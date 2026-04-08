@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>新聞シフト管理ツール</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="data.js"></script>
+<style>
+:root { --primary:#1a56db; --primary-light:#e8eefb; --bg:#f5f6fa; --card:#fff; --border:#dde1e8; --text:#1e293b; --text-sub:#64748b; --danger:#dc2626; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Segoe UI','Meiryo',sans-serif; background:var(--bg); color:var(--text); font-size:14px; }
+.nav { background:var(--primary); color:#fff; padding:0 20px; display:flex; align-items:center; height:52px; position:sticky; top:0; z-index:100; box-shadow:0 2px 8px rgba(0,0,0,.15); }
+.nav h1 { font-size:16px; font-weight:600; margin-right:32px; white-space:nowrap; }
+.nav-links { display:flex; gap:4px; overflow-x:auto; }
+.nav-links button { background:none; border:none; color:rgba(255,255,255,.75); padding:8px 16px; cursor:pointer; font-size:13px; border-radius:6px 6px 0 0; transition:.15s; white-space:nowrap; }
+.nav-links button:hover { background:rgba(255,255,255,.15); color:#fff; }
+.nav-links button.active { background:var(--bg); color:var(--primary); font-weight:600; }
+.container { max-width:1400px; margin:0 auto; padding:16px; }
+.card { background:var(--card); border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,.08); padding:20px; margin-bottom:16px; }
+.card h2 { font-size:16px; margin-bottom:12px; color:var(--primary); border-bottom:2px solid var(--primary-light); padding-bottom:8px; }
+.hidden { display:none !important; }
+.filters { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; align-items:flex-end; }
+.filters label { font-size:12px; color:var(--text-sub); display:block; margin-bottom:2px; }
+.filters select, .filters input[type=text] { padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; background:#fff; }
+.badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+.badge-johoku { background:#dbeafe; color:#1d4ed8; }
+.badge-kawagoe { background:#dcfce7; color:#166534; }
+.badge-tachikawa { background:#fef3c7; color:#92400e; }
+.badge-kawasaki { background:#fce7f3; color:#9d174d; }
+.table-wrap { overflow-x:auto; max-height:72vh; overflow-y:auto; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+thead th { background:#f1f5f9; color:var(--text-sub); font-weight:600; padding:8px 10px; position:sticky; top:0; z-index:2; border-bottom:2px solid var(--border); text-align:left; white-space:nowrap; }
+tbody td { padding:6px 10px; border-bottom:1px solid #f1f5f9; white-space:nowrap; }
+tbody tr:hover { background:var(--primary-light); }
+.shift-table { border:1px solid #ccc; }
+.shift-table th,.shift-table td { padding:5px 8px; font-size:13px; text-align:center; min-width:60px; border-bottom:1px solid #e2e8f0; }
+.shift-table td.cn { text-align:left; font-weight:600; position:sticky; left:0; background:var(--card); z-index:1; min-width:100px; border-right:2px solid #94a3b8; }
+.shift-table thead th:first-child { position:sticky; left:0; z-index:3; background:#f1f5f9; border-right:2px solid #94a3b8; }
+.shift-table thead th { border-bottom:2px solid #94a3b8; }
+.shift-table tbody tr:nth-child(even) { background:#f8fafc; }
+.shift-table tbody tr:hover { background:#e0e7ff !important; }
+.shift-table td.am { background:#f0f9ff; border-left:2px solid #94a3b8; color:#1e293b; }
+.shift-table td.pm { background:#fdf4ff; border-right:1px solid #e2e8f0; color:#1e293b; }
+.shift-table tbody tr:nth-child(even) td.am { background:#e8f4fd; }
+.shift-table tbody tr:nth-child(even) td.pm { background:#f5eafa; }
+.shift-table td.cn { font-size:14px; }
+.sun { background:#fff1f2 !important; }
+.sat { background:#eff6ff !important; }
+.day-off { color:var(--text); }
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
+.stat-card { background:var(--card); border-radius:10px; padding:16px; box-shadow:0 1px 4px rgba(0,0,0,.08); text-align:center; }
+.stat-card .number { font-size:28px; font-weight:700; color:var(--primary); }
+.stat-card .label { font-size:12px; color:var(--text-sub); margin-top:4px; }
+.loading { text-align:center; padding:60px; color:var(--text-sub); }
+.spinner { display:inline-block; width:32px; height:32px; border:3px solid var(--border); border-top-color:var(--primary); border-radius:50%; animation:spin .8s linear infinite; margin-bottom:12px; }
+@keyframes spin { to{transform:rotate(360deg);} }
+.sub-tabs { display:flex; gap:4px; margin-bottom:12px; }
+.sub-tabs button { padding:6px 14px; border:1px solid var(--border); background:#fff; border-radius:6px; cursor:pointer; font-size:12px; }
+.sub-tabs button.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+.highlight { background:#fef08a; padding:0 2px; border-radius:2px; }
+</style>
+</head>
+<body>
+<div class="nav">
+  <h1>新聞シフト管理</h1>
+  <div class="nav-links">
+    <button class="active" onclick="showView('dashboard',this)">ダッシュボード</button>
+    <button onclick="showView('shift',this)">月別シフト</button>
+    <button onclick="showView('tenpo',this)">店舗検索</button>
+    <button onclick="showView('search',this)">検索</button>
+    <button onclick="showView('staff',this)">スタッフ一覧</button>
+  </div>
+</div>
+<div class="container">
+  <div id="loading" class="loading"><div class="spinner"></div><div>データを読み込み中...</div></div>
+  <div id="view-dashboard" class="hidden">
+    <div class="card"><h2>本日のコース担当</h2><div class="table-wrap" id="today-assignments"></div></div>
+  </div>
+  <div id="view-staff" class="hidden">
+    <div class="card"><h2>スタッフ一覧</h2>
+      <div class="filters">
+        <div><label>拠点</label><select id="sf-area" onchange="renderStaff()"><option value="">すべて</option></select></div>
+        <div><label>契約範囲</label><select id="sf-contract" onchange="renderStaff()"><option value="">すべて</option></select></div>
+        <div><label>名前検索</label><input type="text" id="sf-name" placeholder="名前で検索..." oninput="renderStaff()"></div>
+      </div>
+      <div class="table-wrap" id="staff-wrap"></div>
+    </div>
+  </div>
+  <div id="view-courses" class="hidden">
+    <div class="card"><h2>コース別 曜日担当者</h2>
+      <div class="sub-tabs" id="ct"><button class="active" onclick="setEd('morning',this)">朝刊</button><button onclick="setEd('evening',this)">夕刊</button></div>
+      <div class="filters">
+        <div><label>エリア</label><select id="cf-area" onchange="renderCourse()"><option value="">すべて</option></select></div>
+        <div><label>コース検索</label><input type="text" id="cf-name" placeholder="コースで検索..." oninput="renderCourse()"></div>
+      </div>
+      <div class="table-wrap" id="course-wrap"></div>
+    </div>
+  </div>
+  <div id="view-shift" class="hidden">
+    <div class="card"><h2>月別シフト表</h2>
+      <div class="filters">
+        <div><label>月</label><select id="sh-month" onchange="renderShift()"></select></div>
+        <div><label>コース検索</label><input type="text" id="sh-course" placeholder="コースで絞り込み..." oninput="renderShift()"></div>
+        <div><label>スタッフ検索</label><input type="text" id="sh-staff" placeholder="スタッフで絞り込み..." oninput="renderShift()"></div>
+      </div>
+      <div class="table-wrap" id="shift-wrap"></div>
+    </div>
+  </div>
+  <div id="view-tenpo" class="hidden">
+    <div class="card"><h2>店舗検索</h2>
+      <div class="filters">
+        <div><label>日付</label><input type="date" id="tp-date" onchange="renderTenpo()"></div>
+        <div><label>店舗名</label><input type="text" id="tp-name" placeholder="店舗名で検索..." oninput="renderTenpo()"></div>
+        <div><label>営業所</label><select id="tp-area" onchange="renderTenpo()"><option value="">すべて</option></select></div>
+        <div><label>コース</label><input type="text" id="tp-course" placeholder="コース名で検索..." oninput="renderTenpo()"></div>
+      </div>
+      <div style="margin-bottom:8px;color:var(--text-sub);font-size:12px" id="tp-count"></div>
+      <div class="table-wrap" id="tenpo-wrap"></div>
+    </div>
+  </div>
+  <div id="view-search" class="hidden">
+    <div class="card"><h2>横断検索</h2>
+      <div class="filters"><div><label>キーワード</label><input type="text" id="gs" placeholder="スタッフ名・コース名で検索..." oninput="gSearch()" style="width:300px;"></div></div>
+      <div id="sr"><p style="color:var(--text-sub)">2文字以上入力してください</p></div>
+    </div>
+  </div>
+</div>
+<script>
+const DEFS={
+  course_staff_table:{type:'roster'},sheet26:{type:'course'},
+  shift_2026_04:{label:'4月シフト2026',type:'shift',year:2026},
+  shift_2026_02:{label:'2月シフト2026',type:'shift',year:2026},
+  shift_2026_01:{label:'1月シフト2026',type:'shift',year:2026},
+  shift_12:{label:'12月シフト',type:'shift',year:2025},
+  shift_11:{label:'11月シフト',type:'shift',year:2025},
+};
+const DB={staff:[],courses:[],shifts:{},tenpo:[],raw:{}};
+
+function b64utf8(b){const n=atob(b),a=new Uint8Array(n.length);for(let i=0;i<n.length;i++)a[i]=n.charCodeAt(i);return new TextDecoder('utf-8').decode(a);}
+
+function load(k){if(CSVDATA_B64&&CSVDATA_B64[k]){DB.raw[k]=Papa.parse(b64utf8(CSVDATA_B64[k]),{skipEmptyLines:false}).data;}}
+
+function init(){
+  try{
+    if(typeof CSVDATA_B64==='undefined')throw new Error('data.js が見つかりません。index.html と data.js を同じフォルダに置いてください。');
+    load('course_staff_table');load('sheet26');load('tenpo_list');
+    parseStaff();parseCourses();parseTenpo();
+    Object.keys(DEFS).forEach(k=>{const d=DEFS[k];if((d.type==='shift'||d.type==='shift_ev')&&CSVDATA_B64[k]){load(k);d.type==='shift'?parseShift(k):parseShiftEv(k);}});
+    document.getElementById('loading').classList.add('hidden');
+    showView('dashboard',document.querySelector('.nav-links button'));
+  }catch(e){document.getElementById('loading').innerHTML='<div style="color:red;max-width:600px;margin:0 auto"><p><b>読み込み失敗</b></p><p>'+e.message+'</p></div>';}
+}
+
+function parseStaff(){
+  const R=DB.raw.course_staff_table;if(!R||R.length<3)return;
+  const D=['月','火','水','木','金','土','日'];
+  for(let i=2;i<R.length;i++){const r=R[i],nm=(r[2]||'').trim();if(!nm)continue;
+    const s={area:(r[0]||'').trim(),contract:(r[1]||'').trim(),name:nm,phone:(r[3]||'').trim(),am:{},pm:{}};
+    D.forEach((d,j)=>{s.am[d]=(r[4+j]||'').trim();s.pm[d]=(r[11+j]||'').trim();});DB.staff.push(s);}
+}
+function parseCourses(){
+  const R=DB.raw.sheet26;if(!R||R.length<2)return;
+  const D=['月','火','水','木','金','土','日'];
+  for(let i=1;i<R.length;i++){const r=R[i],mc=(r[0]||'').trim();if(!mc||mc==='重複')continue;
+    const am={},ec=(r[9]||'').trim(),pm={};D.forEach((d,j)=>{am[d]=(r[1+j]||'').trim();});
+    if(ec)D.forEach((d,j)=>{pm[d]=(r[10+j]||'').trim();});DB.courses.push({mc,am,ec,pm});}
+}
+function parseTenpo(){
+  const R=DB.raw.tenpo_list;if(!R||R.length<2)return;
+  for(let i=1;i<R.length;i++){
+    const r=R[i],name=(r[2]||'').trim();if(!name)continue;
+    DB.tenpo.push({
+      area:(r[0]||'').trim(),code:(r[1]||'').trim(),name,
+      openDate:(r[3]||'').trim(),
+      amCourse:(r[4]||'').trim(),amSpecial:(r[5]||'').trim(),
+      ekiNouhin:(r[6]||'').trim(),yukanDoukon:(r[7]||'').trim(),
+      kyoriZou:(r[8]||'').trim(),
+      amOrder:(r[11]||'').trim(),amTime:(r[12]||'').trim(),
+      pmCourse:(r[13]||'').trim(),pmSpecial:(r[14]||'').trim(),
+      pmEki:(r[15]||'').trim(),pmOrder:(r[16]||'').trim(),pmTime:(r[17]||'').trim(),
+      keibaCourse:(r[18]||'').trim(),
+      keibaOrder:(r[22]||'').trim(),keibaTime:(r[23]||'').trim(),
+      lastCollect:(r[24]||'').trim(),lastDeliver:(r[25]||'').trim(),
+      note:(r[26]||'').trim(),
+    });
+  }
+}
+function isDateVal(v){return v&&/^0?\d{1,2}\/\d{1,2}$/.test(v);}
+function parseShift(key){
+  const R=DB.raw[key];if(!R||R.length<10)return;
+  const y=DEFS[key].year||2025;
+  // Find all area section headers
+  const sections=[];
+  const areas=['城北','川越','立川','川崎高津'];
+  let curArea='',lastAreaRow=-1;
+  for(let i=50;i<R.length-2;i++){
+    const a=(R[i][0]||'').trim(), b=(R[i][1]||'').trim();
+    const isArea=areas.some(x=>a===x);
+    if(isArea&&isDateVal(b)){
+      curArea=a;lastAreaRow=i;
+      sections.push({row:i,area:curArea});
+    } else if(a===''&&isDateVal(b)&&curArea&&(i-lastAreaRow)<120){
+      sections.push({row:i,area:curArea});
+    }
+  }
+  if(!sections.length)return;
+  // Parse each section: extract dates and staff->course assignments
+  // Merge all sections into per-area data: staffName -> {date: course}
+  // Build set of all section start rows for boundary detection
+  const secRows=new Set(sections.map(s=>s.row));
+  const areaData={};
+  sections.forEach((sec,si)=>{
+    const dr=R[sec.row],wr=R[sec.row+1];
+    const dates=[];
+    for(let c=1;c<dr.length;c++){
+      const v=(dr[c]||'').trim();
+      if(isDateVal(v)){const[m,d]=v.split('/').map(Number);
+        dates.push({col:c,d:`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`,dow:(wr[c]||'').trim().replace(/\(.*?\)/g,''),dn:d});}
+    }
+    if(!dates.length)return;
+    if(!areaData[sec.area])areaData[sec.area]={allDates:{},staffMap:{}};
+    const ad=areaData[sec.area];
+    dates.forEach(dt=>{ad.allDates[dt.d]=dt;});
+    // Find end boundary: next section's start row, or end of data
+    const nextSecRow=sections[si+1]?sections[si+1].row:R.length;
+    for(let i=sec.row+3;i<nextSecRow;i++){
+      const r=R[i],nm=(r[0]||'').trim();
+      if(!nm||nm==='重複')continue;
+      if(!ad.staffMap[nm])ad.staffMap[nm]={};
+      dates.forEach(({col,d})=>{
+        const am=(r[col]||'').trim();
+        const pm=(r[col+1]||'').trim();
+        if(am||pm)ad.staffMap[nm][d]={am,pm};
+      });
+    }
+  });
+  // Convert to display format per area
+  Object.entries(areaData).forEach(([area,ad])=>{
+    const dates=Object.values(ad.allDates).sort((a,b)=>a.d.localeCompare(b.d));
+    const entries=[];
+    Object.entries(ad.staffMap).forEach(([name,dateMap])=>{
+      entries.push({course:name,a:dates.map(dt=>{
+        const info=dateMap[dt.d];
+        return {d:dt.d,dow:dt.dow,am:info?info.am:'',pm:info?info.pm:''};
+      })});
+    });
+    const label=DEFS[key].label+' '+area;
+    DB.shifts[label]={dates,entries};
+  });
+}
+function parseShiftEv(key){parseShift(key);}
+
+function showView(v,btn){
+  document.querySelectorAll('[id^="view-"]').forEach(e=>e.classList.add('hidden'));
+  const e=document.getElementById('view-'+v);if(e)e.classList.remove('hidden');
+  document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView}[v]||function(){})();
+}
+
+function renderDash(){
+  // Find today's assignments from shift data
+  const now=new Date();
+  const todayStr=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const dw=['日','月','火','水','木','金','土'],td=dw[now.getDay()];
+  // Collect: staff -> {am, pm} for today from all shift areas
+  const todayData=[];
+  Object.entries(DB.shifts).forEach(([label,sh])=>{
+    const di=sh.dates.findIndex(d=>d.d===todayStr);
+    if(di<0)return;
+    const area=label.replace(/.*\s/,'');
+    sh.entries.forEach(e=>{
+      const a=e.a[di];if(!a)return;
+      const am=(a.am||'').trim(),pm=(a.pm||'').trim();
+      if((am&&am!=='0'&&am!=='希望休')||(pm&&pm!=='0'&&pm!=='希望休')){
+        todayData.push({staff:e.course,area,am:am==='0'||am==='希望休'?'':am,pm:pm==='0'||pm==='希望休'?'':pm});
+      }
+    });
+  });
+  let h='';
+  if(todayData.length){
+    h=`<p style="margin-bottom:8px;color:var(--text-sub);font-size:12px">${todayStr}（${td}）のシフトデータ</p>`;
+    h+='<table><thead><tr><th>スタッフ</th><th>エリア</th><th>朝刊</th><th>夕刊</th></tr></thead><tbody>';
+    todayData.forEach(d=>{h+=`<tr><td><b>${d.staff}</b></td><td><span class="badge ${bc(d.area)}">${d.area}</span></td><td>${d.am||'-'}</td><td>${d.pm||'-'}</td></tr>`;});
+    h+='</tbody></table>';
+  } else {
+    h=`<p style="color:var(--text-sub)">本日（${todayStr} ${td}）のシフトデータが見つかりません</p>`;
+  }
+  document.getElementById('today-assignments').innerHTML=h;
+}
+
+let si=false;
+function renderStaffView(){if(!si){const a=[...new Set(DB.staff.map(s=>s.area).filter(Boolean))],c=[...new Set(DB.staff.map(s=>s.contract).filter(Boolean))];
+  a.forEach(x=>document.getElementById('sf-area').add(new Option(x,x)));c.forEach(x=>document.getElementById('sf-contract').add(new Option(x,x)));si=true;}renderStaff();}
+function renderStaff(){
+  const a=document.getElementById('sf-area').value,c=document.getElementById('sf-contract').value,n=document.getElementById('sf-name').value.trim();
+  const D=['月','火','水','木','金','土','日'],f=DB.staff.filter(s=>(!a||s.area===a)&&(!c||s.contract===c)&&(!n||s.name.includes(n)));
+  let h=`<table><thead><tr><th>拠点</th><th>契約</th><th>氏名</th><th>電話番号</th>${D.map(d=>`<th style="background:#e0f2fe">朝${d}</th>`).join('')}${D.map(d=>`<th style="background:#fce7f3">夕${d}</th>`).join('')}</tr></thead><tbody>`;
+  f.forEach(s=>{h+=`<tr><td><span class="badge ${bc(s.area)}">${s.area}</span></td><td>${s.contract}</td><td><b>${s.name}</b></td><td>${s.phone}</td>${D.map(d=>`<td>${s.am[d]||''}</td>`).join('')}${D.map(d=>`<td>${s.pm[d]||''}</td>`).join('')}</tr>`;});
+  document.getElementById('staff-wrap').innerHTML=h+'</tbody></table>';
+}
+
+let ed='morning',ci=false;
+function setEd(e,b){ed=e;document.querySelectorAll('#ct button').forEach(x=>x.classList.remove('active'));b.classList.add('active');renderCourse();}
+function renderCourse(){
+  if(!ci){[...new Set(DB.courses.map(c=>ao(c.mc)).filter(Boolean))].forEach(a=>document.getElementById('cf-area').add(new Option(a,a)));ci=true;}
+  const af=document.getElementById('cf-area').value,sf=document.getElementById('cf-name').value.trim(),D=['月','火','水','木','金','土','日'];
+  let h='<table><thead><tr><th>コース</th>'+D.map(d=>`<th>${d}</th>`).join('')+'</tr></thead><tbody>';
+  DB.courses.forEach(c=>{const co=ed==='morning'?c.mc:c.ec,as=ed==='morning'?c.am:c.pm;if(!co)return;const a=ao(co);
+    if(af&&a!==af)return;if(sf&&!co.includes(sf))return;
+    h+=`<tr><td><span class="badge ${bc(a)}">${co}</span></td>${D.map(d=>`<td>${as[d]||'-'}</td>`).join('')}</tr>`;});
+  document.getElementById('course-wrap').innerHTML=h+'</tbody></table>';
+}
+
+let shi=false;
+function renderShiftView(){if(!shi){Object.keys(DB.shifts).forEach(m=>document.getElementById('sh-month').add(new Option(m,m)));shi=true;}renderShift();}
+function renderShift(){
+  const m=document.getElementById('sh-month').value,cs=document.getElementById('sh-course').value.trim(),ss=document.getElementById('sh-staff').value.trim(),w=document.getElementById('shift-wrap');
+  const sh=DB.shifts[m];if(!sh){w.innerHTML='<p style="color:var(--text-sub)">データなし</p>';return;}
+  let f=sh.entries;if(cs)f=f.filter(e=>e.course.includes(cs));if(ss)f=f.filter(e=>e.a.some(x=>(x.am+x.pm).includes(ss)));
+  let h='<table class="shift-table"><thead><tr><th rowspan="2">スタッフ</th>';
+  sh.dates.forEach(d=>{const c=d.dow==='日'?'sun':d.dow==='土'?'sat':'';
+    h+=`<th colspan="2" class="${c}" style="border-left:2px solid #94a3b8">${d.dn} <small>${d.dow}</small></th>`;});
+  h+='</tr><tr>';
+  sh.dates.forEach(d=>{const c=d.dow==='日'?'sun':d.dow==='土'?'sat':'';
+    h+=`<th class="am ${c}" style="font-size:10px;color:#0369a1;border-left:2px solid #94a3b8">朝</th><th class="pm ${c}" style="font-size:10px;color:#9333ea">夕</th>`;});
+  h+='</tr></thead><tbody>';
+  f.forEach(e=>{h+=`<tr><td class="cn">${e.course}</td>`;
+    e.a.forEach((a,i)=>{const d=sh.dates[i];
+      let am=a.am||'',pm=a.pm||'';
+      if(am==='0'||am==='希望休')am='';if(pm==='0'||pm==='希望休')pm='';
+      if(ss&&am&&am.includes(ss))am=`<span class="highlight">${am}</span>`;
+      if(ss&&pm&&pm.includes(ss))pm=`<span class="highlight">${pm}</span>`;
+      h+=`<td class="am">${am}</td><td class="pm">${pm}</td>`;});h+='</tr>';});
+  w.innerHTML=h+'</tbody></table>';
+}
+
+let tpInit=false,tpEd='am';
+function renderTenpoView(){
+  if(!tpInit){
+    const areas=[...new Set(DB.tenpo.map(t=>t.area).filter(Boolean))];
+    const sel=document.getElementById('tp-area');
+    areas.forEach(a=>sel.add(new Option(a,a)));
+    // Set date input to today
+    const now=new Date();
+    document.getElementById('tp-date').value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    tpInit=true;
+  }
+  renderTenpo();
+}
+function setTpEd(ed,btn){
+  tpEd=ed;
+  document.querySelectorAll('#tp-edition button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTenpo();
+}
+// Build course->driver lookup, separated by am/pm
+function getDriverMaps(dateStr){
+  const amMap={},pmMap={};
+  // 1. Try shift data for exact date
+  let found=false;
+  Object.values(DB.shifts).forEach(sh=>{
+    const di=sh.dates.findIndex(d=>d.d===dateStr);
+    if(di<0)return;
+    found=true;
+    sh.entries.forEach(e=>{
+      const a=e.a[di];if(!a)return;
+      if(a.am&&a.am!=='0'&&a.am!=='希望休'){
+        if(!amMap[a.am])amMap[a.am]=[];
+        amMap[a.am].push(e.course);
+      }
+      if(a.pm&&a.pm!=='0'&&a.pm!=='希望休'){
+        if(!pmMap[a.pm])pmMap[a.pm]=[];
+        pmMap[a.pm].push(e.course);
+      }
+    });
+  });
+  // 2. Fallback: static roster by day of week
+  if(!found){
+    const d=new Date(dateStr);
+    const dw=['日','月','火','水','木','金','土'],td=dw[d.getDay()];
+    DB.staff.forEach(s=>{
+      if(s.am[td]){if(!amMap[s.am[td]])amMap[s.am[td]]=[];amMap[s.am[td]].push(s.name);}
+      if(s.pm[td]){if(!pmMap[s.pm[td]])pmMap[s.pm[td]]=[];pmMap[s.pm[td]].push(s.name);}
+    });
+  }
+  return {amMap,pmMap};
+}
+// Get phone by staff name
+function getPhone(name){
+  const s=DB.staff.find(s=>s.name===name);
+  return s?s.phone:'';
+}
+function renderTenpo(){
+  const nm=document.getElementById('tp-name').value.trim();
+  const area=document.getElementById('tp-area').value;
+  const course=document.getElementById('tp-course').value.trim();
+  const dateStr=document.getElementById('tp-date').value;
+  let f=DB.tenpo;
+  if(nm)f=f.filter(t=>t.name.includes(nm));
+  if(area)f=f.filter(t=>t.area===area);
+  const isAm=tpEd==='am';
+  if(course)f=f.filter(t=>t.amCourse.includes(course)||t.pmCourse.includes(course));
+  document.getElementById('tp-count').textContent=`${f.length}件 / ${DB.tenpo.length}件`;
+  const show=f.slice(0,500);
+  const {amMap,pmMap}=getDriverMaps(dateStr);
+  const d=new Date(dateStr);
+  const dw=['日','月','火','水','木','金','土'];
+  const dateLabel=`${dateStr}（${dw[d.getDay()]}）`;
+  let h=`<p style="font-size:12px;color:var(--text-sub);margin-bottom:6px">${dateLabel} の担当ドライバー</p>`;
+  h+='<table><thead><tr><th>営業所</th><th>店舗コード</th><th>店舗名</th><th>朝刊コース</th><th>朝刊担当</th><th>電話番号</th><th>夕刊コース</th><th>夕刊担当</th><th>電話番号</th><th>備考</th></tr></thead><tbody>';
+  show.forEach(t=>{
+    const amD=(amMap[t.amCourse]||[])[0]||'';
+    const pmD=(pmMap[t.pmCourse]||[])[0]||'';
+    const amName=amD||'-';
+    const amPhone=amD?getPhone(amD)||'-':'-';
+    const pmName=pmD||'-';
+    const pmPhone=pmD?getPhone(pmD)||'-':'-';
+    h+=`<tr><td><span class="badge ${bc(t.area)}">${t.area}</span></td><td>${t.code}</td><td><b>${nm?hl(t.name,nm):t.name}</b></td>`;
+    h+=`<td>${course?hl(t.amCourse,course):t.amCourse}</td><td>${amName}</td><td>${amPhone}</td>`;
+    h+=`<td>${course?hl(t.pmCourse,course):t.pmCourse}</td><td>${pmName}</td><td>${pmPhone}</td><td>${t.note}</td></tr>`;
+  });
+  h+='</tbody></table>';
+  if(f.length>500)h+=`<p style="color:var(--text-sub);margin-top:8px">500件まで表示（残り${f.length-500}件）</p>`;
+  document.getElementById('tenpo-wrap').innerHTML=h;
+}
+
+function gSearch(){
+  const q=document.getElementById('gs').value.trim(),el=document.getElementById('sr');
+  if(q.length<2){el.innerHTML='<p style="color:var(--text-sub)">2文字以上入力してください</p>';return;}
+  let h='';const D=['月','火','水','木','金','土','日'];
+  const ms=DB.staff.filter(s=>s.name.includes(q)||s.area.includes(q));
+  if(ms.length){h+=`<div class="card"><h2>スタッフ (${ms.length}件)</h2><table><thead><tr><th>拠点</th><th>氏名</th><th>契約</th><th>電話</th></tr></thead><tbody>`;
+    ms.forEach(s=>{h+=`<tr><td><span class="badge ${bc(s.area)}">${s.area}</span></td><td><b>${hl(s.name,q)}</b></td><td>${s.contract}</td><td>${s.phone}</td></tr>`;});h+='</tbody></table></div>';}
+  const mc=DB.courses.filter(c=>c.mc.includes(q)||(c.ec||'').includes(q)||Object.values(c.am).some(v=>v.includes(q))||Object.values(c.pm).some(v=>v.includes(q)));
+  if(mc.length){h+=`<div class="card"><h2>コース (${mc.length}件)</h2><table><thead><tr><th>朝刊</th>${D.map(d=>`<th>${d}</th>`).join('')}<th>夕刊</th>${D.map(d=>`<th>${d}</th>`).join('')}</tr></thead><tbody>`;
+    mc.forEach(c=>{h+=`<tr><td><b>${hl(c.mc,q)}</b></td>${D.map(d=>`<td>${hl(c.am[d]||'',q)}</td>`).join('')}<td><b>${hl(c.ec||'',q)}</b></td>${D.map(d=>`<td>${hl(c.pm[d]||'',q)}</td>`).join('')}</tr>`;});h+='</tbody></table></div>';}
+  const sr=[];Object.entries(DB.shifts).forEach(([m,sh])=>{sh.entries.forEach(e=>{if(e.course.includes(q)||e.a.some(x=>(x.am||'').includes(q)||(x.pm||'').includes(q)))sr.push({m,c:e.course,sl:[...new Set(e.a.flatMap(x=>[x.am,x.pm]).filter(Boolean))]});});});
+  if(sr.length){const s=sr.slice(0,80);h+=`<div class="card"><h2>シフト (${s.length}/${sr.length}件)</h2><table><thead><tr><th>月</th><th>コース</th><th>担当者</th></tr></thead><tbody>`;
+    s.forEach(r=>{h+=`<tr><td>${r.m}</td><td>${hl(r.c,q)}</td><td>${r.sl.map(n=>hl(n,q)).join(', ')}</td></tr>`;});h+='</tbody></table></div>';}
+  if(!h)h='<p style="color:var(--text-sub)">該当なし</p>';el.innerHTML=h;
+}
+
+function ao(c){if(!c)return'';if(c.startsWith('城北'))return'城北';if(c.startsWith('川越'))return'川越';if(c.startsWith('立川'))return'立川';if(c.startsWith('川崎'))return'川崎';return'';}
+function bc(a){return{'城北':'badge-johoku','川越':'badge-kawagoe','立川':'badge-tachikawa','川崎':'badge-kawasaki'}[a]||'';}
+function hl(t,q){if(!t||!q||!t.includes(q))return t;return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'g'),`<span class="highlight">${q}</span>`);}
+
+init();
+</script>
+</body>
+</html>
