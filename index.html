@@ -99,8 +99,18 @@ tbody tr:hover { background:var(--primary-light); }
   </div>
   <div id="view-shift" class="hidden">
     <div class="card"><h2>月別シフト表</h2>
+      <div class="sub-tabs" id="sh-mode-tabs" style="margin-bottom:8px">
+        <button class="active" onclick="setShMode('staff',this)">スタッフ起点</button>
+        <button onclick="setShMode('course',this)">コース起点</button>
+      </div>
+      <div class="sub-tabs" id="sh-ed-tabs">
+        <button class="active" onclick="setShEd('both',this)">朝刊・夕刊</button>
+        <button onclick="setShEd('am',this)">朝刊のみ</button>
+        <button onclick="setShEd('pm',this)">夕刊のみ</button>
+      </div>
       <div class="filters">
         <div><label>月</label><select id="sh-month" onchange="renderShift()"></select></div>
+        <div><label>営業所</label><select id="sh-area" onchange="renderShift()"><option value="">すべて</option></select></div>
         <div><label>コース検索</label><input type="text" id="sh-course" placeholder="コースで絞り込み..." oninput="renderShift()"></div>
         <div><label>スタッフ検索</label><input type="text" id="sh-staff" placeholder="スタッフで絞り込み..." oninput="renderShift()"></div>
       </div>
@@ -135,7 +145,7 @@ const DEFS={
   shift_12:{label:'12月シフト',type:'shift',year:2025},
   shift_11:{label:'11月シフト',type:'shift',year:2025},
 };
-const DB={staff:[],courses:[],shifts:{},tenpo:[],raw:{}};
+const DB={staff:[],courses:[],shifts:{},shiftsByCourse:{},tenpo:[],raw:{}};
 
 function b64utf8(b){const n=atob(b),a=new Uint8Array(n.length);for(let i=0;i<n.length;i++)a[i]=n.charCodeAt(i);return new TextDecoder('utf-8').decode(a);}
 
@@ -187,66 +197,124 @@ function parseTenpo(){
   }
 }
 function isDateVal(v){return v&&/^0?\d{1,2}\/\d{1,2}$/.test(v);}
+function areaOfCourse(c){
+  if(!c)return'';
+  if(c.startsWith('城北'))return'城北';
+  if(c.startsWith('川越'))return'川越';
+  if(c.startsWith('立川'))return'立川';
+  if(c.startsWith('川崎'))return'川崎高津';
+  return'';
+}
 function parseShift(key){
   const R=DB.raw[key];if(!R||R.length<10)return;
   const y=DEFS[key].year||2025;
-  // Find all area section headers
-  const sections=[];
-  const areas=['城北','川越','立川','川崎高津'];
-  let curArea='',lastAreaRow=-1;
-  for(let i=50;i<R.length-2;i++){
-    const a=(R[i][0]||'').trim(), b=(R[i][1]||'').trim();
-    const isArea=areas.some(x=>a===x);
-    if(isArea&&isDateVal(b)){
-      curArea=a;lastAreaRow=i;
-      sections.push({row:i,area:curArea});
-    } else if(a===''&&isDateVal(b)&&curArea&&(i-lastAreaRow)<120){
-      sections.push({row:i,area:curArea});
+  // Use Section 1 (rows 1-6 header, rows 7+ course-based data)
+  // Row 0: dates (col2=date1, col4=date2, ...)
+  // Row 5: edition (col2=朝刊, col3=夕刊, col4=朝刊, col5=夕刊, ...)
+  // Row 6+: course name in col0, staff names in col2+ (am=col, pm=col+1)
+  const dateRow=R[0],dowRow=R[3];
+  const dates=[];
+  for(let c=1;c<dateRow.length;c++){
+    const v=(dateRow[c]||'').trim();
+    if(isDateVal(v)){
+      const parts=v.split('/').map(Number);
+      const m=parts[parts.length-2],d=parts[parts.length-1];
+      const dow=(dowRow[c]||'').trim().replace(/\(.*?\)/g,'');
+      dates.push({col:c,d:`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`,dow,dn:d});
     }
   }
-  if(!sections.length)return;
-  // Parse each section: extract dates and staff->course assignments
-  // Merge all sections into per-area data: staffName -> {date: course}
-  // Build set of all section start rows for boundary detection
-  const secRows=new Set(sections.map(s=>s.row));
+  if(!dates.length)return;
+  // Parse course rows and transpose to staff->course
+  // staffMap: area -> staffName -> {dateStr: {am, pm}}
   const areaData={};
-  sections.forEach((sec,si)=>{
-    const dr=R[sec.row],wr=R[sec.row+1];
-    const dates=[];
-    for(let c=1;c<dr.length;c++){
-      const v=(dr[c]||'').trim();
-      if(isDateVal(v)){const[m,d]=v.split('/').map(Number);
-        dates.push({col:c,d:`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`,dow:(wr[c]||'').trim().replace(/\(.*?\)/g,''),dn:d});}
+  const maxRow=Math.min(116,R.length); // rows 7-116 only (1-indexed: 7-116)
+  for(let i=6;i<maxRow;i++){
+    const r=R[i],courseName=(r[0]||'').trim();
+    if(!courseName||courseName==='重複')continue;
+    const area=areaOfCourse(courseName);
+    if(!area)continue;
+    dates.forEach(({col,d})=>{
+      const staffAm=(r[col]||'').trim();
+      const staffPm=(r[col+1]||'').trim();
+      if(staffAm&&staffAm!=='0'){
+        if(!areaData[area])areaData[area]={};
+        if(!areaData[area][staffAm])areaData[area][staffAm]={};
+        if(!areaData[area][staffAm][d])areaData[area][staffAm][d]={am:'',pm:''};
+        areaData[area][staffAm][d].am=courseName;
+      }
+      if(staffPm&&staffPm!=='0'){
+        if(!areaData[area])areaData[area]={};
+        if(!areaData[area][staffPm])areaData[area][staffPm]={};
+        if(!areaData[area][staffPm][d])areaData[area][staffPm][d]={am:'',pm:''};
+        areaData[area][staffPm][d].pm=courseName;
+      }
+    });
+  }
+  // Read section 2 (rows 163+) for special values (ミーティング, 希望休, 引継ぎ, etc)
+  const specialPattern=/ミーティング|希望休|引継|研修|有給|欠勤|出張|五反田|目黒|渋谷|休刊/;
+  const areas2=['城北','川越','立川','川崎高津'];
+  let curArea2='';
+  for(let i=120;i<R.length-2;i++){
+    const a=(R[i][0]||'').trim(),b=(R[i][1]||'').trim();
+    if(areas2.some(x=>a===x)&&isDateVal(b)){curArea2=a;
+      // Parse dates for this section 2 block
+      const s2dates=[];
+      for(let c=1;c<R[i].length;c++){const v=(R[i][c]||'').trim();if(isDateVal(v)){const parts=v.split('/').map(Number);const m=parts[parts.length-2],d=parts[parts.length-1];s2dates.push({col:c,d:`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`});}}
+      // Read staff rows until next section
+      for(let j=i+3;j<R.length;j++){
+        const r2=R[j],nm=(r2[0]||'').trim();
+        if(!nm)continue;
+        if(areas2.some(x=>nm===x)&&isDateVal((r2[1]||'').trim()))break;
+        if(nm===''&&isDateVal((r2[1]||'').trim()))break;
+        const ad=areaData[curArea2];if(!ad||!ad[nm])continue;
+        s2dates.forEach(({col,d})=>{
+          const vAm=(r2[col]||'').trim();
+          const vPm=(r2[col+1]||'').trim();
+          if(vAm&&specialPattern.test(vAm)&&ad[nm][d]){ad[nm][d].am=vAm;}
+          if(vPm&&specialPattern.test(vPm)&&ad[nm][d]){ad[nm][d].pm=vPm;}
+          // Also add special values for staff with no section 1 data on this date
+          if(vAm&&specialPattern.test(vAm)&&!ad[nm][d]){ad[nm][d]={am:vAm,pm:''};}
+          if(vPm&&specialPattern.test(vPm)){if(!ad[nm][d])ad[nm][d]={am:'',pm:vPm};else if(!ad[nm][d].pm)ad[nm][d].pm=vPm;}
+        });
+      }
     }
-    if(!dates.length)return;
-    if(!areaData[sec.area])areaData[sec.area]={allDates:{},staffMap:{}};
-    const ad=areaData[sec.area];
-    dates.forEach(dt=>{ad.allDates[dt.d]=dt;});
-    // Find end boundary: next section's start row, or end of data
-    const nextSecRow=sections[si+1]?sections[si+1].row:R.length;
-    for(let i=sec.row+3;i<nextSecRow;i++){
-      const r=R[i],nm=(r[0]||'').trim();
-      if(!nm||nm==='重複')continue;
-      if(!ad.staffMap[nm])ad.staffMap[nm]={};
-      dates.forEach(({col,d})=>{
-        const am=(r[col]||'').trim();
-        const pm=(r[col+1]||'').trim();
-        if(am||pm)ad.staffMap[nm][d]={am,pm};
-      });
-    }
-  });
+  }
   // Convert to display format per area
-  Object.entries(areaData).forEach(([area,ad])=>{
-    const dates=Object.values(ad.allDates).sort((a,b)=>a.d.localeCompare(b.d));
+  Object.entries(areaData).forEach(([area,staffMap])=>{
     const entries=[];
-    Object.entries(ad.staffMap).forEach(([name,dateMap])=>{
+    Object.entries(staffMap).forEach(([name,dateMap])=>{
       entries.push({course:name,a:dates.map(dt=>{
         const info=dateMap[dt.d];
         return {d:dt.d,dow:dt.dow,am:info?info.am:'',pm:info?info.pm:''};
       })});
     });
-    const label=DEFS[key].label+' '+area;
-    DB.shifts[label]={dates,entries};
+    const monthLabel=DEFS[key].label;
+    if(!DB.shifts[monthLabel])DB.shifts[monthLabel]={};
+    DB.shifts[monthLabel][area]={dates,entries};
+  });
+  // Build course-based view from section 1 (rows 7-116)
+  // Each course row: col0=course, col(even)=am staff, col(odd)=pm staff
+  const courseData={};
+  for(let i=6;i<maxRow;i++){
+    const r=R[i],courseName=(r[0]||'').trim();
+    if(!courseName||courseName==='重複')continue;
+    const area=areaOfCourse(courseName);
+    if(!area)continue;
+    if(!courseData[area])courseData[area]={};
+    courseData[area][courseName]=dates.map(({col,d,dow})=>{
+      const am=(r[col]||'').trim();
+      const pm=(r[col+1]||'').trim();
+      return {d,dow,am:am==='0'?'':am,pm:pm==='0'?'':pm};
+    });
+  }
+  const ml=DEFS[key].label;
+  Object.entries(courseData).forEach(([area,courses])=>{
+    const entries=[];
+    Object.entries(courses).forEach(([cname,dayData])=>{
+      entries.push({course:cname,a:dayData});
+    });
+    if(!DB.shiftsByCourse[ml])DB.shiftsByCourse[ml]={};
+    DB.shiftsByCourse[ml][area]={dates,entries};
   });
 }
 function parseShiftEv(key){parseShift(key);}
@@ -266,16 +334,17 @@ function renderDash(){
   const dw=['日','月','火','水','木','金','土'],td=dw[now.getDay()];
   // Collect: staff -> {am, pm} for today from all shift areas
   const todayData=[];
-  Object.entries(DB.shifts).forEach(([label,sh])=>{
-    const di=sh.dates.findIndex(d=>d.d===todayStr);
-    if(di<0)return;
-    const area=label.replace(/.*\s/,'');
-    sh.entries.forEach(e=>{
-      const a=e.a[di];if(!a)return;
-      const am=(a.am||'').trim(),pm=(a.pm||'').trim();
-      if((am&&am!=='0'&&am!=='希望休')||(pm&&pm!=='0'&&pm!=='希望休')){
-        todayData.push({staff:e.course,area,am:am==='0'||am==='希望休'?'':am,pm:pm==='0'||pm==='希望休'?'':pm});
-      }
+  Object.entries(DB.shifts).forEach(([month,areas])=>{
+    Object.entries(areas).forEach(([area,sh])=>{
+      const di=sh.dates.findIndex(d=>d.d===todayStr);
+      if(di<0)return;
+      sh.entries.forEach(e=>{
+        const a=e.a[di];if(!a)return;
+        const am=(a.am||'').trim(),pm=(a.pm||'').trim();
+        if((am&&am!=='0'&&am!=='希望休')||(pm&&pm!=='0'&&pm!=='希望休')){
+          todayData.push({staff:e.course,area,am:am==='0'||am==='希望休'?'':am,pm:pm==='0'||pm==='希望休'?'':pm});
+        }
+      });
     });
   });
   let h='';
@@ -313,18 +382,67 @@ function renderCourse(){
   document.getElementById('course-wrap').innerHTML=h+'</tbody></table>';
 }
 
-let shi=false;
-function renderShiftView(){if(!shi){Object.keys(DB.shifts).forEach(m=>document.getElementById('sh-month').add(new Option(m,m)));shi=true;}renderShift();}
+let shi=false,shEd='both',shMode='staff';
+function setShEd(ed,btn){
+  shEd=ed;
+  document.querySelectorAll('#sh-ed-tabs button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderShift();
+}
+function setShMode(mode,btn){
+  shMode=mode;
+  document.querySelectorAll('#sh-mode-tabs button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderShift();
+}
+function renderShiftView(){
+  if(!shi){
+    const mSel=document.getElementById('sh-month');
+    Object.keys(DB.shifts).forEach(m=>mSel.add(new Option(m,m)));
+    const aSel=document.getElementById('sh-area');
+    const allAreas=new Set();
+    Object.values(DB.shifts).forEach(areas=>Object.keys(areas).forEach(a=>allAreas.add(a)));
+    [...allAreas].forEach(a=>aSel.add(new Option(a,a)));
+    shi=true;
+  }
+  renderShift();
+}
 function renderShift(){
-  const m=document.getElementById('sh-month').value,cs=document.getElementById('sh-course').value.trim(),ss=document.getElementById('sh-staff').value.trim(),w=document.getElementById('shift-wrap');
-  const sh=DB.shifts[m];if(!sh){w.innerHTML='<p style="color:var(--text-sub)">データなし</p>';return;}
-  let f=sh.entries;if(cs)f=f.filter(e=>e.course.includes(cs));if(ss)f=f.filter(e=>e.a.some(x=>(x.am+x.pm).includes(ss)));
-  let h='<table class="shift-table"><thead><tr><th rowspan="2">スタッフ</th>';
-  sh.dates.forEach(d=>{const c=d.dow==='日'?'sun':d.dow==='土'?'sat':'';
-    h+=`<th colspan="2" class="${c}" style="border-left:2px solid #94a3b8">${d.dn} <small>${d.dow}</small></th>`;});
-  h+='</tr><tr>';
-  sh.dates.forEach(d=>{const c=d.dow==='日'?'sun':d.dow==='土'?'sat':'';
-    h+=`<th class="am ${c}" style="font-size:10px;color:#0369a1;border-left:2px solid #94a3b8">朝</th><th class="pm ${c}" style="font-size:10px;color:#9333ea">夕</th>`;});
+  const m=document.getElementById('sh-month').value,areaF=document.getElementById('sh-area').value,cs=document.getElementById('sh-course').value.trim(),ss=document.getElementById('sh-staff').value.trim(),w=document.getElementById('shift-wrap');
+  const isCourseMode=shMode==='course';
+  const src=isCourseMode?DB.shiftsByCourse:DB.shifts;
+  const monthData=src[m];if(!monthData){w.innerHTML='<p style="color:var(--text-sub)">データなし</p>';return;}
+  let mergedDates=null,mergedEntries=[];
+  Object.entries(monthData).forEach(([area,sh])=>{
+    if(areaF&&area!==areaF)return;
+    if(!mergedDates)mergedDates=sh.dates;
+    sh.entries.forEach(e=>mergedEntries.push(e));
+  });
+  if(!mergedDates){w.innerHTML='<p style="color:var(--text-sub)">データなし</p>';return;}
+  const sh={dates:mergedDates,entries:mergedEntries};
+  let f=sh.entries;
+  // Hide rows with no assignments
+  f=f.filter(e=>e.a.some(x=>{const am=(x.am||'').trim(),pm=(x.pm||'').trim();
+    if(shEd==='am')return am&&am!=='0'&&am!=='希望休';
+    if(shEd==='pm')return pm&&pm!=='0'&&pm!=='希望休';
+    return(am&&am!=='0'&&am!=='希望休')||(pm&&pm!=='0'&&pm!=='希望休');}));
+  if(cs)f=f.filter(e=>e.course.includes(cs));
+  if(ss)f=f.filter(e=>e.a.some(x=>((shEd!=='pm'?x.am:'')+' '+(shEd!=='am'?x.pm:'')).includes(ss)));
+  const rowLabel=isCourseMode?'コース':'スタッフ';
+  const isBoth=shEd==='both',isAm=shEd==='am',isPm=shEd==='pm';
+  let h='<table class="shift-table"><thead><tr>';
+  if(isBoth){
+    h+=`<th rowspan="2">${rowLabel}</th>`;
+    sh.dates.forEach(d=>{const c=d.dow==='日'?'sun':d.dow==='土'?'sat':'';
+      h+=`<th colspan="2" class="${c}" style="border-left:2px solid #94a3b8">${d.dn} <small>${d.dow}</small></th>`;});
+    h+='</tr><tr>';
+    sh.dates.forEach(d=>{const c=d.dow==='日'?'sun':d.dow==='土'?'sat':'';
+      h+=`<th class="am ${c}" style="font-size:10px;color:#0369a1;border-left:2px solid #94a3b8">朝</th><th class="pm ${c}" style="font-size:10px;color:#9333ea">夕</th>`;});
+  } else {
+    h+=`<th>${rowLabel}</th>`;
+    sh.dates.forEach(d=>{const c=d.dow==='日'?'sun':d.dow==='土'?'sat':'';
+      h+=`<th class="${c}" style="border-left:2px solid #94a3b8">${d.dn} <small>${d.dow}</small></th>`;});
+  }
   h+='</tr></thead><tbody>';
   f.forEach(e=>{h+=`<tr><td class="cn">${e.course}</td>`;
     e.a.forEach((a,i)=>{const d=sh.dates[i];
@@ -332,7 +450,10 @@ function renderShift(){
       if(am==='0'||am==='希望休')am='';if(pm==='0'||pm==='希望休')pm='';
       if(ss&&am&&am.includes(ss))am=`<span class="highlight">${am}</span>`;
       if(ss&&pm&&pm.includes(ss))pm=`<span class="highlight">${pm}</span>`;
-      h+=`<td class="am">${am}</td><td class="pm">${pm}</td>`;});h+='</tr>';});
+      if(isBoth) h+=`<td class="am">${am}</td><td class="pm">${pm}</td>`;
+      else if(isAm) h+=`<td class="am">${am}</td>`;
+      else h+=`<td class="pm">${pm}</td>`;
+    });h+='</tr>';});
   w.innerHTML=h+'</tbody></table>';
 }
 
@@ -360,7 +481,8 @@ function getDriverMaps(dateStr){
   const amMap={},pmMap={};
   // 1. Try shift data for exact date
   let found=false;
-  Object.values(DB.shifts).forEach(sh=>{
+  Object.values(DB.shifts).forEach(areas=>{
+    Object.values(areas).forEach(sh=>{
     const di=sh.dates.findIndex(d=>d.d===dateStr);
     if(di<0)return;
     found=true;
@@ -375,7 +497,7 @@ function getDriverMaps(dateStr){
         pmMap[a.pm].push(e.course);
       }
     });
-  });
+  });});
   // 2. Fallback: static roster by day of week
   if(!found){
     const d=new Date(dateStr);
@@ -436,7 +558,7 @@ function gSearch(){
   const mc=DB.courses.filter(c=>c.mc.includes(q)||(c.ec||'').includes(q)||Object.values(c.am).some(v=>v.includes(q))||Object.values(c.pm).some(v=>v.includes(q)));
   if(mc.length){h+=`<div class="card"><h2>コース (${mc.length}件)</h2><table><thead><tr><th>朝刊</th>${D.map(d=>`<th>${d}</th>`).join('')}<th>夕刊</th>${D.map(d=>`<th>${d}</th>`).join('')}</tr></thead><tbody>`;
     mc.forEach(c=>{h+=`<tr><td><b>${hl(c.mc,q)}</b></td>${D.map(d=>`<td>${hl(c.am[d]||'',q)}</td>`).join('')}<td><b>${hl(c.ec||'',q)}</b></td>${D.map(d=>`<td>${hl(c.pm[d]||'',q)}</td>`).join('')}</tr>`;});h+='</tbody></table></div>';}
-  const sr=[];Object.entries(DB.shifts).forEach(([m,sh])=>{sh.entries.forEach(e=>{if(e.course.includes(q)||e.a.some(x=>(x.am||'').includes(q)||(x.pm||'').includes(q)))sr.push({m,c:e.course,sl:[...new Set(e.a.flatMap(x=>[x.am,x.pm]).filter(Boolean))]});});});
+  const sr=[];Object.entries(DB.shifts).forEach(([m,areas])=>{Object.values(areas).forEach(sh=>{sh.entries.forEach(e=>{if(e.course.includes(q)||e.a.some(x=>(x.am||'').includes(q)||(x.pm||'').includes(q)))sr.push({m,c:e.course,sl:[...new Set(e.a.flatMap(x=>[x.am,x.pm]).filter(Boolean))]});});});});
   if(sr.length){const s=sr.slice(0,80);h+=`<div class="card"><h2>シフト (${s.length}/${sr.length}件)</h2><table><thead><tr><th>月</th><th>コース</th><th>担当者</th></tr></thead><tbody>`;
     s.forEach(r=>{h+=`<tr><td>${r.m}</td><td>${hl(r.c,q)}</td><td>${r.sl.map(n=>hl(n,q)).join(', ')}</td></tr>`;});h+='</tbody></table></div>';}
   if(!h)h='<p style="color:var(--text-sub)">該当なし</p>';el.innerHTML=h;
