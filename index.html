@@ -36,8 +36,10 @@ tbody tr:hover { background:var(--primary-light); }
 .shift-table { border:1px solid #ccc; }
 .shift-table th,.shift-table td { padding:5px 8px; font-size:13px; text-align:center; min-width:60px; border-bottom:1px solid #e2e8f0; }
 .shift-table td.cn { text-align:left; font-weight:600; position:sticky; left:0; background:var(--card); z-index:1; min-width:100px; border-right:2px solid #94a3b8; }
-.shift-table thead th:first-child { position:sticky; left:0; z-index:3; background:#f1f5f9; border-right:2px solid #94a3b8; }
-.shift-table thead th { border-bottom:2px solid #94a3b8; }
+.shift-table thead th { position:sticky; z-index:2; border-bottom:2px solid #94a3b8; background:#f1f5f9; }
+.shift-table thead tr:first-child th { top:0; }
+.shift-table thead tr:nth-child(2) th { top:28px; }
+.shift-table thead th:first-child { position:sticky; left:0; z-index:4; background:#f1f5f9; border-right:2px solid #94a3b8; }
 .shift-table tbody tr:nth-child(even) { background:#f8fafc; }
 .shift-table tbody tr:hover { background:#e0e7ff !important; }
 .shift-table td.am { background:#f0f9ff; border-left:2px solid #94a3b8; color:#1e293b; }
@@ -419,6 +421,19 @@ function renderShift(){
     sh.entries.forEach(e=>mergedEntries.push(e));
   });
   if(!mergedDates){w.innerHTML='<p style="color:var(--text-sub)">データなし</p>';return;}
+  // In staff mode without area filter, merge same-name staff into one row
+  if(!isCourseMode&&!areaF){
+    const nameMap={};
+    mergedEntries.forEach(e=>{
+      if(!nameMap[e.course]){nameMap[e.course]={course:e.course,a:e.a.map(x=>({...x}))};return;}
+      const m=nameMap[e.course];
+      e.a.forEach((x,i)=>{
+        if(x.am&&!m.a[i].am)m.a[i].am=x.am;
+        if(x.pm&&!m.a[i].pm)m.a[i].pm=x.pm;
+      });
+    });
+    mergedEntries=Object.values(nameMap);
+  }
   const sh={dates:mergedDates,entries:mergedEntries};
   let f=sh.entries;
   // Hide rows with no assignments
@@ -427,7 +442,7 @@ function renderShift(){
     if(shEd==='pm')return pm&&pm!=='0'&&pm!=='希望休';
     return(am&&am!=='0'&&am!=='希望休')||(pm&&pm!=='0'&&pm!=='希望休');}));
   if(cs)f=f.filter(e=>e.course.includes(cs));
-  if(ss)f=f.filter(e=>e.a.some(x=>((shEd!=='pm'?x.am:'')+' '+(shEd!=='am'?x.pm:'')).includes(ss)));
+  if(ss)f=f.filter(e=>e.course.includes(ss)||e.a.some(x=>((shEd!=='pm'?x.am:'')+' '+(shEd!=='am'?x.pm:'')).includes(ss)));
   const rowLabel=isCourseMode?'コース':'スタッフ';
   const isBoth=shEd==='both',isAm=shEd==='am',isPm=shEd==='pm';
   let h='<table class="shift-table"><thead><tr>';
