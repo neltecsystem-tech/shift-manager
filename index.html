@@ -72,6 +72,7 @@ tbody tr:hover { background:var(--primary-light); }
     <button onclick="showView('tenpo',this)">店舗検索</button>
     <button onclick="showView('search',this)">検索</button>
     <button onclick="showView('staff',this)">スタッフ一覧</button>
+    <button onclick="showView('defects',this)">不具合管理</button>
   </div>
 </div>
 <div class="container">
@@ -135,6 +136,43 @@ tbody tr:hover { background:var(--primary-light); }
     <div class="card"><h2>横断検索</h2>
       <div class="filters"><div><label>キーワード</label><input type="text" id="gs" placeholder="スタッフ名・コース名で検索..." oninput="gSearch()" style="width:300px;"></div></div>
       <div id="sr"><p style="color:var(--text-sub)">2文字以上入力してください</p></div>
+    </div>
+  </div>
+
+  <!-- 不具合管理 -->
+  <div id="view-defects" class="hidden">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h2 style="margin-bottom:0">不具合管理</h2>
+        <button onclick="defectShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ 新規登録</button>
+      </div>
+      <div class="filters">
+        <div><label>月</label><select id="df-month" onchange="defectLoad()"></select></div>
+        <div><label>営業所</label><select id="df-area" onchange="defectFilter()"><option value="">すべて</option><option>城北</option><option>川越</option><option>立川</option><option>川崎高津</option></select></div>
+        <div><label>不具合項目</label><select id="df-category" onchange="defectFilter()"><option value="">すべて</option></select></div>
+        <div><label>検索</label><input type="text" id="df-search" placeholder="店舗名・ドライバー..." oninput="defectFilter()"></div>
+      </div>
+      <div id="df-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
+      <div class="table-wrap" id="df-table"></div>
+    </div>
+
+    <!-- 登録/編集モーダル -->
+    <div id="df-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:200;justify-content:center;align-items:center;padding:20px;">
+      <div style="background:#fff;border-radius:16px;padding:24px;width:100%;max-width:500px;max-height:90vh;overflow-y:auto;position:relative;">
+        <button onclick="document.getElementById('df-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;">✕</button>
+        <h3 id="df-modal-title" style="color:var(--primary);margin-bottom:16px;">不具合を登録</h3>
+        <input type="hidden" id="dfe-row">
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">日付け *</label><input type="date" id="dfe-date" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">入電時間</label><input type="time" id="dfe-time" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">営業所 *</label><select id="dfe-area" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">選択</option><option>城北</option><option>川越</option><option>立川</option><option>川崎高津</option></select></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">店舗名</label><input type="text" id="dfe-shop" placeholder="LA杉並区役所前" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">コース</label><input type="text" id="dfe-course" placeholder="13" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">担当ドライバー</label><input type="text" id="dfe-driver" placeholder="遠藤" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">不具合内容</label><input type="text" id="dfe-content" placeholder="産経▲2" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">不具合項目</label><select id="dfe-category" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">選択</option><option>仕分けミス</option><option>仕分けミス(飛</option><option>配送遅延</option><option>誤配</option><option>返品未回収</option><option>その他</option></select></div>
+        <div style="margin-bottom:16px"><label style="font-size:12px;color:var(--text-sub)">原因</label><input type="text" id="dfe-reason" placeholder="確認不足" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <button onclick="defectSave()" id="dfe-submit" style="width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">登録する</button>
+      </div>
     </div>
   </div>
 </div>
@@ -326,7 +364,7 @@ function showView(v,btn){
   const e=document.getElementById('view-'+v);if(e)e.classList.remove('hidden');
   document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
   if(btn)btn.classList.add('active');
-  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView}[v]||function(){})();
+  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit}[v]||function(){})();
 }
 
 function renderDash(){
@@ -582,6 +620,177 @@ function gSearch(){
 function ao(c){if(!c)return'';if(c.startsWith('城北'))return'城北';if(c.startsWith('川越'))return'川越';if(c.startsWith('立川'))return'立川';if(c.startsWith('川崎'))return'川崎';return'';}
 function bc(a){return{'城北':'badge-johoku','川越':'badge-kawagoe','立川':'badge-tachikawa','川崎':'badge-kawasaki'}[a]||'';}
 function hl(t,q){if(!t||!q||!t.includes(q))return t;return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'g'),`<span class="highlight">${q}</span>`);}
+
+// ── 不具合管理（Google Sheets連携）──
+const DEFECT_SHEET_ID='1AoE_of_ZhKl1ebncnwl5-_h2RrnVuSmqFDHc01CWoJs';
+const DEFECT_API_KEY='AIzaSyD8p7oPEYI1lXWBVnXBr3z96ON56NJG6hQ';
+let defectData=[];
+let defectAllData=[];
+let defectMonths=[];
+let defectInited=false;
+
+function defectInit(){
+  if(!defectInited){
+    // 月セレクタ初期化
+    const sel=document.getElementById('df-month');
+    const now=new Date();
+    const months=[];
+    for(let i=-3;i<=6;i++){
+      const d=new Date(now.getFullYear(),now.getMonth()+i,1);
+      const y=d.getFullYear()%100;
+      const m=d.getMonth()+1;
+      months.push({label:`${m}月/${y}`,sheet:`${m}月/${y}`});
+    }
+    sel.innerHTML=months.map((m,i)=>`<option value="${m.sheet}" ${i===3?'selected':''}>${m.label}</option>`).join('');
+    defectInited=true;
+  }
+  defectLoad();
+}
+
+async function defectLoad(){
+  const month=document.getElementById('df-month').value;
+  const sheetName=encodeURIComponent(month);
+  const url=`https://sheets.googleapis.com/v4/spreadsheets/${DEFECT_SHEET_ID}/values/${sheetName}!A1:I200?key=${DEFECT_API_KEY}`;
+  document.getElementById('df-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">読み込み中...</p>';
+  try{
+    const resp=await fetch(url);
+    if(!resp.ok) throw new Error('シートが見つかりません: '+month);
+    const json=await resp.json();
+    const rows=json.values||[];
+    if(rows.length<2){defectData=[];defectAllData=[];defectRender();return;}
+    defectAllData=rows.slice(1).map((r,i)=>({
+      row:i+2,date:r[0]||'',time:r[1]||'',area:r[2]||'',shop:r[3]||'',course:r[4]||'',driver:r[5]||'',content:r[6]||'',category:r[7]||'',reason:r[8]||''
+    })).filter(r=>r.date||r.shop||r.driver);
+    // 不具合項目のユニーク値をフィルターに反映
+    const cats=[...new Set(defectAllData.map(r=>r.category).filter(Boolean))];
+    const catSel=document.getElementById('df-category');
+    catSel.innerHTML='<option value="">すべて</option>'+cats.map(c=>`<option>${c}</option>`).join('');
+    defectFilter();
+  }catch(e){
+    document.getElementById('df-table').innerHTML=`<p style="color:var(--danger);padding:20px;">${e.message}</p>`;
+  }
+}
+
+function defectFilter(){
+  const area=document.getElementById('df-area').value;
+  const cat=document.getElementById('df-category').value;
+  const q=(document.getElementById('df-search').value||'').toLowerCase();
+  defectData=defectAllData.filter(r=>{
+    if(area&&!r.area.includes(area))return false;
+    if(cat&&r.category!==cat)return false;
+    if(q&&![r.shop,r.driver,r.content,r.reason,r.date].join(' ').toLowerCase().includes(q))return false;
+    return true;
+  });
+  defectRender();
+}
+
+function defectRender(){
+  document.getElementById('df-count').textContent=defectData.length+'件';
+  if(!defectData.length){
+    document.getElementById('df-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">データがありません</p>';
+    return;
+  }
+  const areaClass=a=>{if(a.includes('城北'))return'badge-johoku';if(a.includes('川越'))return'badge-kawagoe';if(a.includes('立川'))return'badge-tachikawa';if(a.includes('川崎'))return'badge-kawasaki';return'';};
+  let h='<table><thead><tr><th>日付</th><th>時間</th><th>営業所</th><th>店舗名</th><th>コース</th><th>担当</th><th>不具合内容</th><th>項目</th><th>原因</th><th></th></tr></thead><tbody>';
+  defectData.forEach(r=>{
+    h+=`<tr>
+      <td>${r.date}</td><td>${r.time}</td>
+      <td><span class="badge ${areaClass(r.area)}">${r.area}</span></td>
+      <td>${r.shop}</td><td>${r.course}</td><td>${r.driver}</td>
+      <td>${r.content}</td><td>${r.category}</td><td>${r.reason}</td>
+      <td><button onclick="defectEdit(${r.row})" style="background:none;border:none;cursor:pointer;font-size:14px;" title="編集">✏️</button></td>
+    </tr>`;
+  });
+  h+='</tbody></table>';
+  document.getElementById('df-table').innerHTML=h;
+}
+
+function defectShowAdd(){
+  document.getElementById('df-modal-title').textContent='不具合を登録';
+  document.getElementById('dfe-row').value='';
+  document.getElementById('dfe-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('dfe-time').value='';
+  document.getElementById('dfe-area').value='';
+  document.getElementById('dfe-shop').value='';
+  document.getElementById('dfe-course').value='';
+  document.getElementById('dfe-driver').value='';
+  document.getElementById('dfe-content').value='';
+  document.getElementById('dfe-category').value='';
+  document.getElementById('dfe-reason').value='';
+  document.getElementById('dfe-submit').textContent='登録する';
+  document.getElementById('df-modal').style.display='flex';
+}
+
+function defectEdit(rowNum){
+  const r=defectAllData.find(d=>d.row===rowNum);
+  if(!r)return;
+  document.getElementById('df-modal-title').textContent='不具合を編集';
+  document.getElementById('dfe-row').value=rowNum;
+  // 日付をinput[date]形式に変換
+  let dateVal='';
+  if(r.date){
+    const m=r.date.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+    if(m)dateVal=`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  }
+  document.getElementById('dfe-date').value=dateVal;
+  document.getElementById('dfe-time').value=r.time.includes(':')?r.time:'';
+  document.getElementById('dfe-area').value=r.area;
+  document.getElementById('dfe-shop').value=r.shop;
+  document.getElementById('dfe-course').value=r.course;
+  document.getElementById('dfe-driver').value=r.driver;
+  document.getElementById('dfe-content').value=r.content;
+  // カテゴリが選択肢にない場合は追加
+  const catSel=document.getElementById('dfe-category');
+  if(r.category&&![...catSel.options].some(o=>o.value===r.category)){
+    catSel.innerHTML+=`<option>${r.category}</option>`;
+  }
+  catSel.value=r.category;
+  document.getElementById('dfe-reason').value=r.reason;
+  document.getElementById('dfe-submit').textContent='更新する';
+  document.getElementById('df-modal').style.display='flex';
+}
+
+async function defectSave(){
+  const date=document.getElementById('dfe-date').value;
+  const area=document.getElementById('dfe-area').value;
+  if(!date||!area){alert('日付と営業所は必須です');return;}
+  const dateFormatted=date.replace(/-/g,'/');
+  const time=document.getElementById('dfe-time').value;
+  const row=[
+    dateFormatted,time,area,
+    document.getElementById('dfe-shop').value,
+    document.getElementById('dfe-course').value,
+    document.getElementById('dfe-driver').value,
+    document.getElementById('dfe-content').value,
+    document.getElementById('dfe-category').value,
+    document.getElementById('dfe-reason').value
+  ];
+  const month=document.getElementById('df-month').value;
+  const sheetName=encodeURIComponent(month);
+  const rowNum=document.getElementById('dfe-row').value;
+  const btn=document.getElementById('dfe-submit');
+  btn.textContent='保存中...';btn.disabled=true;
+  try{
+    if(rowNum){
+      // 更新
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${DEFECT_SHEET_ID}/values/${sheetName}!A${rowNum}:I${rowNum}?valueInputOption=USER_ENTERED&key=${DEFECT_API_KEY}`,{
+        method:'PUT',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({values:[row]})
+      });
+    }else{
+      // 追加
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${DEFECT_SHEET_ID}/values/${sheetName}!A1:I1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS&key=${DEFECT_API_KEY}`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({values:[row]})
+      });
+    }
+    document.getElementById('df-modal').style.display='none';
+    await defectLoad();
+  }catch(e){
+    alert('エラー: '+e.message);
+  }
+  btn.textContent=rowNum?'更新する':'登録する';btn.disabled=false;
+}
 
 init();
 </script>
