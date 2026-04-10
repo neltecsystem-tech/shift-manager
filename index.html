@@ -428,23 +428,22 @@ async function loadDashDefects(){
       if(cat)catCounts[cat]=(catCounts[cat]||0)+1;
     });
     const areaColors={'城北':'#1d4ed8','川越':'#166534','立川':'#92400e','川崎高津':'#9d174d'};
-    let html=`<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">`;
-    html+=`<div style="background:#f1f5f9;border-radius:10px;padding:12px 20px;text-align:center;min-width:80px;"><div style="font-size:24px;font-weight:bold;color:var(--danger);">${rows.length}</div><div style="font-size:11px;color:var(--text-sub);">合計</div></div>`;
+    let html=`<div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;"><div style="flex:1;min-width:200px;">`;
+    html+=`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">`;
+    html+=`<div style="background:#f1f5f9;border-radius:8px;padding:8px 14px;text-align:center;"><div style="font-size:20px;font-weight:bold;color:var(--danger);">${rows.length}</div><div style="font-size:10px;color:var(--text-sub);">合計</div></div>`;
     Object.entries(counts).sort((a,b)=>b[1]-a[1]).forEach(([area,cnt])=>{
       const color=areaColors[area]||'#475569';
-      html+=`<div style="background:#f1f5f9;border-radius:10px;padding:12px 20px;text-align:center;min-width:80px;border-top:3px solid ${color};"><div style="font-size:24px;font-weight:bold;color:${color};">${cnt}</div><div style="font-size:11px;color:var(--text-sub);">${area}</div></div>`;
+      html+=`<div style="background:#f1f5f9;border-radius:8px;padding:8px 14px;text-align:center;border-top:3px solid ${color};"><div style="font-size:20px;font-weight:bold;color:${color};">${cnt}</div><div style="font-size:10px;color:var(--text-sub);">${area}</div></div>`;
     });
     html+=`</div>`;
-    // 不具合項目の内訳
     if(Object.keys(catCounts).length){
-      html+=`<div style="display:flex;gap:8px;flex-wrap:wrap;">`;
+      html+=`<div style="display:flex;gap:6px;flex-wrap:wrap;">`;
       Object.entries(catCounts).sort((a,b)=>b[1]-a[1]).forEach(([cat,cnt])=>{
-        html+=`<span style="background:#fee2e2;color:#dc2626;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;">${cat}: ${cnt}</span>`;
+        html+=`<span style="background:#fee2e2;color:#dc2626;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;">${cat}: ${cnt}</span>`;
       });
       html+=`</div>`;
     }
-    // 円グラフ（営業所別占有率）
-    html+=`<div style="margin-top:16px;"><canvas id="defect-pie" width="320" height="320" style="max-width:100%;"></canvas></div>`;
+    html+=`</div><div style="flex-shrink:0;"><canvas id="defect-pie" width="220" height="220"></canvas></div></div>`;
     el.innerHTML=html;
     // 描画
     const canvas=document.getElementById('defect-pie');
@@ -455,7 +454,7 @@ async function loadDashDefects(){
       const colors={'城北':'#3b82f6','川越':'#22c55e','立川':'#f59e0b','川崎高津':'#ec4899'};
       const fallbackColors=['#6366f1','#14b8a6','#f97316','#a855f7','#64748b'];
       let startAngle=-Math.PI/2;
-      const cx=160,cy=140,r=110;
+      const cx=110,cy=95,r=80;
       entries.forEach(([area,cnt],i)=>{
         const slice=cnt/total*Math.PI*2;
         const color=colors[area]||fallbackColors[i%fallbackColors.length];
@@ -470,41 +469,40 @@ async function loadDashDefects(){
         const pct=Math.round(cnt/total*100);
         const lx=cx+Math.cos(mid)*(r*0.65);
         const ly=cy+Math.sin(mid)*(r*0.65);
-        if(pct>=5){
+        if(pct>=8){
           ctx.fillStyle='#fff';
-          ctx.font='bold 13px sans-serif';
+          ctx.font='bold 11px sans-serif';
           ctx.textAlign='center';
           ctx.textBaseline='middle';
-          ctx.fillText(`${area}`,lx,ly-8);
-          ctx.fillText(`${cnt}件(${pct}%)`,lx,ly+8);
+          ctx.fillText(`${area}`,lx,ly-6);
+          ctx.font='10px sans-serif';
+          ctx.fillText(`${pct}%`,lx,ly+6);
         }
         startAngle+=slice;
       });
       // 中央に合計
       ctx.beginPath();
-      ctx.arc(cx,cy,40,0,Math.PI*2);
+      ctx.arc(cx,cy,30,0,Math.PI*2);
       ctx.fillStyle='#fff';
       ctx.fill();
       ctx.fillStyle='#1e293b';
-      ctx.font='bold 22px sans-serif';
+      ctx.font='bold 18px sans-serif';
       ctx.textAlign='center';
       ctx.textBaseline='middle';
-      ctx.fillText(total,cx,cy-6);
+      ctx.fillText(total,cx,cy-4);
       ctx.fillStyle='#94a3b8';
-      ctx.font='11px sans-serif';
-      ctx.fillText('合計',cx,cy+12);
+      ctx.font='9px sans-serif';
+      ctx.fillText('合計',cx,cy+10);
       // 凡例
-      ctx.font='12px sans-serif';
-      let ly2=290;
-      let lx2=10;
+      ctx.font='11px sans-serif';
+      let ly2=195;
       entries.forEach(([area,cnt],i)=>{
         const color=colors[area]||fallbackColors[i%fallbackColors.length];
         ctx.fillStyle=color;
-        ctx.fillRect(lx2,ly2,12,12);
+        ctx.fillRect(4,ly2,10,10);
         ctx.fillStyle='#1e293b';
-        ctx.fillText(`${area}: ${cnt}件 (${Math.round(cnt/total*100)}%)`,lx2+16,ly2+10);
-        lx2+=160;
-        if(lx2>300){lx2=10;ly2+=18;}
+        ctx.fillText(`${area} ${cnt}件(${Math.round(cnt/total*100)}%)`,18,ly2+9);
+        ly2+=14;
       });
     }
   }catch(e){
