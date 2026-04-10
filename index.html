@@ -588,14 +588,15 @@ function renderTenpo(){
   h+='<table><thead><tr><th>営業所</th><th>店舗コード</th><th>店舗名</th><th>朝刊コース</th><th>朝刊担当</th><th>電話番号</th><th>夕刊コース</th><th>夕刊担当</th><th>電話番号</th><th>備考</th></tr></thead><tbody>';
   show.forEach(t=>{
     const amD=(amMap[t.amCourse]||[])[0]||'';
-    const pmD=(pmMap[t.pmCourse]||[])[0]||'';
+    const pmD=(pmMap[t.pmCourse]||[])[0]||(pmMap[t.keibaCourse]||[])[0]||'';
     const amName=amD||'-';
     const amPhone=amD?getPhone(amD)||'-':'-';
+    const pmCourseDisplay=t.pmCourse||(t.keibaCourse?t.keibaCourse+'(競馬)':'');
     const pmName=pmD||'-';
     const pmPhone=pmD?getPhone(pmD)||'-':'-';
     h+=`<tr><td><span class="badge ${bc(t.area)}">${t.area}</span></td><td>${t.code}</td><td><b>${nm?hl(t.name,nm):t.name}</b></td>`;
     h+=`<td>${course?hl(t.amCourse,course):t.amCourse}</td><td>${amName}</td><td>${amPhone}</td>`;
-    h+=`<td>${course?hl(t.pmCourse,course):t.pmCourse}</td><td>${pmName}</td><td>${pmPhone}</td><td>${t.note}</td></tr>`;
+    h+=`<td>${course?hl(pmCourseDisplay,course):pmCourseDisplay}</td><td>${pmName}</td><td>${pmPhone}</td><td>${t.note}</td></tr>`;
   });
   h+='</tbody></table>';
   if(f.length>500)h+=`<p style="color:var(--text-sub);margin-top:8px">500件まで表示（残り${f.length-500}件）</p>`;
@@ -762,13 +763,12 @@ function defectSetEdition(ed){
   defectEdition=ed;
   const amBtn=document.getElementById('dfe-ed-am');
   const pmBtn=document.getElementById('dfe-ed-pm');
-  if(ed==='am'){
-    amBtn.style.background='var(--primary)';amBtn.style.color='#fff';amBtn.style.borderColor='var(--primary)';
-    pmBtn.style.background='#fff';pmBtn.style.color='var(--text-sub)';pmBtn.style.borderColor='var(--border)';
-  }else{
-    pmBtn.style.background='#7c3aed';pmBtn.style.color='#fff';pmBtn.style.borderColor='#7c3aed';
-    amBtn.style.background='#fff';amBtn.style.color='var(--text-sub)';amBtn.style.borderColor='var(--border)';
-  }
+  amBtn.style.background=ed==='am'?'var(--primary)':'#fff';
+  amBtn.style.color=ed==='am'?'#fff':'var(--text-sub)';
+  amBtn.style.borderColor=ed==='am'?'var(--primary)':'var(--border)';
+  pmBtn.style.background=ed==='pm'?'#7c3aed':'#fff';
+  pmBtn.style.color=ed==='pm'?'#fff':'var(--text-sub)';
+  pmBtn.style.borderColor=ed==='pm'?'#7c3aed':'var(--border)';
   // 店舗名が既に入力されていたらコース・ドライバーを再取得
   const shop=document.getElementById('dfe-shop').value;
   if(shop){
@@ -803,8 +803,13 @@ function defectShopSelect(name,course,area){
 function defectShowCourseSuggest(shopName){
   const matches=DB.tenpo.filter(t=>t.name===shopName);
   if(!matches.length)return;
-  // 朝刊/夕刊に応じたコースを取得
-  const courses=[...new Set(matches.map(t=>defectEdition==='am'?t.amCourse:t.pmCourse).filter(Boolean))];
+  // 朝刊/夕刊に応じたコースを取得（夕刊は競馬コースも含む）
+  let courses;
+  if(defectEdition==='am'){
+    courses=[...new Set(matches.map(t=>t.amCourse).filter(Boolean))];
+  }else{
+    courses=[...new Set(matches.map(t=>t.pmCourse).concat(matches.map(t=>t.keibaCourse)).filter(Boolean))];
+  }
   if(courses.length===1){
     document.getElementById('dfe-course').value=courses[0];
     defectAutoFillDriver();
@@ -812,7 +817,7 @@ function defectShowCourseSuggest(shopName){
   }
   if(courses.length>1){
     const box=document.getElementById('dfe-course-suggest');
-    const label=defectEdition==='am'?'朝刊':'夕刊';
+    const label=defectEdition==='am'?'朝刊':defectEdition==='pm'?'夕刊':'競馬';
     box.innerHTML=courses.map(c=>
       `<div onclick="defectCourseSelect('${c.replace(/'/g,"\\'")}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;display:flex;justify-content:space-between;" onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background='#fff'"><span>${c}</span><span style="color:var(--text-sub);font-size:11px;">${label}</span></div>`
     ).join('');
@@ -833,13 +838,16 @@ function defectAutoFillDriver(){
   const course=document.getElementById('dfe-course').value;
   if(!dateStr||!course)return;
   const {amMap,pmMap}=getDriverMaps(dateStr);
-  // 朝刊/夕刊に応じたマップから取得
-  const map=defectEdition==='am'?amMap:pmMap;
-  let driver=(map[course]||[])[0]||'';
+  let driver='';
+  if(defectEdition==='am'){
+    driver=(amMap[course]||[])[0]||'';
+  }else{
+    // 夕刊（競馬含む）: pmMapから取得
+    driver=(pmMap[course]||[])[0]||'';
+  }
   // フォールバック: もう一方も確認
   if(!driver){
-    const fallback=defectEdition==='am'?pmMap:amMap;
-    driver=(fallback[course]||[])[0]||'';
+    driver=(amMap[course]||[])[0]||(pmMap[course]||[])[0]||'';
   }
   if(driver)document.getElementById('dfe-driver').value=driver;
 }
