@@ -79,7 +79,7 @@ tbody tr:hover { background:var(--primary-light); }
   <div id="loading" class="loading"><div class="spinner"></div><div>データを読み込み中...</div></div>
   <div id="view-dashboard" class="hidden">
     <div class="card"><h2>📊 今月の不具合状況</h2><div id="dash-defects"></div></div>
-    <div class="card"><h2>本日のコース担当</h2><div class="table-wrap" id="today-assignments"></div></div>
+    <div class="card"><h2>本日のコース担当</h2><div id="dash-area-tabs" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;"></div><div class="table-wrap" id="today-assignments"></div></div>
   </div>
   <div id="view-staff" class="hidden">
     <div class="card"><h2>スタッフ一覧</h2>
@@ -369,13 +369,14 @@ function showView(v,btn){
   ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit}[v]||function(){})();
 }
 
+let dashAreaFilter='';
+let dashTodayData=[];
+
 function renderDash(){
-  // Find today's assignments from shift data
   const now=new Date();
   const todayStr=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   const dw=['日','月','火','水','木','金','土'],td=dw[now.getDay()];
-  // Collect: staff -> {am, pm} for today from all shift areas
-  const todayData=[];
+  dashTodayData=[];
   Object.entries(DB.shifts).forEach(([month,areas])=>{
     Object.entries(areas).forEach(([area,sh])=>{
       const di=sh.dates.findIndex(d=>d.d===todayStr);
@@ -384,23 +385,39 @@ function renderDash(){
         const a=e.a[di];if(!a)return;
         const am=(a.am||'').trim(),pm=(a.pm||'').trim();
         if((am&&am!=='0'&&am!=='希望休')||(pm&&pm!=='0'&&pm!=='希望休')){
-          todayData.push({staff:e.course,area,am:am==='0'||am==='希望休'?'':am,pm:pm==='0'||pm==='希望休'?'':pm});
+          dashTodayData.push({staff:e.course,area,am:am==='0'||am==='希望休'?'':am,pm:pm==='0'||pm==='希望休'?'':pm});
         }
       });
     });
   });
+  // エリアタブを生成
+  const areas=[...new Set(dashTodayData.map(d=>d.area).filter(Boolean))];
+  const tabsEl=document.getElementById('dash-area-tabs');
+  let tabs=`<button onclick="dashSetArea('')" style="padding:6px 14px;border-radius:16px;border:none;cursor:pointer;font-size:12px;font-weight:600;${!dashAreaFilter?'background:var(--primary);color:#fff;':'background:#f1f5f9;color:var(--text-sub);'}">すべて (${dashTodayData.length})</button>`;
+  areas.forEach(a=>{
+    const cnt=dashTodayData.filter(d=>d.area===a).length;
+    const active=dashAreaFilter===a;
+    tabs+=`<button onclick="dashSetArea('${a}')" style="padding:6px 14px;border-radius:16px;border:none;cursor:pointer;font-size:12px;font-weight:600;${active?'background:var(--primary);color:#fff;':'background:#f1f5f9;color:var(--text-sub);'}">${a} (${cnt})</button>`;
+  });
+  tabsEl.innerHTML=tabs;
+  // フィルタ適用して表示
+  const filtered=dashAreaFilter?dashTodayData.filter(d=>d.area===dashAreaFilter):dashTodayData;
   let h='';
-  if(todayData.length){
+  if(filtered.length){
     h=`<p style="margin-bottom:8px;color:var(--text-sub);font-size:12px">${todayStr}（${td}）のシフトデータ</p>`;
     h+='<table><thead><tr><th>スタッフ</th><th>エリア</th><th>朝刊</th><th>夕刊</th></tr></thead><tbody>';
-    todayData.forEach(d=>{h+=`<tr><td><b>${d.staff}</b></td><td><span class="badge ${bc(d.area)}">${d.area}</span></td><td>${d.am||'-'}</td><td>${d.pm||'-'}</td></tr>`;});
+    filtered.forEach(d=>{h+=`<tr><td><b>${d.staff}</b></td><td><span class="badge ${bc(d.area)}">${d.area}</span></td><td>${d.am||'-'}</td><td>${d.pm||'-'}</td></tr>`;});
     h+='</tbody></table>';
   } else {
     h=`<p style="color:var(--text-sub)">本日（${todayStr} ${td}）のシフトデータが見つかりません</p>`;
   }
   document.getElementById('today-assignments').innerHTML=h;
-  // 今月の不具合件数を取得
   loadDashDefects();
+}
+
+function dashSetArea(area){
+  dashAreaFilter=area;
+  renderDash();
 }
 
 async function loadDashDefects(){
