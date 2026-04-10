@@ -445,18 +445,18 @@ async function loadDashDefects(){
       if(cat)catCounts[cat]=(catCounts[cat]||0)+1;
     });
     const areaColors={'城北':'#1d4ed8','川越':'#166534','立川':'#92400e','川崎高津':'#9d174d'};
-    let html=`<div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;"><div style="flex:1;min-width:200px;">`;
-    html+=`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">`;
-    html+=`<div style="background:#f1f5f9;border-radius:8px;padding:8px 14px;text-align:center;"><div style="font-size:20px;font-weight:bold;color:var(--danger);">${rows.length}</div><div style="font-size:10px;color:var(--text-sub);">合計</div></div>`;
+    let html=`<div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;"><div style="flex:1;min-width:250px;">`;
+    html+=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">`;
+    html+=`<div style="background:#fef2f2;border-radius:10px;padding:14px 22px;text-align:center;min-width:90px;"><div style="font-size:28px;font-weight:bold;color:var(--danger);">${rows.length}</div><div style="font-size:12px;color:var(--text-sub);font-weight:600;">合計</div></div>`;
     Object.entries(counts).sort((a,b)=>b[1]-a[1]).forEach(([area,cnt])=>{
       const color=areaColors[area]||'#475569';
-      html+=`<div style="background:#f1f5f9;border-radius:8px;padding:8px 14px;text-align:center;border-top:3px solid ${color};"><div style="font-size:20px;font-weight:bold;color:${color};">${cnt}</div><div style="font-size:10px;color:var(--text-sub);">${area}</div></div>`;
+      html+=`<div style="background:#f1f5f9;border-radius:10px;padding:14px 22px;text-align:center;min-width:90px;border-top:3px solid ${color};"><div style="font-size:28px;font-weight:bold;color:${color};">${cnt}</div><div style="font-size:12px;color:var(--text-sub);font-weight:600;">${area}</div></div>`;
     });
     html+=`</div>`;
     if(Object.keys(catCounts).length){
-      html+=`<div style="display:flex;gap:6px;flex-wrap:wrap;">`;
+      html+=`<div style="display:flex;gap:8px;flex-wrap:wrap;">`;
       Object.entries(catCounts).sort((a,b)=>b[1]-a[1]).forEach(([cat,cnt])=>{
-        html+=`<span style="background:#fee2e2;color:#dc2626;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;">${cat}: ${cnt}</span>`;
+        html+=`<span style="background:#fee2e2;color:#dc2626;padding:4px 12px;border-radius:12px;font-size:13px;font-weight:600;">${cat}: ${cnt}</span>`;
       });
       html+=`</div>`;
     }
