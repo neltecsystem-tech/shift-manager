@@ -78,6 +78,7 @@ tbody tr:hover { background:var(--primary-light); }
 <div class="container">
   <div id="loading" class="loading"><div class="spinner"></div><div>データを読み込み中...</div></div>
   <div id="view-dashboard" class="hidden">
+    <div class="card"><h2>📊 今月の不具合状況</h2><div id="dash-defects"></div></div>
     <div class="card"><h2>本日のコース担当</h2><div class="table-wrap" id="today-assignments"></div></div>
   </div>
   <div id="view-staff" class="hidden">
@@ -398,6 +399,54 @@ function renderDash(){
     h=`<p style="color:var(--text-sub)">本日（${todayStr} ${td}）のシフトデータが見つかりません</p>`;
   }
   document.getElementById('today-assignments').innerHTML=h;
+  // 今月の不具合件数を取得
+  loadDashDefects();
+}
+
+async function loadDashDefects(){
+  const el=document.getElementById('dash-defects');
+  if(!el)return;
+  const now=new Date();
+  const y=now.getFullYear()%100;
+  const m=now.getMonth()+1;
+  const sheetName=encodeURIComponent(`${m}月/${y}`);
+  const url=`https://sheets.googleapis.com/v4/spreadsheets/${DEFECT_SHEET_ID}/values/${sheetName}!A2:I200?key=${DEFECT_API_KEY}`;
+  el.innerHTML='<p style="color:var(--text-sub);font-size:12px;">読み込み中...</p>';
+  try{
+    const resp=await fetch(url);
+    if(!resp.ok){el.innerHTML='<p style="color:var(--text-sub);font-size:12px;">不具合データなし</p>';return;}
+    const json=await resp.json();
+    const rows=(json.values||[]).filter(r=>r[0]||r[3]);
+    if(!rows.length){el.innerHTML='<p style="color:var(--text-sub);font-size:12px;">今月の不具合: 0件</p>';return;}
+    // 営業所ごとに集計
+    const counts={};
+    const catCounts={};
+    rows.forEach(r=>{
+      const area=(r[2]||'').trim()||'不明';
+      counts[area]=(counts[area]||0)+1;
+      const cat=(r[7]||'').trim();
+      if(cat)catCounts[cat]=(catCounts[cat]||0)+1;
+    });
+    const areaColors={'城北':'#1d4ed8','川越':'#166534','立川':'#92400e','川崎高津':'#9d174d'};
+    let html=`<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">`;
+    html+=`<div style="background:#f1f5f9;border-radius:10px;padding:12px 20px;text-align:center;min-width:80px;"><div style="font-size:24px;font-weight:bold;color:var(--danger);">${rows.length}</div><div style="font-size:11px;color:var(--text-sub);">合計</div></div>`;
+    Object.entries(counts).sort((a,b)=>b[1]-a[1]).forEach(([area,cnt])=>{
+      const color=areaColors[area]||'#475569';
+      html+=`<div style="background:#f1f5f9;border-radius:10px;padding:12px 20px;text-align:center;min-width:80px;border-top:3px solid ${color};"><div style="font-size:24px;font-weight:bold;color:${color};">${cnt}</div><div style="font-size:11px;color:var(--text-sub);">${area}</div></div>`;
+    });
+    html+=`</div>`;
+    // 不具合項目の内訳
+    if(Object.keys(catCounts).length){
+      html+=`<div style="display:flex;gap:8px;flex-wrap:wrap;">`;
+      Object.entries(catCounts).sort((a,b)=>b[1]-a[1]).forEach(([cat,cnt])=>{
+        html+=`<span style="background:#fee2e2;color:#dc2626;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;">${cat}: ${cnt}</span>`;
+      });
+      html+=`</div>`;
+    }
+    el.innerHTML=html;
+  }catch(e){
+    el.innerHTML='<p style="color:var(--text-sub);font-size:12px;">不具合データ取得エラー</p>';
+  }
 }
 
 let si=false;
