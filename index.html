@@ -165,6 +165,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">日付け *</label><input type="date" id="dfe-date" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">入電時間</label><input type="time" id="dfe-time" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">営業所 *</label><select id="dfe-area" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">選択</option><option>城北</option><option>川越</option><option>立川</option><option>川崎高津</option></select></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">朝刊 / 夕刊 *</label><div style="display:flex;gap:8px;"><button type="button" id="dfe-ed-am" onclick="defectSetEdition('am')" style="flex:1;padding:10px;border:2px solid var(--primary);border-radius:8px;font-size:14px;font-weight:bold;cursor:pointer;background:var(--primary);color:#fff;">🌅 朝刊</button><button type="button" id="dfe-ed-pm" onclick="defectSetEdition('pm')" style="flex:1;padding:10px;border:2px solid var(--border);border-radius:8px;font-size:14px;font-weight:bold;cursor:pointer;background:#fff;color:var(--text-sub);">🌙 夕刊</button></div></div>
         <div style="margin-bottom:10px;position:relative;"><label style="font-size:12px;color:var(--text-sub)">店舗名</label><input type="text" id="dfe-shop" placeholder="LA杉並区役所前" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" oninput="defectShopSuggest()" onfocus="defectShopSuggest()" autocomplete="off"><div id="dfe-shop-suggest" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:0 0 8px 8px;max-height:200px;overflow-y:auto;z-index:300;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div>
         <div style="margin-bottom:10px;position:relative;"><label style="font-size:12px;color:var(--text-sub)">コース</label><input type="text" id="dfe-course" placeholder="13" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" onchange="defectAutoFillDriver()"><div id="dfe-course-suggest" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:0 0 8px 8px;max-height:200px;overflow-y:auto;z-index:300;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">担当ドライバー</label><input type="text" id="dfe-driver" placeholder="遠藤" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
@@ -723,6 +724,7 @@ function defectShowAdd(){
   document.getElementById('dfe-category').value='';
   document.getElementById('dfe-reason').value='';
   document.getElementById('dfe-submit').textContent='登録する';
+  defectSetEdition('am');
   document.getElementById('df-modal').style.display='flex';
 }
 
@@ -755,6 +757,25 @@ function defectEdit(rowNum){
   document.getElementById('df-modal').style.display='flex';
 }
 
+let defectEdition='am';
+function defectSetEdition(ed){
+  defectEdition=ed;
+  const amBtn=document.getElementById('dfe-ed-am');
+  const pmBtn=document.getElementById('dfe-ed-pm');
+  if(ed==='am'){
+    amBtn.style.background='var(--primary)';amBtn.style.color='#fff';amBtn.style.borderColor='var(--primary)';
+    pmBtn.style.background='#fff';pmBtn.style.color='var(--text-sub)';pmBtn.style.borderColor='var(--border)';
+  }else{
+    pmBtn.style.background='#7c3aed';pmBtn.style.color='#fff';pmBtn.style.borderColor='#7c3aed';
+    amBtn.style.background='#fff';amBtn.style.color='var(--text-sub)';amBtn.style.borderColor='var(--border)';
+  }
+  // 店舗名が既に入力されていたらコース・ドライバーを再取得
+  const shop=document.getElementById('dfe-shop').value;
+  if(shop){
+    defectShowCourseSuggest(shop);
+  }
+}
+
 function defectShopSuggest(){
   const q=(document.getElementById('dfe-shop').value||'').trim().toLowerCase();
   const box=document.getElementById('dfe-shop-suggest');
@@ -782,7 +803,8 @@ function defectShopSelect(name,course,area){
 function defectShowCourseSuggest(shopName){
   const matches=DB.tenpo.filter(t=>t.name===shopName);
   if(!matches.length)return;
-  const courses=[...new Set(matches.map(t=>t.amCourse).concat(matches.map(t=>t.pmCourse)).filter(Boolean))];
+  // 朝刊/夕刊に応じたコースを取得
+  const courses=[...new Set(matches.map(t=>defectEdition==='am'?t.amCourse:t.pmCourse).filter(Boolean))];
   if(courses.length===1){
     document.getElementById('dfe-course').value=courses[0];
     defectAutoFillDriver();
@@ -790,10 +812,13 @@ function defectShowCourseSuggest(shopName){
   }
   if(courses.length>1){
     const box=document.getElementById('dfe-course-suggest');
+    const label=defectEdition==='am'?'朝刊':'夕刊';
     box.innerHTML=courses.map(c=>
-      `<div onclick="defectCourseSelect('${c.replace(/'/g,"\\'")}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;" onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background='#fff'">${c}</div>`
+      `<div onclick="defectCourseSelect('${c.replace(/'/g,"\\'")}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;display:flex;justify-content:space-between;" onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background='#fff'"><span>${c}</span><span style="color:var(--text-sub);font-size:11px;">${label}</span></div>`
     ).join('');
     box.style.display='block';
+  } else {
+    document.getElementById('dfe-course').value='';
   }
 }
 
@@ -808,9 +833,14 @@ function defectAutoFillDriver(){
   const course=document.getElementById('dfe-course').value;
   if(!dateStr||!course)return;
   const {amMap,pmMap}=getDriverMaps(dateStr);
-  // amMap[コース名] = [スタッフ名/コース名] - renderTenpoと同じ方法で取得
-  let driver=(amMap[course]||[])[0]||'';
-  if(!driver)driver=(pmMap[course]||[])[0]||'';
+  // 朝刊/夕刊に応じたマップから取得
+  const map=defectEdition==='am'?amMap:pmMap;
+  let driver=(map[course]||[])[0]||'';
+  // フォールバック: もう一方も確認
+  if(!driver){
+    const fallback=defectEdition==='am'?pmMap:amMap;
+    driver=(fallback[course]||[])[0]||'';
+  }
   if(driver)document.getElementById('dfe-driver').value=driver;
 }
 
