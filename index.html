@@ -73,6 +73,7 @@ tbody tr:hover { background:var(--primary-light); }
     <button onclick="showView('search',this)" style="display:none">検索</button>
     <button onclick="showView('staff',this)">スタッフ一覧</button>
     <button onclick="showView('defects',this)">不具合管理</button>
+    <button onclick="showView('shopmaster',this)">店舗マスタ</button>
   </div>
 </div>
 <div class="container">
@@ -174,6 +175,32 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">不具合項目</label><select id="dfe-category" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">選択</option><option>仕分けミス</option><option>仕分けミス(飛</option><option>配送遅延</option><option>誤配</option><option>返品未回収</option><option>その他</option></select></div>
         <div style="margin-bottom:16px"><label style="font-size:12px;color:var(--text-sub)">原因</label><input type="text" id="dfe-reason" placeholder="確認不足" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <button onclick="defectSave()" id="dfe-submit" style="width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">登録する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 店舗マスタ -->
+  <div id="view-shopmaster" class="hidden">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h2 style="margin-bottom:0">店舗マスタ</h2>
+        <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ 新規追加</button>
+      </div>
+      <div class="filters">
+        <div><label>営業所</label><select id="sm-area" onchange="smFilter()"><option value="">すべて</option></select></div>
+        <div><label>検索</label><input type="text" id="sm-search" placeholder="店舗名・コード..." oninput="smFilter()" style="width:200px;"></div>
+      </div>
+      <div id="sm-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
+      <div class="table-wrap" id="sm-table"></div>
+    </div>
+
+    <!-- 編集モーダル -->
+    <div id="sm-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:200;justify-content:center;align-items:center;padding:20px;">
+      <div style="background:#fff;border-radius:16px;padding:24px;width:100%;max-width:600px;max-height:90vh;overflow-y:auto;position:relative;">
+        <button onclick="document.getElementById('sm-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;">✕</button>
+        <h3 id="sm-modal-title" style="color:var(--primary);margin-bottom:16px;">店舗を編集</h3>
+        <div id="sm-form"></div>
+        <button onclick="smSave()" id="sm-submit" style="width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;margin-top:12px;">保存する</button>
       </div>
     </div>
   </div>
@@ -366,7 +393,7 @@ function showView(v,btn){
   const e=document.getElementById('view-'+v);if(e)e.classList.remove('hidden');
   document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
   if(btn)btn.classList.add('active');
-  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit}[v]||function(){})();
+  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit}[v]||function(){})();
 }
 
 let dashAreaFilter='';
@@ -1041,6 +1068,186 @@ async function defectSave(){
     alert('エラー: '+e.message);
   }
   btn.textContent=rowNum?'更新する':'登録する';btn.disabled=false;
+}
+
+// ── 店舗マスタ ──
+const SM_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master';
+const SM_PASSWORD='neltec2026';
+let smAuthed=false;
+let smData=[];
+let smFiltered=[];
+let smHeaders=[];
+let smInited=false;
+let smEditRow=null;
+
+// 主要列のインデックス（ヘッダーから動的に決定）
+let smColMap={};
+
+function smInit(){
+  if(!smAuthed){
+    const pw=prompt('店舗マスタのパスワードを入力してください:');
+    if(pw!==SM_PASSWORD){
+      alert('パスワードが正しくありません');
+      showView('dashboard',document.querySelector('.nav-links button'));
+      return;
+    }
+    smAuthed=true;
+  }
+  if(!smInited){smInited=true;}
+  smLoad();
+}
+
+async function smLoad(){
+  document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">読み込み中...</p>';
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})});
+    const json=await resp.json();
+    if(json.error)throw new Error(json.error);
+    smHeaders=json.headers||[];
+    smData=json.records||[];
+    // 列マッピング
+    smColMap={};
+    smHeaders.forEach((h,i)=>{
+      if(h.includes('営業所'))smColMap.area=i;
+      if(h.includes('店舗コード'))smColMap.code=i;
+      if(h.includes('店舗名'))smColMap.name=i;
+      if(h.includes('開店日'))smColMap.openDate=i;
+      if(h.includes('朝刊コース'))smColMap.amCourse=i;
+      if(h.includes('夕刊コース'))smColMap.pmCourse=i;
+      if(h.includes('競馬コース'))smColMap.keibaCourse=i;
+      if(h.includes('備考'))smColMap.note=i;
+    });
+    // 営業所フィルタ
+    const areas=[...new Set(smData.map(r=>r[`col_${smColMap.area??1}`]).filter(Boolean))];
+    const sel=document.getElementById('sm-area');
+    sel.innerHTML='<option value="">すべて</option>'+areas.map(a=>`<option>${a}</option>`).join('');
+    smFilter();
+  }catch(e){
+    document.getElementById('sm-table').innerHTML=`<p style="color:var(--danger);padding:20px;">${e.message}</p>`;
+  }
+}
+
+function smFilter(){
+  const area=document.getElementById('sm-area').value;
+  const q=(document.getElementById('sm-search').value||'').toLowerCase();
+  const aIdx=smColMap.area??1;
+  const cIdx=smColMap.code??2;
+  const nIdx=smColMap.name??3;
+  smFiltered=smData.filter(r=>{
+    if(area&&(r[`col_${aIdx}`]||'')!==area)return false;
+    if(q){
+      const text=[r[`col_${nIdx}`],r[`col_${cIdx}`],r[`col_${aIdx}`]].join(' ').toLowerCase();
+      if(!text.includes(q))return false;
+    }
+    return true;
+  });
+  smRender();
+}
+
+function smRender(){
+  document.getElementById('sm-count').textContent=`${smFiltered.length}件 / ${smData.length}件`;
+  if(!smFiltered.length){
+    document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">データがありません</p>';
+    return;
+  }
+  // 表示する主要列
+  const showCols=[
+    smColMap.area??1, smColMap.code??2, smColMap.name??3, smColMap.openDate??4,
+    smColMap.amCourse??5, smColMap.pmCourse, smColMap.keibaCourse, smColMap.note
+  ].filter(c=>c!==undefined);
+  const showHeaders=showCols.map(i=>smHeaders[i]||`列${i}`);
+
+  let h='<table><thead><tr>';
+  showHeaders.forEach(hd=>{h+=`<th>${hd}</th>`;});
+  h+='<th></th></tr></thead><tbody>';
+  smFiltered.slice(0,500).forEach(r=>{
+    const areaVal=r[`col_${smColMap.area??1}`]||'';
+    h+='<tr>';
+    showCols.forEach((ci,idx)=>{
+      let val=r[`col_${ci}`]||'';
+      if(idx===0&&areaVal)val=`<span class="badge ${bc(areaVal)}">${areaVal}</span>`;
+      if(idx===2)val=`<b>${val}</b>`;
+      h+=`<td>${val}</td>`;
+    });
+    h+=`<td><button onclick="smEdit(${r.row_number})" style="background:none;border:none;cursor:pointer;font-size:14px;" title="編集">✏️</button></td>`;
+    h+='</tr>';
+  });
+  h+='</tbody></table>';
+  if(smFiltered.length>500)h+=`<p style="color:var(--text-sub);margin-top:8px">500件まで表示</p>`;
+  document.getElementById('sm-table').innerHTML=h;
+}
+
+function smBuildForm(record){
+  let html='';
+  // 主要な編集可能列
+  const editCols=[
+    [smColMap.area??1,'営業所'],
+    [smColMap.code??2,'店舗コード'],
+    [smColMap.name??3,'店舗名'],
+    [smColMap.openDate??4,'開店日'],
+    [smColMap.amCourse??5,'朝刊コース名'],
+  ];
+  // 動的に全ヘッダーから生成
+  smHeaders.forEach((h,i)=>{
+    if(!h)return;
+    const val=record?record[`col_${i}`]||'':'';
+    const isCheck=val==='TRUE'||val==='FALSE';
+    if(isCheck){
+      html+=`<div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="sme-${i}" ${val==='TRUE'?'checked':''}>
+        <label style="font-size:12px;color:var(--text-sub)">${h}</label></div>`;
+    }else{
+      html+=`<div style="margin-bottom:8px;">
+        <label style="font-size:12px;color:var(--text-sub)">${h}</label>
+        <input type="text" id="sme-${i}" value="${val.replace(/"/g,'&quot;')}" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
+      </div>`;
+    }
+  });
+  return html;
+}
+
+function smShowAdd(){
+  smEditRow=null;
+  document.getElementById('sm-modal-title').textContent='店舗を追加';
+  document.getElementById('sm-form').innerHTML=smBuildForm(null);
+  document.getElementById('sm-submit').textContent='追加する';
+  document.getElementById('sm-modal').style.display='flex';
+}
+
+function smEdit(rowNum){
+  const record=smData.find(r=>r.row_number===rowNum);
+  if(!record)return;
+  smEditRow=rowNum;
+  document.getElementById('sm-modal-title').textContent='店舗を編集';
+  document.getElementById('sm-form').innerHTML=smBuildForm(record);
+  document.getElementById('sm-submit').textContent='更新する';
+  document.getElementById('sm-modal').style.display='flex';
+}
+
+async function smSave(){
+  const btn=document.getElementById('sm-submit');
+  btn.textContent='保存中...';btn.disabled=true;
+  const record={};
+  smHeaders.forEach((h,i)=>{
+    if(!h)return;
+    const el=document.getElementById(`sme-${i}`);
+    if(!el)return;
+    if(el.type==='checkbox'){
+      record[`col_${i}`]=el.checked?'TRUE':'FALSE';
+    }else{
+      record[`col_${i}`]=el.value;
+    }
+  });
+  try{
+    if(smEditRow){
+      await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update',row_number:smEditRow,record})});
+    }else{
+      await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add',record})});
+    }
+    document.getElementById('sm-modal').style.display='none';
+    await smLoad();
+  }catch(e){alert('エラー: '+e.message);}
+  btn.textContent=smEditRow?'更新する':'追加する';btn.disabled=false;
 }
 
 init();
