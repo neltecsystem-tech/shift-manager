@@ -184,7 +184,10 @@ tbody tr:hover { background:var(--primary-light); }
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <h2 style="margin-bottom:0">店舗マスタ</h2>
-        <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ 新規追加</button>
+        <div style="display:flex;gap:8px;">
+          <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
+          <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ 新規追加</button>
+        </div>
       </div>
       <div class="filters">
         <div><label>営業所</label><select id="sm-area" onchange="smFilter()"><option value="">すべて</option></select></div>
@@ -192,6 +195,33 @@ tbody tr:hover { background:var(--primary-light); }
       </div>
       <div id="sm-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
       <div class="table-wrap" id="sm-table"></div>
+    </div>
+
+    <!-- 閉店情報モーダル -->
+    <div id="sm-close-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:200;justify-content:center;align-items:center;padding:20px;">
+      <div style="background:#fff;border-radius:16px;padding:24px;width:100%;max-width:500px;max-height:90vh;overflow-y:auto;position:relative;">
+        <button onclick="document.getElementById('sm-close-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;">✕</button>
+        <h3 style="color:var(--danger);margin-bottom:16px;">🔒 閉店情報を追加</h3>
+        <div style="margin-bottom:12px;">
+          <label style="font-size:12px;color:var(--text-sub)">店舗を検索</label>
+          <input type="text" id="smc-search" placeholder="店舗名・コードで検索..." oninput="smCloseSearch()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" autocomplete="off">
+          <div id="smc-results" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:0 0 8px 8px;display:none;"></div>
+        </div>
+        <div id="smc-selected" style="display:none;background:#f1f5f9;border-radius:10px;padding:12px;margin-bottom:12px;">
+          <input type="hidden" id="smc-row">
+          <div id="smc-info"></div>
+        </div>
+        <div style="margin-bottom:12px;">
+          <label style="font-size:12px;color:var(--text-sub)">最終回収日</label>
+          <input type="date" id="smc-last-collect" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;">
+        </div>
+        <div style="margin-bottom:16px;">
+          <label style="font-size:12px;color:var(--text-sub)">最終納品日 *</label>
+          <input type="date" id="smc-last-deliver" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;">
+        </div>
+        <p style="font-size:12px;color:var(--text-sub);margin-bottom:12px;">※最終納品日の翌月20日を過ぎると、コース名が自動でクリアされ、営業所に「納品中止」が追加されます。</p>
+        <button onclick="smCloseSave()" id="smc-submit" style="width:100%;background:var(--danger);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">閉店情報を保存</button>
+      </div>
     </div>
 
     <!-- 編集モーダル -->
@@ -1281,6 +1311,80 @@ async function smSave(){
     await smLoad();
   }catch(e){alert('エラー: '+e.message);}
   btn.textContent=smEditRow?'更新する':'追加する';btn.disabled=false;
+}
+
+// ── 閉店情報 ──
+function smShowClose(){
+  document.getElementById('smc-search').value='';
+  document.getElementById('smc-results').style.display='none';
+  document.getElementById('smc-selected').style.display='none';
+  document.getElementById('smc-row').value='';
+  document.getElementById('smc-last-collect').value='';
+  document.getElementById('smc-last-deliver').value='';
+  document.getElementById('sm-close-modal').style.display='flex';
+}
+
+function smCloseSearch(){
+  const q=(document.getElementById('smc-search').value||'').trim().toLowerCase();
+  const box=document.getElementById('smc-results');
+  if(q.length<2){box.style.display='none';return;}
+  const nIdx=smColMap.name??3;
+  const cIdx=smColMap.code??2;
+  const aIdx=smColMap.area??1;
+  const matches=smData.filter(r=>{
+    const name=(r[`col_${nIdx}`]||'').toLowerCase();
+    const code=(r[`col_${cIdx}`]||'').toLowerCase();
+    return name.includes(q)||code.includes(q);
+  }).slice(0,20);
+  if(!matches.length){box.innerHTML='<div style="padding:10px;color:var(--text-sub);font-size:13px;">該当なし</div>';box.style.display='block';return;}
+  box.innerHTML=matches.map(r=>{
+    const area=r[`col_${aIdx}`]||'';
+    const code=r[`col_${cIdx}`]||'';
+    const name=r[`col_${nIdx}`]||'';
+    return `<div onclick="smCloseSelect(${r.row_number},'${area.replace(/'/g,"\\'")}','${code.replace(/'/g,"\\'")}','${name.replace(/'/g,"\\'")}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;display:flex;justify-content:space-between;" onmouseover="this.style.background='#fef2f2'" onmouseout="this.style.background='#fff'"><span><b>${name}</b> (${code})</span><span class="badge ${bc(area)}">${area}</span></div>`;
+  }).join('');
+  box.style.display='block';
+}
+
+function smCloseSelect(rowNum,area,code,name){
+  document.getElementById('smc-row').value=rowNum;
+  document.getElementById('smc-info').innerHTML=`<div style="font-size:15px;font-weight:bold;color:#1e293b;">${name}</div><div style="font-size:12px;color:var(--text-sub);">${area} / ${code} / 行${rowNum}</div>`;
+  document.getElementById('smc-selected').style.display='block';
+  document.getElementById('smc-results').style.display='none';
+  document.getElementById('smc-search').value=name;
+}
+
+async function smCloseSave(){
+  const rowNum=document.getElementById('smc-row').value;
+  const lastDeliver=document.getElementById('smc-last-deliver').value;
+  if(!rowNum){alert('店舗を選択してください');return;}
+  if(!lastDeliver){alert('最終納品日は必須です');return;}
+
+  const btn=document.getElementById('smc-submit');
+  btn.textContent='保存中...';btn.disabled=true;
+
+  const lastCollect=document.getElementById('smc-last-collect').value;
+  // Find the column indices for 最終回収日 and 最終納品日
+  let collectCol=-1,deliverCol=-1;
+  smHeaders.forEach((h,i)=>{
+    if((h||'').includes('最終回収日'))collectCol=i;
+    if((h||'').includes('最終納品日'))deliverCol=i;
+  });
+  // Fallback: Z=25, AA=26
+  if(collectCol<0)collectCol=25;
+  if(deliverCol<0)deliverCol=26;
+
+  const record={};
+  if(lastCollect)record[`col_${collectCol}`]=lastCollect.replace(/-/g,'/');
+  record[`col_${deliverCol}`]=lastDeliver.replace(/-/g,'/');
+
+  try{
+    await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update',row_number:parseInt(rowNum),record})});
+    document.getElementById('sm-close-modal').style.display='none';
+    alert('閉店情報を保存しました。翌月20日以降にコース名が自動クリアされます。');
+    await smLoad();
+  }catch(e){alert('エラー: '+e.message);}
+  btn.textContent='閉店情報を保存';btn.disabled=false;
 }
 
 init();
