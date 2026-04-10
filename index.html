@@ -166,7 +166,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">入電時間</label><input type="time" id="dfe-time" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">営業所 *</label><select id="dfe-area" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">選択</option><option>城北</option><option>川越</option><option>立川</option><option>川崎高津</option></select></div>
         <div style="margin-bottom:10px;position:relative;"><label style="font-size:12px;color:var(--text-sub)">店舗名</label><input type="text" id="dfe-shop" placeholder="LA杉並区役所前" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" oninput="defectShopSuggest()" onfocus="defectShopSuggest()" autocomplete="off"><div id="dfe-shop-suggest" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:0 0 8px 8px;max-height:200px;overflow-y:auto;z-index:300;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div>
-        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">コース</label><input type="text" id="dfe-course" placeholder="13" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="margin-bottom:10px;position:relative;"><label style="font-size:12px;color:var(--text-sub)">コース</label><input type="text" id="dfe-course" placeholder="13" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" onchange="defectAutoFillDriver()"><div id="dfe-course-suggest" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:0 0 8px 8px;max-height:200px;overflow-y:auto;z-index:300;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">担当ドライバー</label><input type="text" id="dfe-driver" placeholder="遠藤" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">不具合内容</label><input type="text" id="dfe-content" placeholder="産経▲2" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">不具合項目</label><select id="dfe-category" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">選択</option><option>仕分けミス</option><option>仕分けミス(飛</option><option>配送遅延</option><option>誤配</option><option>返品未回収</option><option>その他</option></select></div>
@@ -773,15 +773,54 @@ function defectShopSuggest(){
 
 function defectShopSelect(name,course,area){
   document.getElementById('dfe-shop').value=name;
-  if(course)document.getElementById('dfe-course').value=course;
-  if(area&&!document.getElementById('dfe-area').value)document.getElementById('dfe-area').value=area;
   document.getElementById('dfe-shop-suggest').style.display='none';
+  if(area&&!document.getElementById('dfe-area').value)document.getElementById('dfe-area').value=area;
+  // コース候補を表示
+  defectShowCourseSuggest(name);
+}
+
+function defectShowCourseSuggest(shopName){
+  const matches=DB.tenpo.filter(t=>t.name===shopName);
+  if(!matches.length)return;
+  const courses=[...new Set(matches.map(t=>t.amCourse).concat(matches.map(t=>t.pmCourse)).filter(Boolean))];
+  if(courses.length===1){
+    document.getElementById('dfe-course').value=courses[0];
+    defectAutoFillDriver();
+    return;
+  }
+  if(courses.length>1){
+    const box=document.getElementById('dfe-course-suggest');
+    box.innerHTML=courses.map(c=>
+      `<div onclick="defectCourseSelect('${c.replace(/'/g,"\\'")}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;" onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background='#fff'">${c}</div>`
+    ).join('');
+    box.style.display='block';
+  }
+}
+
+function defectCourseSelect(course){
+  document.getElementById('dfe-course').value=course;
+  document.getElementById('dfe-course-suggest').style.display='none';
+  defectAutoFillDriver();
+}
+
+function defectAutoFillDriver(){
+  const dateStr=document.getElementById('dfe-date').value;
+  const course=document.getElementById('dfe-course').value;
+  if(!dateStr||!course)return;
+  const {amMap,pmMap}=getDriverMaps(dateStr);
+  // amMap[コース名] = [スタッフ名/コース名] - renderTenpoと同じ方法で取得
+  let driver=(amMap[course]||[])[0]||'';
+  if(!driver)driver=(pmMap[course]||[])[0]||'';
+  if(driver)document.getElementById('dfe-driver').value=driver;
 }
 
 // クリック外で候補を閉じる
 document.addEventListener('click',function(e){
   if(!e.target.closest('#dfe-shop')&&!e.target.closest('#dfe-shop-suggest')){
     document.getElementById('dfe-shop-suggest').style.display='none';
+  }
+  if(!e.target.closest('#dfe-course')&&!e.target.closest('#dfe-course-suggest')){
+    document.getElementById('dfe-course-suggest').style.display='none';
   }
 });
 
