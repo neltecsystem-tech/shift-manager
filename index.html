@@ -634,14 +634,19 @@ function defectInit(){
     // 月セレクタ初期化
     const sel=document.getElementById('df-month');
     const now=new Date();
+    // スプレッドシートのタブ名に合わせた月リスト
+    const now_y=now.getFullYear()%100;
+    const now_m=now.getMonth()+1;
     const months=[];
-    for(let i=-3;i<=6;i++){
-      const d=new Date(now.getFullYear(),now.getMonth()+i,1);
-      const y=d.getFullYear()%100;
-      const m=d.getMonth()+1;
-      months.push({label:`${m}月/${y}`,sheet:`${m}月/${y}`});
+    for(let i=-6;i<=6;i++){
+      let mm=now_m+i,yy=now_y;
+      if(mm>12){mm-=12;yy++;}
+      if(mm<1){mm+=12;yy--;}
+      months.push({label:`${mm}月/${yy}`,sheet:`${mm}月/${yy}`});
     }
-    sel.innerHTML=months.map((m,i)=>`<option value="${m.sheet}" ${i===3?'selected':''}>${m.label}</option>`).join('');
+    // 現在の月を選択状態にする
+    const curSheet=`${now_m}月/${now_y}`;
+    sel.innerHTML=months.map(m=>`<option value="${m.sheet}" ${m.sheet===curSheet?'selected':''}>${m.label}</option>`).join('');
     defectInited=true;
   }
   defectLoad();
@@ -654,7 +659,7 @@ async function defectLoad(){
   document.getElementById('df-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">読み込み中...</p>';
   try{
     const resp=await fetch(url);
-    if(!resp.ok) throw new Error('シートが見つかりません: '+month);
+    if(!resp.ok){const errText=await resp.text();throw new Error('エラー('+resp.status+'): '+month+' / '+errText.slice(0,200));};
     const json=await resp.json();
     const rows=json.values||[];
     if(rows.length<2){defectData=[];defectAllData=[];defectRender();return;}
