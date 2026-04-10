@@ -1190,7 +1190,15 @@ function smBuildForm(record){
   let html='';
   const isAreaCol=i=>smHeaders[i]&&smHeaders[i].includes('営業所');
   const isCourseCol=i=>smHeaders[i]&&(smHeaders[i].includes('コース名')||smHeaders[i].includes('コース'));
-  const isCheckVal=v=>v==='TRUE'||v==='FALSE';
+  // チェックボックス列: 値がTRUE/FALSEか、ヘッダー名に特定キーワードを含む
+  const checkHeaders=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝'];
+  const isCheckCol=i=>{
+    const h=smHeaders[i]||'';
+    if(checkHeaders.some(k=>h.includes(k)))return true;
+    // データからTRUE/FALSEを検出
+    const vals=smData.slice(0,20).map(r=>r[`col_${i}`]).filter(Boolean);
+    return vals.length>0&&vals.every(v=>v==='TRUE'||v==='FALSE');
+  };
 
   smHeaders.forEach((h,i)=>{
     if(!h)return;
@@ -1210,7 +1218,7 @@ function smBuildForm(record){
         <input type="text" id="sme-${i}" value="${val.replace(/"/g,'&quot;')}" list="sme-dl-${i}" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;" autocomplete="off">
         <datalist id="sme-dl-${i}">${smMasterCourses.map(c=>`<option value="${c}">`).join('')}</datalist>
       </div>`;
-    }else if(isCheckVal(val)){
+    }else if(isCheckCol(i)){
       html+=`<div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;">
         <input type="checkbox" id="sme-${i}" ${val==='TRUE'?'checked':''}>
         <label style="font-size:12px;color:var(--text-sub)">${h}</label></div>`;
@@ -1246,11 +1254,18 @@ async function smSave(){
   const btn=document.getElementById('sm-submit');
   btn.textContent='保存中...';btn.disabled=true;
   const record={};
+  const checkHeaders2=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝'];
+  const isCheck2=i=>{
+    const hh=smHeaders[i]||'';
+    if(checkHeaders2.some(k=>hh.includes(k)))return true;
+    const vals=smData.slice(0,20).map(r=>r[`col_${i}`]).filter(Boolean);
+    return vals.length>0&&vals.every(v=>v==='TRUE'||v==='FALSE');
+  };
   smHeaders.forEach((h,i)=>{
     if(!h)return;
     const el=document.getElementById(`sme-${i}`);
     if(!el)return;
-    if(el.type==='checkbox'){
+    if(isCheck2(i)||el.type==='checkbox'){
       record[`col_${i}`]=el.checked?'TRUE':'FALSE';
     }else{
       record[`col_${i}`]=el.value;
