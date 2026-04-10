@@ -639,7 +639,7 @@ function defectInit(){
       const d=new Date(now.getFullYear(),now.getMonth()+i,1);
       const y=d.getFullYear()%100;
       const m=d.getMonth()+1;
-      months.push({label:`${m}月/${y}`,sheet:`${m}/${y}`});
+      months.push({label:`${m}月/${y}`,sheet:`${m}月/${y}`});
     }
     sel.innerHTML=months.map((m,i)=>`<option value="${m.sheet}" ${i===3?'selected':''}>${m.label}</option>`).join('');
     defectInited=true;
