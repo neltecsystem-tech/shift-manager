@@ -242,6 +242,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <h2 style="margin-bottom:0">📄 請求書</h2>
         <div style="display:flex;gap:8px;">
+          <button onclick="invShowChangePw()" id="inv-changepw-btn" style="background:#94a3b8;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;display:none;">🔑 PW変更</button>
           <button onclick="invShowRates()" class="inv-admin-only" style="background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">⚙ 単価設定</button>
           <button onclick="invShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ 稼働入力</button>
         </div>
@@ -1487,6 +1488,9 @@ async function invLoadAll(){
   // ログイン中の表示
   const headerArea=document.querySelector('#view-invoice .card h2');
   if(headerArea)headerArea.innerHTML=`📄 請求書 <span style="font-size:13px;color:var(--text-sub);font-weight:normal;margin-left:8px;">${invIsAdmin?'👑 管理者':'👤 '+invStaffName}</span>`;
+  // PW変更ボタン（スタッフモードのみ表示）
+  const pwBtn=document.getElementById('inv-changepw-btn');
+  if(pwBtn)pwBtn.style.display=(!invIsAdmin&&invStaffName)?'':'none';
   // スタッフセレクタ更新（人員名簿から取得した名前を使用）
   const names=invStaffNames.length?invStaffNames:invRates.map(r=>r.name);
   ['inve-staff','inv-staff-filter','inv-gen-staff'].forEach(id=>{
@@ -1740,6 +1744,57 @@ function invPrintPDF(){
   const win=window.open('','_blank');
   win.document.write(`<!DOCTYPE html><html><head><title>請求書</title><style>body{font-family:'Meiryo',sans-serif;padding:20px;color:#1e293b;}table{width:100%;border-collapse:collapse;}th,td{padding:6px 8px;border:1px solid #ccc;}@media print{button{display:none !important;}}</style></head><body>${content}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
   win.document.close();
+}
+
+// パスワード変更
+function invShowChangePw(){
+  const modal=document.createElement('div');
+  modal.id='inv-pw-modal';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:300;display:flex;justify-content:center;align-items:center;padding:20px;';
+  modal.innerHTML=`<div style="background:#fff;border-radius:16px;padding:32px;width:100%;max-width:380px;">
+    <h3 style="color:var(--primary);margin-bottom:20px;">🔑 パスワード変更</h3>
+    <p style="font-size:13px;color:var(--text-sub);margin-bottom:16px;">${invStaffName} さんのパスワードを変更</p>
+    <div style="margin-bottom:12px;"><label style="font-size:12px;color:var(--text-sub)">現在のパスワード</label><input type="password" id="inv-pw-old" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+    <div style="margin-bottom:12px;"><label style="font-size:12px;color:var(--text-sub)">新しいパスワード</label><input type="password" id="inv-pw-new" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+    <div style="margin-bottom:16px;"><label style="font-size:12px;color:var(--text-sub)">新しいパスワード（確認）</label><input type="password" id="inv-pw-confirm" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+    <div id="inv-pw-err" style="color:var(--danger);font-size:13px;margin-bottom:12px;display:none;"></div>
+    <button onclick="invDoChangePw()" id="inv-pw-submit" style="width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;margin-bottom:10px;">変更する</button>
+    <button onclick="document.getElementById('inv-pw-modal').remove()" style="width:100%;background:none;border:none;color:var(--text-sub);cursor:pointer;font-size:13px;">キャンセル</button>
+  </div>`;
+  document.body.appendChild(modal);
+}
+
+async function invDoChangePw(){
+  const oldPw=document.getElementById('inv-pw-old').value;
+  const newPw=document.getElementById('inv-pw-new').value;
+  const confirmPw=document.getElementById('inv-pw-confirm').value;
+  const errEl=document.getElementById('inv-pw-err');
+  if(!oldPw||!newPw){errEl.textContent='全ての項目を入力してください';errEl.style.display='block';return;}
+  if(newPw!==confirmPw){errEl.textContent='新しいパスワードが一致しません';errEl.style.display='block';return;}
+  if(newPw.length<3){errEl.textContent='パスワードは3文字以上にしてください';errEl.style.display='block';return;}
+
+  // 現在のパスワードを検証
+  const rate=invRates.find(r=>r.name===invStaffName);
+  if(!rate){errEl.textContent='単価マスタにユーザーが見つかりません';errEl.style.display='block';return;}
+  if(rate.login_pw!==oldPw){errEl.textContent='現在のパスワードが正しくありません';errEl.style.display='block';return;}
+
+  // 行番号を特定
+  const rowIdx=invRates.indexOf(rate);
+  const rowNum=rowIdx+2;
+
+  const btn=document.getElementById('inv-pw-submit');
+  btn.textContent='変更中...';btn.disabled=true;
+
+  try{
+    const updatedRecord={...rate,login_pw:newPw};
+    await invApi({action:'save_rate',record:updatedRecord,row_number:rowNum});
+    document.getElementById('inv-pw-modal').remove();
+    alert('パスワードを変更しました');
+    await invLoadAll();
+  }catch(e){
+    errEl.textContent='エラーが発生しました';errEl.style.display='block';
+  }
+  btn.textContent='変更する';btn.disabled=false;
 }
 
 // ── 閉店情報 ──
