@@ -242,14 +242,14 @@ tbody tr:hover { background:var(--primary-light); }
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <h2 style="margin-bottom:0">📄 請求書</h2>
         <div style="display:flex;gap:8px;">
-          <button onclick="invShowRates()" style="background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">⚙ 単価設定</button>
+          <button onclick="invShowRates()" class="inv-admin-only" style="background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">⚙ 単価設定</button>
           <button onclick="invShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ 稼働入力</button>
         </div>
       </div>
       <!-- タブ -->
       <div id="inv-tabs" style="display:flex;gap:6px;margin-bottom:12px;">
         <button onclick="invSetTab('work')" id="inv-tab-work" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:var(--primary);color:#fff;">稼働記録</button>
-        <button onclick="invSetTab('generate')" id="inv-tab-generate" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">請求書作成</button>
+        <button onclick="invSetTab('generate')" id="inv-tab-generate" class="inv-admin-only" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">請求書作成</button>
       </div>
       <!-- 稼働記録ビュー -->
       <div id="inv-work-view">
@@ -320,6 +320,9 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">庫内夕刊</label><input type="number" id="inv-re-wh-pm" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">計算方式</label><select id="inv-re-calc" onchange="document.getElementById('inv-re-unit-wrap').style.display=this.value==='個数'?'block':'none'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="固定">固定</option><option value="個数">個数制</option></select></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-unit-wrap"><label style="font-size:12px;color:var(--text-sub)">個数単価</label><input type="number" id="inv-re-unit" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">ログイン情報</label></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">ログインID</label><input type="text" id="inv-re-loginid" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">パスワード</label><input type="text" id="inv-re-loginpw" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <button onclick="invSaveRate()" style="width:100%;background:#6366f1;color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">保存する</button>
       </div>
     </div>
@@ -1407,6 +1410,8 @@ async function smSave(){
 const INV_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/invoice-sheet';
 const INV_PW='neltec2026';
 let invAuthed=false;
+let invIsAdmin=false;
+let invStaffName='';
 let invRates=[];
 let invWork=[];
 let invTab='work';
@@ -1420,17 +1425,66 @@ async function invApi(body){
 
 function invInit(){
   if(!invAuthed){
-    const pw=prompt('請求書のパスワードを入力してください:');
-    if(pw!==INV_PW){alert('パスワードが正しくありません');showView('dashboard',document.querySelector('.nav-links button'));return;}
-    invAuthed=true;
+    invShowLogin();
+    return;
   }
   invLoadAll();
+}
+
+function invShowLogin(){
+  const modal=document.createElement('div');
+  modal.id='inv-login-modal';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:300;display:flex;justify-content:center;align-items:center;padding:20px;';
+  modal.innerHTML=`<div style="background:#fff;border-radius:16px;padding:32px;width:100%;max-width:380px;text-align:center;">
+    <h3 style="color:var(--primary);margin-bottom:20px;">📄 請求書ログイン</h3>
+    <div style="margin-bottom:12px;text-align:left;"><label style="font-size:12px;color:var(--text-sub)">ログインID</label><input type="text" id="inv-login-id" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="IDを入力"></div>
+    <div style="margin-bottom:16px;text-align:left;"><label style="font-size:12px;color:var(--text-sub)">パスワード</label><input type="password" id="inv-login-pw" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="パスワードを入力"></div>
+    <div id="inv-login-err" style="color:var(--danger);font-size:13px;margin-bottom:12px;display:none;"></div>
+    <button onclick="invDoLogin()" style="width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;margin-bottom:10px;">ログイン</button>
+    <button onclick="invAdminLogin()" style="width:100%;background:#6366f1;color:#fff;border:none;padding:10px;border-radius:10px;font-size:13px;cursor:pointer;">管理者ログイン</button>
+    <button onclick="document.getElementById('inv-login-modal').remove();showView('dashboard',document.querySelector('.nav-links button'))" style="margin-top:10px;background:none;border:none;color:var(--text-sub);cursor:pointer;font-size:13px;">キャンセル</button>
+  </div>`;
+  document.body.appendChild(modal);
+}
+
+async function invDoLogin(){
+  const id=document.getElementById('inv-login-id').value.trim();
+  const pw=document.getElementById('inv-login-pw').value.trim();
+  if(!id||!pw){document.getElementById('inv-login-err').textContent='IDとパスワードを入力してください';document.getElementById('inv-login-err').style.display='block';return;}
+  const res=await invApi({action:'login',login_id:id,login_pw:pw});
+  if(res.success){
+    invAuthed=true;invIsAdmin=false;invStaffName=res.staff_name;
+    document.getElementById('inv-login-modal').remove();
+    invLoadAll();
+  }else{
+    document.getElementById('inv-login-err').textContent=res.error||'ログインに失敗しました';
+    document.getElementById('inv-login-err').style.display='block';
+  }
+}
+
+function invAdminLogin(){
+  const pw=prompt('管理者パスワードを入力:');
+  if(pw===INV_PW){
+    invAuthed=true;invIsAdmin=true;invStaffName='';
+    document.getElementById('inv-login-modal').remove();
+    invLoadAll();
+  }else if(pw!==null){alert('パスワードが正しくありません');}
 }
 
 async function invLoadAll(){
   const [ratesRes,workRes]=await Promise.all([invApi({action:'get_rates'}),invApi({action:'list_work'})]);
   invRates=ratesRes.rates||[];
   invWork=workRes.records||[];
+  // スタッフモード: 自分のデータのみ
+  if(!invIsAdmin&&invStaffName){
+    invWork=invWork.filter(w=>w.staff===invStaffName);
+  }
+  // UI制御: 管理者のみの要素
+  const adminEls=document.querySelectorAll('.inv-admin-only');
+  adminEls.forEach(el=>{el.style.display=invIsAdmin?'':'none';});
+  // ログイン中の表示
+  const headerArea=document.querySelector('#view-invoice .card h2');
+  if(headerArea)headerArea.innerHTML=`📄 請求書 <span style="font-size:13px;color:var(--text-sub);font-weight:normal;margin-left:8px;">${invIsAdmin?'👑 管理者':'👤 '+invStaffName}</span>`;
   // スタッフセレクタ更新
   const names=invRates.map(r=>r.name);
   ['inve-staff','inv-staff-filter','inv-gen-staff'].forEach(id=>{
@@ -1523,7 +1577,9 @@ function invCalcAmount(){
 function invShowAdd(){
   document.getElementById('inve-row').value='';
   document.getElementById('inve-date').value=new Date().toISOString().slice(0,10);
-  document.getElementById('inve-staff').value='';
+  document.getElementById('inve-staff').value=invIsAdmin?'':invStaffName;
+  if(!invIsAdmin)document.getElementById('inve-staff').disabled=true;
+  else document.getElementById('inve-staff').disabled=false;
   document.getElementById('inve-course').value='';
   invCatSel='朝刊';invRenderCatBtns();
   document.getElementById('inve-start').value='';
@@ -1591,9 +1647,9 @@ async function invDeleteWork(rowNum){
 
 // 単価設定
 function invShowRates(){
-  let h='<table style="width:100%;font-size:13px;"><thead><tr><th>スタッフ</th><th>朝刊(平日)</th><th>朝刊(土日)</th><th>夕刊(月-木)</th><th>夕刊(金-日)</th><th>庫内朝</th><th>庫内夕</th><th>方式</th><th></th></tr></thead><tbody>';
+  let h='<table style="width:100%;font-size:13px;"><thead><tr><th>スタッフ</th><th>朝刊(平日)</th><th>朝刊(土日)</th><th>夕刊(月-木)</th><th>夕刊(金-日)</th><th>庫内朝</th><th>庫内夕</th><th>方式</th><th>ID</th><th></th></tr></thead><tbody>';
   invRates.forEach((r,i)=>{
-    h+=`<tr><td><b>${r.name}</b></td><td>${r.am_weekday?'¥'+Number(r.am_weekday).toLocaleString():'-'}</td><td>${r.am_weekend?'¥'+Number(r.am_weekend).toLocaleString():'-'}</td><td>${r.pm_weekday?'¥'+Number(r.pm_weekday).toLocaleString():'-'}</td><td>${r.pm_weekend?'¥'+Number(r.pm_weekend).toLocaleString():'-'}</td><td>${r.warehouse_am?'¥'+Number(r.warehouse_am).toLocaleString():'-'}</td><td>${r.warehouse_pm?'¥'+Number(r.warehouse_pm).toLocaleString():'-'}</td><td>${r.calc_type}${r.calc_type==='個数'?' ¥'+r.unit_price:''}</td><td><button onclick="invEditRate(${i+2})" style="background:none;border:none;cursor:pointer;">✏️</button></td></tr>`;
+    h+=`<tr><td><b>${r.name}</b></td><td>${r.am_weekday?'¥'+Number(r.am_weekday).toLocaleString():'-'}</td><td>${r.am_weekend?'¥'+Number(r.am_weekend).toLocaleString():'-'}</td><td>${r.pm_weekday?'¥'+Number(r.pm_weekday).toLocaleString():'-'}</td><td>${r.pm_weekend?'¥'+Number(r.pm_weekend).toLocaleString():'-'}</td><td>${r.warehouse_am?'¥'+Number(r.warehouse_am).toLocaleString():'-'}</td><td>${r.warehouse_pm?'¥'+Number(r.warehouse_pm).toLocaleString():'-'}</td><td>${r.calc_type}${r.calc_type==='個数'?' ¥'+r.unit_price:''}</td><td>${r.login_id||'<span style="color:#cbd5e1">未設定</span>'}</td><td><button onclick="invEditRate(${i+2})" style="background:none;border:none;cursor:pointer;">✏️</button></td></tr>`;
   });
   h+='</tbody></table>';
   if(!invRates.length)h='<p style="color:var(--text-sub);text-align:center;padding:20px;">単価が設定されていません</p>';
@@ -1604,7 +1660,7 @@ function invShowRates(){
 function invAddRate(){
   document.getElementById('inv-re-row').value='';
   document.getElementById('inv-re-title').textContent='単価を追加';
-  ['inv-re-name','inv-re-am-wd','inv-re-am-we','inv-re-pm-wd','inv-re-pm-we','inv-re-wh-am','inv-re-wh-pm','inv-re-unit'].forEach(id=>document.getElementById(id).value='');
+  ['inv-re-name','inv-re-am-wd','inv-re-am-we','inv-re-pm-wd','inv-re-pm-we','inv-re-wh-am','inv-re-wh-pm','inv-re-unit','inv-re-loginid','inv-re-loginpw'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('inv-re-calc').value='固定';
   document.getElementById('inv-re-unit-wrap').style.display='none';
   document.getElementById('inv-rate-edit').style.display='flex';
@@ -1624,13 +1680,15 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-calc').value=r.calc_type||'固定';
   document.getElementById('inv-re-unit').value=r.unit_price;
   document.getElementById('inv-re-unit-wrap').style.display=r.calc_type==='個数'?'block':'none';
+  document.getElementById('inv-re-loginid').value=r.login_id||'';
+  document.getElementById('inv-re-loginpw').value=r.login_pw||'';
   document.getElementById('inv-rate-edit').style.display='flex';
 }
 
 async function invSaveRate(){
   const name=document.getElementById('inv-re-name').value.trim();
   if(!name){alert('スタッフ名は必須です');return;}
-  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value};
+  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value};
   const rowNum=document.getElementById('inv-re-row').value;
   await invApi({action:'save_rate',record,row_number:rowNum?parseInt(rowNum):undefined});
   document.getElementById('inv-rate-edit').style.display='none';
