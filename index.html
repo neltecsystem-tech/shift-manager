@@ -1704,8 +1704,14 @@ function invEditRate(rowNum){
 async function invSaveRate(){
   const name=document.getElementById('inv-re-name').value.trim();
   if(!name){alert('スタッフ名は必須です');return;}
-  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value};
   const rowNum=document.getElementById('inv-re-row').value;
+  // 重複チェック（新規追加時、または編集で名前を変えた場合）
+  const existing=invRates.find((r,i)=>{
+    if(rowNum&&(i+2)===parseInt(rowNum))return false;// 自分自身はスキップ
+    return r.name===name;
+  });
+  if(existing){alert(`「${name}」は既に登録されています。同姓同名の登録はできません。`);return;}
+  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value};
   await invApi({action:'save_rate',record,row_number:rowNum?parseInt(rowNum):undefined});
   document.getElementById('inv-rate-edit').style.display='none';
   await invLoadAll();
