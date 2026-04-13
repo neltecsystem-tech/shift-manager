@@ -283,9 +283,9 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">スタッフ名 *</label><select id="inve-staff" onchange="invUpdateCourseSuggest();invCalcAmount()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">選択</option></select></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分 *</label><div style="display:flex;gap:6px;flex-wrap:wrap;" id="inve-cat-btns"></div></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">コース名</label><input type="text" id="inve-course" list="inve-course-dl" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><datalist id="inve-course-dl"></datalist></div>
-        <div style="margin-bottom:10px;display:flex;gap:10px;">
-          <div style="flex:1"><label style="font-size:12px;color:var(--text-sub)">開始時間</label><input type="time" id="inve-start" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
-          <div style="flex:1"><label style="font-size:12px;color:var(--text-sub)">終了時間</label><input type="time" id="inve-end" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="margin-bottom:10px;display:none;"><input type="hidden" id="inve-start"></div>
+        <div style="margin-bottom:10px">
+          <label style="font-size:12px;color:var(--text-sub)">終了時間</label><input type="time" id="inve-end" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;">
         </div>
         <div style="margin-bottom:10px;display:none;" id="inve-qty-wrap"><label style="font-size:12px;color:var(--text-sub)">配送個数</label><input type="number" id="inve-qty" onchange="invCalcAmount()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px;display:flex;gap:10px;">
