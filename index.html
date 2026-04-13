@@ -1512,10 +1512,15 @@ async function invLoadAll(){
   if(pwBtn)pwBtn.style.display=(!invIsAdmin&&invStaffName)?'':'none';
   // スタッフセレクタ更新（人員名簿から取得した名前を使用）
   const names=invStaffNames.length?invStaffNames:invRates.map(r=>r.name);
+  // スタッフモード: 自分の名前がリストになくても追加
+  if(!invIsAdmin&&invStaffName&&!names.includes(invStaffName))names.unshift(invStaffName);
   ['inve-staff','inv-staff-filter','inv-gen-staff'].forEach(id=>{
     const sel=document.getElementById(id);if(!sel)return;
-    const val=sel.value;
+    // スタッフモードの稼働入力: 自分の名前を固定
+    const defaultVal=(!invIsAdmin&&invStaffName&&id==='inve-staff')?invStaffName:'';
+    const val=sel.value||defaultVal;
     sel.innerHTML=(id==='inve-staff'||id==='inv-gen-staff'?'<option value="">選択</option>':'<option value="">すべて</option>')+names.map(n=>`<option${n===val?' selected':''}>${n}</option>`).join('');
+    if(!invIsAdmin&&invStaffName&&id==='inve-staff'){sel.value=invStaffName;sel.disabled=true;}
   });
   // コースdatalist
   const dl=document.getElementById('inve-course-dl');
