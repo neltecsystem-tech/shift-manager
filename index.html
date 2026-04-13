@@ -321,8 +321,12 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">夕刊/競馬(金-日)</label><input type="number" id="inv-re-pm-we" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">庫内朝刊</label><input type="number" id="inv-re-wh-am" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">庫内夕刊</label><input type="number" id="inv-re-wh-pm" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
-        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">計算方式</label><select id="inv-re-calc" onchange="document.getElementById('inv-re-unit-wrap').style.display=this.value==='個数'?'block':'none'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="固定">固定</option><option value="個数">個数制</option></select></div>
-        <div style="margin-bottom:10px;display:none;" id="inv-re-unit-wrap"><label style="font-size:12px;color:var(--text-sub)">個数単価</label><input type="number" id="inv-re-unit" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:#6366f1;font-weight:600;">朝刊 計算方式</label></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">朝刊 計算方式</label><select id="inv-re-calc" onchange="document.getElementById('inv-re-unit-wrap').style.display=this.value==='個数'?'block':'none'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="固定">固定</option><option value="個数">個数制</option></select></div>
+        <div style="margin-bottom:10px;display:none;" id="inv-re-unit-wrap"><label style="font-size:12px;color:var(--text-sub)">朝刊 個数単価</label><input type="number" id="inv-re-unit" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:#6366f1;font-weight:600;">夕刊 計算方式</label></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">夕刊 計算方式</label><select id="inv-re-calc-pm" onchange="document.getElementById('inv-re-unit-pm-wrap').style.display=this.value==='個数'?'block':'none'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="固定">固定</option><option value="個数">個数制</option></select></div>
+        <div style="margin-bottom:10px;display:none;" id="inv-re-unit-pm-wrap"><label style="font-size:12px;color:var(--text-sub)">夕刊 個数単価</label><input type="number" id="inv-re-unit-pm" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人</option></select></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-company-wrap"><label style="font-size:12px;color:var(--text-sub)">所属会社名</label><input type="text" id="inv-re-company" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="株式会社○○"></div>
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">ログイン情報</label></div>
@@ -1766,18 +1770,20 @@ function invCalcAmount(){
     if(s.type==='日当'){specialReplace+=amt;specialLabel+=`特別単価¥${amt.toLocaleString()}(${s.reason}) `;}
     else if(s.type==='日当+'){specialAdd+=amt;specialLabel+=`+¥${amt.toLocaleString()}(${s.reason}) `;}
   });
-  // 個数制
-  const isQty=rate.calc_type==='個数';
+  // 個数制（朝刊/夕刊別）
+  const isPm=invCatSel==='夕刊/競馬'||invCatSel==='庫内夕刊';
+  const calcType=isPm?(rate.calc_type_pm||rate.calc_type):rate.calc_type;
+  const unitPriceVal=isPm?(Number(rate.unit_price_pm)||Number(rate.unit_price)||0):(Number(rate.unit_price)||0);
+  const isQty=calcType==='個数';
   document.getElementById('inve-qty-wrap').style.display=isQty?'block':'none';
   if(isQty){
-    const unitPrice=Number(rate.unit_price)||0;
     const qty=Number(document.getElementById('inve-qty').value)||0;
-    let amount=unitPrice*qty;
+    let amount=unitPriceVal*qty;
     if(isHikitsugi)amount=Math.floor(amount/2);
     if(specialReplace)amount=specialReplace;
     amount+=specialAdd;
-    price=unitPrice;
-    document.getElementById('inve-price').value=unitPrice?'¥'+unitPrice.toLocaleString()+(isHikitsugi?' (引継ぎ半額)':'')+(specialLabel?' '+specialLabel:''):'';
+    price=unitPriceVal;
+    document.getElementById('inve-price').value=unitPriceVal?'¥'+unitPriceVal.toLocaleString()+(isHikitsugi?' (引継ぎ半額)':'')+(specialLabel?' '+specialLabel:''):'';
     document.getElementById('inve-amount').value=qty||specialReplace||specialAdd?'¥'+amount.toLocaleString():'';
   }else{
     let amount=price;
@@ -1840,10 +1846,12 @@ async function invSaveWork(){
     else if(invCatSel==='夕刊/競馬')price=Number((dow>=1&&dow<=4)?rate.pm_weekday:rate.pm_weekend)||0;
     else if(invCatSel==='庫内朝刊')price=Number(rate.warehouse_am)||0;
     else if(invCatSel==='庫内夕刊')price=Number(rate.warehouse_pm)||0;
-    if(rate.calc_type==='個数'){
-      const unitP=Number(rate.unit_price)||0;
+    const isPm=invCatSel==='夕刊/競馬'||invCatSel==='庫内夕刊';
+    const cType=isPm?(rate.calc_type_pm||rate.calc_type):rate.calc_type;
+    const uPrice=isPm?(Number(rate.unit_price_pm)||Number(rate.unit_price)||0):(Number(rate.unit_price)||0);
+    if(cType==='個数'){
       const qty=Number(document.getElementById('inve-qty').value)||0;
-      price=unitP;amount=unitP*qty;
+      price=uPrice;amount=uPrice*qty;
     }else{amount=price;}
     // 引継ぎコースは半額
     if((document.getElementById('inve-course').value||'').includes('引継'))amount=Math.floor(amount/2);
@@ -1896,13 +1904,15 @@ function invUpdateNameSelect(selectedName){
 function invAddRate(){
   document.getElementById('inv-re-row').value='';
   document.getElementById('inv-re-title').textContent='単価を追加';
-  ['inv-re-am-wd','inv-re-am-we','inv-re-pm-wd','inv-re-pm-we','inv-re-wh-am','inv-re-wh-pm','inv-re-unit','inv-re-loginid','inv-re-loginpw'].forEach(id=>document.getElementById(id).value='');
+  ['inv-re-am-wd','inv-re-am-we','inv-re-pm-wd','inv-re-pm-we','inv-re-wh-am','inv-re-wh-pm','inv-re-unit','inv-re-unit-pm','inv-re-loginid','inv-re-loginpw'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('inv-re-biztype').value='';
   document.getElementById('inv-re-company').value='';
   document.getElementById('inv-re-company-wrap').style.display='none';
   invUpdateNameSelect('');
   document.getElementById('inv-re-calc').value='固定';
   document.getElementById('inv-re-unit-wrap').style.display='none';
+  document.getElementById('inv-re-calc-pm').value='固定';
+  document.getElementById('inv-re-unit-pm-wrap').style.display='none';
   document.getElementById('inv-rate-edit').style.display='flex';
 }
 
@@ -1920,6 +1930,9 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-calc').value=r.calc_type||'固定';
   document.getElementById('inv-re-unit').value=r.unit_price;
   document.getElementById('inv-re-unit-wrap').style.display=r.calc_type==='個数'?'block':'none';
+  document.getElementById('inv-re-calc-pm').value=r.calc_type_pm||'固定';
+  document.getElementById('inv-re-unit-pm').value=r.unit_price_pm||'';
+  document.getElementById('inv-re-unit-pm-wrap').style.display=r.calc_type_pm==='個数'?'block':'none';
   document.getElementById('inv-re-loginid').value=r.login_id||'';
   document.getElementById('inv-re-loginpw').value=r.login_pw||'';
   document.getElementById('inv-re-biztype').value=r.biz_type||'';
@@ -1938,7 +1951,7 @@ async function invSaveRate(){
     return r.name===name;
   });
   if(existing){alert(`「${name}」は既に登録されています。同姓同名の登録はできません。`);return;}
-  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value};
+  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value,calc_type_pm:document.getElementById('inv-re-calc-pm').value,unit_price_pm:document.getElementById('inv-re-unit-pm').value};
   await invApi({action:'save_rate',record,row_number:rowNum?parseInt(rowNum):undefined});
   document.getElementById('inv-rate-edit').style.display='none';
   await invLoadAll();
