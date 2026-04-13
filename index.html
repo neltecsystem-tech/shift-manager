@@ -279,7 +279,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="document.getElementById('inv-work-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;">✕</button>
         <h3 style="color:var(--primary);margin-bottom:16px;">稼働を入力</h3>
         <input type="hidden" id="inve-row">
-        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">日付 *</label><input type="date" id="inve-date" onchange="invUpdateCourseSuggest();invCalcAmount()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">日付 *</label><input type="date" id="inve-date" onchange="invUpdateCourseSuggest();invCalcAmount()" max="" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">スタッフ名 *</label><select id="inve-staff" onchange="invUpdateCourseSuggest();invCalcAmount()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">選択</option></select></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分 *</label><div style="display:flex;gap:6px;flex-wrap:wrap;" id="inve-cat-btns"></div></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">コース名</label><input type="text" id="inve-course" list="inve-course-dl" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><datalist id="inve-course-dl"></datalist></div>
@@ -1631,7 +1631,9 @@ function invCalcAmount(){
 
 function invShowAdd(){
   document.getElementById('inve-row').value='';
-  document.getElementById('inve-date').value=new Date().toISOString().slice(0,10);
+  const today=new Date().toISOString().slice(0,10);
+  document.getElementById('inve-date').value=today;
+  document.getElementById('inve-date').max=today;
   document.getElementById('inve-staff').value=invIsAdmin?'':invStaffName;
   if(!invIsAdmin)document.getElementById('inve-staff').disabled=true;
   else document.getElementById('inve-staff').disabled=false;
