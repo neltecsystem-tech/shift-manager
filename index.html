@@ -284,7 +284,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">日付 *</label><input type="date" id="inve-date" onchange="invUpdateCourseSuggest();invCalcAmount()" max="" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">スタッフ名 *</label><select id="inve-staff" onchange="invUpdateCourseSuggest();invCalcAmount()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">選択</option></select></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分 *</label><div style="display:flex;gap:6px;flex-wrap:wrap;" id="inve-cat-btns"></div></div>
-        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">コース名</label><input type="text" id="inve-course" list="inve-course-dl" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><datalist id="inve-course-dl"></datalist></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">コース名</label><input type="text" id="inve-course" list="inve-course-dl" onchange="invCalcAmount()" oninput="invCalcAmount()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><datalist id="inve-course-dl"></datalist></div>
         <div style="margin-bottom:10px;display:none;"><input type="hidden" id="inve-start"></div>
         <div style="margin-bottom:10px">
           <label style="font-size:12px;color:var(--text-sub)">終了時間</label><input type="time" id="inve-end" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;">
@@ -1740,18 +1740,25 @@ function invCalcAmount(){
   }else if(invCatSel==='庫内夕刊'){
     price=Number(rate.warehouse_pm)||0;
   }
+  // 引継ぎコースは半額
+  const course=document.getElementById('inve-course').value||'';
+  const isHikitsugi=course.includes('引継');
   // 個数制
   const isQty=rate.calc_type==='個数';
   document.getElementById('inve-qty-wrap').style.display=isQty?'block':'none';
   if(isQty){
     const unitPrice=Number(rate.unit_price)||0;
     const qty=Number(document.getElementById('inve-qty').value)||0;
+    let amount=unitPrice*qty;
+    if(isHikitsugi)amount=Math.floor(amount/2);
     price=unitPrice;
-    document.getElementById('inve-price').value=unitPrice?'¥'+unitPrice.toLocaleString():'';
-    document.getElementById('inve-amount').value=qty?'¥'+(unitPrice*qty).toLocaleString():'';
+    document.getElementById('inve-price').value=unitPrice?'¥'+unitPrice.toLocaleString()+(isHikitsugi?' (引継ぎ半額)':''):'';
+    document.getElementById('inve-amount').value=qty?'¥'+amount.toLocaleString():'';
   }else{
-    document.getElementById('inve-price').value=price?'¥'+price.toLocaleString():'';
-    document.getElementById('inve-amount').value=price?'¥'+price.toLocaleString():'';
+    let amount=price;
+    if(isHikitsugi)amount=Math.floor(price/2);
+    document.getElementById('inve-price').value=price?'¥'+price.toLocaleString()+(isHikitsugi?' (引継ぎ半額)':''):'';
+    document.getElementById('inve-amount').value=amount?'¥'+amount.toLocaleString():'';
   }
 }
 
@@ -1810,6 +1817,8 @@ async function invSaveWork(){
       const qty=Number(document.getElementById('inve-qty').value)||0;
       price=unitP;amount=unitP*qty;
     }else{amount=price;}
+    // 引継ぎコースは半額
+    if((document.getElementById('inve-course').value||'').includes('引継'))amount=Math.floor(amount/2);
   }
   const record={date:date.replace(/-/g,'/'),staff,course:document.getElementById('inve-course').value,category:invCatSel,start_time:document.getElementById('inve-start').value,end_time:document.getElementById('inve-end').value,quantity:document.getElementById('inve-qty').value,unit_price:String(price),amount:String(amount)};
   const rowNum=document.getElementById('inve-row').value;
