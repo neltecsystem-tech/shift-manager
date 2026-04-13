@@ -250,7 +250,7 @@ tbody tr:hover { background:var(--primary-light); }
       <!-- タブ -->
       <div id="inv-tabs" style="display:flex;gap:6px;margin-bottom:12px;">
         <button onclick="invSetTab('work')" id="inv-tab-work" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:var(--primary);color:#fff;">稼働記録</button>
-        <button onclick="invSetTab('generate')" id="inv-tab-generate" class="inv-admin-only" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">請求書作成</button>
+        <button onclick="invSetTab('generate')" id="inv-tab-generate" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">請求書作成</button>
       </div>
       <!-- 稼働記録ビュー -->
       <div id="inv-work-view">
@@ -264,7 +264,8 @@ tbody tr:hover { background:var(--primary-light); }
       <!-- 請求書生成ビュー -->
       <div id="inv-gen-view" style="display:none;">
         <div class="filters">
-          <div><label>スタッフ</label><select id="inv-gen-staff"><option value="">選択</option></select></div>
+          <div class="inv-admin-only"><label>スタッフ</label><select id="inv-gen-staff"><option value="">選択</option></select></div>
+          <div id="inv-gen-staff-label" style="display:none;"><label style="font-size:12px;color:var(--text-sub)">スタッフ</label><p style="font-weight:bold;font-size:14px;margin-top:4px;" id="inv-gen-staff-name"></p></div>
           <div><label>開始日</label><input type="date" id="inv-gen-from"></div>
           <div><label>終了日</label><input type="date" id="inv-gen-to"></div>
           <div><button onclick="invGenerate()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">作成</button></div>
@@ -1510,6 +1511,13 @@ async function invLoadAll(){
   // PW変更ボタン（スタッフモードのみ表示）
   const pwBtn=document.getElementById('inv-changepw-btn');
   if(pwBtn)pwBtn.style.display=(!invIsAdmin&&invStaffName)?'':'none';
+  // スタッフモードの請求書作成: スタッフ名固定表示
+  const genLabel=document.getElementById('inv-gen-staff-label');
+  const genName=document.getElementById('inv-gen-staff-name');
+  if(genLabel&&genName){
+    if(!invIsAdmin&&invStaffName){genLabel.style.display='block';genName.textContent=invStaffName;}
+    else{genLabel.style.display='none';}
+  }
   // スタッフセレクタ更新（人員名簿から取得した名前を使用）
   const names=invStaffNames.length?invStaffNames:invRates.map(r=>r.name);
   // スタッフモード: 自分の名前がリストになくても追加
@@ -1803,7 +1811,7 @@ async function invSaveRate(){
 
 // 請求書生成
 function invGenerate(){
-  const staff=document.getElementById('inv-gen-staff').value;
+  const staff=invIsAdmin?document.getElementById('inv-gen-staff').value:invStaffName;
   const from=document.getElementById('inv-gen-from').value;
   const to=document.getElementById('inv-gen-to').value;
   if(!staff||!from||!to){alert('スタッフと期間を指定してください');return;}
