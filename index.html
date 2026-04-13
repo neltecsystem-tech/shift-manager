@@ -344,6 +344,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('invoices')" id="adm-tab-invoices" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:var(--primary);color:#fff;">📄 請求書管理</button>
         <button onclick="adminTab('staff')" id="adm-tab-staff" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">👥 スタッフ管理</button>
         <button onclick="adminTab('data')" id="adm-tab-data" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📁 データ管理</button>
+        <button onclick="adminTab('check')" id="adm-tab-check" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🔍 突合せチェック</button>
         <button onclick="adminTab('settings')" id="adm-tab-settings" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⚙ システム設定</button>
       </div>
 
@@ -379,6 +380,16 @@ tbody tr:hover { background:var(--primary-light); }
           <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">🗑 キャッシュクリア</h3>
           <button onclick="if(confirm('ブラウザキャッシュをクリアしてリロードしますか？')){localStorage.clear();sessionStorage.clear();location.reload()}" style="background:var(--danger);color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:600;">キャッシュクリア＆リロード</button>
         </div>
+      </div>
+
+      <!-- 突合せチェック -->
+      <div id="adm-check" class="adm-panel" style="display:none;">
+        <div class="filters">
+          <div><label>シフト月</label><select id="adm-chk-month" onchange="adminRunCheck()"></select></div>
+          <div><label>スタッフ</label><select id="adm-chk-staff" onchange="adminRunCheck()"><option value="">すべて</option></select></div>
+        </div>
+        <div id="adm-chk-summary" style="margin-bottom:12px;"></div>
+        <div class="table-wrap" id="adm-chk-result"></div>
       </div>
 
       <!-- システム設定 -->
@@ -2120,6 +2131,7 @@ function adminTab(t){
   document.getElementById('adm-tab-'+t).style.color='#fff';
   if(t==='invoices')adminLoadInvoices();
   if(t==='staff')adminLoadStaff();
+  if(t==='check')adminInitCheck();
   if(t==='data')adminShowDataInfo();
   if(t==='settings')adminShowSysInfo();
 }
@@ -2262,6 +2274,139 @@ function adminUploadData(){
     }
   };
   reader.readAsText(file);
+}
+
+// --- 突合せチェック ---
+function adminInitCheck(){
+  const sel=document.getElementById('adm-chk-month');
+  const cur=sel.value;
+  sel.innerHTML='';
+  Object.keys(DB.shifts).forEach(m=>sel.add(new Option(m,m)));
+  if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;
+  // Staff filter
+  const ssel=document.getElementById('adm-chk-staff');
+  const curS=ssel.value;
+  const names=new Set();
+  Object.values(DB.shifts).forEach(areas=>Object.values(areas).forEach(sh=>sh.entries.forEach(e=>names.add(e.course))));
+  ssel.innerHTML='<option value="">すべて</option>';
+  [...names].sort().forEach(n=>ssel.add(new Option(n,n)));
+  if(curS)ssel.value=curS;
+  adminRunCheck();
+}
+
+async function adminRunCheck(){
+  const monthLabel=document.getElementById('adm-chk-month').value;
+  const staffFilter=document.getElementById('adm-chk-staff').value;
+  if(!monthLabel){document.getElementById('adm-chk-result').innerHTML='<p style="color:var(--text-sub);text-align:center;padding:40px;">シフト月を選択してください</p>';return;}
+
+  document.getElementById('adm-chk-result').innerHTML='<p style="text-align:center;padding:20px;">読み込み中...</p>';
+
+  // 1. Build shift assignments: {date_staff_category -> courseName}
+  const shiftMap={};// key: "date|staff|am/pm" -> course
+  const areas=DB.shifts[monthLabel];
+  if(!areas){document.getElementById('adm-chk-result').innerHTML='<p style="color:var(--text-sub);text-align:center;padding:40px;">該当するシフトデータがありません</p>';return;}
+  const specialPattern=/ミーティング|希望休|引継|研修|有給|欠勤|出張|休刊/;
+  const allDates=new Set();
+  Object.values(areas).forEach(sh=>{
+    sh.entries.forEach(e=>{
+      const staffName=e.course;// In shifts, "course" field is actually staff name
+      e.a.forEach(a=>{
+        if(a.am&&a.am!=='0'&&!specialPattern.test(a.am)){
+          shiftMap[`${a.d}|${staffName}|朝刊`]=a.am;
+          allDates.add(a.d);
+        }
+        if(a.pm&&a.pm!=='0'&&!specialPattern.test(a.pm)){
+          shiftMap[`${a.d}|${staffName}|夕刊`]=a.pm;
+          allDates.add(a.d);
+        }
+      });
+    });
+  });
+
+  // 2. Load work records
+  const res=await invApi({action:'list_work'});
+  const workRecords=res.records||[];
+
+  // Normalize category for matching
+  function normCat(c){return (c||'').includes('朝')?'朝刊':'夕刊';}
+  function normName(n){return (n||'').replace(/[\s\u3000\u00A0]+/g,'').trim();}
+
+  // 3. Build work map: {date|staff|category -> course}
+  const workMap={};
+  const dateRange=[...allDates].sort();
+  workRecords.forEach(w=>{
+    const d=(w.date||'').replace(/\//g,'-');
+    if(!allDates.has(d))return;
+    const key=`${d}|${normName(w.staff)}|${normCat(w.category)}`;
+    workMap[key]=w.course;
+  });
+
+  // 4. Compare
+  const issues=[];// {type, date, staff, category, shiftCourse, workCourse}
+
+  // Check shift → work (シフトにあるが稼働記録がない)
+  Object.entries(shiftMap).forEach(([key,course])=>{
+    const [date,staff,cat]=key.split('|');
+    if(staffFilter&&normName(staff)!==normName(staffFilter))return;
+    const normKey=`${date}|${normName(staff)}|${cat}`;
+    if(!workMap[normKey]){
+      issues.push({type:'missing_work',date,staff,category:cat,shiftCourse:course,workCourse:'-'});
+    }else if(normName(workMap[normKey])!==normName(course)){
+      issues.push({type:'course_mismatch',date,staff,category:cat,shiftCourse:course,workCourse:workMap[normKey]});
+    }
+  });
+
+  // Check work → shift (稼働記録にあるがシフトにない)
+  Object.entries(workMap).forEach(([key,course])=>{
+    const [date,staff,cat]=key.split('|');
+    if(staffFilter&&normName(staff)!==normName(staffFilter))return;
+    // Find matching shift key (need to match normalized names)
+    const matchKey=Object.keys(shiftMap).find(sk=>{
+      const [sd,ss,sc]=sk.split('|');
+      return sd===date&&normName(ss)===normName(staff)&&sc===cat;
+    });
+    if(!matchKey){
+      issues.push({type:'extra_work',date,staff,category:cat,shiftCourse:'-',workCourse:course});
+    }
+  });
+
+  // Sort by date
+  issues.sort((a,b)=>a.date.localeCompare(b.date)||a.staff.localeCompare(b.staff));
+
+  // Remove duplicates
+  const seen=new Set();
+  const unique=issues.filter(i=>{const k=`${i.type}|${i.date}|${i.staff}|${i.category}`;if(seen.has(k))return false;seen.add(k);return true;});
+
+  // Summary
+  const missing=unique.filter(i=>i.type==='missing_work').length;
+  const extra=unique.filter(i=>i.type==='extra_work').length;
+  const mismatch=unique.filter(i=>i.type==='course_mismatch').length;
+  const totalShift=Object.keys(shiftMap).length;
+  const totalWork=Object.keys(workMap).length;
+
+  let summary=`<div style="display:flex;gap:12px;flex-wrap:wrap;">`;
+  summary+=`<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px 16px;flex:1;min-width:120px;text-align:center;"><div style="font-size:12px;color:#166534;">シフト件数</div><div style="font-size:24px;font-weight:bold;color:#166534;">${totalShift}</div></div>`;
+  summary+=`<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:12px 16px;flex:1;min-width:120px;text-align:center;"><div style="font-size:12px;color:#1d4ed8;">稼働記録</div><div style="font-size:24px;font-weight:bold;color:#1d4ed8;">${totalWork}</div></div>`;
+  summary+=`<div style="background:${missing?'#fef2f2':'#f0fdf4'};border:1px solid ${missing?'#fca5a5':'#86efac'};border-radius:8px;padding:12px 16px;flex:1;min-width:120px;text-align:center;"><div style="font-size:12px;color:${missing?'#dc2626':'#166534'};">未入力</div><div style="font-size:24px;font-weight:bold;color:${missing?'#dc2626':'#166534'};">${missing}</div></div>`;
+  summary+=`<div style="background:${extra?'#fefce8':'#f0fdf4'};border:1px solid ${extra?'#fde047':'#86efac'};border-radius:8px;padding:12px 16px;flex:1;min-width:120px;text-align:center;"><div style="font-size:12px;color:${extra?'#a16207':'#166534'};">シフト外</div><div style="font-size:24px;font-weight:bold;color:${extra?'#a16207':'#166534'};">${extra}</div></div>`;
+  summary+=`<div style="background:${mismatch?'#fdf4ff':'#f0fdf4'};border:1px solid ${mismatch?'#d8b4fe':'#86efac'};border-radius:8px;padding:12px 16px;flex:1;min-width:120px;text-align:center;"><div style="font-size:12px;color:${mismatch?'#7c3aed':'#166534'};">コース不一致</div><div style="font-size:24px;font-weight:bold;color:${mismatch?'#7c3aed':'#166534'};">${mismatch}</div></div>`;
+  summary+=`</div>`;
+  document.getElementById('adm-chk-summary').innerHTML=summary;
+
+  if(!unique.length){
+    document.getElementById('adm-chk-result').innerHTML='<p style="text-align:center;color:#22c55e;font-weight:bold;padding:40px;font-size:16px;">✅ すべて一致しています！</p>';
+    return;
+  }
+
+  let h='<table><thead><tr><th>状態</th><th>日付</th><th>スタッフ</th><th>区分</th><th>シフトのコース</th><th>稼働記録のコース</th></tr></thead><tbody>';
+  unique.forEach(i=>{
+    const badge=i.type==='missing_work'?'<span style="background:#fef2f2;color:#dc2626;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">未入力</span>'
+      :i.type==='extra_work'?'<span style="background:#fefce8;color:#a16207;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">シフト外</span>'
+      :'<span style="background:#fdf4ff;color:#7c3aed;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">コース不一致</span>';
+    h+=`<tr><td>${badge}</td><td>${i.date}</td><td><b>${i.staff}</b></td><td>${i.category}</td><td>${i.shiftCourse}</td><td>${i.workCourse}</td></tr>`;
+  });
+  h+='</tbody></table>';
+  document.getElementById('adm-chk-result').innerHTML=h;
 }
 
 // --- システム設定 ---
