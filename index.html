@@ -256,7 +256,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="inv-work-view">
         <div class="filters">
           <div><label>月</label><input type="month" id="inv-month" onchange="invFilterWork()"></div>
-          <div><label>スタッフ</label><select id="inv-staff-filter" onchange="invFilterWork()"><option value="">すべて</option></select></div>
+          <div class="inv-admin-only"><label>スタッフ</label><select id="inv-staff-filter" onchange="invFilterWork()"><option value="">すべて</option></select></div>
         </div>
         <div id="inv-work-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
         <div class="table-wrap" id="inv-work-table"></div>
