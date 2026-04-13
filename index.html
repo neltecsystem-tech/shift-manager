@@ -1564,7 +1564,8 @@ function invFilterWork(){
   if(!filtered.length){document.getElementById('inv-work-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">稼働データがありません</p>';return;}
   let h='<table><thead><tr><th>日付</th><th>スタッフ</th><th>コース</th><th>区分</th><th>時間</th><th>個数</th><th>単価</th><th>金額</th><th></th></tr></thead><tbody>';
   filtered.forEach(w=>{
-    h+=`<tr><td>${w.date}</td><td><b>${w.staff}</b></td><td>${w.course}</td><td>${w.category}</td><td>${w.start_time||''}${w.start_time&&w.end_time?'~':''}${w.end_time||''}</td><td>${w.quantity||''}</td><td>${w.unit_price?'¥'+Number(w.unit_price).toLocaleString():''}</td><td><b>${w.amount?'¥'+Number(w.amount).toLocaleString():''}</b></td><td><button onclick="invEditWork(${w.row_number})" style="background:none;border:none;cursor:pointer;">✏️</button><button onclick="invDeleteWork(${w.row_number})" style="background:none;border:none;cursor:pointer;">🗑</button></td></tr>`;
+    const locked=!invIsAdmin&&w.confirmed;
+    h+=`<tr${locked?' style="background:#f0fdf4;"':''}><td>${w.date}</td><td><b>${w.staff}</b></td><td>${w.course}</td><td>${w.category}</td><td>${w.start_time||''}${w.start_time&&w.end_time?'~':''}${w.end_time||''}</td><td>${w.quantity||''}</td><td>${w.unit_price?'¥'+Number(w.unit_price).toLocaleString():''}</td><td><b>${w.amount?'¥'+Number(w.amount).toLocaleString():''}</b></td><td>${locked?'<span title="確定済み" style="color:#22c55e;font-size:16px;">🔒</span>':'<button onclick="invEditWork('+w.row_number+')" style="background:none;border:none;cursor:pointer;">✏️</button><button onclick="invDeleteWork('+w.row_number+')" style="background:none;border:none;cursor:pointer;">🗑</button>'}</td></tr>`;
   });
   h+='</tbody></table>';
   const total=filtered.reduce((s,w)=>s+Number(w.amount||0),0);
@@ -1725,8 +1726,10 @@ async function invSaveWork(){
   const record={date:date.replace(/-/g,'/'),staff,course:document.getElementById('inve-course').value,category:invCatSel,start_time:document.getElementById('inve-start').value,end_time:document.getElementById('inve-end').value,quantity:document.getElementById('inve-qty').value,unit_price:String(price),amount:String(amount)};
   const rowNum=document.getElementById('inve-row').value;
   try{
-    if(rowNum)await invApi({action:'update_work',record,row_number:parseInt(rowNum)});
-    else await invApi({action:'add_work',record});
+    let res;
+    if(rowNum)res=await invApi({action:'update_work',record,row_number:parseInt(rowNum),is_admin:invIsAdmin});
+    else res=await invApi({action:'add_work',record});
+    if(res.error){alert(res.error);btn.textContent=rowNum?'更新する':'登録する';btn.disabled=false;return;}
     document.getElementById('inv-work-modal').style.display='none';
     await invLoadAll();
   }catch(e){alert('エラー: '+e.message);}
@@ -1735,7 +1738,8 @@ async function invSaveWork(){
 
 async function invDeleteWork(rowNum){
   if(!confirm('この稼働記録を削除しますか？'))return;
-  await invApi({action:'delete_work',row_number:rowNum});
+  const res=await invApi({action:'delete_work',row_number:rowNum,is_admin:invIsAdmin});
+  if(res.error){alert(res.error);return;}
   await invLoadAll();
 }
 
@@ -1856,6 +1860,12 @@ async function invConfirmSave(staff,from,to,total){
     });
     const json=await resp.json();
     if(json.success){
+      // 稼働記録を確定マーク
+      const rowNums=filtered.map(w=>w.row_number).filter(Boolean);
+      if(rowNums.length){
+        await invApi({action:'confirm_records',row_numbers:rowNums}).catch(()=>{});
+        filtered.forEach(w=>{w.confirmed=new Date().toISOString().split('T')[0];});
+      }
       btn.textContent='✅ 保存済み';btn.style.background='#22c55e';
       // 保存済みリンクを表示
       const linkDiv=document.createElement('div');
