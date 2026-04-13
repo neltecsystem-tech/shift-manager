@@ -1378,6 +1378,23 @@ function smEdit(rowNum){
 
 async function smSave(){
   const btn=document.getElementById('sm-submit');
+  // 新規追加時のみ重複チェック
+  if(!smEditRow){
+    const codeIdx=smColMap.code??2;
+    const nameIdx=smColMap.name??3;
+    const codeEl=document.getElementById(`sme-${codeIdx}`);
+    const nameEl=document.getElementById(`sme-${nameIdx}`);
+    const newCode=(codeEl?codeEl.value:'').trim();
+    const newName=(nameEl?nameEl.value:'').trim();
+    if(newCode){
+      const dupCode=smData.find(r=>(r[`col_${codeIdx}`]||'').trim()===newCode);
+      if(dupCode){alert(`店舗コード「${newCode}」は既に存在しています。`);return;}
+    }
+    if(newName){
+      const dupName=smData.find(r=>(r[`col_${nameIdx}`]||'').trim()===newName);
+      if(dupName){alert(`店舗名「${newName}」は既に存在しています。`);return;}
+    }
+  }
   btn.textContent='保存中...';btn.disabled=true;
   const record={};
   const checkHeaders2=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝'];
