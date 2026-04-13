@@ -275,8 +275,11 @@ tbody tr:hover { background:var(--primary-light); }
       </div>
     </div>
 
-    <!-- 稼働入力モーダル -->
-    <div id="inv-work-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:200;justify-content:center;align-items:center;padding:20px;">
+  </div>
+
+  <!-- モーダル群（view外に配置） -->
+  <!-- 稼働入力モーダル -->
+  <div id="inv-work-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:200;justify-content:center;align-items:center;padding:20px;">
       <div style="background:#fff;border-radius:16px;padding:24px;width:100%;max-width:450px;max-height:90vh;overflow-y:auto;position:relative;">
         <button onclick="document.getElementById('inv-work-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;">✕</button>
         <h3 style="color:var(--primary);margin-bottom:16px;">稼働を入力</h3>
@@ -335,7 +338,6 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="invSaveRate()" style="width:100%;background:#6366f1;color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">保存する</button>
       </div>
     </div>
-  </div>
 
   <!-- 管理画面 -->
   <div id="view-admin" class="hidden">
@@ -1963,6 +1965,7 @@ async function invSaveRate(){
   document.getElementById('inv-rate-edit').style.display='none';
   await invLoadAll();
   invShowRates();
+  if(adminAuthed)adminLoadStaff();
 }
 
 // 請求書生成
