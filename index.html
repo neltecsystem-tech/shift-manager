@@ -75,6 +75,7 @@ tbody tr:hover { background:var(--primary-light); }
     <button onclick="showView('defects',this)">不具合管理</button>
     <button onclick="showView('shopmaster',this)">店舗マスタ</button>
     <button onclick="showView('invoice',this)">請求書</button>
+    <button onclick="adminShowLogin()" style="margin-left:auto;background:rgba(255,255,255,.15);color:#fff;">🔧 管理</button>
   </div>
 </div>
 <div class="container">
@@ -328,6 +329,82 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">ログインID</label><input type="text" id="inv-re-loginid" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">パスワード</label><input type="text" id="inv-re-loginpw" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <button onclick="invSaveRate()" style="width:100%;background:#6366f1;color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">保存する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 管理画面 -->
+  <div id="view-admin" class="hidden">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h2 style="margin-bottom:0">🔧 管理画面</h2>
+        <button onclick="adminLogout()" style="background:#94a3b8;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:13px;">ログアウト</button>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;">
+        <button onclick="adminTab('invoices')" id="adm-tab-invoices" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:var(--primary);color:#fff;">📄 請求書管理</button>
+        <button onclick="adminTab('staff')" id="adm-tab-staff" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">👥 スタッフ管理</button>
+        <button onclick="adminTab('data')" id="adm-tab-data" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📁 データ管理</button>
+        <button onclick="adminTab('settings')" id="adm-tab-settings" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⚙ システム設定</button>
+      </div>
+
+      <!-- 請求書管理 -->
+      <div id="adm-invoices" class="adm-panel">
+        <div class="filters">
+          <div><label>月</label><input type="month" id="adm-inv-month" onchange="adminLoadInvoices()"></div>
+          <div><label>スタッフ</label><select id="adm-inv-staff" onchange="adminLoadInvoices()"><option value="">すべて</option></select></div>
+        </div>
+        <div id="adm-inv-list"></div>
+      </div>
+
+      <!-- スタッフ管理 -->
+      <div id="adm-staff" class="adm-panel" style="display:none;">
+        <div id="adm-staff-list"></div>
+        <button onclick="admStaffAdd()" style="background:#6366f1;color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:12px;">＋ スタッフ追加</button>
+      </div>
+
+      <!-- データ管理 -->
+      <div id="adm-data" class="adm-panel" style="display:none;">
+        <div style="margin-bottom:20px;">
+          <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">📊 現在のシフトデータ</h3>
+          <div id="adm-data-info" style="background:#f8fafc;border-radius:8px;padding:16px;"></div>
+        </div>
+        <div style="margin-bottom:20px;">
+          <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">📤 data.js アップロード</h3>
+          <p style="font-size:13px;color:var(--text-sub);margin-bottom:10px;">新しいシフトデータ（data.js）をアップロードして即時反映します。<br>※ GitHubにpush後、GitHub Pagesに反映されるまで本番には反映されません。</p>
+          <input type="file" id="adm-datafile" accept=".js" style="margin-bottom:10px;">
+          <button onclick="adminUploadData()" style="background:var(--primary);color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:600;">アップロード・反映</button>
+          <div id="adm-upload-result" style="margin-top:10px;"></div>
+        </div>
+        <div>
+          <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">🗑 キャッシュクリア</h3>
+          <button onclick="if(confirm('ブラウザキャッシュをクリアしてリロードしますか？')){localStorage.clear();sessionStorage.clear();location.reload()}" style="background:var(--danger);color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:600;">キャッシュクリア＆リロード</button>
+        </div>
+      </div>
+
+      <!-- システム設定 -->
+      <div id="adm-settings" class="adm-panel" style="display:none;">
+        <div style="margin-bottom:24px;">
+          <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">🔑 管理者パスワード変更</h3>
+          <div style="max-width:400px;">
+            <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">現在のパスワード</label><input type="password" id="adm-pw-current" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+            <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">新しいパスワード</label><input type="password" id="adm-pw-new" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+            <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">新しいパスワード（確認）</label><input type="password" id="adm-pw-confirm" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+            <button onclick="adminChangePw()" style="background:var(--primary);color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:600;">パスワード変更</button>
+          </div>
+        </div>
+        <div style="margin-bottom:24px;">
+          <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">📋 システム情報</h3>
+          <div style="background:#f8fafc;border-radius:8px;padding:16px;font-size:13px;" id="adm-sysinfo"></div>
+        </div>
+        <div>
+          <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">📊 Google Sheets</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <a href="https://docs.google.com/spreadsheets/d/1fxzGdAE64wcFLL0_mZI-eFk6U5jxqCh7DtAIzinoymQ" target="_blank" style="background:#22c55e;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px;">📄 請求書シート</a>
+            <a href="https://docs.google.com/spreadsheets/d/1AoE_of_ZhKl1ebncnwl5-_h2RrnVuSmqFDHc01CWoJs" target="_blank" style="background:#22c55e;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px;">🔧 不具合管理シート</a>
+            <a href="https://docs.google.com/spreadsheets/d/1Owv83TGxSl15pqO0MaaF4AaLeslye0frfKAuo62TlGY" target="_blank" style="background:#22c55e;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px;">🏪 店舗マスタシート</a>
+            <a href="https://drive.google.com/drive/folders/1_YBT9Cx9G2EzyG-qsH_8r4kleHKoolvT" target="_blank" style="background:#4285f4;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none;font-weight:600;font-size:13px;">📁 Google Drive（請求書PDF）</a>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -2013,6 +2090,231 @@ async function smCloseSave(){
   }catch(e){alert('エラー: '+e.message);}
   btn.textContent='閉店情報を保存';btn.disabled=false;
 }
+
+// ===== 管理画面 =====
+let adminAuthed=false;
+let adminPw=localStorage.getItem('adminPw')||INV_PW;
+
+function adminShowLogin(){
+  if(adminAuthed){showView('admin');adminTab('invoices');return;}
+  const pw=prompt('管理者パスワードを入力:');
+  if(!pw)return;
+  if(pw===adminPw||pw===INV_PW){
+    adminAuthed=true;
+    showView('admin');
+    document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
+    adminTab('invoices');
+  }else{alert('パスワードが正しくありません');}
+}
+
+function adminLogout(){
+  adminAuthed=false;
+  showView('dashboard',document.querySelector('.nav-links button'));
+}
+
+function adminTab(t){
+  document.querySelectorAll('.adm-panel').forEach(p=>p.style.display='none');
+  document.querySelectorAll('.adm-tab').forEach(b=>{b.style.background='#f1f5f9';b.style.color='var(--text-sub)';});
+  document.getElementById('adm-'+t).style.display='';
+  document.getElementById('adm-tab-'+t).style.background='var(--primary)';
+  document.getElementById('adm-tab-'+t).style.color='#fff';
+  if(t==='invoices')adminLoadInvoices();
+  if(t==='staff')adminLoadStaff();
+  if(t==='data')adminShowDataInfo();
+  if(t==='settings')adminShowSysInfo();
+}
+
+// --- 請求書管理 ---
+async function adminLoadInvoices(){
+  const res=await invApi({action:'list_work'});
+  const all=res.records||[];
+  const confirmed=all.filter(r=>r.confirmed);
+  // Populate staff filter
+  const sel=document.getElementById('adm-inv-staff');
+  const staffNames=[...new Set(confirmed.map(r=>r.staff))].sort();
+  const curVal=sel.value;
+  sel.innerHTML='<option value="">すべて</option>'+staffNames.map(n=>`<option value="${n}">${n}</option>`).join('');
+  sel.value=curVal;
+  // Filter
+  const month=document.getElementById('adm-inv-month').value;
+  const staff=sel.value;
+  let filtered=confirmed;
+  if(month)filtered=filtered.filter(r=>(r.date||'').replace(/\//g,'-').startsWith(month));
+  if(staff)filtered=filtered.filter(r=>r.staff===staff);
+  // Group by staff + confirmed date
+  const groups={};
+  filtered.forEach(r=>{
+    const key=r.staff+'_'+r.confirmed;
+    if(!groups[key])groups[key]={staff:r.staff,confirmed:r.confirmed,records:[],total:0};
+    groups[key].records.push(r);
+    groups[key].total+=Number(r.amount||0);
+  });
+  const gList=Object.values(groups).sort((a,b)=>b.confirmed.localeCompare(a.confirmed));
+  if(!gList.length){document.getElementById('adm-inv-list').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">確定済み請求書がありません</p>';return;}
+  let h='<table><thead><tr><th>スタッフ</th><th>確定日</th><th>件数</th><th>合計金額</th><th>操作</th></tr></thead><tbody>';
+  gList.forEach(g=>{
+    const rowNums=g.records.map(r=>r.row_number);
+    h+=`<tr><td><b>${g.staff}</b></td><td>${g.confirmed}</td><td>${g.records.length}件</td><td><b>¥${g.total.toLocaleString()}</b></td><td>
+      <button onclick="adminUnconfirm([${rowNums}])" style="background:#f59e0b;color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🔓 確定解除</button>
+      <button onclick="adminViewRecords([${rowNums}],'${g.staff}','${g.confirmed}')" style="background:var(--primary);color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;margin-left:4px;">📋 明細</button>
+    </td></tr>`;
+  });
+  h+='</tbody></table>';
+  document.getElementById('adm-inv-list').innerHTML=h;
+}
+
+async function adminUnconfirm(rowNums){
+  if(!confirm(`${rowNums.length}件の確定を解除しますか？\nスタッフが再度編集できるようになります。`))return;
+  // Clear J column for these rows
+  const data=rowNums.map(rn=>({range:`${encodeURIComponent('稼働記録')}!J${rn}`,values:[['']]}));
+  const token=await admGetToken();
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/1fxzGdAE64wcFLL0_mZI-eFk6U5jxqCh7DtAIzinoymQ/values:batchUpdate`,{
+    method:'POST',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},
+    body:JSON.stringify({valueInputOption:'USER_ENTERED',data})
+  });
+  alert('確定を解除しました');
+  adminLoadInvoices();
+}
+
+function adminViewRecords(rowNums,staff,confirmed){
+  const res=invWork.length?invWork:[];
+  const records=res.filter(r=>rowNums.includes(r.row_number));
+  let h=`<div style="position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:300;display:flex;justify-content:center;align-items:center;padding:20px;">
+    <div style="background:#fff;border-radius:16px;padding:24px;width:100%;max-width:700px;max-height:90vh;overflow-y:auto;position:relative;">
+      <button onclick="this.closest('div[style*=fixed]').remove()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;">✕</button>
+      <h3 style="color:var(--primary);margin-bottom:16px;">📋 ${staff} - 確定日: ${confirmed}</h3>
+      <table><thead><tr><th>日付</th><th>コース</th><th>区分</th><th>単価</th><th>金額</th></tr></thead><tbody>`;
+  let total=0;
+  records.forEach(r=>{
+    h+=`<tr><td>${r.date}</td><td>${r.course}</td><td>${r.category}</td><td>${r.unit_price?'¥'+Number(r.unit_price).toLocaleString():''}</td><td><b>${r.amount?'¥'+Number(r.amount).toLocaleString():''}</b></td></tr>`;
+    total+=Number(r.amount||0);
+  });
+  h+=`</tbody></table><p style="text-align:right;font-weight:bold;margin-top:8px;">合計: ¥${total.toLocaleString()}</p></div></div>`;
+  document.body.insertAdjacentHTML('beforeend',h);
+}
+
+// --- スタッフ管理 ---
+async function adminLoadStaff(){
+  const res=await invApi({action:'get_rates'});
+  const rates=res.rates||[];
+  if(!rates.length){document.getElementById('adm-staff-list').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">スタッフが登録されていません</p>';return;}
+  let h='<table><thead><tr><th>スタッフ名</th><th>区分</th><th>所属</th><th>ログインID</th><th>パスワード</th><th>朝刊(平日)</th><th>朝刊(土日)</th><th>夕刊(平日)</th><th>夕刊(週末)</th><th>計算方式</th><th>操作</th></tr></thead><tbody>';
+  rates.forEach((r,i)=>{
+    h+=`<tr>
+      <td><b>${r.name}</b></td>
+      <td><span class="badge" style="background:${r.biz_type==='法人'?'#dbeafe':'#fef3c7'};color:${r.biz_type==='法人'?'#1d4ed8':'#92400e'}">${r.biz_type||'未設定'}</span></td>
+      <td>${r.company||'-'}</td>
+      <td><code>${r.login_id||'-'}</code></td>
+      <td><code>${r.login_pw||'-'}</code></td>
+      <td>¥${Number(r.am_weekday||0).toLocaleString()}</td>
+      <td>¥${Number(r.am_weekend||0).toLocaleString()}</td>
+      <td>¥${Number(r.pm_weekday||0).toLocaleString()}</td>
+      <td>¥${Number(r.pm_weekend||0).toLocaleString()}</td>
+      <td>${r.calc_type}</td>
+      <td><button onclick="invEditRate(${i+2})" style="background:var(--primary);color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">編集</button></td>
+    </tr>`;
+  });
+  h+='</tbody></table>';
+  document.getElementById('adm-staff-list').innerHTML=h;
+}
+
+function admStaffAdd(){invAddRate();}
+
+// --- データ管理 ---
+function adminShowDataInfo(){
+  const shiftKeys=Object.keys(DEFS).filter(k=>DEFS[k].type==='shift'&&DB.raw[k]);
+  let h=`<p><b>スタッフ数:</b> ${DB.staff.length}名</p>`;
+  h+=`<p><b>コース数:</b> ${DB.courses.length}コース</p>`;
+  h+=`<p><b>店舗数:</b> ${DB.tenpo.length}店舗</p>`;
+  h+=`<p style="margin-top:8px;"><b>シフトデータ:</b></p><ul style="margin-left:20px;">`;
+  shiftKeys.forEach(k=>{
+    const d=DEFS[k];
+    const areas=DB.shifts[k]?Object.keys(DB.shifts[k]):[];
+    h+=`<li>${d.label||k} — ${areas.length}エリア</li>`;
+  });
+  h+='</ul>';
+  h+=`<p style="margin-top:8px;"><b>data.js内のキー:</b> ${Object.keys(CSVDATA_B64||{}).join(', ')}</p>`;
+  document.getElementById('adm-data-info').innerHTML=h;
+}
+
+function adminUploadData(){
+  const fileInput=document.getElementById('adm-datafile');
+  const file=fileInput.files[0];
+  if(!file){alert('ファイルを選択してください');return;}
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      // Validate it's a valid data.js
+      const content=e.target.result;
+      if(!content.includes('CSVDATA_B64')){alert('無効なファイルです。CSVDATA_B64が含まれていません。');return;}
+      // Execute to replace current data
+      eval(content);
+      // Re-parse all data
+      DB.staff=[];DB.courses=[];DB.shifts={};DB.shiftsByCourse={};DB.tenpo=[];DB.raw={};
+      load('course_staff_table');load('sheet26');load('tenpo_list');
+      parseStaff();parseCourses();parseTenpo();
+      Object.keys(DEFS).forEach(k=>{const d=DEFS[k];if((d.type==='shift'||d.type==='shift_ev')&&CSVDATA_B64[k]){load(k);d.type==='shift'?parseShift(k):parseShiftEv(k);}});
+      document.getElementById('adm-upload-result').innerHTML=`<p style="color:#22c55e;font-weight:bold;">✅ データを読み込みました！ スタッフ${DB.staff.length}名、コース${DB.courses.length}件、店舗${DB.tenpo.length}件</p>
+        <p style="color:var(--text-sub);font-size:12px;margin-top:4px;">※ このブラウザ内でのみ反映されています。本番反映にはGitHubへのpushが必要です。</p>`;
+      adminShowDataInfo();
+    }catch(err){
+      document.getElementById('adm-upload-result').innerHTML=`<p style="color:var(--danger);">❌ エラー: ${err.message}</p>`;
+    }
+  };
+  reader.readAsText(file);
+}
+
+// --- システム設定 ---
+function adminChangePw(){
+  const cur=document.getElementById('adm-pw-current').value;
+  const nw=document.getElementById('adm-pw-new').value;
+  const cf=document.getElementById('adm-pw-confirm').value;
+  if(!cur||!nw||!cf){alert('すべての項目を入力してください');return;}
+  if(cur!==adminPw&&cur!==INV_PW){alert('現在のパスワードが正しくありません');return;}
+  if(nw!==cf){alert('新しいパスワードが一致しません');return;}
+  if(nw.length<4){alert('パスワードは4文字以上にしてください');return;}
+  adminPw=nw;
+  localStorage.setItem('adminPw',nw);
+  alert('パスワードを変更しました');
+  document.getElementById('adm-pw-current').value='';
+  document.getElementById('adm-pw-new').value='';
+  document.getElementById('adm-pw-confirm').value='';
+}
+
+function adminShowSysInfo(){
+  const h=`
+    <p><b>アプリ:</b> 新聞シフト管理ツール</p>
+    <p><b>ホスティング:</b> GitHub Pages</p>
+    <p><b>API:</b> Supabase Edge Functions</p>
+    <p><b>請求書ストレージ:</b> Google Drive</p>
+    <p><b>スプレッドシートID:</b> <code style="font-size:11px;">1fxzGdAE64wcFLL0_mZI-eFk6U5jxqCh7DtAIzinoymQ</code></p>
+    <p><b>サービスアカウント:</b> <code style="font-size:11px;">workchat@my-project-78970-492704.iam.gserviceaccount.com</code></p>
+    <p><b>ブラウザ:</b> ${navigator.userAgent.split(' ').slice(-2).join(' ')}</p>
+    <p><b>画面:</b> ${screen.width}x${screen.height}</p>
+  `;
+  document.getElementById('adm-sysinfo').innerHTML=h;
+}
+
+// Token helper for admin direct API calls
+async function admGetToken(){
+  const SA={
+    client_email:'workchat@my-project-78970-492704.iam.gserviceaccount.com',
+    private_key:null,
+    token_uri:'https://oauth2.googleapis.com/token'
+  };
+  // Use the Edge Function to perform the action instead
+  // For unconfirm, we call the Edge Function
+  return '';
+}
+
+// Override adminUnconfirm to use Edge Function
+adminUnconfirm=async function(rowNums){
+  if(!confirm(`${rowNums.length}件の確定を解除しますか？\nスタッフが再度編集できるようになります。`))return;
+  const res=await invApi({action:'unconfirm_records',row_numbers:rowNums});
+  if(res.error){alert('エラー: '+res.error);return;}
+  alert('確定を解除しました');
+  adminLoadInvoices();
+};
 
 init();
 </script>
