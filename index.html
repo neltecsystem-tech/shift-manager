@@ -1844,7 +1844,7 @@ function invGenerate(){
 }
 
 async function invConfirmSave(staff,from,to,total){
-  if(!confirm(`${staff}の請求書（¥${total.toLocaleString()}）を確定してGoogle Driveに保存しますか？`))return;
+  if(!confirm(`${staff}の請求書（¥${total.toLocaleString()}）を確定・保存しますか？`))return;
   const btn=document.getElementById('inv-confirm-btn');
   btn.textContent='保存中...';btn.disabled=true;
   // 該当期間のデータを取得
@@ -1856,8 +1856,12 @@ async function invConfirmSave(staff,from,to,total){
     });
     const json=await resp.json();
     if(json.success){
-      alert(`請求書を保存しました！\n\nファイル: ${json.file_name}\n\nGoogle Driveで確認できます。`);
       btn.textContent='✅ 保存済み';btn.style.background='#22c55e';
+      // 保存済みリンクを表示
+      const linkDiv=document.createElement('div');
+      linkDiv.style.cssText='text-align:center;margin-top:12px;';
+      linkDiv.innerHTML=`<a href="${json.url}" target="_blank" style="color:#1a56db;font-weight:bold;font-size:14px;">📄 保存した請求書を開く（印刷・PDF保存可）</a>`;
+      btn.parentNode.appendChild(linkDiv);
     }else{
       alert('エラー: '+(json.error||'保存に失敗しました'));
       btn.textContent='✅ 確定・保存';btn.disabled=false;
