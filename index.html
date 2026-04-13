@@ -1834,10 +1834,38 @@ function invGenerate(){
   h+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="5" style="padding:8px;border:1px solid #dde1e8;text-align:right;">合計</td><td style="padding:8px;border:1px solid #dde1e8;text-align:right;font-size:16px;">¥${total.toLocaleString()}</td></tr>`;
   h+=`</tbody></table>`;
   h+=`</div>`;
-  h+=`<div style="margin-top:12px;text-align:right;"><button onclick="invPrintPDF()" style="background:var(--danger);color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">🖨 PDF印刷</button></div>`;
+  h+=`<div style="margin-top:12px;display:flex;justify-content:flex-end;gap:10px;">`;
+  h+=`<button onclick="invPrintPDF()" style="background:#64748b;color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">🖨 PDF印刷</button>`;
+  h+=`<button onclick="invConfirmSave('${staff}','${from}','${to}',${total})" id="inv-confirm-btn" style="background:var(--danger);color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">✅ 確定・保存</button>`;
+  h+=`</div>`;
 
   document.getElementById('inv-preview').innerHTML=h;
   document.getElementById('inv-preview').style.display='block';
+}
+
+async function invConfirmSave(staff,from,to,total){
+  if(!confirm(`${staff}の請求書（¥${total.toLocaleString()}）を確定してGoogle Driveに保存しますか？`))return;
+  const btn=document.getElementById('inv-confirm-btn');
+  btn.textContent='保存中...';btn.disabled=true;
+  // 該当期間のデータを取得
+  const filtered=invWork.filter(w=>w.staff===staff&&w.date&&w.date.replace(/\//g,'-')>=from&&w.date.replace(/\//g,'-')<=to);
+  try{
+    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/save-invoice-pdf',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({staff,from,to,records:filtered,total})
+    });
+    const json=await resp.json();
+    if(json.success){
+      alert(`請求書を保存しました！\n\nファイル: ${json.file_name}\n\nGoogle Driveで確認できます。`);
+      btn.textContent='✅ 保存済み';btn.style.background='#22c55e';
+    }else{
+      alert('エラー: '+(json.error||'保存に失敗しました'));
+      btn.textContent='✅ 確定・保存';btn.disabled=false;
+    }
+  }catch(e){
+    alert('エラー: '+e.message);
+    btn.textContent='✅ 確定・保存';btn.disabled=false;
+  }
 }
 
 function invPrintPDF(){
