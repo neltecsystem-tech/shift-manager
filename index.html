@@ -2279,11 +2279,20 @@ function adminViewRecords(rowNums,staff,confirmed){
 }
 
 // --- スタッフ管理 ---
+async function adminEnsureData(){
+  // 管理画面で使うデータをロード（請求書未ログインでも動くように）
+  if(!invRates.length||!invStaffNames.length){
+    const [ratesRes,namesRes]=await Promise.all([invApi({action:'get_rates'}),invApi({action:'get_staff_names'})]);
+    invRates=ratesRes.rates||[];
+    invStaffNames=namesRes.names||[];
+  }
+}
+
 async function adminLoadStaff(){
-  const res=await invApi({action:'get_rates'});
-  const rates=res.rates||[];
+  await adminEnsureData();
+  const rates=invRates;
   if(!rates.length){document.getElementById('adm-staff-list').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">スタッフが登録されていません</p>';return;}
-  let h='<table><thead><tr><th>スタッフ名</th><th>区分</th><th>所属</th><th>ログインID</th><th>パスワード</th><th>朝刊(平日)</th><th>朝刊(土日)</th><th>夕刊(平日)</th><th>夕刊(週末)</th><th>計算方式</th><th>操作</th></tr></thead><tbody>';
+  let h='<table><thead><tr><th>スタッフ名</th><th>区分</th><th>所属</th><th>ログインID</th><th>パスワード</th><th>朝刊(平日)</th><th>朝刊(土)</th><th>朝刊(日)</th><th>夕刊(平日)</th><th>夕刊(週末)</th><th>夕刊(日)</th><th>計算方式</th><th>操作</th></tr></thead><tbody>';
   rates.forEach((r,i)=>{
     h+=`<tr>
       <td><b>${r.name}</b></td>
@@ -2293,17 +2302,27 @@ async function adminLoadStaff(){
       <td><code>${r.login_pw||'-'}</code></td>
       <td>¥${Number(r.am_weekday||0).toLocaleString()}</td>
       <td>¥${Number(r.am_weekend||0).toLocaleString()}</td>
+      <td>${r.am_sunday?'¥'+Number(r.am_sunday).toLocaleString():'<span style="color:#94a3b8">-</span>'}</td>
       <td>¥${Number(r.pm_weekday||0).toLocaleString()}</td>
       <td>¥${Number(r.pm_weekend||0).toLocaleString()}</td>
-      <td>${r.calc_type}</td>
-      <td><button onclick="invEditRate(${i+2})" style="background:var(--primary);color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">編集</button></td>
+      <td>${r.pm_sunday?'¥'+Number(r.pm_sunday).toLocaleString():'<span style="color:#94a3b8">-</span>'}</td>
+      <td>${r.calc_type}${r.calc_type_pm&&r.calc_type_pm!==r.calc_type?' / 夕:'+r.calc_type_pm:''}</td>
+      <td><button onclick="admEditRate(${i})" style="background:var(--primary);color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">編集</button></td>
     </tr>`;
   });
   h+='</tbody></table>';
   document.getElementById('adm-staff-list').innerHTML=h;
 }
 
-function admStaffAdd(){invAddRate();}
+async function admStaffAdd(){
+  await adminEnsureData();
+  invAddRate();
+}
+
+function admEditRate(idx){
+  const r=invRates[idx];if(!r)return;
+  invEditRate(idx+2);
+}
 
 // --- シフト取込 ---
 const SHIFT_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/fetch-shift';
