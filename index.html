@@ -374,8 +374,14 @@ tbody tr:hover { background:var(--primary-light); }
           <div id="adm-data-info" style="background:#f8fafc;border-radius:8px;padding:16px;"></div>
         </div>
         <div style="margin-bottom:20px;">
+          <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">📥 Google Sheetsからシフト取込</h3>
+          <p style="font-size:13px;color:var(--text-sub);margin-bottom:10px;">スプレッドシートから直接シフトデータを取り込みます。反映したいシートを選択してください。</p>
+          <div id="adm-shift-sheets" style="margin-bottom:10px;"><button onclick="adminListSheets()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">シート一覧を取得</button></div>
+          <div id="adm-shift-result" style="margin-top:10px;"></div>
+        </div>
+        <div style="margin-bottom:20px;">
           <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">📤 data.js アップロード</h3>
-          <p style="font-size:13px;color:var(--text-sub);margin-bottom:10px;">新しいシフトデータ（data.js）をアップロードして即時反映します。<br>※ GitHubにpush後、GitHub Pagesに反映されるまで本番には反映されません。</p>
+          <p style="font-size:13px;color:var(--text-sub);margin-bottom:10px;">ローカルのdata.jsファイルをアップロードして反映します。</p>
           <input type="file" id="adm-datafile" accept=".js" style="margin-bottom:10px;">
           <button onclick="adminUploadData()" style="background:var(--primary);color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:600;">アップロード・反映</button>
           <div id="adm-upload-result" style="margin-top:10px;"></div>
@@ -445,6 +451,7 @@ function init(){
     load('course_staff_table');load('sheet26');load('tenpo_list');
     parseStaff();parseCourses();parseTenpo();
     Object.keys(DEFS).forEach(k=>{const d=DEFS[k];if((d.type==='shift'||d.type==='shift_ev')&&CSVDATA_B64[k]){load(k);d.type==='shift'?parseShift(k):parseShiftEv(k);}});
+    loadLiveShifts();
     document.getElementById('loading').classList.add('hidden');
     showView('dashboard',document.querySelector('.nav-links button'));
   }catch(e){document.getElementById('loading').innerHTML='<div style="color:red;max-width:600px;margin:0 auto"><p><b>読み込み失敗</b></p><p>'+e.message+'</p></div>';}
@@ -2288,6 +2295,95 @@ async function adminLoadStaff(){
 }
 
 function admStaffAdd(){invAddRate();}
+
+// --- シフト取込 ---
+const SHIFT_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/fetch-shift';
+
+async function adminListSheets(){
+  const el=document.getElementById('adm-shift-sheets');
+  el.innerHTML='<p>読み込み中...</p>';
+  try{
+    const resp=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list_sheets'})});
+    const json=await resp.json();
+    const shifts=json.shift_sheets||[];
+    const others=json.other_sheets||[];
+    if(!shifts.length&&!others.length){el.innerHTML='<p style="color:var(--danger);">シートが見つかりません</p>';return;}
+    let h='<div style="margin-bottom:12px;">';
+    h+='<p style="font-weight:600;margin-bottom:8px;">シフトシート:</p>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">';
+    shifts.forEach(s=>{
+      const loaded=Object.keys(DB.shifts).includes(s);
+      h+=`<label style="display:flex;align-items:center;gap:4px;background:${loaded?'#f0fdf4':'#f8fafc'};border:1px solid ${loaded?'#86efac':'var(--border)'};border-radius:8px;padding:8px 12px;cursor:pointer;font-size:13px;">
+        <input type="checkbox" value="${s}" class="adm-shift-cb" ${loaded?'checked':''}>
+        ${s} ${loaded?'<span style="color:#22c55e;font-size:11px;">✅反映中</span>':''}
+      </label>`;
+    });
+    h+='</div>';
+    if(others.length){
+      h+='<p style="font-weight:600;margin-bottom:8px;">その他（名簿等）:</p>';
+      h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">';
+      others.forEach(s=>{
+        h+=`<label style="display:flex;align-items:center;gap:4px;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:8px 12px;cursor:pointer;font-size:13px;">
+          <input type="checkbox" value="${s}" class="adm-shift-cb"> ${s}
+        </label>`;
+      });
+      h+='</div>';
+    }
+    h+='<button onclick="adminImportSheets()" style="background:var(--primary);color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;font-size:14px;">📥 選択したシートを反映</button>';
+    h+='</div>';
+    el.innerHTML=h;
+  }catch(e){el.innerHTML=`<p style="color:var(--danger);">エラー: ${e.message}</p>`;}
+}
+
+async function adminImportSheets(){
+  const checked=[...document.querySelectorAll('.adm-shift-cb:checked')].map(cb=>cb.value);
+  if(!checked.length){alert('シートを選択してください');return;}
+  const resEl=document.getElementById('adm-shift-result');
+  resEl.innerHTML=`<p>取込中... (0/${checked.length})</p>`;
+  let imported=0,errors=[];
+  for(const sheetName of checked){
+    try{
+      resEl.innerHTML=`<p>取込中... ${sheetName} (${imported}/${checked.length})</p>`;
+      const resp=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
+      const json=await resp.json();
+      if(json.error){errors.push(`${sheetName}: ${json.error}`);continue;}
+      const rows=json.rows||[];
+      if(rows.length<10){errors.push(`${sheetName}: データが少なすぎます (${rows.length}行)`);continue;}
+      // Detect year from sheet name
+      let year=new Date().getFullYear();
+      const ym=sheetName.match(/(20\d{2})/);
+      if(ym)year=parseInt(ym[1]);
+      // Store as raw data and parse with existing parseShift
+      const key='live_'+sheetName.replace(/\s+/g,'_');
+      DEFS[key]={label:sheetName.trim(),type:'shift',year:year};
+      DB.raw[key]=rows;
+      parseShift(key);
+      imported++;
+    }catch(e){errors.push(`${sheetName}: ${e.message}`);}
+  }
+  let msg=`<p style="color:#22c55e;font-weight:bold;">✅ ${imported}件のシートを反映しました</p>`;
+  if(errors.length)msg+=`<p style="color:var(--danger);margin-top:4px;">${errors.join('<br>')}</p>`;
+  // Save to localStorage for persistence
+  const liveKeys=Object.keys(DEFS).filter(k=>k.startsWith('live_'));
+  const saveData={};
+  liveKeys.forEach(k=>{saveData[k]={def:DEFS[k],rows:DB.raw[k]};});
+  try{localStorage.setItem('liveShifts',JSON.stringify(saveData));}catch(_){}
+  resEl.innerHTML=msg;
+  adminShowDataInfo();
+  adminListSheets();
+}
+
+// Load saved live shifts on init
+function loadLiveShifts(){
+  try{
+    const saved=JSON.parse(localStorage.getItem('liveShifts')||'{}');
+    Object.entries(saved).forEach(([key,val])=>{
+      DEFS[key]=val.def;
+      DB.raw[key]=val.rows;
+      parseShift(key);
+    });
+  }catch(_){}
+}
 
 // --- データ管理 ---
 function adminShowDataInfo(){
