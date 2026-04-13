@@ -281,8 +281,8 @@ tbody tr:hover { background:var(--primary-light); }
         <input type="hidden" id="inve-row">
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">日付 *</label><input type="date" id="inve-date" onchange="invUpdateCourseSuggest();invCalcAmount()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">スタッフ名 *</label><select id="inve-staff" onchange="invUpdateCourseSuggest();invCalcAmount()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">選択</option></select></div>
-        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">コース名</label><input type="text" id="inve-course" list="inve-course-dl" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><datalist id="inve-course-dl"></datalist></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分 *</label><div style="display:flex;gap:6px;flex-wrap:wrap;" id="inve-cat-btns"></div></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">コース名</label><input type="text" id="inve-course" list="inve-course-dl" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><datalist id="inve-course-dl"></datalist></div>
         <div style="margin-bottom:10px;display:flex;gap:10px;">
           <div style="flex:1"><label style="font-size:12px;color:var(--text-sub)">開始時間</label><input type="time" id="inve-start" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
           <div style="flex:1"><label style="font-size:12px;color:var(--text-sub)">終了時間</label><input type="time" id="inve-end" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
@@ -1547,14 +1547,16 @@ function invRenderCatBtns(){
   const wrap=document.getElementById('inve-cat-btns');
   wrap.innerHTML=INV_CATS.map(c=>`<button type="button" onclick="invSetCat('${c}')" style="padding:8px 14px;border-radius:8px;border:2px solid ${invCatSel===c?'var(--primary)':'var(--border)'};background:${invCatSel===c?'var(--primary)':'#fff'};color:${invCatSel===c?'#fff':'var(--text-sub)'};cursor:pointer;font-size:13px;font-weight:600;">${c}</button>`).join('');
 }
-function invSetCat(c){invCatSel=c;invRenderCatBtns();invCalcAmount();}
+function invSetCat(c){invCatSel=c;invRenderCatBtns();invUpdateCourseSuggest();invCalcAmount();}
 
 function invUpdateCourseSuggest(){
   const staff=document.getElementById('inve-staff').value;
   const date=document.getElementById('inve-date').value;
   const dl=document.getElementById('inve-course-dl');
   if(!staff||!date||!dl)return;
-  const courses=[];
+  const amCourses=[];
+  const pmCourses=[];
+  const isAm=invCatSel==='朝刊'||invCatSel==='庫内朝刊';
   // シフトデータから該当日・該当スタッフのコースを検索
   Object.values(DB.shifts).forEach(areas=>{
     Object.values(areas).forEach(sh=>{
@@ -1563,30 +1565,34 @@ function invUpdateCourseSuggest(){
       sh.entries.forEach(e=>{
         if(e.course!==staff)return;
         const a=e.a[di];if(!a)return;
-        if(a.am&&a.am!=='0'&&a.am!=='希望休')courses.push(a.am);
-        if(a.pm&&a.pm!=='0'&&a.pm!=='希望休')courses.push(a.pm);
+        if(a.am&&a.am!=='0'&&a.am!=='希望休')amCourses.push(a.am);
+        if(a.pm&&a.pm!=='0'&&a.pm!=='希望休')pmCourses.push(a.pm);
       });
     });
   });
   // フォールバック: 曜日ベースのrosterからも取得
-  if(!courses.length){
+  if(!amCourses.length&&!pmCourses.length){
     const d=new Date(date);
     const dw=['日','月','火','水','木','金','土'];
     const td=dw[d.getDay()];
     DB.staff.forEach(s=>{
       if(s.name!==staff)return;
-      if(s.am[td])courses.push(s.am[td]);
-      if(s.pm[td])courses.push(s.pm[td]);
+      if(s.am[td])amCourses.push(s.am[td]);
+      if(s.pm[td])pmCourses.push(s.pm[td]);
     });
   }
-  // 過去の稼働記録からも候補を追加
-  const pastCourses=[...new Set(invWork.filter(w=>w.staff===staff).map(w=>w.course).filter(Boolean))];
+  // 区分に応じたコースを選択
+  const courses=isAm?amCourses:pmCourses;
+  // 過去の稼働記録からも候補を追加（同じ区分のもの）
+  const pastCourses=[...new Set(invWork.filter(w=>w.staff===staff&&w.category===invCatSel).map(w=>w.course).filter(Boolean))];
   pastCourses.forEach(c=>{if(!courses.includes(c))courses.push(c);});
   const unique=[...new Set(courses)];
   dl.innerHTML=unique.map(c=>`<option value="${c}">`).join('');
   // コースが1つだけなら自動入力
-  if(unique.length===1&&!document.getElementById('inve-course').value){
+  if(unique.length===1){
     document.getElementById('inve-course').value=unique[0];
+  }else if(unique.length===0){
+    document.getElementById('inve-course').value='';
   }
 }
 
