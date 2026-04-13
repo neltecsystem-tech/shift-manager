@@ -1524,6 +1524,7 @@ let invStaffName='';
 let invRates=[];
 let invWork=[];
 let invStaffNames=[];
+let invSpecial=[];// 特別単価データ
 let invTab='work';
 let invCatSel='朝刊';
 const INV_CATS=['朝刊','夕刊/競馬','庫内朝刊','庫内夕刊'];
@@ -1582,9 +1583,10 @@ function invAdminLogin(){
 }
 
 async function invLoadAll(){
-  const [ratesRes,workRes,namesRes]=await Promise.all([invApi({action:'get_rates'}),invApi({action:'list_work'}),invApi({action:'get_staff_names'})]);
+  const [ratesRes,workRes,namesRes,specialRes]=await Promise.all([invApi({action:'get_rates'}),invApi({action:'list_work'}),invApi({action:'get_staff_names'}),invApi({action:'get_special_rates'})]);
   invRates=ratesRes.rates||[];
   invWork=workRes.records||[];
+  invSpecial=specialRes.records||[];
   invStaffNames=namesRes.names||[];
   // スタッフモード: 自分のデータのみ
   if(!invIsAdmin&&invStaffName){
@@ -1722,6 +1724,16 @@ function invUpdateCourseSuggest(){
   }
 }
 
+// 特別単価を検索 (日付+氏名で一致)
+function invFindSpecial(date,staff){
+  const normDate=(date||'').replace(/-/g,'/');
+  const normName=invNormName(staff);
+  return invSpecial.filter(s=>{
+    const sDate=(s.date||'').replace(/-/g,'/');
+    return sDate===normDate&&invNormName(s.name)===normName;
+  });
+}
+
 function invCalcAmount(){
   const staff=document.getElementById('inve-staff').value;
   const date=document.getElementById('inve-date').value;
@@ -1743,6 +1755,17 @@ function invCalcAmount(){
   // 引継ぎコースは半額
   const course=document.getElementById('inve-course').value||'';
   const isHikitsugi=course.includes('引継');
+  // 特別単価チェック
+  const specials=invFindSpecial(date,staff);
+  const specCat=invCatSel.includes('朝')?'朝刊':'夕刊';
+  const specMatch=specials.filter(s=>(s.category||'').includes(specCat));
+  let specialLabel='';
+  let specialAdd=0,specialReplace=0;
+  specMatch.forEach(s=>{
+    const amt=Number((s.amount||'').replace(/,/g,''))||0;
+    if(s.type==='日当'){specialReplace+=amt;specialLabel+=`特別単価¥${amt.toLocaleString()}(${s.reason}) `;}
+    else if(s.type==='日当+'){specialAdd+=amt;specialLabel+=`+¥${amt.toLocaleString()}(${s.reason}) `;}
+  });
   // 個数制
   const isQty=rate.calc_type==='個数';
   document.getElementById('inve-qty-wrap').style.display=isQty?'block':'none';
@@ -1751,13 +1774,18 @@ function invCalcAmount(){
     const qty=Number(document.getElementById('inve-qty').value)||0;
     let amount=unitPrice*qty;
     if(isHikitsugi)amount=Math.floor(amount/2);
+    if(specialReplace)amount=specialReplace;
+    amount+=specialAdd;
     price=unitPrice;
-    document.getElementById('inve-price').value=unitPrice?'¥'+unitPrice.toLocaleString()+(isHikitsugi?' (引継ぎ半額)':''):'';
-    document.getElementById('inve-amount').value=qty?'¥'+amount.toLocaleString():'';
+    document.getElementById('inve-price').value=unitPrice?'¥'+unitPrice.toLocaleString()+(isHikitsugi?' (引継ぎ半額)':'')+(specialLabel?' '+specialLabel:''):'';
+    document.getElementById('inve-amount').value=qty||specialReplace||specialAdd?'¥'+amount.toLocaleString():'';
   }else{
     let amount=price;
     if(isHikitsugi)amount=Math.floor(price/2);
-    document.getElementById('inve-price').value=price?'¥'+price.toLocaleString()+(isHikitsugi?' (引継ぎ半額)':''):'';
+    if(specialReplace)amount=specialReplace;
+    amount+=specialAdd;
+    const label=(isHikitsugi?' (引継ぎ半額)':'')+(specialLabel?' '+specialLabel:'');
+    document.getElementById('inve-price').value=price?'¥'+price.toLocaleString()+label:'';
     document.getElementById('inve-amount').value=amount?'¥'+amount.toLocaleString():'';
   }
 }
@@ -1819,6 +1847,13 @@ async function invSaveWork(){
     }else{amount=price;}
     // 引継ぎコースは半額
     if((document.getElementById('inve-course').value||'').includes('引継'))amount=Math.floor(amount/2);
+    // 特別単価
+    const specCat=invCatSel.includes('朝')?'朝刊':'夕刊';
+    const specials=invFindSpecial(date,staff).filter(s=>(s.category||'').includes(specCat));
+    let spAdd=0,spReplace=0;
+    specials.forEach(s=>{const a=Number((s.amount||'').replace(/,/g,''))||0;if(s.type==='日当')spReplace+=a;else if(s.type==='日当+')spAdd+=a;});
+    if(spReplace)amount=spReplace;
+    amount+=spAdd;
   }
   const record={date:date.replace(/-/g,'/'),staff,course:document.getElementById('inve-course').value,category:invCatSel,start_time:document.getElementById('inve-start').value,end_time:document.getElementById('inve-end').value,quantity:document.getElementById('inve-qty').value,unit_price:String(price),amount:String(amount)};
   const rowNum=document.getElementById('inve-row').value;
