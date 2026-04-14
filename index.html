@@ -75,6 +75,7 @@ tbody tr:hover { background:var(--primary-light); }
     <button onclick="showView('defects',this)">不具合管理</button>
     <button onclick="showView('shopmaster',this)">店舗マスタ</button>
     <button onclick="showView('invoice',this)">請求書</button>
+    <button onclick="showView('measure',this)">測定</button>
     <button onclick="adminShowLogin()" style="margin-left:auto;background:rgba(255,255,255,.15);color:#fff;">🔧 管理</button>
   </div>
 </div>
@@ -367,6 +368,23 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="invSaveRate()" style="width:100%;background:#6366f1;color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">保存する</button>
       </div>
     </div>
+
+  <!-- 測定画面 -->
+  <div id="view-measure" class="hidden">
+    <div class="card">
+      <h2>⏱ 到着時刻測定</h2>
+      <div class="filters">
+        <div><label>営業所</label><select id="msr-area" onchange="msrFilter()"><option value="">選択してください</option></select></div>
+        <div><label>区分</label><select id="msr-type" onchange="msrFilter()"><option value="am">朝刊コース</option><option value="pm">夕刊コース</option><option value="keiba">競馬コース</option></select></div>
+        <div><label>コース</label><select id="msr-course" onchange="msrRender()"><option value="">選択してください</option></select></div>
+        <div style="margin-left:auto;display:flex;gap:6px;align-items:flex-end;">
+          <button onclick="msrResetAll()" style="background:var(--danger);color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">全リセット</button>
+          <button onclick="msrExport()" style="background:#22c55e;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">📋 コピー</button>
+        </div>
+      </div>
+      <div id="msr-table" style="margin-top:8px;"></div>
+    </div>
+  </div>
 
   <!-- 管理画面 -->
   <div id="view-admin" class="hidden">
@@ -2783,6 +2801,151 @@ adminUnconfirm=async function(rowNums){
   alert('確定を解除しました');
   adminLoadInvoices();
 };
+
+// ===== 測定画面 =====
+let msrData=[];
+let msrHeaders=[];
+let msrColMap={};
+let msrTimes={};// key: "course|shopCode" → arrival time
+let msrLoaded=false;
+
+function showView_measure(){
+  if(!msrLoaded)msrLoadData();
+}
+
+async function msrLoadData(){
+  msrLoaded=true;
+  document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">店舗データ読み込み中...</p>';
+  try{
+    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})});
+    const json=await resp.json();
+    if(json.error)throw new Error(json.error);
+    msrHeaders=json.headers||[];
+    msrData=json.records||[];
+    msrColMap={};
+    msrHeaders.forEach((h,i)=>{
+      if(h.includes('営業所'))msrColMap.area=i;
+      if(h.includes('店舗コード'))msrColMap.code=i;
+      if(h.includes('店舗名'))msrColMap.name=i;
+      if(h.includes('朝刊コース'))msrColMap.amCourse=i;
+      if(h.includes('夕刊コース'))msrColMap.pmCourse=i;
+      if(h.includes('競馬コース'))msrColMap.keibaCourse=i;
+    });
+    // 営業所セレクタ
+    const areas=[...new Set(msrData.map(r=>r[`col_${msrColMap.area??1}`]).filter(Boolean))];
+    document.getElementById('msr-area').innerHTML='<option value="">選択してください</option>'+areas.map(a=>`<option>${a}</option>`).join('');
+    // 保存済みデータをlocalStorageから復元
+    try{msrTimes=JSON.parse(localStorage.getItem('msrTimes')||'{}');}catch(_){msrTimes={};}
+    document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">営業所とコースを選択してください</p>';
+  }catch(e){
+    document.getElementById('msr-table').innerHTML=`<p style="color:var(--danger);padding:20px;">${e.message}</p>`;
+  }
+}
+
+function msrFilter(){
+  const area=document.getElementById('msr-area').value;
+  const type=document.getElementById('msr-type').value;
+  const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
+  // コース一覧を取得
+  let filtered=msrData;
+  if(area)filtered=filtered.filter(r=>r[`col_${msrColMap.area??1}`]===area);
+  const courses=[...new Set(filtered.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort();
+  const sel=document.getElementById('msr-course');
+  sel.innerHTML='<option value="">選択してください</option>'+courses.map(c=>`<option>${c}</option>`).join('');
+  document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">コースを選択してください</p>';
+}
+
+function msrRender(){
+  const area=document.getElementById('msr-area').value;
+  const type=document.getElementById('msr-type').value;
+  const course=document.getElementById('msr-course').value;
+  if(!course){document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">コースを選択してください</p>';return;}
+  const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
+  const nameCol=msrColMap.name??3;
+  const codeCol=msrColMap.code??2;
+  let shops=msrData.filter(r=>{
+    if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
+    return r[`col_${courseCol}`]===course;
+  });
+  if(!shops.length){document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">該当する店舗がありません</p>';return;}
+  const now=new Date();
+  const today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  let h=`<div style="margin-bottom:8px;font-size:13px;color:var(--text-sub);">${today} ／ ${course} ／ ${shops.length}店舗</div>`;
+  h+='<table><thead><tr><th style="width:40px">#</th><th>店舗コード</th><th>店舗名</th><th style="width:100px">到着時刻</th><th style="width:80px"></th></tr></thead><tbody>';
+  shops.forEach((s,i)=>{
+    const code=s[`col_${codeCol}`]||'';
+    const name=s[`col_${nameCol}`]||'';
+    const key=`${course}|${code}`;
+    const time=msrTimes[key]||'';
+    const done=!!time;
+    h+=`<tr style="${done?'background:#f0fdf4;':''}">
+      <td style="text-align:center;color:var(--text-sub);">${i+1}</td>
+      <td>${code}</td>
+      <td><b>${name}</b></td>
+      <td style="text-align:center;font-weight:bold;color:${done?'#22c55e':'#94a3b8'};">${time||'--:--'}</td>
+      <td style="text-align:center;">${done
+        ?`<button onclick="msrClear('${key}')" style="background:#f1f5f9;color:var(--text-sub);border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">取消</button>`
+        :`<button onclick="msrArrive('${key}')" style="background:#06C755;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">到着</button>`
+      }</td>
+    </tr>`;
+  });
+  h+='</tbody></table>';
+  // 進捗
+  const doneCount=shops.filter(s=>msrTimes[`${course}|${s[`col_${codeCol}`]}`]).length;
+  h+=`<p style="text-align:right;font-size:13px;color:var(--text-sub);margin-top:8px;">完了: ${doneCount}/${shops.length}</p>`;
+  document.getElementById('msr-table').innerHTML=h;
+}
+
+function msrArrive(key){
+  const now=new Date();
+  msrTimes[key]=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  localStorage.setItem('msrTimes',JSON.stringify(msrTimes));
+  msrRender();
+}
+
+function msrClear(key){
+  delete msrTimes[key];
+  localStorage.setItem('msrTimes',JSON.stringify(msrTimes));
+  msrRender();
+}
+
+function msrResetAll(){
+  if(!confirm('全ての到着記録をリセットしますか？'))return;
+  msrTimes={};
+  localStorage.setItem('msrTimes',JSON.stringify(msrTimes));
+  msrRender();
+}
+
+function msrExport(){
+  const course=document.getElementById('msr-course').value;
+  if(!course){alert('コースを選択してください');return;}
+  const area=document.getElementById('msr-area').value;
+  const type=document.getElementById('msr-type').value;
+  const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
+  const nameCol=msrColMap.name??3;
+  const codeCol=msrColMap.code??2;
+  const shops=msrData.filter(r=>{
+    if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
+    return r[`col_${courseCol}`]===course;
+  });
+  const now=new Date();
+  const today=`${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`;
+  let text=`${today} ${course} 到着時刻\n`;
+  text+='─'.repeat(30)+'\n';
+  shops.forEach((s,i)=>{
+    const code=s[`col_${codeCol}`]||'';
+    const name=s[`col_${nameCol}`]||'';
+    const time=msrTimes[`${course}|${code}`]||'未到着';
+    text+=`${i+1}. ${name}（${code}）→ ${time}\n`;
+  });
+  navigator.clipboard.writeText(text).then(()=>alert('クリップボードにコピーしました')).catch(()=>{
+    prompt('以下をコピーしてください:',text);
+  });
+}
+
+// showView拡張: 測定画面初期化
+const origShowView=showView;
+showView=function(v,btn){origShowView(v,btn);if(v==='measure')showView_measure();};
 
 init();
 </script>
