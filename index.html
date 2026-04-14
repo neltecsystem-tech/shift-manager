@@ -2835,8 +2835,11 @@ async function msrLoadData(){
       if(h.includes('店舗コード'))msrColMap.code=i;
       if(h.includes('店舗名'))msrColMap.name=i;
       if(h.includes('朝刊コース'))msrColMap.amCourse=i;
+      if(h.includes('朝刊順番'))msrColMap.amOrder=i;
       if(h.includes('夕刊コース'))msrColMap.pmCourse=i;
+      if(h.includes('夕刊順番'))msrColMap.pmOrder=i;
       if(h.includes('競馬コース'))msrColMap.keibaCourse=i;
+      if(h.includes('競馬順番'))msrColMap.pmOrder2=i;
       if(h==='緯度')msrColMap.lat=i;
       if(h==='経度')msrColMap.lng=i;
     });
@@ -2870,12 +2873,21 @@ function msrRender(){
   const course=document.getElementById('msr-course').value;
   if(!course){document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">コースを選択してください</p>';return;}
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
+  const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
   const nameCol=msrColMap.name??3;
   const codeCol=msrColMap.code??2;
   let shops=msrData.filter(r=>{
     if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
     return r[`col_${courseCol}`]===course;
   });
+  // 順番列でソート（数値順、未入力は末尾）
+  if(orderCol!==undefined){
+    shops.sort((a,b)=>{
+      const oa=parseInt(a[`col_${orderCol}`])||99999;
+      const ob=parseInt(b[`col_${orderCol}`])||99999;
+      return oa-ob;
+    });
+  }
   if(!shops.length){document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">該当する店舗がありません</p>';return;}
   const now=new Date();
   const today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
@@ -3011,12 +3023,14 @@ function msrExport(){
   const area=document.getElementById('msr-area').value;
   const type=document.getElementById('msr-type').value;
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
+  const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
   const nameCol=msrColMap.name??3;
   const codeCol=msrColMap.code??2;
   const shops=msrData.filter(r=>{
     if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
     return r[`col_${courseCol}`]===course;
   });
+  if(orderCol!==undefined)shops.sort((a,b)=>(parseInt(a[`col_${orderCol}`])||99999)-(parseInt(b[`col_${orderCol}`])||99999));
   const now=new Date();
   const today=`${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`;
   let text=`${today} ${course} 到着時刻\n`;
