@@ -394,6 +394,7 @@ tbody tr:hover { background:var(--primary-light); }
 
       <!-- スタッフ管理 -->
       <div id="adm-staff" class="adm-panel" style="display:none;">
+        <div style="margin-bottom:10px;"><input type="text" id="adm-staff-search" oninput="adminFilterStaff()" placeholder="氏名で検索..." style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;width:100%;max-width:300px;"></div>
         <div id="adm-staff-list"></div>
         <button onclick="admStaffAdd()" style="background:#6366f1;color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:12px;">＋ スタッフ追加</button>
       </div>
@@ -2411,12 +2412,21 @@ async function adminEnsureData(){
   }
 }
 
+function adminFilterStaff(){adminRenderStaff();}
+
 async function adminLoadStaff(){
   await adminEnsureData();
-  const rates=invRates;
-  if(!rates.length){document.getElementById('adm-staff-list').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">スタッフが登録されていません</p>';return;}
+  adminRenderStaff();
+}
+
+function adminRenderStaff(){
+  const q=(document.getElementById('adm-staff-search')?.value||'').trim().toLowerCase();
+  const rates=q?invRates.filter(r=>r.name.toLowerCase().includes(q)):invRates;
+  if(!invRates.length){document.getElementById('adm-staff-list').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">スタッフが登録されていません</p>';return;}
+  if(!rates.length){document.getElementById('adm-staff-list').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">該当なし</p>';return;}
   let h='<table><thead><tr><th>スタッフ名</th><th>区分</th><th>所属</th><th>ログインID</th><th>PW</th><th>朝刊(平)</th><th>朝(土)</th><th>朝(日)</th><th>夕刊(平)</th><th>夕(末)</th><th>夕(日)</th><th>計算</th><th>権限</th><th></th></tr></thead><tbody>';
-  rates.forEach((r,i)=>{
+  rates.forEach((r)=>{
+    const origIdx=invRates.indexOf(r);
     const bizColors={'個人':['#dbeafe','#1d4ed8'],'法人':['#dcfce7','#166534'],'社員':['#fdf4ff','#7c3aed']};
     const bc=bizColors[r.biz_type]||['#f1f5f9','#94a3b8'];
     const ps=(r.permissions||'').split(',').filter(Boolean);
@@ -2439,7 +2449,7 @@ async function adminLoadStaff(){
       <td>${r.pm_sunday?'¥'+Number(r.pm_sunday).toLocaleString():'<span style="color:#94a3b8">-</span>'}</td>
       <td>${r.calc_type}${r.calc_type_pm&&r.calc_type_pm!==r.calc_type?' / 夕:'+r.calc_type_pm:''}</td>
       <td style="font-size:11px;">${permDisp}</td>
-      <td><button onclick="admEditRate(${i})" style="background:var(--primary);color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">編集</button></td>
+      <td><button onclick="admEditRate(${origIdx})" style="background:var(--primary);color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">編集</button></td>
     </tr>`;
   });
   h+='</tbody></table>';
