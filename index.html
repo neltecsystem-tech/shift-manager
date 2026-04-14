@@ -67,14 +67,14 @@ tbody tr:hover { background:var(--primary-light); }
 <div class="nav">
   <h1>新聞シフト管理</h1>
   <div class="nav-links">
-    <button class="active" onclick="showView('dashboard',this)" data-page="dashboard">ダッシュボード</button>
-    <button onclick="showView('shift',this)" data-page="shift">月別シフト</button>
-    <button onclick="showView('tenpo',this)" data-page="tenpo">店舗検索</button>
+    <button class="active" onclick="showView('dashboard',this)">ダッシュボード</button>
+    <button onclick="showView('shift',this)">月別シフト</button>
+    <button onclick="showView('tenpo',this)">店舗検索</button>
     <button onclick="showView('search',this)" style="display:none">検索</button>
-    <button onclick="showView('staff',this)" data-page="staff">スタッフ一覧</button>
-    <button onclick="showView('defects',this)" data-page="defects">不具合管理</button>
-    <button onclick="showView('shopmaster',this)" data-page="shopmaster">店舗マスタ</button>
-    <button onclick="showView('invoice',this)" data-page="invoice">請求書</button>
+    <button onclick="showView('staff',this)">スタッフ一覧</button>
+    <button onclick="showView('defects',this)">不具合管理</button>
+    <button onclick="showView('shopmaster',this)">店舗マスタ</button>
+    <button onclick="showView('invoice',this)">請求書</button>
     <button onclick="adminShowLogin()" style="margin-left:auto;background:rgba(255,255,255,.15);color:#fff;">🔧 管理</button>
   </div>
 </div>
@@ -358,17 +358,10 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">ログイン情報</label></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">ログインID</label><input type="text" id="inv-re-loginid" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">パスワード</label><input type="text" id="inv-re-loginpw" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
-        <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">表示権限</label></div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;" id="inv-re-perms">
-          <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" value="dashboard" class="inv-perm-cb"> ダッシュボード</label>
-          <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" value="shift" class="inv-perm-cb"> 月別シフト</label>
-          <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" value="tenpo" class="inv-perm-cb"> 店舗検索</label>
-          <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" value="staff" class="inv-perm-cb"> スタッフ一覧</label>
-          <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" value="defects" class="inv-perm-cb"> 不具合管理</label>
-          <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" value="shopmaster" class="inv-perm-cb"> 店舗マスタ</label>
-          <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" value="invoice" class="inv-perm-cb"> 請求書</label>
+        <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">管理権限</label></div>
+        <div style="margin-bottom:10px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-admin-perm"> 管理画面へのアクセスを許可</label>
         </div>
-        <button onclick="invPermSelectAll()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 12px;font-size:12px;color:var(--text-sub);cursor:pointer;margin-bottom:10px;">全選択/解除</button>
         <button onclick="invSaveRate()" style="width:100%;background:#6366f1;color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">保存する</button>
       </div>
     </div>
@@ -1617,13 +1610,6 @@ async function invDoLogin(){
     // ログイン応答に含まれるデータを先にセット
     if(res.rates)invRates=res.rates;
     if(res.work)invWork=res.work.filter(w=>w.staff===res.staff_name);
-    // 権限によるナビ制御
-    const perms=(res.permissions||'').split(',').filter(Boolean);
-    if(perms.length>0){
-      document.querySelectorAll('.nav-links button[data-page]').forEach(btn=>{
-        btn.style.display=perms.includes(btn.getAttribute('data-page'))?'':'none';
-      });
-    }
     document.getElementById('inv-login-modal').remove();
     invApplyUI();
     invFilterWork();
@@ -1982,12 +1968,6 @@ function invRateTab(t){
   document.getElementById('inv-re-tab-kawagoe').style.color=t==='kawagoe'?'#fff':'var(--text-sub)';
 }
 
-function invPermSelectAll(){
-  const cbs=[...document.querySelectorAll('.inv-perm-cb')];
-  const allChecked=cbs.every(cb=>cb.checked);
-  cbs.forEach(cb=>{cb.checked=!allChecked;});
-}
-
 function invUpdateNameSelect(selectedName){
   const sel=document.getElementById('inv-re-name');
   sel.innerHTML='<option value="">選択</option>'+invStaffNames.map(n=>`<option${n===selectedName?' selected':''}>${n}</option>`).join('');
@@ -2005,7 +1985,7 @@ function invAddRate(){
   document.getElementById('inv-re-unit-wrap').style.display='none';
   document.getElementById('inv-re-calc-pm').value='固定';
   document.getElementById('inv-re-unit-pm-wrap').style.display='none';
-  document.querySelectorAll('.inv-perm-cb').forEach(cb=>{cb.checked=true;});// 新規は全権限ON
+  document.getElementById('inv-re-admin-perm').checked=false;
   ['inv-re-kw-mon','inv-re-kw-tue','inv-re-kw-wed','inv-re-kw-thu','inv-re-kw-fri','inv-re-kw-sat','inv-re-kw-sun'].forEach(id=>document.getElementById(id).value='');
   invRateTab('normal');
   document.getElementById('inv-rate-edit').style.display='flex';
@@ -2040,11 +2020,8 @@ function invEditRate(rowNum){
   const kwDays=kw.split(',');
   ['mon','tue','wed','thu','fri','sat','sun'].forEach((d,i)=>{document.getElementById('inv-re-kw-'+d).value=kwDays[i]||'';});
   invRateTab(kw?'kawagoe':'normal');
-  // 権限チェックボックス
-  const perms=(r.permissions||'').split(',').map(s=>s.trim()).filter(Boolean);
-  document.querySelectorAll('.inv-perm-cb').forEach(cb=>{
-    cb.checked=perms.length===0||perms.includes(cb.value);// 未設定=全権限
-  });
+  // 管理権限
+  document.getElementById('inv-re-admin-perm').checked=(r.permissions||'').includes('admin');
   document.getElementById('inv-rate-edit').style.display='flex';
 }
 
@@ -2058,7 +2035,7 @@ async function invSaveRate(){
     return r.name===name;
   });
   if(existing){alert(`「${name}」は既に登録されています。同姓同名の登録はできません。`);return;}
-  const perms=[...document.querySelectorAll('.inv-perm-cb:checked')].map(cb=>cb.value).join(',');
+  const perms=document.getElementById('inv-re-admin-perm').checked?'admin':'';
   const kwAmDaily=['mon','tue','wed','thu','fri','sat','sun'].map(d=>document.getElementById('inv-re-kw-'+d).value).join(',');
   const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,am_sunday:document.getElementById('inv-re-am-sun').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,pm_sunday:document.getElementById('inv-re-pm-sun').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value,calc_type_pm:document.getElementById('inv-re-calc-pm').value,unit_price_pm:document.getElementById('inv-re-unit-pm').value,permissions:perms,kw_am_daily:kwAmDaily.replace(/^,+$/,'')};
   await invApi({action:'save_rate',record,row_number:rowNum?parseInt(rowNum):undefined});
@@ -2390,9 +2367,8 @@ async function adminLoadStaff(){
   rates.forEach((r,i)=>{
     const bizColors={'個人':['#dbeafe','#1d4ed8'],'法人':['#dcfce7','#166534'],'社員':['#fdf4ff','#7c3aed']};
     const bc=bizColors[r.biz_type]||['#f1f5f9','#94a3b8'];
-    const permList=(r.permissions||'').split(',').filter(Boolean);
-    const permLabels={'dashboard':'ダッシュ','shift':'シフト','tenpo':'店舗検索','staff':'スタッフ','defects':'不具合','shopmaster':'店舗マスタ','invoice':'請求書'};
-    const permDisp=permList.length===0||permList.length===7?'<span style="color:#22c55e;font-size:11px;">全権限</span>':permList.map(p=>permLabels[p]||p).join(',');
+    const hasAdmin=(r.permissions||'').includes('admin');
+    const permDisp=hasAdmin?'<span style="color:#7c3aed;font-size:11px;font-weight:600;">管理者</span>':'<span style="color:#94a3b8;font-size:11px;">-</span>';
     h+=`<tr>
       <td><b>${r.name}</b></td>
       <td><span class="badge" style="background:${bc[0]};color:${bc[1]}">${r.biz_type||'未設定'}</span></td>
