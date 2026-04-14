@@ -372,7 +372,10 @@ tbody tr:hover { background:var(--primary-light); }
   <!-- 測定画面 -->
   <div id="view-measure" class="hidden">
     <div class="card">
-      <h2>⏱ 到着時刻測定</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <h2 style="margin-bottom:0;">⏱ 到着時刻測定 <span id="msr-staff-label" style="font-size:13px;color:var(--text-sub);font-weight:normal;"></span></h2>
+        <button onclick="msrLogout()" style="background:#94a3b8;color:#fff;border:none;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:12px;">ログアウト</button>
+      </div>
       <div class="filters">
         <div><label>営業所</label><select id="msr-area" onchange="msrFilter()"><option value="">選択してください</option></select></div>
         <div><label>区分</label><select id="msr-type" onchange="msrFilter()"><option value="am">朝刊コース</option><option value="pm">夕刊コース</option><option value="keiba">競馬コース</option></select></div>
@@ -2815,14 +2818,62 @@ let msrTimes={};// key: "course|shopCode" → arrival time
 let msrLoaded=false;
 let msrGpsWatchId=null;
 let msrGpsPos=null;// {lat,lng,accuracy}
+let msrStaffName='';
+let msrAuthed=false;
 const MSR_ARRIVE_DIST=50;// 到着判定距離(m)
 
 function showView_measure(){
+  if(!msrAuthed){msrShowLogin();return;}
   if(!msrLoaded)msrLoadData();
+}
+
+function msrShowLogin(){
+  document.getElementById('msr-table').innerHTML='';
+  const modal=document.createElement('div');
+  modal.id='msr-login-modal';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:300;display:flex;justify-content:center;align-items:center;padding:20px;';
+  modal.innerHTML=`<div style="background:#fff;border-radius:16px;padding:32px;width:100%;max-width:380px;text-align:center;">
+    <h3 style="color:var(--primary);margin-bottom:20px;">⏱ 測定ログイン</h3>
+    <div style="margin-bottom:12px;text-align:left;"><label style="font-size:12px;color:var(--text-sub)">スタッフ名を選択</label><select id="msr-login-name" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">選択してください</option></select></div>
+    <div id="msr-login-err" style="color:var(--danger);font-size:13px;margin-bottom:12px;display:none;"></div>
+    <button onclick="msrDoLogin()" style="width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;margin-bottom:8px;">ログイン</button>
+    <button onclick="document.getElementById('msr-login-modal').remove();showView('dashboard',document.querySelector('.nav-links button'))" style="background:none;border:none;color:var(--text-sub);cursor:pointer;font-size:13px;padding:8px;">キャンセル</button>
+  </div>`;
+  document.body.appendChild(modal);
+  // スタッフ名一覧をロード
+  msrLoadStaffNames();
+}
+
+async function msrLoadStaffNames(){
+  const sel=document.getElementById('msr-login-name');
+  if(!sel)return;
+  try{
+    // 人員名簿から取得
+    const res=await invApi({action:'get_staff_names'});
+    const names=res.names||[];
+    sel.innerHTML='<option value="">選択してください</option>'+names.map(n=>`<option>${n}</option>`).join('');
+  }catch(_){}
+}
+
+function msrDoLogin(){
+  const name=document.getElementById('msr-login-name').value;
+  if(!name){document.getElementById('msr-login-err').textContent='スタッフ名を選択してください';document.getElementById('msr-login-err').style.display='block';return;}
+  msrStaffName=name;
+  msrAuthed=true;
+  document.getElementById('msr-login-modal').remove();
+  msrLoadData();
+}
+
+function msrLogout(){
+  msrAuthed=false;msrStaffName='';msrLoaded=false;
+  if(msrGpsWatchId!==null)msrStopGps();
+  document.getElementById('msr-staff-label').textContent='';
+  showView('dashboard',document.querySelector('.nav-links button'));
 }
 
 async function msrLoadData(){
   msrLoaded=true;
+  document.getElementById('msr-staff-label').textContent=msrStaffName?'👤 '+msrStaffName:'';
   document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">店舗データ読み込み中...</p>';
   try{
     const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})});
@@ -3074,7 +3125,7 @@ async function msrFinish(){
     time:msrTimes[`${course}|${s[`col_${codeCol}`]}`]||''
   }));
   try{
-    const res=await invApi({action:'save_measure',measure_data:{date:today,course,type:typeLabel,start_time:startTime,end_time:endTime,shops:saveShops}});
+    const res=await invApi({action:'save_measure',measure_data:{date:today,course,type:typeLabel,start_time:startTime,end_time:endTime,staff:msrStaffName,shops:saveShops}});
     const el=document.getElementById('msr-save-status');
     if(el)el.innerHTML=res.success?`✅ スプレッドシートに${res.saved}件保存しました`:`❌ 保存エラー: ${res.error||''}`;
   }catch(e){
