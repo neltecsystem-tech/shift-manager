@@ -358,9 +358,11 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">ログイン情報</label></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">ログインID</label><input type="text" id="inv-re-loginid" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">パスワード</label><input type="text" id="inv-re-loginpw" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
-        <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">管理権限</label></div>
-        <div style="margin-bottom:10px;">
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-admin-perm"> 管理画面へのアクセスを許可</label>
+        <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">アクセス権限</label></div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-admin"> 🔧 管理画面</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-defects"> 🔧 不具合管理</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-shopmaster"> 🏪 店舗マスタ</label>
         </div>
         <button onclick="invSaveRate()" style="width:100%;background:#6366f1;color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">保存する</button>
       </div>
@@ -1043,10 +1045,18 @@ let defectInited=false;
 const DEFECT_PASSWORD='neltec2026';
 let defectAuthed=false;
 
-function defectInit(){
+async function checkStaffPerm(permKey,pw){
+  // スタッフのログインPWで権限チェック
+  if(!invRates.length){
+    try{const res=await invApi({action:'get_rates'});invRates=res.rates||[];}catch(_){}
+  }
+  return !!invRates.find(r=>r.login_pw===pw&&(r.permissions||'').includes(permKey));
+}
+
+async function defectInit(){
   if(!defectAuthed){
     const pw=prompt('不具合管理のパスワードを入力してください:');
-    if(pw!==DEFECT_PASSWORD&&pw!=='admin'){
+    if(pw!==DEFECT_PASSWORD&&pw!=='admin'&&!await checkStaffPerm('defects',pw)){
       alert('パスワードが正しくありません');
       showView('dashboard',document.querySelector('.nav-links button'));
       return;
@@ -1340,10 +1350,10 @@ let smMasterCourses=[];
 // 主要列のインデックス（ヘッダーから動的に決定）
 let smColMap={};
 
-function smInit(){
+async function smInit(){
   if(!smAuthed){
     const pw=prompt('店舗マスタのパスワードを入力してください:');
-    if(pw!==SM_PASSWORD){
+    if(pw!==SM_PASSWORD&&!await checkStaffPerm('shopmaster',pw)){
       alert('パスワードが正しくありません');
       showView('dashboard',document.querySelector('.nav-links button'));
       return;
@@ -1985,7 +1995,9 @@ function invAddRate(){
   document.getElementById('inv-re-unit-wrap').style.display='none';
   document.getElementById('inv-re-calc-pm').value='固定';
   document.getElementById('inv-re-unit-pm-wrap').style.display='none';
-  document.getElementById('inv-re-admin-perm').checked=false;
+  document.getElementById('inv-re-perm-admin').checked=false;
+  document.getElementById('inv-re-perm-defects').checked=false;
+  document.getElementById('inv-re-perm-shopmaster').checked=false;
   ['inv-re-kw-mon','inv-re-kw-tue','inv-re-kw-wed','inv-re-kw-thu','inv-re-kw-fri','inv-re-kw-sat','inv-re-kw-sun'].forEach(id=>document.getElementById(id).value='');
   invRateTab('normal');
   document.getElementById('inv-rate-edit').style.display='flex';
@@ -2020,8 +2032,11 @@ function invEditRate(rowNum){
   const kwDays=kw.split(',');
   ['mon','tue','wed','thu','fri','sat','sun'].forEach((d,i)=>{document.getElementById('inv-re-kw-'+d).value=kwDays[i]||'';});
   invRateTab(kw?'kawagoe':'normal');
-  // 管理権限
-  document.getElementById('inv-re-admin-perm').checked=(r.permissions||'').includes('admin');
+  // アクセス権限
+  const permStr=r.permissions||'';
+  document.getElementById('inv-re-perm-admin').checked=permStr.includes('admin');
+  document.getElementById('inv-re-perm-defects').checked=permStr.includes('defects');
+  document.getElementById('inv-re-perm-shopmaster').checked=permStr.includes('shopmaster');
   document.getElementById('inv-rate-edit').style.display='flex';
 }
 
@@ -2035,7 +2050,11 @@ async function invSaveRate(){
     return r.name===name;
   });
   if(existing){alert(`「${name}」は既に登録されています。同姓同名の登録はできません。`);return;}
-  const perms=document.getElementById('inv-re-admin-perm').checked?'admin':'';
+  const permArr=[];
+  if(document.getElementById('inv-re-perm-admin').checked)permArr.push('admin');
+  if(document.getElementById('inv-re-perm-defects').checked)permArr.push('defects');
+  if(document.getElementById('inv-re-perm-shopmaster').checked)permArr.push('shopmaster');
+  const perms=permArr.join(',');
   const kwAmDaily=['mon','tue','wed','thu','fri','sat','sun'].map(d=>document.getElementById('inv-re-kw-'+d).value).join(',');
   const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,am_sunday:document.getElementById('inv-re-am-sun').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,pm_sunday:document.getElementById('inv-re-pm-sun').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value,calc_type_pm:document.getElementById('inv-re-calc-pm').value,unit_price_pm:document.getElementById('inv-re-unit-pm').value,permissions:perms,kw_am_daily:kwAmDaily.replace(/^,+$/,'')};
   await invApi({action:'save_rate',record,row_number:rowNum?parseInt(rowNum):undefined});
@@ -2367,8 +2386,12 @@ async function adminLoadStaff(){
   rates.forEach((r,i)=>{
     const bizColors={'個人':['#dbeafe','#1d4ed8'],'法人':['#dcfce7','#166534'],'社員':['#fdf4ff','#7c3aed']};
     const bc=bizColors[r.biz_type]||['#f1f5f9','#94a3b8'];
-    const hasAdmin=(r.permissions||'').includes('admin');
-    const permDisp=hasAdmin?'<span style="color:#7c3aed;font-size:11px;font-weight:600;">管理者</span>':'<span style="color:#94a3b8;font-size:11px;">-</span>';
+    const ps=(r.permissions||'').split(',').filter(Boolean);
+    const permTags=[];
+    if(ps.includes('admin'))permTags.push('<span style="background:#fdf4ff;color:#7c3aed;padding:1px 6px;border-radius:8px;font-size:10px;">管理</span>');
+    if(ps.includes('defects'))permTags.push('<span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:8px;font-size:10px;">不具合</span>');
+    if(ps.includes('shopmaster'))permTags.push('<span style="background:#dcfce7;color:#166534;padding:1px 6px;border-radius:8px;font-size:10px;">店舗</span>');
+    const permDisp=permTags.length?permTags.join(' '):'<span style="color:#94a3b8;font-size:11px;">-</span>';
     h+=`<tr>
       <td><b>${r.name}</b></td>
       <td><span class="badge" style="background:${bc[0]};color:${bc[1]}">${r.biz_type||'未設定'}</span></td>
