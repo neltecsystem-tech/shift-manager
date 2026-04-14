@@ -3104,15 +3104,25 @@ async function msrSendProgress(){
     text+='【未到着】\n';
     undone.forEach(s=>{text+=`  ${s[`col_${nameCol}`]||''}\n`;});
   }
-  // クリップボードにコピー
+  // スプレッドシートに保存
+  const btn=document.getElementById('msr-progress-btn');
+  btn.textContent='送信中...';btn.disabled=true;
+  const typeLabel=type==='am'?'朝刊':type==='pm'?'夕刊':'競馬';
+  const times=done.map(s=>msrTimes[`${course}|${s[`col_${codeCol}`]}`]).sort();
+  const startTime=times.length?times[0]:'';
+  const saveShops=shops.map(s=>({
+    name:s[`col_${nameCol}`]||'',
+    time:msrTimes[`${course}|${s[`col_${codeCol}`]}`]||''
+  }));
   try{
-    await navigator.clipboard.writeText(text);
-    const btn=document.getElementById('msr-progress-btn');
-    btn.textContent='✅ コピー済';btn.style.background='#22c55e';
-    setTimeout(()=>{btn.textContent='📤 途中送信';btn.style.background='#f59e0b';},2000);
-  }catch(_){
-    prompt('以下をコピーして送信してください:',text);
+    const res=await invApi({action:'save_measure',measure_data:{date:today,course,type:typeLabel,start_time:startTime+'(途中)',end_time:nowTime+'(途中)',staff:msrStaffName,shops:saveShops}});
+    btn.textContent=res.success?'✅ 送信済':'❌ エラー';
+    btn.style.background=res.success?'#22c55e':'var(--danger)';
+  }catch(e){
+    btn.textContent='❌ エラー';btn.style.background='var(--danger)';
   }
+  btn.disabled=false;
+  setTimeout(()=>{btn.textContent='📤 途中送信';btn.style.background='#f59e0b';},2000);
 }
 
 async function msrFinish(){
