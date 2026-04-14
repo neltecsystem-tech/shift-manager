@@ -2064,8 +2064,8 @@ async function invSaveRate(){
   await invApi({action:'save_rate',record,row_number:rowNum?parseInt(rowNum):undefined});
   document.getElementById('inv-rate-edit').style.display='none';
   await invLoadAll();
-  invShowRates();
-  if(adminAuthed)adminLoadStaff();
+  if(adminAuthed){adminLoadStaff();}
+  else{invShowRates();}
 }
 
 // 請求書生成
