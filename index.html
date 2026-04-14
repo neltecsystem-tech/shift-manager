@@ -2963,12 +2963,10 @@ function msrAutoSelectCourse(){
     return;
   }
   // コースからどの営業所か特定
-  const courseCol5=msrColMap.amCourse;
-  const courseCol14=msrColMap.pmCourse;
   const areaCol=msrColMap.area??1;
   // 最初に見つかったコースで自動選択
   const first=myCourses[0];
-  const colIdx=first.type==='am'?courseCol5:courseCol14;
+  const colIdx=first.type==='am'?msrColMap.amCourse:first.type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
   const matchShop=msrData.find(r=>r[`col_${colIdx}`]===first.course);
   const area=matchShop?matchShop[`col_${areaCol}`]:'';
   // 自動選択
@@ -3036,10 +3034,20 @@ function msrFilter(){
   const area=document.getElementById('msr-area').value;
   const type=document.getElementById('msr-type').value;
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
-  // コース一覧を取得
+  if(courseCol===undefined){document.getElementById('msr-course').innerHTML='<option value="">該当列なし</option>';return;}
+  // コース一覧を取得（営業所未選択なら全データから）
   let filtered=msrData;
   if(area)filtered=filtered.filter(r=>r[`col_${msrColMap.area??1}`]===area);
   const courses=[...new Set(filtered.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort();
+  // 候補がなく営業所が選択されている場合、営業所を外して再検索
+  if(!courses.length&&area){
+    const allCourses=[...new Set(msrData.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort();
+    if(allCourses.length){
+      document.getElementById('msr-area').value='';
+      filtered=msrData;
+      courses.push(...allCourses);
+    }
+  }
   const sel=document.getElementById('msr-course');
   sel.innerHTML='<option value="">選択してください</option>'+courses.map(c=>`<option>${c}</option>`).join('');
   document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">コースを選択してください</p>';
