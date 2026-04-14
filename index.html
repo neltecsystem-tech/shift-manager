@@ -378,9 +378,13 @@ tbody tr:hover { background:var(--primary-light); }
         <div><label>区分</label><select id="msr-type" onchange="msrFilter()"><option value="am">朝刊コース</option><option value="pm">夕刊コース</option><option value="keiba">競馬コース</option></select></div>
         <div><label>コース</label><select id="msr-course" onchange="msrRender()"><option value="">選択してください</option></select></div>
         <div style="margin-left:auto;display:flex;gap:6px;align-items:flex-end;">
+          <button onclick="msrToggleGps()" id="msr-gps-btn" style="background:#3498DB;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">📍 GPS開始</button>
           <button onclick="msrResetAll()" style="background:var(--danger);color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">全リセット</button>
           <button onclick="msrExport()" style="background:#22c55e;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">📋 コピー</button>
         </div>
+      </div>
+      <div id="msr-gps-status" style="display:none;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:12px;color:#1d4ed8;">
+        📍 GPS追跡中... <span id="msr-gps-info"></span>
       </div>
       <div id="msr-table" style="margin-top:8px;"></div>
     </div>
@@ -2808,6 +2812,9 @@ let msrHeaders=[];
 let msrColMap={};
 let msrTimes={};// key: "course|shopCode" → arrival time
 let msrLoaded=false;
+let msrGpsWatchId=null;
+let msrGpsPos=null;// {lat,lng,accuracy}
+const MSR_ARRIVE_DIST=50;// 到着判定距離(m)
 
 function showView_measure(){
   if(!msrLoaded)msrLoadData();
@@ -2830,6 +2837,8 @@ async function msrLoadData(){
       if(h.includes('朝刊コース'))msrColMap.amCourse=i;
       if(h.includes('夕刊コース'))msrColMap.pmCourse=i;
       if(h.includes('競馬コース'))msrColMap.keibaCourse=i;
+      if(h==='緯度')msrColMap.lat=i;
+      if(h==='経度')msrColMap.lng=i;
     });
     // 営業所セレクタ
     const areas=[...new Set(msrData.map(r=>r[`col_${msrColMap.area??1}`]).filter(Boolean))];
@@ -2871,17 +2880,31 @@ function msrRender(){
   const now=new Date();
   const today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   let h=`<div style="margin-bottom:8px;font-size:13px;color:var(--text-sub);">${today} ／ ${course} ／ ${shops.length}店舗</div>`;
-  h+='<table><thead><tr><th style="width:40px">#</th><th>店舗コード</th><th>店舗名</th><th style="width:100px">到着時刻</th><th style="width:80px"></th></tr></thead><tbody>';
+  const latCol=msrColMap.lat;
+  const lngCol=msrColMap.lng;
+  const hasGps=msrGpsPos&&latCol!==undefined&&lngCol!==undefined;
+  h+='<table><thead><tr><th style="width:40px">#</th><th>店舗コード</th><th>店舗名</th>'+(hasGps?'<th style="width:60px">距離</th>':'')+'<th style="width:100px">到着時刻</th><th style="width:80px"></th></tr></thead><tbody>';
   shops.forEach((s,i)=>{
     const code=s[`col_${codeCol}`]||'';
     const name=s[`col_${nameCol}`]||'';
     const key=`${course}|${code}`;
     const time=msrTimes[key]||'';
     const done=!!time;
-    h+=`<tr style="${done?'background:#f0fdf4;':''}">
+    let distStr='',distM=Infinity;
+    if(hasGps){
+      const sLat=parseFloat(s[`col_${latCol}`]);
+      const sLng=parseFloat(s[`col_${lngCol}`]);
+      if(!isNaN(sLat)&&!isNaN(sLng)){
+        distM=msrCalcDist(msrGpsPos.lat,msrGpsPos.lng,sLat,sLng);
+        distStr=distM<1000?Math.round(distM)+'m':(distM/1000).toFixed(1)+'km';
+      }else{distStr='<span style="color:#cbd5e1">-</span>';}
+    }
+    const nearby=distM<=MSR_ARRIVE_DIST&&!done;
+    h+=`<tr style="${done?'background:#f0fdf4;':nearby?'background:#fefce8;':''}">
       <td style="text-align:center;color:var(--text-sub);">${i+1}</td>
       <td>${code}</td>
-      <td><b>${name}</b></td>
+      <td><b>${name}</b>${nearby?' <span style="color:#f59e0b;font-size:11px;">⚡近い!</span>':''}</td>
+      ${hasGps?`<td style="text-align:center;font-size:12px;color:${distM<=MSR_ARRIVE_DIST?'#f59e0b':distM<=200?'#3498DB':'var(--text-sub)'};font-weight:${distM<=MSR_ARRIVE_DIST?'bold':'normal'}">${distStr}</td>`:''}
       <td style="text-align:center;font-weight:bold;color:${done?'#22c55e':'#94a3b8'};">${time||'--:--'}</td>
       <td style="text-align:center;">${done
         ?`<button onclick="msrClear('${key}')" style="background:#f1f5f9;color:var(--text-sub);border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">取消</button>`
@@ -2914,6 +2937,72 @@ function msrResetAll(){
   msrTimes={};
   localStorage.setItem('msrTimes',JSON.stringify(msrTimes));
   msrRender();
+}
+
+// GPS距離計算（Haversine公式）
+function msrCalcDist(lat1,lng1,lat2,lng2){
+  const R=6371000;
+  const dLat=(lat2-lat1)*Math.PI/180;
+  const dLng=(lng2-lng1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+function msrToggleGps(){
+  if(msrGpsWatchId!==null){msrStopGps();return;}
+  if(!navigator.geolocation){alert('このブラウザはGPSに対応していません');return;}
+  document.getElementById('msr-gps-btn').textContent='📍 GPS停止';
+  document.getElementById('msr-gps-btn').style.background='var(--danger)';
+  document.getElementById('msr-gps-status').style.display='block';
+  document.getElementById('msr-gps-info').textContent='位置取得中...';
+  msrGpsWatchId=navigator.geolocation.watchPosition(pos=>{
+    msrGpsPos={lat:pos.coords.latitude,lng:pos.coords.longitude,accuracy:pos.coords.accuracy};
+    document.getElementById('msr-gps-info').textContent=`精度: ${Math.round(pos.coords.accuracy)}m`;
+    msrCheckAutoArrive();
+    msrRender();
+  },err=>{
+    document.getElementById('msr-gps-info').textContent='位置取得失敗: '+err.message;
+  },{enableHighAccuracy:true,maximumAge:5000,timeout:10000});
+}
+
+function msrStopGps(){
+  if(msrGpsWatchId!==null){navigator.geolocation.clearWatch(msrGpsWatchId);msrGpsWatchId=null;}
+  msrGpsPos=null;
+  document.getElementById('msr-gps-btn').textContent='📍 GPS開始';
+  document.getElementById('msr-gps-btn').style.background='#3498DB';
+  document.getElementById('msr-gps-status').style.display='none';
+  msrRender();
+}
+
+function msrCheckAutoArrive(){
+  if(!msrGpsPos)return;
+  const course=document.getElementById('msr-course').value;
+  if(!course)return;
+  const area=document.getElementById('msr-area').value;
+  const type=document.getElementById('msr-type').value;
+  const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
+  const codeCol=msrColMap.code??2;
+  const latCol=msrColMap.lat;
+  const lngCol=msrColMap.lng;
+  if(latCol===undefined||lngCol===undefined)return;
+  const shops=msrData.filter(r=>{
+    if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
+    return r[`col_${courseCol}`]===course;
+  });
+  shops.forEach(s=>{
+    const code=s[`col_${codeCol}`]||'';
+    const key=`${course}|${code}`;
+    if(msrTimes[key])return;// already recorded
+    const sLat=parseFloat(s[`col_${latCol}`]);
+    const sLng=parseFloat(s[`col_${lngCol}`]);
+    if(isNaN(sLat)||isNaN(sLng))return;
+    const dist=msrCalcDist(msrGpsPos.lat,msrGpsPos.lng,sLat,sLng);
+    if(dist<=MSR_ARRIVE_DIST){
+      const now=new Date();
+      msrTimes[key]=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+      localStorage.setItem('msrTimes',JSON.stringify(msrTimes));
+    }
+  });
 }
 
 function msrExport(){
