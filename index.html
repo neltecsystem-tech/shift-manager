@@ -382,6 +382,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div><label>コース</label><select id="msr-course" onchange="msrRender()"><option value="">選択してください</option></select></div>
         <div style="margin-left:auto;display:flex;gap:6px;align-items:flex-end;">
           <button onclick="msrToggleGps()" id="msr-gps-btn" style="background:#3498DB;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">📍 GPS開始</button>
+          <button onclick="msrSendProgress()" id="msr-progress-btn" style="background:#f59e0b;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">📤 途中送信</button>
           <button onclick="msrFinish()" style="background:#6366f1;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">🏁 終了</button>
           <button onclick="msrResetAll()" style="background:var(--danger);color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">全リセット</button>
           <button onclick="msrExport()" style="background:#22c55e;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">📋 コピー</button>
@@ -3067,6 +3068,51 @@ function msrCheckAutoArrive(){
       localStorage.setItem('msrTimes',JSON.stringify(msrTimes));
     }
   });
+}
+
+async function msrSendProgress(){
+  const course=document.getElementById('msr-course').value;
+  if(!course){alert('コースを選択してください');return;}
+  const area=document.getElementById('msr-area').value;
+  const type=document.getElementById('msr-type').value;
+  const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
+  const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
+  const nameCol=msrColMap.name??3;
+  const codeCol=msrColMap.code??2;
+  const shops=msrData.filter(r=>{
+    if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
+    return r[`col_${courseCol}`]===course;
+  });
+  if(orderCol!==undefined)shops.sort((a,b)=>(parseInt(a[`col_${orderCol}`])||99999)-(parseInt(b[`col_${orderCol}`])||99999));
+  const now=new Date();
+  const nowTime=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  const today=`${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`;
+  const done=shops.filter(s=>msrTimes[`${course}|${s[`col_${codeCol}`]}`]);
+  const undone=shops.filter(s=>!msrTimes[`${course}|${s[`col_${codeCol}`]}`]);
+  const lastArrival=done.length?done.map(s=>msrTimes[`${course}|${s[`col_${codeCol}`]}`]).sort().pop():'--:--';
+  let text=`📤 途中経過 ${today} ${nowTime}\n`;
+  text+=`担当: ${msrStaffName||'-'} ／ コース: ${course}\n`;
+  text+=`進捗: ${done.length}/${shops.length} (最終到着: ${lastArrival})\n`;
+  text+='─'.repeat(25)+'\n';
+  text+='【到着済み】\n';
+  done.forEach((s,i)=>{
+    const code=s[`col_${codeCol}`]||'';
+    const name=s[`col_${nameCol}`]||'';
+    text+=`  ${name} → ${msrTimes[`${course}|${code}`]}\n`;
+  });
+  if(undone.length){
+    text+='【未到着】\n';
+    undone.forEach(s=>{text+=`  ${s[`col_${nameCol}`]||''}\n`;});
+  }
+  // クリップボードにコピー
+  try{
+    await navigator.clipboard.writeText(text);
+    const btn=document.getElementById('msr-progress-btn');
+    btn.textContent='✅ コピー済';btn.style.background='#22c55e';
+    setTimeout(()=>{btn.textContent='📤 途中送信';btn.style.background='#f59e0b';},2000);
+  }catch(_){
+    prompt('以下をコピーして送信してください:',text);
+  }
 }
 
 async function msrFinish(){
