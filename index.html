@@ -335,10 +335,10 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">庫内朝刊</label><input type="number" id="inv-re-wh-am" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">庫内夕刊</label><input type="number" id="inv-re-wh-pm" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:#6366f1;font-weight:600;">朝刊 計算方式</label></div>
-        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">朝刊 計算方式</label><select id="inv-re-calc" onchange="document.getElementById('inv-re-unit-wrap').style.display=this.value==='個数'?'block':'none'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="固定">固定</option><option value="個数">個数制</option></select></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">朝刊 計算方式</label><select id="inv-re-calc" onchange="document.getElementById('inv-re-unit-wrap').style.display=this.value==='個数'?'block':'none'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="固定">固定</option><option value="個数">個数制</option><option value="個建">個建制</option></select></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-unit-wrap"><label style="font-size:12px;color:var(--text-sub)">朝刊 個数単価</label><input type="number" id="inv-re-unit" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:#6366f1;font-weight:600;">夕刊 計算方式</label></div>
-        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">夕刊 計算方式</label><select id="inv-re-calc-pm" onchange="document.getElementById('inv-re-unit-pm-wrap').style.display=this.value==='個数'?'block':'none'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="固定">固定</option><option value="個数">個数制</option></select></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">夕刊 計算方式</label><select id="inv-re-calc-pm" onchange="document.getElementById('inv-re-unit-pm-wrap').style.display=this.value==='個数'?'block':'none'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="固定">固定</option><option value="個数">個数制</option><option value="個建">個建制</option></select></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-unit-pm-wrap"><label style="font-size:12px;color:var(--text-sub)">夕刊 個数単価</label><input type="number" id="inv-re-unit-pm" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         </div>
         <!-- 川越タブ -->
@@ -1878,6 +1878,66 @@ function invFindSpecial(date,staff){
   });
 }
 
+// 個建制: 店舗マスタから自動計算
+let invShopMasterCache=null;
+async function invLoadShopMaster(){
+  if(invShopMasterCache)return invShopMasterCache;
+  try{
+    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})});
+    const json=await resp.json();
+    invShopMasterCache={records:json.records||[],headers:json.headers||[]};
+    return invShopMasterCache;
+  }catch(_){return {records:[],headers:[]};}
+}
+// 事前ロード（非同期で裏読み）
+invLoadShopMaster();
+
+function invCalcKodate(courseName,category){
+  if(!courseName||!invShopMasterCache)return {amount:0,detail:''};
+  const records=invShopMasterCache.records;
+  const headers=invShopMasterCache.headers;
+  // 列マッピング
+  let amCourseCol=-1,pmCourseCol=-1,keibaCourseCol=-1;
+  let tokushuCol=-1,yuukanCol=-1,kyoriCol=-1,zasshiCol=-1;
+  let pmTokushuCol=-1,keibaTokushuCol=-1;
+  headers.forEach((h,i)=>{
+    if(h.includes('朝刊コース'))amCourseCol=i;
+    if(h.includes('夕刊コース'))pmCourseCol=i;
+    if(h.includes('競馬コース'))keibaCourseCol=i;
+    if(h==='朝刊特殊納品')tokushuCol=i;
+    if(h==='夕刊同梱')yuukanCol=i;
+    if(h==='距離増')kyoriCol=i;
+    if(h==='雑誌')zasshiCol=i;
+    if(h==='夕刊特殊納品')pmTokushuCol=i;
+    if(h==='競馬特殊納品')keibaTokushuCol=i;
+  });
+  // コースに該当する店舗を抽出
+  let courseCol=amCourseCol;
+  let tCol=tokushuCol;
+  if(category==='夕刊/競馬'){courseCol=pmCourseCol;tCol=pmTokushuCol;}
+  if(category==='競馬'){courseCol=keibaCourseCol;tCol=keibaTokushuCol;}
+  const shops=records.filter(r=>r[`col_${courseCol}`]===courseName);
+  if(!shops.length)return {amount:0,detail:'該当店舗なし'};
+  // カウント
+  const shopCount=shops.length;
+  let tokushu=0,yuukan=0,kyori=0,zasshi=0;
+  shops.forEach(s=>{
+    if(s[`col_${tCol}`]==='TRUE')tokushu++;
+    if(yuukanCol>=0&&s[`col_${yuukanCol}`]==='TRUE')yuukan++;
+    if(kyoriCol>=0&&s[`col_${kyoriCol}`]==='TRUE')kyori++;
+    if(zasshiCol>=0&&s[`col_${zasshiCol}`]==='TRUE')zasshi++;
+  });
+  // 計算: 店舗数×265 + 夕刊同梱×50 + 距離増×13 + 特殊納品×20 + 雑誌×80
+  const amount=shopCount*265+yuukan*50+kyori*13+tokushu*20+zasshi*80;
+  const parts=[];
+  parts.push(`${shopCount}店×265`);
+  if(yuukan)parts.push(`同梱${yuukan}×50`);
+  if(kyori)parts.push(`距離${kyori}×13`);
+  if(tokushu)parts.push(`特殊${tokushu}×20`);
+  if(zasshi)parts.push(`雑誌${zasshi}×80`);
+  return {amount,detail:parts.join('+'),shopCount,yuukan,kyori,tokushu,zasshi};
+}
+
 function invCalcAmount(){
   const staff=document.getElementById('inve-staff').value;
   const date=document.getElementById('inve-date').value;
@@ -1922,8 +1982,21 @@ function invCalcAmount(){
   const calcType=isPm?(rate.calc_type_pm||rate.calc_type):rate.calc_type;
   const unitPriceVal=isPm?(Number(rate.unit_price_pm)||Number(rate.unit_price)||0):(Number(rate.unit_price)||0);
   const isQty=calcType==='個数';
+  const isKodate=calcType==='個建';
   document.getElementById('inve-qty-wrap').style.display=isQty?'block':'none';
-  if(isQty){
+  if(isKodate){
+    // 個建制: 店舗マスタから自動計算
+    const koResult=invCalcKodate(course,invCatSel);
+    let amount=koResult.amount;
+    if(isHikitsugi)amount=Math.floor(amount/2);
+    if(specialReplace)amount=specialReplace;
+    amount+=specialAdd;
+    price=koResult.amount;
+    const detail=koResult.detail;
+    document.getElementById('inve-price').value=amount?'¥'+amount.toLocaleString()+(isHikitsugi?' (引継ぎ半額)':'')+(specialLabel?' '+specialLabel:''):'コース未選択';
+    document.getElementById('inve-amount').value=amount?'¥'+amount.toLocaleString():'';
+    if(detail){document.getElementById('inve-price').value+='\n'+detail;}
+  }else if(isQty){
     const qty=Number(document.getElementById('inve-qty').value)||0;
     let amount=unitPriceVal*qty;
     if(isHikitsugi)amount=Math.floor(amount/2);
@@ -1997,7 +2070,10 @@ async function invSaveWork(){
     const isPm=invCatSel==='夕刊/競馬'||invCatSel==='庫内夕刊';
     const cType=isPm?(rate.calc_type_pm||rate.calc_type):rate.calc_type;
     const uPrice=isPm?(Number(rate.unit_price_pm)||Number(rate.unit_price)||0):(Number(rate.unit_price)||0);
-    if(cType==='個数'){
+    if(cType==='個建'){
+      const koR=invCalcKodate(document.getElementById('inve-course').value,invCatSel);
+      price=koR.amount;amount=koR.amount;
+    }else if(cType==='個数'){
       const qty=Number(document.getElementById('inve-qty').value)||0;
       price=uPrice;amount=uPrice*qty;
     }else{amount=price;}
