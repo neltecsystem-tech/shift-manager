@@ -379,6 +379,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div><label>コース</label><select id="msr-course" onchange="msrRender()"><option value="">選択してください</option></select></div>
         <div style="margin-left:auto;display:flex;gap:6px;align-items:flex-end;">
           <button onclick="msrToggleGps()" id="msr-gps-btn" style="background:#3498DB;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">📍 GPS開始</button>
+          <button onclick="msrFinish()" style="background:#6366f1;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">🏁 終了</button>
           <button onclick="msrResetAll()" style="background:var(--danger);color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">全リセット</button>
           <button onclick="msrExport()" style="background:#22c55e;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">📋 コピー</button>
         </div>
@@ -3015,6 +3016,81 @@ function msrCheckAutoArrive(){
       localStorage.setItem('msrTimes',JSON.stringify(msrTimes));
     }
   });
+}
+
+function msrFinish(){
+  const course=document.getElementById('msr-course').value;
+  if(!course){alert('コースを選択してください');return;}
+  // GPS停止
+  if(msrGpsWatchId!==null)msrStopGps();
+  const area=document.getElementById('msr-area').value;
+  const type=document.getElementById('msr-type').value;
+  const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
+  const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
+  const nameCol=msrColMap.name??3;
+  const codeCol=msrColMap.code??2;
+  const shops=msrData.filter(r=>{
+    if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
+    return r[`col_${courseCol}`]===course;
+  });
+  if(orderCol!==undefined)shops.sort((a,b)=>(parseInt(a[`col_${orderCol}`])||99999)-(parseInt(b[`col_${orderCol}`])||99999));
+  const now=new Date();
+  const endTime=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  const today=`${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`;
+  // 集計
+  const done=shops.filter(s=>msrTimes[`${course}|${s[`col_${codeCol}`]}`]);
+  const undone=shops.filter(s=>!msrTimes[`${course}|${s[`col_${codeCol}`]}`]);
+  const times=done.map(s=>msrTimes[`${course}|${s[`col_${codeCol}`]}`]).sort();
+  const startTime=times.length?times[0]:'--:--';
+  // 結果表示
+  let h=`<div style="background:#f0fdf4;border:2px solid #86efac;border-radius:12px;padding:20px;margin-top:12px;">`;
+  h+=`<h3 style="color:#166534;margin-bottom:12px;">🏁 測定終了</h3>`;
+  h+=`<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;">`;
+  h+=`<div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;text-align:center;"><div style="font-size:11px;color:#64748b;">コース</div><div style="font-size:16px;font-weight:bold;">${course}</div></div>`;
+  h+=`<div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;text-align:center;"><div style="font-size:11px;color:#64748b;">開始</div><div style="font-size:16px;font-weight:bold;">${startTime}</div></div>`;
+  h+=`<div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;text-align:center;"><div style="font-size:11px;color:#64748b;">終了</div><div style="font-size:16px;font-weight:bold;">${endTime}</div></div>`;
+  h+=`<div style="background:#fff;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;text-align:center;"><div style="font-size:11px;color:#64748b;">完了</div><div style="font-size:16px;font-weight:bold;color:#22c55e;">${done.length}/${shops.length}</div></div>`;
+  h+=`</div>`;
+  h+=`<table><thead><tr><th>#</th><th>店舗名</th><th>到着時刻</th></tr></thead><tbody>`;
+  shops.forEach((s,i)=>{
+    const code=s[`col_${codeCol}`]||'';
+    const name=s[`col_${nameCol}`]||'';
+    const time=msrTimes[`${course}|${code}`]||'';
+    h+=`<tr style="${time?'':'color:#dc2626;'}"><td>${i+1}</td><td>${name}</td><td style="font-weight:bold;">${time||'未到着'}</td></tr>`;
+  });
+  h+=`</tbody></table>`;
+  if(undone.length)h+=`<p style="color:#dc2626;font-size:13px;margin-top:8px;">⚠ 未到着: ${undone.map(s=>s[`col_${nameCol}`]).join(', ')}</p>`;
+  h+=`<div style="display:flex;gap:8px;margin-top:16px;">`;
+  h+=`<button onclick="msrFinishExport('${course}','${startTime}','${endTime}',${done.length},${shops.length})" style="background:#22c55e;color:#fff;border:none;padding:8px 20px;border-radius:8px;cursor:pointer;font-weight:600;">📋 結果をコピー</button>`;
+  h+=`<button onclick="msrRender()" style="background:#f1f5f9;color:var(--text-sub);border:none;padding:8px 20px;border-radius:8px;cursor:pointer;font-weight:600;">← 戻る</button>`;
+  h+=`</div></div>`;
+  document.getElementById('msr-table').innerHTML=h;
+}
+
+function msrFinishExport(course,startTime,endTime,doneCount,total){
+  const area=document.getElementById('msr-area').value;
+  const type=document.getElementById('msr-type').value;
+  const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
+  const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
+  const nameCol=msrColMap.name??3;
+  const codeCol=msrColMap.code??2;
+  const shops=msrData.filter(r=>{
+    if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
+    return r[`col_${courseCol}`]===course;
+  });
+  if(orderCol!==undefined)shops.sort((a,b)=>(parseInt(a[`col_${orderCol}`])||99999)-(parseInt(b[`col_${orderCol}`])||99999));
+  const now=new Date();
+  const today=`${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`;
+  let text=`${today} ${course} 測定結果\n`;
+  text+=`開始: ${startTime} ／ 終了: ${endTime} ／ 完了: ${doneCount}/${total}\n`;
+  text+='─'.repeat(30)+'\n';
+  shops.forEach((s,i)=>{
+    const code=s[`col_${codeCol}`]||'';
+    const name=s[`col_${nameCol}`]||'';
+    const time=msrTimes[`${course}|${code}`]||'未到着';
+    text+=`${i+1}. ${name}（${code}）→ ${time}\n`;
+  });
+  navigator.clipboard.writeText(text).then(()=>alert('クリップボードにコピーしました')).catch(()=>{prompt('コピー:',text);});
 }
 
 function msrExport(){
