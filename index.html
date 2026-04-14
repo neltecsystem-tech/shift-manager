@@ -3018,9 +3018,10 @@ function msrCheckAutoArrive(){
   });
 }
 
-function msrFinish(){
+async function msrFinish(){
   const course=document.getElementById('msr-course').value;
   if(!course){alert('コースを選択してください');return;}
+  if(!confirm('測定を終了してスプレッドシートに記録しますか？'))return;
   // GPS停止
   if(msrGpsWatchId!==null)msrStopGps();
   const area=document.getElementById('msr-area').value;
@@ -3061,10 +3062,25 @@ function msrFinish(){
   h+=`</tbody></table>`;
   if(undone.length)h+=`<p style="color:#dc2626;font-size:13px;margin-top:8px;">⚠ 未到着: ${undone.map(s=>s[`col_${nameCol}`]).join(', ')}</p>`;
   h+=`<div style="display:flex;gap:8px;margin-top:16px;">`;
+  h+=`<div id="msr-save-status" style="margin-bottom:8px;color:var(--text-sub);font-size:13px;">📝 スプレッドシートに保存中...</div>`;
   h+=`<button onclick="msrFinishExport('${course}','${startTime}','${endTime}',${done.length},${shops.length})" style="background:#22c55e;color:#fff;border:none;padding:8px 20px;border-radius:8px;cursor:pointer;font-weight:600;">📋 結果をコピー</button>`;
   h+=`<button onclick="msrRender()" style="background:#f1f5f9;color:var(--text-sub);border:none;padding:8px 20px;border-radius:8px;cursor:pointer;font-weight:600;">← 戻る</button>`;
   h+=`</div></div>`;
   document.getElementById('msr-table').innerHTML=h;
+  // スプレッドシートに保存
+  const typeLabel=type==='am'?'朝刊':type==='pm'?'夕刊':'競馬';
+  const saveShops=shops.map(s=>({
+    name:s[`col_${nameCol}`]||'',
+    time:msrTimes[`${course}|${s[`col_${codeCol}`]}`]||''
+  }));
+  try{
+    const res=await invApi({action:'save_measure',measure_data:{date:today,course,type:typeLabel,start_time:startTime,end_time:endTime,shops:saveShops}});
+    const el=document.getElementById('msr-save-status');
+    if(el)el.innerHTML=res.success?`✅ スプレッドシートに${res.saved}件保存しました`:`❌ 保存エラー: ${res.error||''}`;
+  }catch(e){
+    const el=document.getElementById('msr-save-status');
+    if(el)el.innerHTML=`❌ 保存エラー: ${e.message}`;
+  }
 }
 
 function msrFinishExport(course,startTime,endTime,doneCount,total){
