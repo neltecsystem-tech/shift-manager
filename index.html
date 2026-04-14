@@ -1577,14 +1577,23 @@ async function invDoLogin(){
   const id=document.getElementById('inv-login-id').value.trim();
   const pw=document.getElementById('inv-login-pw').value.trim();
   if(!id||!pw){document.getElementById('inv-login-err').textContent='IDとパスワードを入力してください';document.getElementById('inv-login-err').style.display='block';return;}
+  const btn=document.querySelector('#inv-login-modal button');
+  if(btn)btn.textContent='ログイン中...';
   const res=await invApi({action:'login',login_id:id,login_pw:pw});
   if(res.success){
     invAuthed=true;invIsAdmin=false;invStaffName=res.staff_name;
+    // ログイン応答に含まれるデータを先にセット
+    if(res.rates)invRates=res.rates;
+    if(res.work)invWork=res.work.filter(w=>w.staff===res.staff_name);
     document.getElementById('inv-login-modal').remove();
-    invLoadAll();
+    invApplyUI();
+    invFilterWork();
+    // 残りのデータを裏で読み込む
+    invLoadAllBackground();
   }else{
     document.getElementById('inv-login-err').textContent=res.error||'ログインに失敗しました';
     document.getElementById('inv-login-err').style.display='block';
+    if(btn)btn.textContent='ログイン';
   }
 }
 
@@ -1597,16 +1606,8 @@ function invAdminLogin(){
   }else if(pw!==null){alert('パスワードが正しくありません');}
 }
 
-async function invLoadAll(){
-  const [ratesRes,workRes,namesRes,specialRes]=await Promise.all([invApi({action:'get_rates'}),invApi({action:'list_work'}),invApi({action:'get_staff_names'}),invApi({action:'get_special_rates'})]);
-  invRates=ratesRes.rates||[];
-  invWork=workRes.records||[];
-  invSpecial=specialRes.records||[];
-  invStaffNames=namesRes.names||[];
-  // スタッフモード: 自分のデータのみ
-  if(!invIsAdmin&&invStaffName){
-    invWork=invWork.filter(w=>w.staff===invStaffName);
-  }
+// UI反映のみ（データロード済み前提）
+function invApplyUI(){
   // UI制御: 管理者のみの要素
   const adminEls=document.querySelectorAll('.inv-admin-only');
   adminEls.forEach(el=>{el.style.display=invIsAdmin?'':'none';});
@@ -1623,18 +1624,36 @@ async function invLoadAll(){
     if(!invIsAdmin&&invStaffName){genLabel.style.display='block';genName.textContent=invStaffName;}
     else{genLabel.style.display='none';}
   }
-  // スタッフセレクタ更新（人員名簿から取得した名前を使用）
+  // スタッフセレクタ更新
   const names=invStaffNames.length?invStaffNames:invRates.map(r=>r.name);
-  // スタッフモード: 自分の名前がリストになくても追加
   if(!invIsAdmin&&invStaffName&&!names.includes(invStaffName))names.unshift(invStaffName);
   ['inve-staff','inv-staff-filter','inv-gen-staff'].forEach(id=>{
     const sel=document.getElementById(id);if(!sel)return;
-    // スタッフモードの稼働入力: 自分の名前を固定
     const defaultVal=(!invIsAdmin&&invStaffName&&id==='inve-staff')?invStaffName:'';
     const val=sel.value||defaultVal;
     sel.innerHTML=(id==='inve-staff'||id==='inv-gen-staff'?'<option value="">選択</option>':'<option value="">すべて</option>')+names.map(n=>`<option${n===val?' selected':''}>${n}</option>`).join('');
     if(!invIsAdmin&&invStaffName&&id==='inve-staff'){sel.value=invStaffName;sel.disabled=true;}
   });
+}
+
+// バックグラウンドで残りデータを読み込む
+async function invLoadAllBackground(){
+  const [namesRes,specialRes]=await Promise.all([invApi({action:'get_staff_names'}),invApi({action:'get_special_rates'})]);
+  invStaffNames=namesRes.names||[];
+  invSpecial=specialRes.records||[];
+  invApplyUI();
+}
+
+async function invLoadAll(){
+  const [ratesRes,workRes,namesRes,specialRes]=await Promise.all([invApi({action:'get_rates'}),invApi({action:'list_work'}),invApi({action:'get_staff_names'}),invApi({action:'get_special_rates'})]);
+  invRates=ratesRes.rates||[];
+  invWork=workRes.records||[];
+  invSpecial=specialRes.records||[];
+  invStaffNames=namesRes.names||[];
+  if(!invIsAdmin&&invStaffName){
+    invWork=invWork.filter(w=>w.staff===invStaffName);
+  }
+  invApplyUI();
   // コースdatalist
   const dl=document.getElementById('inve-course-dl');
   if(dl){const courses=[...new Set(invWork.map(w=>w.course).filter(Boolean))];dl.innerHTML=courses.map(c=>`<option value="${c}">`).join('');}
