@@ -2941,7 +2941,53 @@ async function msrDoLogin(){
   msrStaffName=staff.name;
   msrAuthed=true;
   document.getElementById('msr-login-modal').remove();
-  msrLoadData();
+  msrLoadData().then(()=>msrAutoSelectCourse());
+}
+
+function msrAutoSelectCourse(){
+  if(!msrStaffName)return;
+  const normName=invNormName(msrStaffName);
+  const now=new Date();
+  const today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const {amMap,pmMap}=getDriverMaps(today);
+  // スタッフ名からコースを検索
+  let myCourses=[];
+  Object.entries(amMap).forEach(([course,drivers])=>{
+    if(drivers.some(d=>invNormName(d)===normName))myCourses.push({course,type:'am'});
+  });
+  Object.entries(pmMap).forEach(([course,drivers])=>{
+    if(drivers.some(d=>invNormName(d)===normName))myCourses.push({course,type:'pm'});
+  });
+  if(!myCourses.length){
+    document.getElementById('msr-table').innerHTML=`<p style="text-align:center;padding:40px;color:var(--text-sub);">本日のシフトデータにコースが見つかりませんでした。<br>手動で営業所・コースを選択してください。</p>`;
+    return;
+  }
+  // コースからどの営業所か特定
+  const courseCol5=msrColMap.amCourse;
+  const courseCol14=msrColMap.pmCourse;
+  const areaCol=msrColMap.area??1;
+  // 最初に見つかったコースで自動選択
+  const first=myCourses[0];
+  const colIdx=first.type==='am'?courseCol5:courseCol14;
+  const matchShop=msrData.find(r=>r[`col_${colIdx}`]===first.course);
+  const area=matchShop?matchShop[`col_${areaCol}`]:'';
+  // 自動選択
+  if(area){document.getElementById('msr-area').value=area;}
+  document.getElementById('msr-type').value=first.type;
+  msrFilter();
+  // コースセレクタに候補がある場合選択
+  setTimeout(()=>{
+    const courseSel=document.getElementById('msr-course');
+    const opt=[...courseSel.options].find(o=>o.value===first.course);
+    if(opt){courseSel.value=first.course;msrRender();}
+  },100);
+  // 複数コースがある場合は案内表示
+  if(myCourses.length>1){
+    const info=myCourses.map(c=>`${c.course}(${c.type==='am'?'朝刊':'夕刊'})`).join('、');
+    const el=document.getElementById('msr-table');
+    const existing=el.innerHTML;
+    el.innerHTML=`<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:13px;color:#1d4ed8;">📋 本日の担当コース: ${info}</div>`+existing;
+  }
 }
 
 function msrLogout(){
