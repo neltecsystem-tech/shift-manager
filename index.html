@@ -2837,7 +2837,11 @@ function admBillTachikawa(area,course,monthVal){
     const isSun=dow===0;
     const isSat=dow===6;
 
-    const dayAm=amDayTotal;
+    // 月曜は夕刊同梱なし（日曜に夕刊が発行されないため）
+    const isMon=dow===1;
+    const dayDokkonFee=isMon?0:amDokkonFee;
+    const dayDokkonCount=isMon?0:amDokkon;
+    const dayAm=amShopFee+dayDokkonFee+amTokushuFee+amZasshiFee+amKanriFee;
     let dayPm=isSun?0:pmDayTotal;
     const dayTotal=dayAm+dayPm;
     grandTotal+=dayTotal;totalAmSum+=dayAm;totalPmSum+=dayPm;
@@ -2851,8 +2855,8 @@ function admBillTachikawa(area,course,monthVal){
     // 朝刊
     h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${amShopFee.toLocaleString()}</td>`;
     h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:var(--text-sub);">${amCount}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${amDokkonFee?'¥'+amDokkonFee.toLocaleString():''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:var(--text-sub);">${amDokkon||''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${dayDokkonFee?'¥'+dayDokkonFee.toLocaleString():''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:var(--text-sub);">${dayDokkonCount||''}</td>`;
     h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${amTokushuFee?'¥'+amTokushuFee.toLocaleString():''}</td>`;
     h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${amZasshiFee?'¥'+amZasshiFee.toLocaleString():''}</td>`;
     h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${amKanriFee.toLocaleString()}</td>`;
