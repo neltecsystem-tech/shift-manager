@@ -2728,16 +2728,10 @@ function admBillUpdateCourses(){
   document.getElementById('adm-bill-course').innerHTML='<option value="">選択</option>'+courses.map(c=>`<option>${c}</option>`).join('');
 }
 
-function admBillGenerate(){
-  const area=document.getElementById('adm-bill-area').value;
-  const course=document.getElementById('adm-bill-course').value;
-  const monthVal=document.getElementById('adm-bill-month').value;
-  if(!area||!course||!monthVal){alert('営業所・コース・年月を選択してください');return;}
-
-  const records=admBillShopData.records||[];
+// 店舗マスタ列マッピング取得
+function admBillCols(){
   const headers=admBillShopData.headers||[];
-  // 列マッピング
-  let cols={};
+  const cols={};
   headers.forEach((h,i)=>{
     if(h.includes('営業所'))cols.area=i;
     if(h.includes('朝刊コース'))cols.amCourse=i;
@@ -2750,66 +2744,89 @@ function admBillGenerate(){
     if(h.includes('店舗名'))cols.name=i;
     if(h.includes('店舗コード'))cols.code=i;
   });
+  return cols;
+}
 
-  // コースに該当する朝刊店舗
+function admBillGenerate(){
+  const area=document.getElementById('adm-bill-area').value;
+  const course=document.getElementById('adm-bill-course').value;
+  const monthVal=document.getElementById('adm-bill-month').value;
+  if(!area||!course||!monthVal){alert('営業所・コース・年月を選択してください');return;}
+
+  // 営業所別にレイアウト関数を呼び分け
+  if(area==='立川')admBillTachikawa(area,course,monthVal);
+  else admBillTachikawa(area,course,monthVal);// 他営業所は後で追加。暫定的に立川と同じ
+}
+
+function admBillTachikawa(area,course,monthVal){
+  const records=admBillShopData.records||[];
+  const cols=admBillCols();
+
   const amShops=records.filter(r=>(r[`col_${cols.area}`]||'').split(',')[0].trim()===area&&r[`col_${cols.amCourse}`]===course);
-  // 同じコースの夕刊店舗（夕刊コース名が一致）
   const pmShops=records.filter(r=>(r[`col_${cols.area}`]||'').split(',')[0].trim()===area&&r[`col_${cols.pmCourse}`]===course);
 
-  // 朝刊カウント
   const amCount=amShops.length;
   const amTokushu=amShops.filter(s=>s[`col_${cols.amTokushu}`]==='TRUE').length;
   const amZasshi=amShops.filter(s=>s[`col_${cols.zasshi}`]==='TRUE').length;
   const amDokkon=amShops.filter(s=>s[`col_${cols.yuukanDokkon}`]==='TRUE').length;
-  const amKanri=amCount;// 管理費=全店舗
-
-  // 夕刊カウント（通常=毎日配送の店舗）
-  // 金・土のみ店舗の判定: 夕刊コースはあるが朝刊コースが同一でない？→ 要確認
-  // とりあえず全夕刊店舗を通常として計算
+  const amKanri=amCount;
   const pmCount=pmShops.length;
   const pmTokushu=pmShops.filter(s=>s[`col_${cols.pmTokushu}`]==='TRUE').length;
-  const pmKanri=pmCount;
 
-  // 月の日数
   const [y,m]=monthVal.split('-').map(Number);
   const daysInMonth=new Date(y,m,0).getDate();
   const WEEKDAYS=['日','月','火','水','木','金','土'];
-
-  // 朝刊1日分の金額
-  const amDayAmount=amCount*270+amTokushu*20+amZasshi*130+amDokkon*50+amKanri*20;
-  // 夕刊1日分（月〜土）
-  const pmDayAmount=pmCount*230+pmTokushu*20+pmKanri*20;
-
-  // 和暦
   const reiwa=y-2018;
 
-  // 明細表生成
+  // 朝刊の各項目金額
+  const amShopFee=amCount*270;
+  const amDokkonFee=amDokkon*50;
+  const amTokushuFee=amTokushu*20;
+  const amKanriFee=amKanri*20;
+  const amZasshiFee=amZasshi*130;
+  const amDayTotal=amShopFee+amDokkonFee+amTokushuFee+amKanriFee+amZasshiFee;
+
+  // 夕刊
+  const pmShopFee=pmCount*230;
+  const pmTokushuFee=pmTokushu*20;
+  const pmKanriFee=pmCount*20;
+  const pmDayTotal=pmShopFee+pmTokushuFee+pmKanriFee;
+
   let h=`<div id="adm-bill-print-area" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:12px;">`;
-  h+=`<div style="display:flex;justify-content:space-between;margin-bottom:8px;">`;
-  h+=`<div><span style="font-size:13px;">令和${reiwa}年</span><br><span style="font-size:18px;font-weight:bold;">${m}月分</span></div>`;
-  h+=`<div style="text-align:center;"><span style="font-size:13px;">${area}営業所</span><br><span style="font-size:18px;font-weight:bold;">${course} コース</span></div>`;
-  h+=`<div style="text-align:right;font-size:12px;color:var(--text-sub);">朝刊${amCount}店 夕刊${pmCount}店</div>`;
+  // ヘッダー
+  h+=`<div style="display:flex;justify-content:space-between;margin-bottom:12px;">`;
+  h+=`<div><span style="font-size:13px;">令和${reiwa}年</span><br><span style="font-size:20px;font-weight:bold;">${m}月分</span></div>`;
+  h+=`<div style="text-align:center;"><span style="font-size:13px;">${area}営業所</span><br><span style="font-size:20px;font-weight:bold;">${course} コース</span></div>`;
+  h+=`<div style="text-align:right;font-size:12px;color:var(--text-sub);line-height:1.8;">朝刊: ${amCount}店舗<br>夕刊: ${pmCount}店舗</div>`;
   h+=`</div>`;
 
-  // テーブル
-  h+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead>`;
-  h+=`<tr style="background:#f1f5f9;">`;
-  h+=`<th style="border:1px solid #ccc;padding:4px;width:30px;">日</th>`;
-  h+=`<th style="border:1px solid #ccc;padding:4px;width:24px;">曜</th>`;
-  h+=`<th style="border:1px solid #ccc;padding:4px;">店舗数</th>`;
-  h+=`<th style="border:1px solid #ccc;padding:4px;">特殊</th>`;
-  h+=`<th style="border:1px solid #ccc;padding:4px;">雑誌</th>`;
-  h+=`<th style="border:1px solid #ccc;padding:4px;">同梱</th>`;
-  h+=`<th style="border:1px solid #ccc;padding:4px;">管理</th>`;
-  h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;background:#e8f4fd;">朝刊計</th>`;
-  h+=`<th style="border:1px solid #ccc;padding:4px;">店舗数</th>`;
-  h+=`<th style="border:1px solid #ccc;padding:4px;">特殊</th>`;
-  h+=`<th style="border:1px solid #ccc;padding:4px;">管理</th>`;
-  h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;background:#fdf4ff;">夕刊計</th>`;
-  h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;">日計</th>`;
+  // 立川レイアウト: 日 | 曜 | 合計金額 | 朝刊店舗料金 | 朝刊店舗数 | 夕刊同梱料金 | 夕刊同梱件数 | 特殊納品料金 | 管理費 | 雑誌料金 | 夕刊料金 | 夕刊店舗数 | 夕刊特殊 | 夕刊管理費
+  h+=`<table style="width:100%;border-collapse:collapse;font-size:12px;">`;
+  // 2段ヘッダー
+  h+=`<thead>`;
+  h+=`<tr style="background:#e8f4fd;">`;
+  h+=`<th colspan="2" style="border:1px solid #999;padding:4px;"></th>`;
+  h+=`<th style="border:1px solid #999;padding:4px;background:#dbeafe;">合計</th>`;
+  h+=`<th colspan="6" style="border:1px solid #999;padding:4px;background:#dbeafe;text-align:center;">朝 刊</th>`;
+  h+=`<th colspan="4" style="border:1px solid #999;padding:4px;background:#fae8ff;text-align:center;">夕 刊</th>`;
+  h+=`</tr>`;
+  h+=`<tr style="background:#f1f5f9;font-size:11px;">`;
+  h+=`<th style="border:1px solid #999;padding:3px;width:28px;">日</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;width:22px;">曜</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;width:70px;">金額</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">店舗料金</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:center;">数</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">同梱料金</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:center;">数</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">特殊</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">管理費</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">店舗料金</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:center;">数</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">特殊</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">管理費</th>`;
   h+=`</tr></thead><tbody>`;
 
-  let totalAm=0,totalPm=0;
+  let grandTotal=0,totalAmSum=0,totalPmSum=0;
   for(let d=1;d<=daysInMonth;d++){
     const dt=new Date(y,m-1,d);
     const dow=dt.getDay();
@@ -2817,56 +2834,47 @@ function admBillGenerate(){
     const isSun=dow===0;
     const isSat=dow===6;
 
-    // 朝刊: 毎日
-    const dayAm=amDayAmount;
-    totalAm+=dayAm;
-
-    // 夕刊: 月〜土（日曜は基本なし）
-    let dayPm=0;
-    if(!isSun){
-      dayPm=pmDayAmount;
-    }
-    totalPm+=dayPm;
+    const dayAm=amDayTotal;
+    let dayPm=isSun?0:pmDayTotal;
+    const dayTotal=dayAm+dayPm;
+    grandTotal+=dayTotal;totalAmSum+=dayAm;totalPmSum+=dayPm;
 
     const rowBg=isSun?'background:#fff1f2;':isSat?'background:#f0f9ff;':'';
+    const dowColor=isSun?'#dc2626':isSat?'#2563eb':'#333';
     h+=`<tr style="${rowBg}">`;
-    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${d}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;color:${isSun?'#dc2626':isSat?'#2563eb':'#333'}">${dowStr}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;">${d}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:${dowColor};font-weight:bold;">${dowStr}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;font-weight:bold;">¥${dayTotal.toLocaleString()}</td>`;
     // 朝刊
-    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${amCount}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${amTokushu||''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${amZasshi||''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${amDokkon||''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${amKanri}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;background:#f0f9ff;font-weight:500;">¥${dayAm.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${amShopFee.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:var(--text-sub);">${amCount}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${amDokkonFee?'¥'+amDokkonFee.toLocaleString():''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:var(--text-sub);">${amDokkon||''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${amTokushuFee?'¥'+amTokushuFee.toLocaleString():''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${amKanriFee.toLocaleString()}</td>`;
     // 夕刊
     if(dayPm>0){
-      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${pmCount}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${pmTokushu||''}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${pmKanri}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;background:#faf5ff;font-weight:500;">¥${dayPm.toLocaleString()}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${pmShopFee.toLocaleString()}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:var(--text-sub);">${pmCount}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${pmTokushuFee?'¥'+pmTokushuFee.toLocaleString():''}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${pmKanriFee.toLocaleString()}</td>`;
     }else{
-      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;color:#ccc;">-</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:3px;"></td>`;
-      h+=`<td style="border:1px solid #ccc;padding:3px;"></td>`;
-      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:#ccc;">-</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:#ddd;">-</td>`.repeat(4);
     }
-    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;">¥${(dayAm+dayPm).toLocaleString()}</td>`;
     h+=`</tr>`;
   }
   // 合計行
-  h+=`<tr style="background:#f1f5f9;font-weight:bold;">`;
-  h+=`<td colspan="7" style="border:1px solid #ccc;padding:6px;text-align:right;">朝刊合計</td>`;
-  h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;font-size:14px;">¥${totalAm.toLocaleString()}</td>`;
-  h+=`<td colspan="3" style="border:1px solid #ccc;padding:6px;text-align:right;">夕刊合計</td>`;
-  h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;font-size:14px;">¥${totalPm.toLocaleString()}</td>`;
-  h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;font-size:16px;color:var(--primary);">¥${(totalAm+totalPm).toLocaleString()}</td>`;
+  h+=`<tr style="background:#f1f5f9;font-weight:bold;font-size:13px;">`;
+  h+=`<td colspan="2" style="border:1px solid #999;padding:6px;text-align:center;">合計</td>`;
+  h+=`<td style="border:1px solid #999;padding:6px;text-align:right;font-size:15px;color:var(--primary);">¥${grandTotal.toLocaleString()}</td>`;
+  h+=`<td colspan="6" style="border:1px solid #999;padding:6px;text-align:right;">朝刊計 ¥${totalAmSum.toLocaleString()}</td>`;
+  h+=`<td colspan="4" style="border:1px solid #999;padding:6px;text-align:right;">夕刊計 ¥${totalPmSum.toLocaleString()}</td>`;
   h+=`</tr></tbody></table>`;
 
-  // 単価凡例
-  h+=`<div style="margin-top:12px;font-size:11px;color:var(--text-sub);display:flex;gap:16px;flex-wrap:wrap;">`;
-  h+=`<span>朝刊: 1件×¥270 特殊納品×¥20 雑誌×¥130 夕刊同梱×¥50 管理費×¥20</span>`;
-  h+=`<span>夕刊: 1件×¥230 特殊納品×¥20 管理費×¥20</span>`;
+  // 凡例
+  h+=`<div style="margin-top:12px;font-size:11px;color:var(--text-sub);">`;
+  h+=`<div>朝刊: 下げ1件×¥270　特殊納品=${amTokushu}件×¥20　雑誌=${amZasshi}件×¥130　夕刊同梱=${amDokkon}件×¥50　管理費=${amKanri}件×¥20</div>`;
+  h+=`<div>夕刊: 下げ1件×¥230　特殊納品=${pmTokushu}件×¥20　管理費=${pmCount}件×¥20</div>`;
   h+=`</div>`;
   h+=`</div>`;
 
