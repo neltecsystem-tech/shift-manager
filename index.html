@@ -407,6 +407,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('staff')" id="adm-tab-staff" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">👥 スタッフ管理</button>
         <button onclick="adminTab('data')" id="adm-tab-data" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📁 データ管理</button>
         <button onclick="adminTab('check')" id="adm-tab-check" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🔍 突合せチェック</button>
+        <button onclick="adminTab('billing')" id="adm-tab-billing" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📄 請求書作成</button>
         <button onclick="adminTab('measure')" id="adm-tab-measure" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⏱ 測定データ</button>
         <button onclick="adminTab('settings')" id="adm-tab-settings" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⚙ システム設定</button>
       </div>
@@ -418,6 +419,18 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>スタッフ</label><select id="adm-inv-staff" onchange="adminLoadInvoices()"><option value="">すべて</option></select></div>
         </div>
         <div id="adm-inv-list"></div>
+      </div>
+
+      <!-- 得意先請求書作成 -->
+      <div id="adm-billing" class="adm-panel" style="display:none;">
+        <div class="filters">
+          <div><label>営業所</label><select id="adm-bill-area" onchange="admBillUpdateCourses()"><option value="">選択</option></select></div>
+          <div><label>コース</label><select id="adm-bill-course"><option value="">選択</option></select></div>
+          <div><label>年月</label><input type="month" id="adm-bill-month"></div>
+          <div><button onclick="admBillGenerate()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">明細作成</button></div>
+          <div><button onclick="admBillPrint()" style="background:#64748b;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">🖨 印刷</button></div>
+        </div>
+        <div id="adm-bill-preview" style="margin-top:12px;"></div>
       </div>
 
       <!-- スタッフ管理 -->
@@ -2443,6 +2456,7 @@ function adminTab(t){
   document.getElementById('adm-tab-'+t).style.color='#fff';
   if(t==='invoices')adminLoadInvoices();
   if(t==='staff')adminLoadStaff();
+  if(t==='billing')admBillInit().catch(()=>{});
   if(t==='check')adminInitCheck();
   if(t==='measure')admMsrInit();
   if(t==='data')adminShowDataInfo();
@@ -2669,6 +2683,202 @@ function loadLiveShifts(){
       parseShift(key);
     });
   }catch(_){}
+}
+
+// --- 得意先請求書作成 ---
+let admBillShopData=null;
+
+async function admBillInit(){
+  // 店舗マスタ読み込み
+  if(!admBillShopData){
+    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})});
+    admBillShopData=await resp.json();
+  }
+  const records=admBillShopData.records||[];
+  const headers=admBillShopData.headers||[];
+  // 列マッピング
+  let areaCol=1;
+  headers.forEach((h,i)=>{if(h.includes('営業所'))areaCol=i;});
+  // 営業所セレクタ
+  const areas=[...new Set(records.map(r=>(r[`col_${areaCol}`]||'').split(',')[0].trim()).filter(Boolean))];
+  const sel=document.getElementById('adm-bill-area');
+  if(sel.options.length<=1){
+    sel.innerHTML='<option value="">選択</option>'+areas.map(a=>`<option>${a}</option>`).join('');
+  }
+  // 年月デフォルト
+  const mInput=document.getElementById('adm-bill-month');
+  if(!mInput.value){
+    const now=new Date();
+    mInput.value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  }
+}
+
+function admBillUpdateCourses(){
+  const area=document.getElementById('adm-bill-area').value;
+  if(!admBillShopData||!area){document.getElementById('adm-bill-course').innerHTML='<option value="">選択</option>';return;}
+  const records=admBillShopData.records||[];
+  const headers=admBillShopData.headers||[];
+  let areaCol=1,amCourseCol=5;
+  headers.forEach((h,i)=>{
+    if(h.includes('営業所'))areaCol=i;
+    if(h.includes('朝刊コース'))amCourseCol=i;
+  });
+  const filtered=records.filter(r=>(r[`col_${areaCol}`]||'').split(',')[0].trim()===area);
+  const courses=[...new Set(filtered.map(r=>r[`col_${amCourseCol}`]).filter(Boolean))].sort();
+  document.getElementById('adm-bill-course').innerHTML='<option value="">選択</option>'+courses.map(c=>`<option>${c}</option>`).join('');
+}
+
+function admBillGenerate(){
+  const area=document.getElementById('adm-bill-area').value;
+  const course=document.getElementById('adm-bill-course').value;
+  const monthVal=document.getElementById('adm-bill-month').value;
+  if(!area||!course||!monthVal){alert('営業所・コース・年月を選択してください');return;}
+
+  const records=admBillShopData.records||[];
+  const headers=admBillShopData.headers||[];
+  // 列マッピング
+  let cols={};
+  headers.forEach((h,i)=>{
+    if(h.includes('営業所'))cols.area=i;
+    if(h.includes('朝刊コース'))cols.amCourse=i;
+    if(h==='朝刊特殊納品')cols.amTokushu=i;
+    if(h==='夕刊同梱')cols.yuukanDokkon=i;
+    if(h==='距離増')cols.kyori=i;
+    if(h==='雑誌')cols.zasshi=i;
+    if(h.includes('夕刊コース'))cols.pmCourse=i;
+    if(h==='夕刊特殊納品')cols.pmTokushu=i;
+    if(h.includes('店舗名'))cols.name=i;
+    if(h.includes('店舗コード'))cols.code=i;
+  });
+
+  // コースに該当する朝刊店舗
+  const amShops=records.filter(r=>(r[`col_${cols.area}`]||'').split(',')[0].trim()===area&&r[`col_${cols.amCourse}`]===course);
+  // 同じコースの夕刊店舗（夕刊コース名が一致）
+  const pmShops=records.filter(r=>(r[`col_${cols.area}`]||'').split(',')[0].trim()===area&&r[`col_${cols.pmCourse}`]===course);
+
+  // 朝刊カウント
+  const amCount=amShops.length;
+  const amTokushu=amShops.filter(s=>s[`col_${cols.amTokushu}`]==='TRUE').length;
+  const amZasshi=amShops.filter(s=>s[`col_${cols.zasshi}`]==='TRUE').length;
+  const amDokkon=amShops.filter(s=>s[`col_${cols.yuukanDokkon}`]==='TRUE').length;
+  const amKanri=amCount;// 管理費=全店舗
+
+  // 夕刊カウント（通常=毎日配送の店舗）
+  // 金・土のみ店舗の判定: 夕刊コースはあるが朝刊コースが同一でない？→ 要確認
+  // とりあえず全夕刊店舗を通常として計算
+  const pmCount=pmShops.length;
+  const pmTokushu=pmShops.filter(s=>s[`col_${cols.pmTokushu}`]==='TRUE').length;
+  const pmKanri=pmCount;
+
+  // 月の日数
+  const [y,m]=monthVal.split('-').map(Number);
+  const daysInMonth=new Date(y,m,0).getDate();
+  const WEEKDAYS=['日','月','火','水','木','金','土'];
+
+  // 朝刊1日分の金額
+  const amDayAmount=amCount*270+amTokushu*20+amZasshi*130+amDokkon*50+amKanri*20;
+  // 夕刊1日分（月〜土）
+  const pmDayAmount=pmCount*230+pmTokushu*20+pmKanri*20;
+
+  // 和暦
+  const reiwa=y-2018;
+
+  // 明細表生成
+  let h=`<div id="adm-bill-print-area" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:12px;">`;
+  h+=`<div style="display:flex;justify-content:space-between;margin-bottom:8px;">`;
+  h+=`<div><span style="font-size:13px;">令和${reiwa}年</span><br><span style="font-size:18px;font-weight:bold;">${m}月分</span></div>`;
+  h+=`<div style="text-align:center;"><span style="font-size:13px;">${area}営業所</span><br><span style="font-size:18px;font-weight:bold;">${course} コース</span></div>`;
+  h+=`<div style="text-align:right;font-size:12px;color:var(--text-sub);">朝刊${amCount}店 夕刊${pmCount}店</div>`;
+  h+=`</div>`;
+
+  // テーブル
+  h+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead>`;
+  h+=`<tr style="background:#f1f5f9;">`;
+  h+=`<th style="border:1px solid #ccc;padding:4px;width:30px;">日</th>`;
+  h+=`<th style="border:1px solid #ccc;padding:4px;width:24px;">曜</th>`;
+  h+=`<th style="border:1px solid #ccc;padding:4px;">店舗数</th>`;
+  h+=`<th style="border:1px solid #ccc;padding:4px;">特殊</th>`;
+  h+=`<th style="border:1px solid #ccc;padding:4px;">雑誌</th>`;
+  h+=`<th style="border:1px solid #ccc;padding:4px;">同梱</th>`;
+  h+=`<th style="border:1px solid #ccc;padding:4px;">管理</th>`;
+  h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;background:#e8f4fd;">朝刊計</th>`;
+  h+=`<th style="border:1px solid #ccc;padding:4px;">店舗数</th>`;
+  h+=`<th style="border:1px solid #ccc;padding:4px;">特殊</th>`;
+  h+=`<th style="border:1px solid #ccc;padding:4px;">管理</th>`;
+  h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;background:#fdf4ff;">夕刊計</th>`;
+  h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;">日計</th>`;
+  h+=`</tr></thead><tbody>`;
+
+  let totalAm=0,totalPm=0;
+  for(let d=1;d<=daysInMonth;d++){
+    const dt=new Date(y,m-1,d);
+    const dow=dt.getDay();
+    const dowStr=WEEKDAYS[dow];
+    const isSun=dow===0;
+    const isSat=dow===6;
+
+    // 朝刊: 毎日
+    const dayAm=amDayAmount;
+    totalAm+=dayAm;
+
+    // 夕刊: 月〜土（日曜は基本なし）
+    let dayPm=0;
+    if(!isSun){
+      dayPm=pmDayAmount;
+    }
+    totalPm+=dayPm;
+
+    const rowBg=isSun?'background:#fff1f2;':isSat?'background:#f0f9ff;':'';
+    h+=`<tr style="${rowBg}">`;
+    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${d}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;color:${isSun?'#dc2626':isSat?'#2563eb':'#333'}">${dowStr}</td>`;
+    // 朝刊
+    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${amCount}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${amTokushu||''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${amZasshi||''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${amDokkon||''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${amKanri}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;background:#f0f9ff;font-weight:500;">¥${dayAm.toLocaleString()}</td>`;
+    // 夕刊
+    if(dayPm>0){
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${pmCount}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${pmTokushu||''}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${pmKanri}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;background:#faf5ff;font-weight:500;">¥${dayPm.toLocaleString()}</td>`;
+    }else{
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;color:#ccc;">-</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;"></td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;"></td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:#ccc;">-</td>`;
+    }
+    h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;">¥${(dayAm+dayPm).toLocaleString()}</td>`;
+    h+=`</tr>`;
+  }
+  // 合計行
+  h+=`<tr style="background:#f1f5f9;font-weight:bold;">`;
+  h+=`<td colspan="7" style="border:1px solid #ccc;padding:6px;text-align:right;">朝刊合計</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;font-size:14px;">¥${totalAm.toLocaleString()}</td>`;
+  h+=`<td colspan="3" style="border:1px solid #ccc;padding:6px;text-align:right;">夕刊合計</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;font-size:14px;">¥${totalPm.toLocaleString()}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;font-size:16px;color:var(--primary);">¥${(totalAm+totalPm).toLocaleString()}</td>`;
+  h+=`</tr></tbody></table>`;
+
+  // 単価凡例
+  h+=`<div style="margin-top:12px;font-size:11px;color:var(--text-sub);display:flex;gap:16px;flex-wrap:wrap;">`;
+  h+=`<span>朝刊: 1件×¥270 特殊納品×¥20 雑誌×¥130 夕刊同梱×¥50 管理費×¥20</span>`;
+  h+=`<span>夕刊: 1件×¥230 特殊納品×¥20 管理費×¥20</span>`;
+  h+=`</div>`;
+  h+=`</div>`;
+
+  document.getElementById('adm-bill-preview').innerHTML=h;
+}
+
+function admBillPrint(){
+  const content=document.getElementById('adm-bill-print-area');
+  if(!content){alert('先に明細を作成してください');return;}
+  const win=window.open('','_blank');
+  win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>body{font-family:'Meiryo',sans-serif;padding:20px;color:#1e293b;font-size:12px;}table{width:100%;border-collapse:collapse;}th,td{padding:3px 4px;border:1px solid #ccc;}@media print{button{display:none!important;}@page{size:A4 landscape;margin:10mm;}}</style></head><body>${content.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
+  win.document.close();
 }
 
 // --- 測定データ ---
