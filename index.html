@@ -2952,7 +2952,7 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   h+=`</div>`;
   h+=`</div>`;
 
-  if(returnTotals)return {html:h,course,grandTotal,totalAmSum,totalPmSum,amCount,pmCount,keibaCount};
+  if(returnTotals)return {html:h,course,grandTotal,totalAmSum,totalPmSum,amCount,amDokkon,amTokushu,amZasshi,pmCount,pmTokushu,keibaCount,keibaTokushu};
   return h;
 }
 
@@ -2978,10 +2978,42 @@ async function admBillAllCourses(){
 
   // 各コースの明細を連続生成
   let allHtml='';
+  const sums=[];
   courses.forEach((course,idx)=>{
+    const r=admBillRenderWithTotals(area,course,monthVal);
     if(idx>0)allHtml+='<div style="page-break-before:always;margin-top:24px;border-top:3px solid var(--primary);padding-top:16px;"></div>';
-    allHtml+=admBillRender(area,course,monthVal);
+    allHtml+=r.html;
+    sums.push(r);
   });
+  // 営業所合計ページ
+  const [sy,sm]=monthVal.split('-').map(Number);
+  const rw=sy-2018;
+  let t={amCount:0,amDokkon:0,amTokushu:0,amZasshi:0,pmCount:0,pmTokushu:0,keibaCount:0,keibaTokushu:0,totalAmSum:0,totalPmSum:0,grandTotal:0};
+  sums.forEach(s=>{t.amCount+=s.amCount;t.amDokkon+=s.amDokkon;t.amTokushu+=s.amTokushu;t.amZasshi+=s.amZasshi;t.pmCount+=s.pmCount;t.pmTokushu+=s.pmTokushu;t.keibaCount+=s.keibaCount;t.keibaTokushu+=s.keibaTokushu;t.totalAmSum+=s.totalAmSum;t.totalPmSum+=s.totalPmSum;t.grandTotal+=s.grandTotal;});
+  let sh=`<div class="bill-page" style="background:#fff;padding:16px;border:1px solid var(--border);border-radius:12px;">`;
+  sh+=`<h3 style="margin-bottom:12px;">令和${rw}年${sm}月分　${area}営業所　合計</h3>`;
+  // 項目合計
+  sh+=`<table style="border-collapse:collapse;font-size:13px;margin-bottom:16px;">`;
+  sh+=`<tr style="background:#dbeafe;"><th colspan="4" style="border:1px solid #999;padding:6px;text-align:center;">朝 刊</th><th colspan="2" style="border:1px solid #999;padding:6px;text-align:center;background:#fae8ff;">夕 刊</th><th colspan="2" style="border:1px solid #999;padding:6px;text-align:center;background:#fef3c7;">競 馬</th></tr>`;
+  sh+=`<tr style="background:#f1f5f9;font-size:11px;">`;
+  sh+=`<th style="border:1px solid #999;padding:4px;">店舗数</th><th style="border:1px solid #999;padding:4px;">同梱</th><th style="border:1px solid #999;padding:4px;">特殊納品</th><th style="border:1px solid #999;padding:4px;">雑誌</th>`;
+  sh+=`<th style="border:1px solid #999;padding:4px;">店舗数</th><th style="border:1px solid #999;padding:4px;">特殊納品</th>`;
+  sh+=`<th style="border:1px solid #999;padding:4px;">店舗数</th><th style="border:1px solid #999;padding:4px;">特殊納品</th>`;
+  sh+=`</tr><tr style="font-size:16px;font-weight:bold;text-align:center;">`;
+  sh+=`<td style="border:1px solid #ccc;padding:8px;">${t.amCount}</td><td style="border:1px solid #ccc;padding:8px;">${t.amDokkon}</td><td style="border:1px solid #ccc;padding:8px;">${t.amTokushu}</td><td style="border:1px solid #ccc;padding:8px;">${t.amZasshi}</td>`;
+  sh+=`<td style="border:1px solid #ccc;padding:8px;">${t.pmCount}</td><td style="border:1px solid #ccc;padding:8px;">${t.pmTokushu}</td>`;
+  sh+=`<td style="border:1px solid #ccc;padding:8px;">${t.keibaCount}</td><td style="border:1px solid #ccc;padding:8px;">${t.keibaTokushu}</td>`;
+  sh+=`</tr></table>`;
+  // コース別金額
+  sh+=`<table style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr style="background:#f1f5f9;">`;
+  sh+=`<th style="border:1px solid #999;padding:4px;">コース</th><th style="border:1px solid #999;padding:4px;text-align:right;">朝刊計</th><th style="border:1px solid #999;padding:4px;text-align:right;">夕刊/競馬計</th><th style="border:1px solid #999;padding:4px;text-align:right;font-weight:bold;">合計</th>`;
+  sh+=`</tr></thead><tbody>`;
+  sums.forEach(s=>{
+    sh+=`<tr><td style="border:1px solid #ccc;padding:3px;">${s.course}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${s.totalAmSum.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${s.totalPmSum.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;">¥${s.grandTotal.toLocaleString()}</td></tr>`;
+  });
+  sh+=`<tr style="background:#f1f5f9;font-weight:bold;"><td style="border:1px solid #999;padding:6px;">合計</td><td style="border:1px solid #999;padding:6px;text-align:right;">¥${t.totalAmSum.toLocaleString()}</td><td style="border:1px solid #999;padding:6px;text-align:right;">¥${t.totalPmSum.toLocaleString()}</td><td style="border:1px solid #999;padding:6px;text-align:right;font-size:14px;color:var(--primary);">¥${t.grandTotal.toLocaleString()}</td></tr>`;
+  sh+=`</tbody></table></div>`;
+  allHtml=sh+'<div style="page-break-before:always;"></div>'+allHtml;
   document.getElementById('adm-bill-preview').innerHTML=allHtml;
   }catch(e){alert('エラー: '+e.message+'\n'+e.stack);console.error(e);}
 }
