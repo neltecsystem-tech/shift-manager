@@ -2954,9 +2954,16 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const pmTokushuFee=pmTokushu*20;
   const pmKanriFee=pmCount*20;
   const pmDayTotal=pmShopFee+pmTokushuFee+pmKanriFee;
-  // 競馬（金〜土）: 夕刊と同じ×230
-  const keibaShopFee=keibaCount*230;
-  const keibaTokushuFee=keibaTokushu*20;
+  // 競馬（金〜土）: 夕刊コースにもある店舗は×230、金土のみ店舗は×250
+  const pmShopCodes=new Set(openPmShops.map(s=>s[`col_${cols.code}`]));
+  const keibaAlsoPm=openKeibaShops.filter(s=>pmShopCodes.has(s[`col_${cols.code}`]));
+  const keibaOnly=openKeibaShops.filter(s=>!pmShopCodes.has(s[`col_${cols.code}`]));
+  const keibaAlsoPmCount=keibaAlsoPm.length;
+  const keibaOnlyCount=keibaOnly.length;
+  const keibaOnlyTokushu=keibaOnly.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
+  const keibaAlsoPmTokushu=keibaAlsoPm.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
+  const keibaShopFee=keibaAlsoPmCount*230+keibaOnlyCount*250;
+  const keibaTokushuFee=(keibaAlsoPmTokushu+keibaOnlyTokushu)*20;
   const keibaKanriFee=keibaCount*20;
   const keibaDayTotal=keibaShopFee+keibaTokushuFee+keibaKanriFee;
 
@@ -3085,7 +3092,7 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#fef3c7;">競馬店舗</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${keibaCount}</td>`;
   h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#fef3c7;">競特殊</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${keibaTokushu}</td>`;
   h+=`</tr></table>`;
-  h+=`<div style="color:var(--text-sub);">朝刊×¥270 特殊×¥20 雑誌×¥130 同梱×¥50 管理×¥20 ／ 夕刊・競馬×¥230 特殊×¥20 管理×¥20</div>`;
+  h+=`<div style="color:var(--text-sub);">朝刊×¥270 特殊×¥20 雑誌×¥130 同梱×¥50 管理×¥20 ／ 夕刊×¥230 特殊×¥20 管理×¥20 ／ 金土のみ×¥250${keibaOnlyCount?'('+keibaOnlyCount+'店)':''}</div>`;
   h+=`</div>`;
   h+=`</div>`;
 
