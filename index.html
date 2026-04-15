@@ -2816,14 +2816,14 @@ function admBillTachikawa(area,course,monthVal){
   h+=`<th style="border:1px solid #999;padding:3px;width:28px;">日</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;width:22px;">曜</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:right;width:70px;">金額</th>`;
-  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">下げ料金</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">店舗料金</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:center;">数</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">同梱料金</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:center;">数</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">特殊</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">雑誌</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">管理費</th>`;
-  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">下げ料金</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">店舗料金</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:center;">数</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">特殊</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">管理費</th>`;
@@ -2881,8 +2881,8 @@ function admBillTachikawa(area,course,monthVal){
 
   // 凡例
   h+=`<div style="margin-top:12px;font-size:11px;color:var(--text-sub);">`;
-  h+=`<div>朝刊: 下げ${amCount}件×¥270　特殊納品${amTokushu}件×¥20　雑誌${amZasshi}件×¥130　夕刊同梱${amDokkon}件×¥50　管理費${amKanri}件×¥20</div>`;
-  h+=`<div>夕刊: 下げ${pmCount}件×¥230　特殊納品${pmTokushu}件×¥20　管理費${pmCount}件×¥20</div>`;
+  h+=`<div>朝刊: 店舗${amCount}件×¥270　特殊納品${amTokushu}件×¥20　雑誌${amZasshi}件×¥130　夕刊同梱${amDokkon}件×¥50　管理費${amKanri}件×¥20</div>`;
+  h+=`<div>夕刊: 店舗${pmCount}件×¥230　特殊納品${pmTokushu}件×¥20　管理費${pmCount}件×¥20</div>`;
   h+=`</div>`;
   h+=`</div>`;
 
