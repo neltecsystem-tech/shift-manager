@@ -3159,7 +3159,7 @@ function admBillSavePDF(){
   const fileName=`R${reiwa}年${m}月度${area}明細`;
 
   const win=window.open('','_blank');
-  win.document.write(`<!DOCTYPE html><html><head><title>${fileName}</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:9px;}table{width:100%;border-collapse:collapse;}th,td{padding:0px 2px;border:1px solid #ccc;line-height:1;}.bill-page{page-break-after:always;padding:5mm;box-sizing:border-box;}@media print{@page{size:A4 landscape;margin:3mm;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>document.title='${fileName}';setTimeout(()=>window.print(),500)<\/script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html><head><title>${fileName}</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:9px;}table{width:100%;border-collapse:collapse;}th,td{padding:0px 2px;border:1px solid #ccc;line-height:1;}.bill-page{page-break-after:always;padding:2mm;box-sizing:border-box;}@media print{@page{size:A4 landscape;margin:0;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>document.title='${fileName}';setTimeout(()=>window.print(),500)<\/script></body></html>`);
   win.document.close();
 }
 
@@ -3167,7 +3167,7 @@ function admBillPrint(){
   const preview=document.getElementById('adm-bill-preview');
   if(!preview||!preview.innerHTML.trim()){alert('先に明細を作成してください');return;}
   const win=window.open('','_blank');
-  win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:9px;}table{width:100%;border-collapse:collapse;}th,td{padding:0px 2px;border:1px solid #ccc;line-height:1;}.bill-page{page-break-after:always;padding:5mm;box-sizing:border-box;}@media print{button{display:none!important;}@page{size:A4 landscape;margin:3mm;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:9px;}table{width:100%;border-collapse:collapse;}th,td{padding:0px 2px;border:1px solid #ccc;line-height:1;}.bill-page{page-break-after:always;padding:2mm;box-sizing:border-box;}@media print{button{display:none!important;}@page{size:A4 landscape;margin:0;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
   win.document.close();
 }
 
