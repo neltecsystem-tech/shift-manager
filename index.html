@@ -3149,7 +3149,7 @@ async function admBillAllCourses(){
   }catch(e){alert('エラー: '+e.message+'\n'+e.stack);console.error(e);}
 }
 
-async function admBillSavePDF(){
+function admBillSavePDF(){
   const preview=document.getElementById('adm-bill-preview');
   if(!preview||!preview.innerHTML.trim()){alert('先に明細を作成してください');return;}
   const area=document.getElementById('adm-bill-area').value;
@@ -3158,30 +3158,9 @@ async function admBillSavePDF(){
   const reiwa=y-2018;
   const fileName=`R${reiwa}年${m}月度${area}明細`;
 
-  const btn=document.getElementById('adm-bill-pdf-btn');
-  btn.textContent='保存中...';btn.disabled=true;
-
-  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${fileName}</title><style>body{font-family:'Meiryo',sans-serif;padding:10px;color:#1e293b;font-size:10px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 3px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:8mm;}</style></head><body>${preview.innerHTML}</body></html>`;
-
-  try{
-    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/save-invoice-pdf',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({staff:fileName,from:monthVal+'-01',to:monthVal+'-'+new Date(y,m,0).getDate(),records:[{date:'',course:area,category:'明細',amount:0}],total:0,custom_html:html,custom_filename:fileName})
-    });
-    const json=await resp.json();
-    if(json.success){
-      btn.textContent='✅ 保存済';btn.style.background='#22c55e';
-      if(json.url)window.open(json.url,'_blank');
-    }else{
-      alert('エラー: '+(json.error||'保存失敗'));
-      btn.textContent='📄 PDF保存';btn.style.background='#dc2626';
-    }
-  }catch(e){
-    alert('エラー: '+e.message);
-    btn.textContent='📄 PDF保存';btn.style.background='#dc2626';
-  }
-  btn.disabled=false;
-  setTimeout(()=>{btn.textContent='📄 PDF保存';btn.style.background='#dc2626';},3000);
+  const win=window.open('','_blank');
+  win.document.write(`<!DOCTYPE html><html><head><title>${fileName}</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:9px;}table{width:100%;border-collapse:collapse;}th,td{padding:1px 2px;border:1px solid #ccc;line-height:1.2;}.bill-page{page-break-after:always;padding:5mm;box-sizing:border-box;}@media print{@page{size:A4 landscape;margin:3mm;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>document.title='${fileName}';setTimeout(()=>window.print(),500)<\/script></body></html>`);
+  win.document.close();
 }
 
 function admBillPrint(){
