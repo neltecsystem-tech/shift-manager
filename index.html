@@ -2954,10 +2954,10 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const pmTokushuFee=pmTokushu*20;
   const pmKanriFee=pmCount*20;
   const pmDayTotal=pmShopFee+pmTokushuFee+pmKanriFee;
-  // 競馬（金〜土）: 夕刊コースにもある店舗は×230、金土のみ店舗は×250
-  const pmShopCodes=new Set(openPmShops.map(s=>s[`col_${cols.code}`]));
-  const keibaAlsoPm=openKeibaShops.filter(s=>pmShopCodes.has(s[`col_${cols.code}`]));
-  const keibaOnly=openKeibaShops.filter(s=>!pmShopCodes.has(s[`col_${cols.code}`]));
+  // 競馬（金〜土）: いずれかの夕刊コースにある店舗は×230、どの夕刊コースにもない店舗は×250
+  const allPmCodes=new Set(records.filter(r=>notCancelled(r)&&r[`col_${cols.pmCourse}`]).map(s=>s[`col_${cols.code}`]));
+  const keibaAlsoPm=openKeibaShops.filter(s=>allPmCodes.has(s[`col_${cols.code}`]));
+  const keibaOnly=openKeibaShops.filter(s=>!allPmCodes.has(s[`col_${cols.code}`]));
   const keibaAlsoPmCount=keibaAlsoPm.length;
   const keibaOnlyCount=keibaOnly.length;
   const keibaOnlyTokushu=keibaOnly.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
