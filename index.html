@@ -2734,7 +2734,8 @@ function admBillUpdateCourses(){
     if(pmCourseCol>=0&&r[`col_${pmCourseCol}`])allCourses.add(r[`col_${pmCourseCol}`]);
     if(keibaCourseCol>=0&&r[`col_${keibaCourseCol}`])allCourses.add(r[`col_${keibaCourseCol}`]);
   });
-  const courses=[...allCourses].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  // 営業所名を含むコースのみ表示
+  const courses=[...allCourses].filter(c=>c.includes(area)).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   document.getElementById('adm-bill-course').innerHTML='<option value="">選択</option>'+courses.map(c=>`<option>${c}</option>`).join('');
 }
 
@@ -2938,7 +2939,7 @@ function admBillAllCourses(){
     if(r[`col_${cols.pmCourse}`])allC.add(r[`col_${cols.pmCourse}`]);
     if(r[`col_${cols.keibaCourse}`])allC.add(r[`col_${cols.keibaCourse}`]);
   });
-  const courses=[...allC].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const courses=[...allC].filter(c=>c.includes(area)).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   if(!courses.length){alert('該当コースがありません');return;}
 
   // 各コースの明細を連続生成
