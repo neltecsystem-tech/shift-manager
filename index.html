@@ -2725,7 +2725,16 @@ function admBillUpdateCourses(){
     if(h.includes('朝刊コース'))amCourseCol=i;
   });
   const filtered=records.filter(r=>!(r[`col_${areaCol}`]||'').includes('納品中止')&&(r[`col_${areaCol}`]||'').split(',')[0].trim()===area);
-  const courses=[...new Set(filtered.map(r=>r[`col_${amCourseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  // 朝刊+夕刊+競馬の全コースを結合
+  let pmCourseCol=-1,keibaCourseCol=-1;
+  headers.forEach((h,i)=>{if(h.includes('夕刊コース'))pmCourseCol=i;if(h.includes('競馬コース'))keibaCourseCol=i;});
+  const allCourses=new Set();
+  filtered.forEach(r=>{
+    if(r[`col_${amCourseCol}`])allCourses.add(r[`col_${amCourseCol}`]);
+    if(pmCourseCol>=0&&r[`col_${pmCourseCol}`])allCourses.add(r[`col_${pmCourseCol}`]);
+    if(keibaCourseCol>=0&&r[`col_${keibaCourseCol}`])allCourses.add(r[`col_${keibaCourseCol}`]);
+  });
+  const courses=[...allCourses].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   document.getElementById('adm-bill-course').innerHTML='<option value="">選択</option>'+courses.map(c=>`<option>${c}</option>`).join('');
 }
 
@@ -2921,9 +2930,15 @@ function admBillAllCourses(){
 
   const records=admBillShopData.records||[];
   const cols=admBillCols();
-  // 営業所の全朝刊コースを取得（納品中止除外）
+  // 営業所の全コースを取得（納品中止除外、朝刊+夕刊+競馬）
   const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&(r[`col_${cols.area}`]||'').split(',')[0].trim()===area);
-  const courses=[...new Set(filtered.map(r=>r[`col_${cols.amCourse}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const allC=new Set();
+  filtered.forEach(r=>{
+    if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
+    if(r[`col_${cols.pmCourse}`])allC.add(r[`col_${cols.pmCourse}`]);
+    if(r[`col_${cols.keibaCourse}`])allC.add(r[`col_${cols.keibaCourse}`]);
+  });
+  const courses=[...allC].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   if(!courses.length){alert('該当コースがありません');return;}
 
   // 各コースの明細を連続生成
