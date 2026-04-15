@@ -428,6 +428,7 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>コース</label><select id="adm-bill-course"><option value="">選択</option></select></div>
           <div><label>年月</label><input type="month" id="adm-bill-month"></div>
           <div><button onclick="admBillGenerate()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">明細作成</button></div>
+          <div><button onclick="admBillAllCourses()" style="background:#6366f1;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📄 営業所一括作成</button></div>
           <div><button onclick="admBillPrint()" style="background:#64748b;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">🖨 印刷</button></div>
         </div>
         <div id="adm-bill-preview" style="margin-top:12px;"></div>
@@ -2881,11 +2882,38 @@ function admBillTachikawa(area,course,monthVal){
   document.getElementById('adm-bill-preview').innerHTML=h;
 }
 
+function admBillAllCourses(){
+  const area=document.getElementById('adm-bill-area').value;
+  const monthVal=document.getElementById('adm-bill-month').value;
+  if(!area||!monthVal){alert('営業所と年月を選択してください');return;}
+
+  const records=admBillShopData.records||[];
+  const cols=admBillCols();
+  // 営業所の全朝刊コースを取得
+  const filtered=records.filter(r=>(r[`col_${cols.area}`]||'').split(',')[0].trim()===area);
+  const courses=[...new Set(filtered.map(r=>r[`col_${cols.amCourse}`]).filter(Boolean))].sort();
+  if(!courses.length){alert('該当コースがありません');return;}
+
+  // 各コースの明細を連続生成
+  let allHtml='';
+  courses.forEach((course,idx)=>{
+    // 一時的にpreviewに書き出してHTMLを取得
+    if(area==='立川')admBillTachikawa(area,course,monthVal);
+    else admBillTachikawa(area,course,monthVal);
+    const content=document.getElementById('adm-bill-print-area');
+    if(content){
+      if(idx>0)allHtml+='<div style="page-break-before:always;margin-top:24px;border-top:3px solid var(--primary);padding-top:16px;"></div>';
+      allHtml+=content.outerHTML.replace('id="adm-bill-print-area"',`id="adm-bill-print-${idx}"`);
+    }
+  });
+  document.getElementById('adm-bill-preview').innerHTML=allHtml;
+}
+
 function admBillPrint(){
-  const content=document.getElementById('adm-bill-print-area');
-  if(!content){alert('先に明細を作成してください');return;}
+  const preview=document.getElementById('adm-bill-preview');
+  if(!preview||!preview.innerHTML.trim()){alert('先に明細を作成してください');return;}
   const win=window.open('','_blank');
-  win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>body{font-family:'Meiryo',sans-serif;padding:20px;color:#1e293b;font-size:12px;}table{width:100%;border-collapse:collapse;}th,td{padding:3px 4px;border:1px solid #ccc;}@media print{button{display:none!important;}@page{size:A4 landscape;margin:10mm;}}</style></head><body>${content.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>body{font-family:'Meiryo',sans-serif;padding:20px;color:#1e293b;font-size:12px;}table{width:100%;border-collapse:collapse;}th,td{padding:3px 4px;border:1px solid #ccc;}@media print{button{display:none!important;}@page{size:A4 landscape;margin:10mm;}div[style*="page-break"]{page-break-before:always!important;}}</style></head><body>${preview.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
   win.document.close();
 }
 
