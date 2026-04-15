@@ -2905,10 +2905,10 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const matchAreas=area==='城北'?['城北','池袋']:[area];
   const inArea=r=>matchAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim());
   const amShops=records.filter(r=>notCancelled(r)&&inArea(r)&&r[`col_${cols.amCourse}`]===course);
-  // 夕刊（月〜木）
-  const pmShops=records.filter(r=>notCancelled(r)&&inArea(r)&&r[`col_${cols.pmCourse}`]===course);
-  // 競馬（金〜日）— 同じコース名で競馬コース列を検索
-  const keibaShops=records.filter(r=>notCancelled(r)&&inArea(r)&&r[`col_${cols.keibaCourse}`]===course);
+  // 夕刊（月〜木）— コース名一致なら営業所問わず
+  const pmShops=records.filter(r=>notCancelled(r)&&r[`col_${cols.pmCourse}`]===course);
+  // 競馬（金〜日）— コース名一致なら営業所問わず
+  const keibaShops=records.filter(r=>notCancelled(r)&&r[`col_${cols.keibaCourse}`]===course);
 
   // 開店日列
   let openDateCol=-1;
