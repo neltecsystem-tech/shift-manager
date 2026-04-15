@@ -3003,14 +3003,14 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
 
   let h=`<div id="adm-bill-print-area" class="bill-page" style="background:#fff;padding:16px;border:1px solid var(--border);border-radius:12px;">`;
   // ヘッダー
-  h+=`<div style="display:flex;justify-content:space-between;margin-bottom:6px;">`;
-  h+=`<div><span style="font-size:11px;">令和${reiwa}年</span><br><span style="font-size:16px;font-weight:bold;">${m}月分</span></div>`;
-  h+=`<div style="text-align:center;"><span style="font-size:11px;">${area}営業所</span><br><span style="font-size:16px;font-weight:bold;">${course} コース</span></div>`;
-  h+=`<div style="text-align:right;font-size:10px;color:var(--text-sub);line-height:1.6;">朝刊: ${amCount}店舗<br>夕刊(月-木): ${pmCount}店舗<br>競馬(金-土): ${keibaCount}店舗</div>`;
+  h+=`<div style="display:flex;justify-content:space-between;margin-bottom:2px;">`;
+  h+=`<div><span style="font-size:9px;">令和${reiwa}年</span> <span style="font-size:13px;font-weight:bold;">${m}月分</span></div>`;
+  h+=`<div style="text-align:center;"><span style="font-size:9px;">${area}営業所</span> <span style="font-size:13px;font-weight:bold;">${course} コース</span></div>`;
+  h+=`<div style="text-align:right;font-size:9px;color:var(--text-sub);">朝刊${amCount}店 夕刊${pmCount}店 競馬${keibaCount}店</div>`;
   h+=`</div>`;
 
   // 立川レイアウト: 日 | 曜 | 合計金額 | 朝刊店舗料金 | 朝刊店舗数 | 夕刊同梱料金 | 夕刊同梱件数 | 特殊納品料金 | 管理費 | 雑誌料金 | 夕刊料金 | 夕刊店舗数 | 夕刊特殊 | 夕刊管理費
-  h+=`<table style="width:100%;border-collapse:collapse;font-size:10px;">`;
+  h+=`<table style="width:100%;border-collapse:collapse;font-size:9px;">`;
   // 2段ヘッダー
   h+=`<thead>`;
   h+=`<tr style="background:#e8f4fd;">`;
@@ -3188,7 +3188,7 @@ function admBillPrint(){
   const preview=document.getElementById('adm-bill-preview');
   if(!preview||!preview.innerHTML.trim()){alert('先に明細を作成してください');return;}
   const win=window.open('','_blank');
-  win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 3px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:8mm;box-sizing:border-box;}@media print{button{display:none!important;}@page{size:A4 landscape;margin:5mm;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:9px;}table{width:100%;border-collapse:collapse;}th,td{padding:1px 2px;border:1px solid #ccc;line-height:1.2;}.bill-page{page-break-after:always;padding:5mm;box-sizing:border-box;}@media print{button{display:none!important;}@page{size:A4 landscape;margin:3mm;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
   win.document.close();
 }
 
