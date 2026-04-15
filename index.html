@@ -2943,19 +2943,25 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const keibaCount=openKeibaShops.length;
   const keibaTokushu=openKeibaShops.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
 
+  // 特別単価店舗（¥700）
+  const specialPriceShops=new Set(['622179','602271','622183','612322','622068','762049','602267','761537','761536','761538','601719']);
+
   // 朝刊の各項目金額（月内固定）
   const amShopFee=amCount*270;
   const amDokkonFee=amDokkon*50;
   const amTokushuFee=amTokushu*20;
   const amKanriFee=amCount*20;
   const amZasshiFee=amZasshi*130;
-  // 夕刊（月〜木）
-  const pmShopFee=pmCount*230;
+  // 夕刊（月〜木）: 特別単価店舗は¥700
+  const pmSpecial=openPmShops.filter(s=>specialPriceShops.has(s[`col_${cols.code}`]));
+  const pmNormal=openPmShops.filter(s=>!specialPriceShops.has(s[`col_${cols.code}`]));
+  const pmSpecialCount=pmSpecial.length;
+  const pmNormalCount=pmNormal.length;
+  const pmShopFee=pmNormalCount*230+pmSpecialCount*700;
   const pmTokushuFee=pmTokushu*20;
   const pmKanriFee=pmCount*20;
   const pmDayTotal=pmShopFee+pmTokushuFee+pmKanriFee;
-  // 競馬（金〜土）: 夕刊にもある→230、金土のみ→250、特別単価店舗→700
-  const specialPriceShops=new Set(['622179','602271','622183','612322','622068','762049','602267','761537','761536','761538','601719']);
+  // 競馬（金〜土）: 夕刊にもある→230、金土のみ→250、特別単価→700
   const allPmCodes=new Set(records.filter(r=>notCancelled(r)&&r[`col_${cols.pmCourse}`]).map(s=>s[`col_${cols.code}`]));
   const keibaSpecial=openKeibaShops.filter(s=>specialPriceShops.has(s[`col_${cols.code}`]));
   const keibaAlsoPm=openKeibaShops.filter(s=>!specialPriceShops.has(s[`col_${cols.code}`])&&allPmCodes.has(s[`col_${cols.code}`]));
