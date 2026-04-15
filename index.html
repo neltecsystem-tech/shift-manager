@@ -2813,8 +2813,8 @@ async function admBillInit(){
   // 列マッピング
   let areaCol=1;
   headers.forEach((h,i)=>{if(h.includes('営業所'))areaCol=i;});
-  // 営業所セレクタ
-  const areas=[...new Set(records.map(r=>(r[`col_${areaCol}`]||'').split(',')[0].trim()).filter(Boolean))];
+  // 営業所セレクタ（城北と池袋は統合）
+  const areas=[...new Set(records.map(r=>(r[`col_${areaCol}`]||'').split(',')[0].trim()).filter(Boolean))].filter(a=>a!=='池袋');
   const sel=document.getElementById('adm-bill-area');
   if(sel.options.length<=1){
     sel.innerHTML='<option value="">選択</option>'+areas.map(a=>`<option>${a}</option>`).join('');
@@ -2837,7 +2837,8 @@ function admBillUpdateCourses(){
     if(h.includes('営業所'))areaCol=i;
     if(h.includes('朝刊コース'))amCourseCol=i;
   });
-  const filtered=records.filter(r=>!(r[`col_${areaCol}`]||'').includes('納品中止')&&(r[`col_${areaCol}`]||'').split(',')[0].trim()===area);
+  const matchAreas=area==='城北'?['城北','池袋']:[area];
+  const filtered=records.filter(r=>!(r[`col_${areaCol}`]||'').includes('納品中止')&&matchAreas.includes((r[`col_${areaCol}`]||'').split(',')[0].trim()));
   // 朝刊+夕刊+競馬の全コースを結合
   let pmCourseCol=-1,keibaCourseCol=-1;
   headers.forEach((h,i)=>{if(h.includes('夕刊コース'))pmCourseCol=i;if(h.includes('競馬コース'))keibaCourseCol=i;});
@@ -2847,8 +2848,9 @@ function admBillUpdateCourses(){
     if(pmCourseCol>=0&&r[`col_${pmCourseCol}`])allCourses.add(r[`col_${pmCourseCol}`]);
     if(keibaCourseCol>=0&&r[`col_${keibaCourseCol}`])allCourses.add(r[`col_${keibaCourseCol}`]);
   });
-  // 営業所名を含むコースのみ表示
-  const courses=[...allCourses].filter(c=>c.includes(area)).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  // 営業所名を含むコースのみ表示（城北は池袋も含む）
+  const courseAreas=area==='城北'?['城北','池袋']:[area];
+  const courses=[...allCourses].filter(c=>courseAreas.some(a=>c.includes(a))).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   document.getElementById('adm-bill-course').innerHTML='<option value="">選択</option>'+courses.map(c=>`<option>${c}</option>`).join('');
 }
 
@@ -2900,7 +2902,8 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const cols=admBillCols();
 
   const notCancelled=r=>!(r[`col_${cols.area}`]||'').includes('納品中止');
-  const inArea=r=>(r[`col_${cols.area}`]||'').split(',')[0].trim()===area;
+  const matchAreas=area==='城北'?['城北','池袋']:[area];
+  const inArea=r=>matchAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim());
   const amShops=records.filter(r=>notCancelled(r)&&inArea(r)&&r[`col_${cols.amCourse}`]===course);
   // 夕刊（月〜木）
   const pmShops=records.filter(r=>notCancelled(r)&&inArea(r)&&r[`col_${cols.pmCourse}`]===course);
@@ -3097,15 +3100,16 @@ async function admBillAllCourses(){
 
   const records=admBillShopData.records||[];
   const cols=admBillCols();
-  // 営業所の全コースを取得（納品中止除外、朝刊+夕刊+競馬）
-  const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&(r[`col_${cols.area}`]||'').split(',')[0].trim()===area);
+  // 営業所の全コースを取得（納品中止除外、朝刊+夕刊+競馬、城北は池袋含む）
+  const bulkAreas=area==='城北'?['城北','池袋']:[area];
+  const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&bulkAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
   const allC=new Set();
   filtered.forEach(r=>{
     if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
     if(r[`col_${cols.pmCourse}`])allC.add(r[`col_${cols.pmCourse}`]);
     if(r[`col_${cols.keibaCourse}`])allC.add(r[`col_${cols.keibaCourse}`]);
   });
-  const courses=[...allC].filter(c=>c.includes(area)).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const courses=[...allC].filter(c=>bulkAreas.some(a=>c.includes(a))).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   if(!courses.length){alert('該当コースがありません');return;}
 
   // 各コースの明細を連続生成
