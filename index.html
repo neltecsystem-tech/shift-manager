@@ -3050,25 +3050,25 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
     const rowBg=cd.isHoliday?'background:#fef2f2;':cd.isNoAm?'background:#fefce8;':isSun?'background:#fff1f2;':isSat?'background:#f0f9ff;':'';
     const dowColor=isSun?'#dc2626':isSat?'#2563eb':'#333';
     h+=`<tr style="${rowBg}">`;
-    h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:center;">${d}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:center;color:${dowColor};font-weight:bold;">${dowStr}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:right;font-weight:bold;">¥${dayTotal.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;">${d}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:${dowColor};font-weight:bold;">${dowStr}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;font-weight:bold;">¥${dayTotal.toLocaleString()}</td>`;
     // 朝刊
-    h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:right;">¥${cd.amSF.toLocaleString()}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:center;color:var(--text-sub);">${cd.ac}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:right;">${cd.amDF?'¥'+cd.amDF.toLocaleString():''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:center;color:var(--text-sub);">${cd.ad||''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:right;">${cd.amTF?'¥'+cd.amTF.toLocaleString():''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:right;">${cd.amZF?'¥'+cd.amZF.toLocaleString():''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:right;">¥${cd.amKF.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${cd.amSF.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:var(--text-sub);">${cd.ac}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${cd.amDF?'¥'+cd.amDF.toLocaleString():''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:var(--text-sub);">${cd.ad||''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${cd.amTF?'¥'+cd.amTF.toLocaleString():''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${cd.amZF?'¥'+cd.amZF.toLocaleString():''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${cd.amKF.toLocaleString()}</td>`;
     // 夕刊/競馬
     if(cd.dayPm>0){
-      h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:right;">¥${cd.dShopFee.toLocaleString()}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:center;color:var(--text-sub);">${cd.dCount}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:right;">${cd.dTokFee?'¥'+cd.dTokFee.toLocaleString():''}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:right;">¥${cd.dKanFee.toLocaleString()}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${cd.dShopFee.toLocaleString()}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:var(--text-sub);">${cd.dCount}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${cd.dTokFee?'¥'+cd.dTokFee.toLocaleString():''}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${cd.dKanFee.toLocaleString()}</td>`;
     }else{
-      h+=`<td style="border:1px solid #ccc;padding:3px 4px;text-align:center;color:#ddd;">-</td><td style="border:1px solid #ccc;padding:3px 4px;"></td><td style="border:1px solid #ccc;padding:3px 4px;"></td><td style="border:1px solid #ccc;padding:3px 4px;"></td>`;
+      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:#ddd;">-</td><td style="border:1px solid #ccc;padding:2px 4px;"></td><td style="border:1px solid #ccc;padding:2px 4px;"></td><td style="border:1px solid #ccc;padding:2px 4px;"></td>`;
     }
     h+=`</tr>`;
   }
@@ -3159,7 +3159,7 @@ function admBillSavePDF(){
   const fileName=`R${reiwa}年${m}月度${area}明細`;
 
   const win=window.open('','_blank');
-  win.document.write(`<!DOCTYPE html><html><head><title>${fileName}</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:3px 4px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:5mm;box-sizing:border-box;}@media print{@page{size:A4 landscape;margin:0;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>document.title='${fileName}';setTimeout(()=>window.print(),500)<\/script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html><head><title>${fileName}</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 4px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:2mm;box-sizing:border-box;}@media print{@page{size:A4 landscape;margin:0;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>document.title='${fileName}';setTimeout(()=>window.print(),500)<\/script></body></html>`);
   win.document.close();
 }
 
@@ -3167,7 +3167,7 @@ function admBillPrint(){
   const preview=document.getElementById('adm-bill-preview');
   if(!preview||!preview.innerHTML.trim()){alert('先に明細を作成してください');return;}
   const win=window.open('','_blank');
-  win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:3px 4px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:5mm;box-sizing:border-box;}@media print{button{display:none!important;}@page{size:A4 landscape;margin:0;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 4px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:2mm;box-sizing:border-box;}@media print{button{display:none!important;}@page{size:A4 landscape;margin:0;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
   win.document.close();
 }
 
