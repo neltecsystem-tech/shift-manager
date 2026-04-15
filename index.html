@@ -2724,7 +2724,7 @@ function admBillUpdateCourses(){
     if(h.includes('営業所'))areaCol=i;
     if(h.includes('朝刊コース'))amCourseCol=i;
   });
-  const filtered=records.filter(r=>(r[`col_${areaCol}`]||'').split(',')[0].trim()===area);
+  const filtered=records.filter(r=>!(r[`col_${areaCol}`]||'').includes('納品中止')&&(r[`col_${areaCol}`]||'').split(',')[0].trim()===area);
   const courses=[...new Set(filtered.map(r=>r[`col_${amCourseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   document.getElementById('adm-bill-course').innerHTML='<option value="">選択</option>'+courses.map(c=>`<option>${c}</option>`).join('');
 }
@@ -2763,8 +2763,9 @@ function admBillTachikawa(area,course,monthVal){
   const records=admBillShopData.records||[];
   const cols=admBillCols();
 
-  const amShops=records.filter(r=>(r[`col_${cols.area}`]||'').split(',')[0].trim()===area&&r[`col_${cols.amCourse}`]===course);
-  const pmShops=records.filter(r=>(r[`col_${cols.area}`]||'').split(',')[0].trim()===area&&r[`col_${cols.pmCourse}`]===course);
+  const notCancelled=r=>!(r[`col_${cols.area}`]||'').includes('納品中止');
+  const amShops=records.filter(r=>notCancelled(r)&&(r[`col_${cols.area}`]||'').split(',')[0].trim()===area&&r[`col_${cols.amCourse}`]===course);
+  const pmShops=records.filter(r=>notCancelled(r)&&(r[`col_${cols.area}`]||'').split(',')[0].trim()===area&&r[`col_${cols.pmCourse}`]===course);
 
   const amCount=amShops.length;
   const amTokushu=amShops.filter(s=>s[`col_${cols.amTokushu}`]==='TRUE').length;
@@ -2889,8 +2890,8 @@ function admBillAllCourses(){
 
   const records=admBillShopData.records||[];
   const cols=admBillCols();
-  // 営業所の全朝刊コースを取得
-  const filtered=records.filter(r=>(r[`col_${cols.area}`]||'').split(',')[0].trim()===area);
+  // 営業所の全朝刊コースを取得（納品中止除外）
+  const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&(r[`col_${cols.area}`]||'').split(',')[0].trim()===area);
   const courses=[...new Set(filtered.map(r=>r[`col_${cols.amCourse}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   if(!courses.length){alert('該当コースがありません');return;}
 
