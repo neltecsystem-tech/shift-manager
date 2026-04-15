@@ -2809,20 +2809,21 @@ function admBillTachikawa(area,course,monthVal){
   h+=`<tr style="background:#e8f4fd;">`;
   h+=`<th colspan="2" style="border:1px solid #999;padding:4px;"></th>`;
   h+=`<th style="border:1px solid #999;padding:4px;background:#dbeafe;">合計</th>`;
-  h+=`<th colspan="6" style="border:1px solid #999;padding:4px;background:#dbeafe;text-align:center;">朝 刊</th>`;
+  h+=`<th colspan="8" style="border:1px solid #999;padding:4px;background:#dbeafe;text-align:center;">朝 刊</th>`;
   h+=`<th colspan="4" style="border:1px solid #999;padding:4px;background:#fae8ff;text-align:center;">夕 刊</th>`;
   h+=`</tr>`;
   h+=`<tr style="background:#f1f5f9;font-size:11px;">`;
   h+=`<th style="border:1px solid #999;padding:3px;width:28px;">日</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;width:22px;">曜</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:right;width:70px;">金額</th>`;
-  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">店舗料金</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">下げ料金</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:center;">数</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">同梱料金</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:center;">数</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">特殊</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">雑誌</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">管理費</th>`;
-  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">店舗料金</th>`;
+  h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">下げ料金</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:center;">数</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">特殊</th>`;
   h+=`<th style="border:1px solid #999;padding:3px;text-align:right;">管理費</th>`;
@@ -2853,6 +2854,7 @@ function admBillTachikawa(area,course,monthVal){
     h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${amDokkonFee?'¥'+amDokkonFee.toLocaleString():''}</td>`;
     h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:var(--text-sub);">${amDokkon||''}</td>`;
     h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${amTokushuFee?'¥'+amTokushuFee.toLocaleString():''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${amZasshiFee?'¥'+amZasshiFee.toLocaleString():''}</td>`;
     h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${amKanriFee.toLocaleString()}</td>`;
     // 夕刊
     if(dayPm>0){
@@ -2861,7 +2863,7 @@ function admBillTachikawa(area,course,monthVal){
       h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${pmTokushuFee?'¥'+pmTokushuFee.toLocaleString():''}</td>`;
       h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${pmKanriFee.toLocaleString()}</td>`;
     }else{
-      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:#ddd;">-</td>`.repeat(4);
+      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:#ddd;">-</td><td style="border:1px solid #ccc;padding:2px 4px;"></td><td style="border:1px solid #ccc;padding:2px 4px;"></td><td style="border:1px solid #ccc;padding:2px 4px;"></td>`;
     }
     h+=`</tr>`;
   }
@@ -2869,14 +2871,14 @@ function admBillTachikawa(area,course,monthVal){
   h+=`<tr style="background:#f1f5f9;font-weight:bold;font-size:13px;">`;
   h+=`<td colspan="2" style="border:1px solid #999;padding:6px;text-align:center;">合計</td>`;
   h+=`<td style="border:1px solid #999;padding:6px;text-align:right;font-size:15px;color:var(--primary);">¥${grandTotal.toLocaleString()}</td>`;
-  h+=`<td colspan="6" style="border:1px solid #999;padding:6px;text-align:right;">朝刊計 ¥${totalAmSum.toLocaleString()}</td>`;
+  h+=`<td colspan="7" style="border:1px solid #999;padding:6px;text-align:right;">朝刊計 ¥${totalAmSum.toLocaleString()}</td>`;
   h+=`<td colspan="4" style="border:1px solid #999;padding:6px;text-align:right;">夕刊計 ¥${totalPmSum.toLocaleString()}</td>`;
   h+=`</tr></tbody></table>`;
 
   // 凡例
   h+=`<div style="margin-top:12px;font-size:11px;color:var(--text-sub);">`;
-  h+=`<div>朝刊: 下げ1件×¥270　特殊納品=${amTokushu}件×¥20　雑誌=${amZasshi}件×¥130　夕刊同梱=${amDokkon}件×¥50　管理費=${amKanri}件×¥20</div>`;
-  h+=`<div>夕刊: 下げ1件×¥230　特殊納品=${pmTokushu}件×¥20　管理費=${pmCount}件×¥20</div>`;
+  h+=`<div>朝刊: 下げ${amCount}件×¥270　特殊納品${amTokushu}件×¥20　雑誌${amZasshi}件×¥130　夕刊同梱${amDokkon}件×¥50　管理費${amKanri}件×¥20</div>`;
+  h+=`<div>夕刊: 下げ${pmCount}件×¥230　特殊納品${pmTokushu}件×¥20　管理費${pmCount}件×¥20</div>`;
   h+=`</div>`;
   h+=`</div>`;
 
