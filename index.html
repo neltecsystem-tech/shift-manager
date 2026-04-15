@@ -408,6 +408,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('data')" id="adm-tab-data" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📁 データ管理</button>
         <button onclick="adminTab('check')" id="adm-tab-check" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🔍 突合せチェック</button>
         <button onclick="adminTab('billing')" id="adm-tab-billing" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📄 請求書作成</button>
+        <button onclick="adminTab('billcond')" id="adm-tab-billcond" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 請求条件</button>
         <button onclick="adminTab('measure')" id="adm-tab-measure" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⏱ 測定データ</button>
         <button onclick="adminTab('settings')" id="adm-tab-settings" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⚙ システム設定</button>
       </div>
@@ -434,6 +435,46 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="adm-bill-totals" style="margin-top:8px;"></div>
         <div id="adm-bill-preview" style="margin-top:12px;"></div>
+      </div>
+
+      <!-- 請求条件設定 -->
+      <div id="adm-billcond" class="adm-panel" style="display:none;">
+        <div class="filters">
+          <div><label>年月</label><input type="month" id="adm-bc-month" onchange="admBcLoad()"></div>
+          <div><button onclick="admBcSave()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">💾 保存</button></div>
+        </div>
+        <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:16px;" id="adm-bc-grid">
+          <div>
+            <h4 style="color:var(--danger);margin-bottom:6px;">🚫 休刊日 <span style="font-size:11px;color:var(--text-sub);font-weight:normal;">朝刊・夕刊すべて無し</span></h4>
+            <div id="adm-bc-holiday" class="adm-bc-dates"></div>
+            <button onclick="admBcAddDate('holiday')" style="margin-top:4px;background:none;border:1px dashed var(--border);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px;color:var(--text-sub);">＋ 追加</button>
+          </div>
+          <div>
+            <h4 style="color:#f59e0b;margin-bottom:6px;">📰 朝刊無し <span style="font-size:11px;color:var(--text-sub);font-weight:normal;">朝刊のみ無し</span></h4>
+            <div id="adm-bc-noam" class="adm-bc-dates"></div>
+            <button onclick="admBcAddDate('noam')" style="margin-top:4px;background:none;border:1px dashed var(--border);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px;color:var(--text-sub);">＋ 追加</button>
+          </div>
+          <div>
+            <h4 style="color:#3498DB;margin-bottom:6px;">📦 夕刊同梱無し <span style="font-size:11px;color:var(--text-sub);font-weight:normal;">通常同梱ある日を無しに</span></h4>
+            <div id="adm-bc-nodokkon" class="adm-bc-dates"></div>
+            <button onclick="admBcAddDate('nodokkon')" style="margin-top:4px;background:none;border:1px dashed var(--border);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px;color:var(--text-sub);">＋ 追加</button>
+          </div>
+          <div>
+            <h4 style="color:#22c55e;margin-bottom:6px;">📦 夕刊同梱有 <span style="font-size:11px;color:var(--text-sub);font-weight:normal;">通常同梱ない日を有りに</span></h4>
+            <div id="adm-bc-yesdokkon" class="adm-bc-dates"></div>
+            <button onclick="admBcAddDate('yesdokkon')" style="margin-top:4px;background:none;border:1px dashed var(--border);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px;color:var(--text-sub);">＋ 追加</button>
+          </div>
+          <div>
+            <h4 style="color:#7c3aed;margin-bottom:6px;">🌙 夕刊なし <span style="font-size:11px;color:var(--text-sub);font-weight:normal;">夕刊/競馬を無しに</span></h4>
+            <div id="adm-bc-nopm" class="adm-bc-dates"></div>
+            <button onclick="admBcAddDate('nopm')" style="margin-top:4px;background:none;border:1px dashed var(--border);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px;color:var(--text-sub);">＋ 追加</button>
+          </div>
+          <div>
+            <h4 style="color:#dc2626;margin-bottom:6px;">🏇 競馬配送有り <span style="font-size:11px;color:var(--text-sub);font-weight:normal;">通常競馬ない日を有りに</span></h4>
+            <div id="adm-bc-yeskeiba" class="adm-bc-dates"></div>
+            <button onclick="admBcAddDate('yeskeiba')" style="margin-top:4px;background:none;border:1px dashed var(--border);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px;color:var(--text-sub);">＋ 追加</button>
+          </div>
+        </div>
       </div>
 
       <!-- スタッフ管理 -->
@@ -2460,6 +2501,7 @@ function adminTab(t){
   if(t==='invoices')adminLoadInvoices();
   if(t==='staff')adminLoadStaff();
   if(t==='billing')admBillInit().catch(()=>{});
+  if(t==='billcond')admBcInit();
   if(t==='check')adminInitCheck();
   if(t==='measure')admMsrInit();
   if(t==='data')adminShowDataInfo();
@@ -2688,6 +2730,75 @@ function loadLiveShifts(){
   }catch(_){}
 }
 
+// --- 請求条件設定 ---
+let admBcData={};// key: "2026-04" → {holiday:[1,15],noam:[],nodokkon:[],yesdokkon:[],nopm:[],yeskeiba:[3]}
+
+function admBcInit(){
+  const mInput=document.getElementById('adm-bc-month');
+  if(!mInput.value){
+    const now=new Date();
+    mInput.value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  }
+  // localStorageから読み込み
+  try{admBcData=JSON.parse(localStorage.getItem('billConditions')||'{}');}catch(_){admBcData={};}
+  admBcLoad();
+}
+
+function admBcLoad(){
+  const month=document.getElementById('adm-bc-month').value;
+  if(!month)return;
+  const cond=admBcData[month]||{holiday:[],noam:[],nodokkon:[],yesdokkon:[],nopm:[],yeskeiba:[]};
+  ['holiday','noam','nodokkon','yesdokkon','nopm','yeskeiba'].forEach(key=>{
+    admBcRenderDates(key,cond[key]||[],month);
+  });
+}
+
+function admBcRenderDates(key,dates,month){
+  const el=document.getElementById('adm-bc-'+key);
+  if(!el)return;
+  const [y,m]=month.split('-').map(Number);
+  const daysInMonth=new Date(y,m,0).getDate();
+  const WEEKDAYS=['日','月','火','水','木','金','土'];
+  if(!dates.length){el.innerHTML='<span style="font-size:12px;color:#cbd5e1;">設定なし</span>';return;}
+  el.innerHTML=dates.sort((a,b)=>a-b).map(d=>{
+    const dt=new Date(y,m-1,d);
+    const dow=WEEKDAYS[dt.getDay()];
+    return `<span style="display:inline-flex;align-items:center;gap:2px;background:#f1f5f9;border:1px solid var(--border);border-radius:6px;padding:2px 8px;margin:2px;font-size:12px;">${m}/${d}(${dow})<button onclick="admBcRemoveDate('${key}',${d})" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;margin-left:2px;">×</button></span>`;
+  }).join('');
+}
+
+function admBcAddDate(key){
+  const month=document.getElementById('adm-bc-month').value;
+  if(!month)return;
+  const [y,m]=month.split('-').map(Number);
+  const daysInMonth=new Date(y,m,0).getDate();
+  const day=prompt(`${m}月の何日？ (1-${daysInMonth})`);
+  if(!day)return;
+  const d=parseInt(day);
+  if(isNaN(d)||d<1||d>daysInMonth){alert('無効な日付です');return;}
+  if(!admBcData[month])admBcData[month]={holiday:[],noam:[],nodokkon:[],yesdokkon:[],nopm:[],yeskeiba:[]};
+  if(!admBcData[month][key])admBcData[month][key]=[];
+  if(!admBcData[month][key].includes(d))admBcData[month][key].push(d);
+  admBcRenderDates(key,admBcData[month][key],month);
+}
+
+function admBcRemoveDate(key,d){
+  const month=document.getElementById('adm-bc-month').value;
+  if(!admBcData[month]||!admBcData[month][key])return;
+  admBcData[month][key]=admBcData[month][key].filter(x=>x!==d);
+  admBcRenderDates(key,admBcData[month][key],month);
+}
+
+function admBcSave(){
+  localStorage.setItem('billConditions',JSON.stringify(admBcData));
+  alert('請求条件を保存しました');
+}
+
+// 請求条件を取得
+function getBillConditions(monthVal){
+  try{const all=JSON.parse(localStorage.getItem('billConditions')||'{}');return all[monthVal]||{};}catch(_){return {};}
+}
+
 // --- 得意先請求書作成 ---
 let admBillShopData=null;
 
@@ -2804,6 +2915,7 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const daysInMonth=new Date(y,m,0).getDate();
   const WEEKDAYS=['日','月','火','水','木','金','土'];
   const reiwa=y-2018;
+  const cond=getBillConditions(monthVal);
 
   // 開店日が明細月の初日より前かチェック（月初より前に開店していればtrue）
   const monthFirstDay=`${y}-${String(m).padStart(2,'0')}-01`;
@@ -2845,19 +2957,36 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const keibaKanriFee=keibaCount*20;
   const keibaDayTotal=keibaShopFee+keibaTokushuFee+keibaKanriFee;
 
-  function calcDay(dow){
+  function calcDay(dow,day){
+    const isHoliday=(cond.holiday||[]).includes(day);
+    const isNoAm=(cond.noam||[]).includes(day);
+    const isNoDokkon=(cond.nodokkon||[]).includes(day);
+    const isYesDokkon=(cond.yesdokkon||[]).includes(day);
+    const isNoPm=(cond.nopm||[]).includes(day);
+    const isYesKeiba=(cond.yeskeiba||[]).includes(day);
+
     const isMon=dow===1,isSun=dow===0,isFri=dow===5,isSat=dow===6;
-    const isKeiba=isFri||isSat||isSun;
-    const ad=isMon?0:amDokkon;
-    const amDF=isMon?0:amDokkonFee;
-    const dayAm=amShopFee+amDF+amTokushuFee+amZasshiFee+amKanriFee;
+    const isKeiba=(isFri||isSat||isSun||isYesKeiba)&&!isNoPm;
+
+    // 朝刊
+    let dayAm=0,amSF=0,ac=0,amDF=0,ad=0,amTF=0,amZF=0,amKF=0;
+    if(!isHoliday&&!isNoAm){
+      amSF=amShopFee;ac=amCount;amTF=amTokushuFee;amZF=amZasshiFee;amKF=amKanriFee;
+      // 同梱: 月曜は基本なし、ただしyesDokkonで上書き可。noDokkonで除外可。
+      const hasDokkon=isYesDokkon||((!isMon)&&!isNoDokkon);
+      ad=hasDokkon?amDokkon:0;
+      amDF=hasDokkon?amDokkonFee:0;
+      dayAm=amSF+amDF+amTF+amZF+amKF;
+    }
+
+    // 夕刊/競馬
     let dayPm=0,dShopFee=0,dCount=0,dTokFee=0,dKanFee=0;
-    if(!isSun){
+    if(!isHoliday&&!isNoPm&&!(isSun&&!isYesKeiba)){
       if(isKeiba){dShopFee=keibaShopFee;dCount=keibaCount;dTokFee=keibaTokushuFee;dKanFee=keibaKanriFee;}
       else{dShopFee=pmShopFee;dCount=pmCount;dTokFee=pmTokushuFee;dKanFee=pmKanriFee;}
       dayPm=dShopFee+dTokFee+dKanFee;
     }
-    return {dayAm,dayPm,amSF:amShopFee,ac:amCount,amDF,ad,amTF:amTokushuFee,amZF:amZasshiFee,amKF:amKanriFee,dShopFee,dCount,dTokFee,dKanFee,isKeiba};
+    return {dayAm,dayPm,amSF,ac,amDF,ad,amTF,amZF,amKF,dShopFee,dCount,dTokFee,dKanFee,isKeiba,isHoliday,isNoAm};
   }
 
   let h=`<div id="adm-bill-print-area" class="bill-page" style="background:#fff;padding:16px;border:1px solid var(--border);border-radius:12px;">`;
@@ -2902,11 +3031,11 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
     const dowStr=WEEKDAYS[dow];
     const isSun=dow===0;
     const isSat=dow===6;
-    const cd=calcDay(dow);
+    const cd=calcDay(dow,d);
     const dayTotal=cd.dayAm+cd.dayPm;
     grandTotal+=dayTotal;totalAmSum+=cd.dayAm;totalPmSum+=cd.dayPm;
 
-    const rowBg=isSun?'background:#fff1f2;':isSat?'background:#f0f9ff;':'';
+    const rowBg=cd.isHoliday?'background:#fef2f2;':cd.isNoAm?'background:#fefce8;':isSun?'background:#fff1f2;':isSat?'background:#f0f9ff;':'';
     const dowColor=isSun?'#dc2626':isSat?'#2563eb':'#333';
     h+=`<tr style="${rowBg}">`;
     h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;">${d}</td>`;
