@@ -2983,11 +2983,23 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
     }
 
     // 夕刊/競馬
+    // 月〜木: 夕刊コース店舗×230
+    // 金〜土: 夕刊コース店舗×230 + 競馬のみ店舗×250
     let dayPm=0,dShopFee=0,dCount=0,dTokFee=0,dKanFee=0;
     if(!isHoliday&&!isNoPm&&!(isSun&&!isYesKeiba)){
-      if(isKeiba){dShopFee=keibaShopFee;dCount=keibaCount;dTokFee=keibaTokushuFee;dKanFee=keibaKanriFee;}
-      else{dShopFee=pmShopFee;dCount=pmCount;dTokFee=pmTokushuFee;dKanFee=pmKanriFee;}
-      dayPm=dShopFee+dTokFee+dKanFee;
+      if(isKeiba){
+        // 夕刊コース店舗も金・土は配送あり（×230）+ 競馬のみ店舗（×250）
+        const pmOnKeiba=pmCount*230+pmTokushu*20+pmCount*20;
+        const keibaOnly=keibaShopFee+keibaTokushuFee+keibaKanriFee;
+        dShopFee=pmCount*230+keibaShopFee;
+        dCount=pmCount+keibaCount;
+        dTokFee=pmTokushu*20+keibaTokushuFee;
+        dKanFee=pmCount*20+keibaKanriFee;
+        dayPm=dShopFee+dTokFee+dKanFee;
+      }else{
+        dShopFee=pmShopFee;dCount=pmCount;dTokFee=pmTokushuFee;dKanFee=pmKanriFee;
+        dayPm=dShopFee+dTokFee+dKanFee;
+      }
     }
     return {dayAm,dayPm,amSF,ac,amDF,ad,amTF,amZF,amKF,dShopFee,dCount,dTokFee,dKanFee,isKeiba,isHoliday,isNoAm};
   }
