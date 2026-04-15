@@ -2954,16 +2954,20 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const pmTokushuFee=pmTokushu*20;
   const pmKanriFee=pmCount*20;
   const pmDayTotal=pmShopFee+pmTokushuFee+pmKanriFee;
-  // 競馬（金〜土）: いずれかの夕刊コースにある店舗は×230、どの夕刊コースにもない店舗は×250
+  // 競馬（金〜土）: 夕刊にもある→230、金土のみ→250、特別単価店舗→700
+  const specialPriceShops=new Set(['622179','602271','622183','612322','622068','762049','602267','761537','761536','761538','601719']);
   const allPmCodes=new Set(records.filter(r=>notCancelled(r)&&r[`col_${cols.pmCourse}`]).map(s=>s[`col_${cols.code}`]));
-  const keibaAlsoPm=openKeibaShops.filter(s=>allPmCodes.has(s[`col_${cols.code}`]));
-  const keibaOnly=openKeibaShops.filter(s=>!allPmCodes.has(s[`col_${cols.code}`]));
+  const keibaSpecial=openKeibaShops.filter(s=>specialPriceShops.has(s[`col_${cols.code}`]));
+  const keibaAlsoPm=openKeibaShops.filter(s=>!specialPriceShops.has(s[`col_${cols.code}`])&&allPmCodes.has(s[`col_${cols.code}`]));
+  const keibaOnly=openKeibaShops.filter(s=>!specialPriceShops.has(s[`col_${cols.code}`])&&!allPmCodes.has(s[`col_${cols.code}`]));
+  const keibaSpecialCount=keibaSpecial.length;
   const keibaAlsoPmCount=keibaAlsoPm.length;
   const keibaOnlyCount=keibaOnly.length;
   const keibaOnlyTokushu=keibaOnly.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
   const keibaAlsoPmTokushu=keibaAlsoPm.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
-  const keibaShopFee=keibaAlsoPmCount*230+keibaOnlyCount*250;
-  const keibaTokushuFee=(keibaAlsoPmTokushu+keibaOnlyTokushu)*20;
+  const keibaSpecialTokushu=keibaSpecial.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
+  const keibaShopFee=keibaAlsoPmCount*230+keibaOnlyCount*250+keibaSpecialCount*700;
+  const keibaTokushuFee=(keibaAlsoPmTokushu+keibaOnlyTokushu+keibaSpecialTokushu)*20;
   const keibaKanriFee=keibaCount*20;
   const keibaDayTotal=keibaShopFee+keibaTokushuFee+keibaKanriFee;
 
