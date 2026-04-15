@@ -2761,6 +2761,7 @@ function admBillCols(){
 }
 
 async function admBillGenerate(){
+  try{
   if(!admBillShopData)await admBillInit();
   const area=document.getElementById('adm-bill-area').value;
   const course=document.getElementById('adm-bill-course').value;
@@ -2769,6 +2770,7 @@ async function admBillGenerate(){
 
   const html=admBillRender(area,course,monthVal);
   document.getElementById('adm-bill-preview').innerHTML=html;
+  }catch(e){alert('エラー: '+e.message+'\n'+e.stack);console.error(e);}
 }
 
 function admBillRender(area,course,monthVal){
@@ -2943,6 +2945,7 @@ function admBillTachikawa(area,course,monthVal){
 }
 
 async function admBillAllCourses(){
+  try{
   if(!admBillShopData)await admBillInit();
   const area=document.getElementById('adm-bill-area').value;
   const monthVal=document.getElementById('adm-bill-month').value;
@@ -2968,6 +2971,7 @@ async function admBillAllCourses(){
     allHtml+=admBillRender(area,course,monthVal);
   });
   document.getElementById('adm-bill-preview').innerHTML=allHtml;
+  }catch(e){alert('エラー: '+e.message+'\n'+e.stack);console.error(e);}
 }
 
 function admBillPrint(){
