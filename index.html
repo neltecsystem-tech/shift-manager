@@ -2741,7 +2741,7 @@ function admBillUpdateCourses(){
 
 // 店舗マスタ列マッピング取得
 function admBillCols(){
-  const headers=admBillShopData.headers||[];
+  const headers=(admBillShopData&&admBillShopData.headers)||[];
   const cols={};
   headers.forEach((h,i)=>{
     if(h.includes('営業所'))cols.area=i;
@@ -2760,7 +2760,8 @@ function admBillCols(){
   return cols;
 }
 
-function admBillGenerate(){
+async function admBillGenerate(){
+  if(!admBillShopData)await admBillInit();
   const area=document.getElementById('adm-bill-area').value;
   const course=document.getElementById('adm-bill-course').value;
   const monthVal=document.getElementById('adm-bill-month').value;
@@ -2937,7 +2938,8 @@ function admBillTachikawa(area,course,monthVal){
   document.getElementById('adm-bill-preview').innerHTML=h;
 }
 
-function admBillAllCourses(){
+async function admBillAllCourses(){
+  if(!admBillShopData)await admBillInit();
   const area=document.getElementById('adm-bill-area').value;
   const monthVal=document.getElementById('adm-bill-month').value;
   if(!area||!monthVal){alert('営業所と年月を選択してください');return;}
