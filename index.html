@@ -430,6 +430,7 @@ tbody tr:hover { background:var(--primary-light); }
           <div><button onclick="admBillGenerate()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">明細作成</button></div>
           <div><button onclick="admBillAllCourses()" style="background:#6366f1;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📄 営業所一括作成</button></div>
           <div><button onclick="admBillPrint()" style="background:#64748b;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">🖨 印刷</button></div>
+          <div><button onclick="admBillSavePDF()" id="adm-bill-pdf-btn" style="background:#dc2626;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📄 PDF保存</button></div>
         </div>
         <div id="adm-bill-totals" style="margin-top:8px;"></div>
         <div id="adm-bill-preview" style="margin-top:12px;"></div>
@@ -3004,6 +3005,41 @@ async function admBillAllCourses(){
   document.getElementById('adm-bill-totals').innerHTML=th;
   document.getElementById('adm-bill-preview').innerHTML=allHtml;
   }catch(e){alert('エラー: '+e.message+'\n'+e.stack);console.error(e);}
+}
+
+async function admBillSavePDF(){
+  const preview=document.getElementById('adm-bill-preview');
+  if(!preview||!preview.innerHTML.trim()){alert('先に明細を作成してください');return;}
+  const area=document.getElementById('adm-bill-area').value;
+  const monthVal=document.getElementById('adm-bill-month').value;
+  const [y,m]=monthVal.split('-').map(Number);
+  const reiwa=y-2018;
+  const fileName=`R${reiwa}年${m}月度${area}明細`;
+
+  const btn=document.getElementById('adm-bill-pdf-btn');
+  btn.textContent='保存中...';btn.disabled=true;
+
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${fileName}</title><style>body{font-family:'Meiryo',sans-serif;padding:10px;color:#1e293b;font-size:10px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 3px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:8mm;}</style></head><body>${preview.innerHTML}</body></html>`;
+
+  try{
+    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/save-invoice-pdf',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({staff:fileName,from:monthVal+'-01',to:monthVal+'-'+new Date(y,m,0).getDate(),records:[{date:'',course:area,category:'明細',amount:0}],total:0,custom_html:html,custom_filename:fileName})
+    });
+    const json=await resp.json();
+    if(json.success){
+      btn.textContent='✅ 保存済';btn.style.background='#22c55e';
+      if(json.url)window.open(json.url,'_blank');
+    }else{
+      alert('エラー: '+(json.error||'保存失敗'));
+      btn.textContent='📄 PDF保存';btn.style.background='#dc2626';
+    }
+  }catch(e){
+    alert('エラー: '+e.message);
+    btn.textContent='📄 PDF保存';btn.style.background='#dc2626';
+  }
+  btn.disabled=false;
+  setTimeout(()=>{btn.textContent='📄 PDF保存';btn.style.background='#dc2626';},3000);
 }
 
 function admBillPrint(){
