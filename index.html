@@ -2818,16 +2818,16 @@ function admBillTachikawa(area,course,monthVal){
   const keibaKanriFee=keibaCount*20;
   const keibaDayTotal=keibaShopFee+keibaTokushuFee+keibaKanriFee;
 
-  let h=`<div id="adm-bill-print-area" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:12px;">`;
+  let h=`<div id="adm-bill-print-area" class="bill-page" style="background:#fff;padding:16px;border:1px solid var(--border);border-radius:12px;">`;
   // ヘッダー
-  h+=`<div style="display:flex;justify-content:space-between;margin-bottom:12px;">`;
-  h+=`<div><span style="font-size:13px;">令和${reiwa}年</span><br><span style="font-size:20px;font-weight:bold;">${m}月分</span></div>`;
-  h+=`<div style="text-align:center;"><span style="font-size:13px;">${area}営業所</span><br><span style="font-size:20px;font-weight:bold;">${course} コース</span></div>`;
-  h+=`<div style="text-align:right;font-size:12px;color:var(--text-sub);line-height:1.8;">朝刊: ${amCount}店舗<br>夕刊(月-木): ${pmCount}店舗<br>競馬(金-土): ${keibaCount}店舗</div>`;
+  h+=`<div style="display:flex;justify-content:space-between;margin-bottom:6px;">`;
+  h+=`<div><span style="font-size:11px;">令和${reiwa}年</span><br><span style="font-size:16px;font-weight:bold;">${m}月分</span></div>`;
+  h+=`<div style="text-align:center;"><span style="font-size:11px;">${area}営業所</span><br><span style="font-size:16px;font-weight:bold;">${course} コース</span></div>`;
+  h+=`<div style="text-align:right;font-size:10px;color:var(--text-sub);line-height:1.6;">朝刊: ${amCount}店舗<br>夕刊(月-木): ${pmCount}店舗<br>競馬(金-土): ${keibaCount}店舗</div>`;
   h+=`</div>`;
 
   // 立川レイアウト: 日 | 曜 | 合計金額 | 朝刊店舗料金 | 朝刊店舗数 | 夕刊同梱料金 | 夕刊同梱件数 | 特殊納品料金 | 管理費 | 雑誌料金 | 夕刊料金 | 夕刊店舗数 | 夕刊特殊 | 夕刊管理費
-  h+=`<table style="width:100%;border-collapse:collapse;font-size:12px;">`;
+  h+=`<table style="width:100%;border-collapse:collapse;font-size:10px;">`;
   // 2段ヘッダー
   h+=`<thead>`;
   h+=`<tr style="background:#e8f4fd;">`;
@@ -2879,29 +2879,29 @@ function admBillTachikawa(area,course,monthVal){
     const rowBg=isSun?'background:#fff1f2;':isSat?'background:#f0f9ff;':'';
     const dowColor=isSun?'#dc2626':isSat?'#2563eb':'#333';
     h+=`<tr style="${rowBg}">`;
-    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;">${d}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:${dowColor};font-weight:bold;">${dowStr}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;font-weight:bold;">¥${dayTotal.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;">${d}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;color:${dowColor};font-weight:bold;">${dowStr}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;font-weight:bold;">¥${dayTotal.toLocaleString()}</td>`;
     // 朝刊
-    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${amShopFee.toLocaleString()}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:var(--text-sub);">${amCount}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${dayDokkonFee?'¥'+dayDokkonFee.toLocaleString():''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:var(--text-sub);">${dayDokkonCount||''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${amTokushuFee?'¥'+amTokushuFee.toLocaleString():''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${amZasshiFee?'¥'+amZasshiFee.toLocaleString():''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${amKanriFee.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">¥${amShopFee.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;color:var(--text-sub);">${amCount}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">${dayDokkonFee?'¥'+dayDokkonFee.toLocaleString():''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;color:var(--text-sub);">${dayDokkonCount||''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">${amTokushuFee?'¥'+amTokushuFee.toLocaleString():''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">${amZasshiFee?'¥'+amZasshiFee.toLocaleString():''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">¥${amKanriFee.toLocaleString()}</td>`;
     // 夕刊/競馬
     if(dayPm>0){
       const dShopFee=isKeiba?keibaShopFee:pmShopFee;
       const dCount=isKeiba?keibaCount:pmCount;
       const dTokFee=isKeiba?keibaTokushuFee:pmTokushuFee;
       const dKanFee=isKeiba?keibaKanriFee:pmKanriFee;
-      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${dShopFee.toLocaleString()}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:var(--text-sub);">${dCount}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">${dTokFee?'¥'+dTokFee.toLocaleString():''}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:right;">¥${dKanFee.toLocaleString()}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">¥${dShopFee.toLocaleString()}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;color:var(--text-sub);">${dCount}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">${dTokFee?'¥'+dTokFee.toLocaleString():''}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">¥${dKanFee.toLocaleString()}</td>`;
     }else{
-      h+=`<td style="border:1px solid #ccc;padding:2px 4px;text-align:center;color:#ddd;">-</td><td style="border:1px solid #ccc;padding:2px 4px;"></td><td style="border:1px solid #ccc;padding:2px 4px;"></td><td style="border:1px solid #ccc;padding:2px 4px;"></td>`;
+      h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;color:#ddd;">-</td><td style="border:1px solid #ccc;padding:1px 3px;"></td><td style="border:1px solid #ccc;padding:1px 3px;"></td><td style="border:1px solid #ccc;padding:1px 3px;"></td>`;
     }
     h+=`</tr>`;
   }
@@ -2914,7 +2914,7 @@ function admBillTachikawa(area,course,monthVal){
   h+=`</tr></tbody></table>`;
 
   // 凡例
-  h+=`<div style="margin-top:12px;font-size:11px;color:var(--text-sub);">`;
+  h+=`<div style="margin-top:4px;font-size:9px;color:var(--text-sub);">`;
   h+=`<div>朝刊: 店舗${amCount}件×¥270　特殊納品${amTokushu}件×¥20　雑誌${amZasshi}件×¥130　夕刊同梱${amDokkon}件×¥50　管理費${amKanri}件×¥20</div>`;
   h+=`<div>夕刊(月-木): 店舗${pmCount}件×¥230　特殊納品${pmTokushu}件×¥20　管理費${pmCount}件×¥20</div>`;
   h+=`<div>競馬(金-土): 店舗${keibaCount}件×¥250　特殊納品${keibaTokushu}件×¥20　管理費${keibaCount}件×¥20</div>`;
@@ -2961,7 +2961,7 @@ function admBillPrint(){
   const preview=document.getElementById('adm-bill-preview');
   if(!preview||!preview.innerHTML.trim()){alert('先に明細を作成してください');return;}
   const win=window.open('','_blank');
-  win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>body{font-family:'Meiryo',sans-serif;padding:20px;color:#1e293b;font-size:12px;}table{width:100%;border-collapse:collapse;}th,td{padding:3px 4px;border:1px solid #ccc;}@media print{button{display:none!important;}@page{size:A4 landscape;margin:10mm;}div[style*="page-break"]{page-break-before:always!important;}}</style></head><body>${preview.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 3px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:8mm;box-sizing:border-box;}@media print{button{display:none!important;}@page{size:A4 landscape;margin:5mm;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
   win.document.close();
 }
 
