@@ -2792,53 +2792,60 @@ function admBillTachikawa(area,course,monthVal){
   const WEEKDAYS=['日','月','火','水','木','金','土'];
   const reiwa=y-2018;
 
-  // 開店日が指定日以前かチェック（開店日が空 or 指定日以前ならtrue）
-  function isOpenOn(shop,dateStr){
+  // 開店日が明細月の初日より前かチェック（月初より前に開店していればtrue）
+  const monthFirstDay=`${y}-${String(m).padStart(2,'0')}-01`;
+  function isOpenOn(shop){
     if(openDateCol<0)return true;
     const od=(shop[`col_${openDateCol}`]||'').replace(/\//g,'-');
     if(!od)return true;
-    return od<=dateStr;
+    return od<monthFirstDay;// 月初より前に開店済み（月途中開店は翌月から）
   }
 
-  // 日ごとに店舗数を動的計算する関数
-  function calcDay(dateStr,dow){
-    const isMon=dow===1;
-    const isSun=dow===0;
-    const isFri=dow===5;
-    const isSat=dow===6;
+  // 月初時点で開店している店舗のみ（月途中開店は翌月から）
+  const openAmShops=amShops.filter(s=>isOpenOn(s));
+  const openPmShops=pmShops.filter(s=>isOpenOn(s));
+  const openKeibaShops=keibaShops.filter(s=>isOpenOn(s));
+
+  const amCount=openAmShops.length;
+  const amTokushu=openAmShops.filter(s=>s[`col_${cols.amTokushu}`]==='TRUE').length;
+  const amZasshi=openAmShops.filter(s=>s[`col_${cols.zasshi}`]==='TRUE').length;
+  const amDokkon=openAmShops.filter(s=>s[`col_${cols.yuukanDokkon}`]==='TRUE').length;
+  const pmCount=openPmShops.length;
+  const pmTokushu=openPmShops.filter(s=>s[`col_${cols.pmTokushu}`]==='TRUE').length;
+  const keibaCount=openKeibaShops.length;
+  const keibaTokushu=openKeibaShops.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
+
+  // 朝刊の各項目金額（月内固定）
+  const amShopFee=amCount*270;
+  const amDokkonFee=amDokkon*50;
+  const amTokushuFee=amTokushu*20;
+  const amKanriFee=amCount*20;
+  const amZasshiFee=amZasshi*130;
+  // 夕刊（月〜木）
+  const pmShopFee=pmCount*230;
+  const pmTokushuFee=pmTokushu*20;
+  const pmKanriFee=pmCount*20;
+  const pmDayTotal=pmShopFee+pmTokushuFee+pmKanriFee;
+  // 競馬（金〜土）
+  const keibaShopFee=keibaCount*250;
+  const keibaTokushuFee=keibaTokushu*20;
+  const keibaKanriFee=keibaCount*20;
+  const keibaDayTotal=keibaShopFee+keibaTokushuFee+keibaKanriFee;
+
+  function calcDay(dow){
+    const isMon=dow===1,isSun=dow===0,isFri=dow===5,isSat=dow===6;
     const isKeiba=isFri||isSat||isSun;
-
-    const dayAmShops=amShops.filter(s=>isOpenOn(s,dateStr));
-    const ac=dayAmShops.length;
-    const at=dayAmShops.filter(s=>s[`col_${cols.amTokushu}`]==='TRUE').length;
-    const az=dayAmShops.filter(s=>s[`col_${cols.zasshi}`]==='TRUE').length;
-    const ad=isMon?0:dayAmShops.filter(s=>s[`col_${cols.yuukanDokkon}`]==='TRUE').length;
-    const amSF=ac*270, amDF=ad*50, amTF=at*20, amZF=az*130, amKF=ac*20;
-    const dayAm=amSF+amDF+amTF+amZF+amKF;
-
+    const ad=isMon?0:amDokkon;
+    const amDF=isMon?0:amDokkonFee;
+    const dayAm=amShopFee+amDF+amTokushuFee+amZasshiFee+amKanriFee;
     let dayPm=0,dShopFee=0,dCount=0,dTokFee=0,dKanFee=0;
     if(!isSun){
-      if(isKeiba){
-        const dayKShops=keibaShops.filter(s=>isOpenOn(s,dateStr));
-        dCount=dayKShops.length;
-        const kt=dayKShops.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
-        dShopFee=dCount*250;dTokFee=kt*20;dKanFee=dCount*20;
-      }else{
-        const dayPShops=pmShops.filter(s=>isOpenOn(s,dateStr));
-        dCount=dayPShops.length;
-        const pt=dayPShops.filter(s=>s[`col_${cols.pmTokushu}`]==='TRUE').length;
-        dShopFee=dCount*230;dTokFee=pt*20;dKanFee=dCount*20;
-      }
+      if(isKeiba){dShopFee=keibaShopFee;dCount=keibaCount;dTokFee=keibaTokushuFee;dKanFee=keibaKanriFee;}
+      else{dShopFee=pmShopFee;dCount=pmCount;dTokFee=pmTokushuFee;dKanFee=pmKanriFee;}
       dayPm=dShopFee+dTokFee+dKanFee;
     }
-    return {dayAm,dayPm,amSF,ac,amDF,ad,amTF,amZF,amKF,dShopFee,dCount,dTokFee,dKanFee,isKeiba};
+    return {dayAm,dayPm,amSF:amShopFee,ac:amCount,amDF,ad,amTF:amTokushuFee,amZF:amZasshiFee,amKF:amKanriFee,dShopFee,dCount,dTokFee,dKanFee,isKeiba};
   }
-
-  // ヘッダー用の店舗数（月末時点）
-  const lastDate=`${y}-${String(m).padStart(2,'0')}-${String(daysInMonth).padStart(2,'0')}`;
-  const amCount=amShops.filter(s=>isOpenOn(s,lastDate)).length;
-  const pmCount=pmShops.filter(s=>isOpenOn(s,lastDate)).length;
-  const keibaCount=keibaShops.filter(s=>isOpenOn(s,lastDate)).length;
 
   let h=`<div id="adm-bill-print-area" class="bill-page" style="background:#fff;padding:16px;border:1px solid var(--border);border-radius:12px;">`;
   // ヘッダー
@@ -2882,9 +2889,7 @@ function admBillTachikawa(area,course,monthVal){
     const dowStr=WEEKDAYS[dow];
     const isSun=dow===0;
     const isSat=dow===6;
-    const dateStr=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-
-    const cd=calcDay(dateStr,dow);
+    const cd=calcDay(dow);
     const dayTotal=cd.dayAm+cd.dayPm;
     grandTotal+=dayTotal;totalAmSum+=cd.dayAm;totalPmSum+=cd.dayPm;
 
