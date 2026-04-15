@@ -2798,7 +2798,7 @@ function admBillTachikawa(area,course,monthVal){
     if(openDateCol<0)return true;
     const od=(shop[`col_${openDateCol}`]||'').replace(/\//g,'-');
     if(!od)return true;
-    return od<monthFirstDay;// 月初より前に開店済み（月途中開店は翌月から）
+    return od<=monthFirstDay;// 月初以前に開店済み（1日開店はカウント、2日以降は翌月から）
   }
 
   // 月初時点で開店している店舗のみ（月途中開店は翌月から）
