@@ -2783,40 +2783,62 @@ function admBillTachikawa(area,course,monthVal){
   // 競馬（金〜日）— 同じコース名で競馬コース列を検索
   const keibaShops=records.filter(r=>notCancelled(r)&&inArea(r)&&r[`col_${cols.keibaCourse}`]===course);
 
-  const amCount=amShops.length;
-  const amTokushu=amShops.filter(s=>s[`col_${cols.amTokushu}`]==='TRUE').length;
-  const amZasshi=amShops.filter(s=>s[`col_${cols.zasshi}`]==='TRUE').length;
-  const amDokkon=amShops.filter(s=>s[`col_${cols.yuukanDokkon}`]==='TRUE').length;
-  const amKanri=amCount;
-  // 夕刊（月〜木）
-  const pmCount=pmShops.length;
-  const pmTokushu=pmShops.filter(s=>s[`col_${cols.pmTokushu}`]==='TRUE').length;
-  // 競馬（金〜日）
-  const keibaCount=keibaShops.length;
-  const keibaTokushu=keibaShops.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
+  // 開店日列
+  let openDateCol=-1;
+  admBillShopData.headers.forEach((h,i)=>{if(h.includes('開店日'))openDateCol=i;});
 
   const [y,m]=monthVal.split('-').map(Number);
   const daysInMonth=new Date(y,m,0).getDate();
   const WEEKDAYS=['日','月','火','水','木','金','土'];
   const reiwa=y-2018;
 
-  // 朝刊の各項目金額
-  const amShopFee=amCount*270;
-  const amDokkonFee=amDokkon*50;
-  const amTokushuFee=amTokushu*20;
-  const amKanriFee=amKanri*20;
-  const amZasshiFee=amZasshi*130;
+  // 開店日が指定日以前かチェック（開店日が空 or 指定日以前ならtrue）
+  function isOpenOn(shop,dateStr){
+    if(openDateCol<0)return true;
+    const od=(shop[`col_${openDateCol}`]||'').replace(/\//g,'-');
+    if(!od)return true;
+    return od<=dateStr;
+  }
 
-  // 夕刊（月〜木）: ×230
-  const pmShopFee=pmCount*230;
-  const pmTokushuFee=pmTokushu*20;
-  const pmKanriFee=pmCount*20;
-  const pmDayTotal=pmShopFee+pmTokushuFee+pmKanriFee;
-  // 競馬（金〜日）: ×250
-  const keibaShopFee=keibaCount*250;
-  const keibaTokushuFee=keibaTokushu*20;
-  const keibaKanriFee=keibaCount*20;
-  const keibaDayTotal=keibaShopFee+keibaTokushuFee+keibaKanriFee;
+  // 日ごとに店舗数を動的計算する関数
+  function calcDay(dateStr,dow){
+    const isMon=dow===1;
+    const isSun=dow===0;
+    const isFri=dow===5;
+    const isSat=dow===6;
+    const isKeiba=isFri||isSat||isSun;
+
+    const dayAmShops=amShops.filter(s=>isOpenOn(s,dateStr));
+    const ac=dayAmShops.length;
+    const at=dayAmShops.filter(s=>s[`col_${cols.amTokushu}`]==='TRUE').length;
+    const az=dayAmShops.filter(s=>s[`col_${cols.zasshi}`]==='TRUE').length;
+    const ad=isMon?0:dayAmShops.filter(s=>s[`col_${cols.yuukanDokkon}`]==='TRUE').length;
+    const amSF=ac*270, amDF=ad*50, amTF=at*20, amZF=az*130, amKF=ac*20;
+    const dayAm=amSF+amDF+amTF+amZF+amKF;
+
+    let dayPm=0,dShopFee=0,dCount=0,dTokFee=0,dKanFee=0;
+    if(!isSun){
+      if(isKeiba){
+        const dayKShops=keibaShops.filter(s=>isOpenOn(s,dateStr));
+        dCount=dayKShops.length;
+        const kt=dayKShops.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
+        dShopFee=dCount*250;dTokFee=kt*20;dKanFee=dCount*20;
+      }else{
+        const dayPShops=pmShops.filter(s=>isOpenOn(s,dateStr));
+        dCount=dayPShops.length;
+        const pt=dayPShops.filter(s=>s[`col_${cols.pmTokushu}`]==='TRUE').length;
+        dShopFee=dCount*230;dTokFee=pt*20;dKanFee=dCount*20;
+      }
+      dayPm=dShopFee+dTokFee+dKanFee;
+    }
+    return {dayAm,dayPm,amSF,ac,amDF,ad,amTF,amZF,amKF,dShopFee,dCount,dTokFee,dKanFee,isKeiba};
+  }
+
+  // ヘッダー用の店舗数（月末時点）
+  const lastDate=`${y}-${String(m).padStart(2,'0')}-${String(daysInMonth).padStart(2,'0')}`;
+  const amCount=amShops.filter(s=>isOpenOn(s,lastDate)).length;
+  const pmCount=pmShops.filter(s=>isOpenOn(s,lastDate)).length;
+  const keibaCount=keibaShops.filter(s=>isOpenOn(s,lastDate)).length;
 
   let h=`<div id="adm-bill-print-area" class="bill-page" style="background:#fff;padding:16px;border:1px solid var(--border);border-radius:12px;">`;
   // ヘッダー
@@ -2860,21 +2882,11 @@ function admBillTachikawa(area,course,monthVal){
     const dowStr=WEEKDAYS[dow];
     const isSun=dow===0;
     const isSat=dow===6;
+    const dateStr=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 
-    // 月曜は夕刊同梱なし（日曜に夕刊が発行されないため）
-    const isMon=dow===1;
-    const isFri=dow===5;
-    const isKeiba=isFri||isSat||isSun;// 金・土・日は競馬
-    const dayDokkonFee=isMon?0:amDokkonFee;
-    const dayDokkonCount=isMon?0:amDokkon;
-    const dayAm=amShopFee+dayDokkonFee+amTokushuFee+amZasshiFee+amKanriFee;
-    // 夕刊: 月〜木=夕刊コース、金〜土=競馬コース、日=なし
-    let dayPm=0;
-    if(isSun){dayPm=0;}
-    else if(isKeiba){dayPm=keibaDayTotal;}
-    else{dayPm=pmDayTotal;}
-    const dayTotal=dayAm+dayPm;
-    grandTotal+=dayTotal;totalAmSum+=dayAm;totalPmSum+=dayPm;
+    const cd=calcDay(dateStr,dow);
+    const dayTotal=cd.dayAm+cd.dayPm;
+    grandTotal+=dayTotal;totalAmSum+=cd.dayAm;totalPmSum+=cd.dayPm;
 
     const rowBg=isSun?'background:#fff1f2;':isSat?'background:#f0f9ff;':'';
     const dowColor=isSun?'#dc2626':isSat?'#2563eb':'#333';
@@ -2883,23 +2895,19 @@ function admBillTachikawa(area,course,monthVal){
     h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;color:${dowColor};font-weight:bold;">${dowStr}</td>`;
     h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;font-weight:bold;">¥${dayTotal.toLocaleString()}</td>`;
     // 朝刊
-    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">¥${amShopFee.toLocaleString()}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;color:var(--text-sub);">${amCount}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">${dayDokkonFee?'¥'+dayDokkonFee.toLocaleString():''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;color:var(--text-sub);">${dayDokkonCount||''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">${amTokushuFee?'¥'+amTokushuFee.toLocaleString():''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">${amZasshiFee?'¥'+amZasshiFee.toLocaleString():''}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">¥${amKanriFee.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">¥${cd.amSF.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;color:var(--text-sub);">${cd.ac}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">${cd.amDF?'¥'+cd.amDF.toLocaleString():''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;color:var(--text-sub);">${cd.ad||''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">${cd.amTF?'¥'+cd.amTF.toLocaleString():''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">${cd.amZF?'¥'+cd.amZF.toLocaleString():''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">¥${cd.amKF.toLocaleString()}</td>`;
     // 夕刊/競馬
-    if(dayPm>0){
-      const dShopFee=isKeiba?keibaShopFee:pmShopFee;
-      const dCount=isKeiba?keibaCount:pmCount;
-      const dTokFee=isKeiba?keibaTokushuFee:pmTokushuFee;
-      const dKanFee=isKeiba?keibaKanriFee:pmKanriFee;
-      h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">¥${dShopFee.toLocaleString()}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;color:var(--text-sub);">${dCount}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">${dTokFee?'¥'+dTokFee.toLocaleString():''}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">¥${dKanFee.toLocaleString()}</td>`;
+    if(cd.dayPm>0){
+      h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">¥${cd.dShopFee.toLocaleString()}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;color:var(--text-sub);">${cd.dCount}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">${cd.dTokFee?'¥'+cd.dTokFee.toLocaleString():''}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:right;">¥${cd.dKanFee.toLocaleString()}</td>`;
     }else{
       h+=`<td style="border:1px solid #ccc;padding:1px 3px;text-align:center;color:#ddd;">-</td><td style="border:1px solid #ccc;padding:1px 3px;"></td><td style="border:1px solid #ccc;padding:1px 3px;"></td><td style="border:1px solid #ccc;padding:1px 3px;"></td>`;
     }
