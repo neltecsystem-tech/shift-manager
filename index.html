@@ -2936,11 +2936,19 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   h+=`<td colspan="4" style="border:1px solid #999;padding:6px;text-align:right;">夕刊計 ¥${totalPmSum.toLocaleString()}</td>`;
   h+=`</tr></tbody></table>`;
 
-  // 凡例
-  h+=`<div style="margin-top:4px;font-size:9px;color:var(--text-sub);">`;
-  h+=`<div>朝刊: 店舗${amCount}件×¥270　特殊納品${amTokushu}件×¥20　雑誌${amZasshi}件×¥130　夕刊同梱${amDokkon}件×¥50　管理費${amCount}件×¥20</div>`;
-  h+=`<div>夕刊(月-木): 店舗${pmCount}件×¥230　特殊納品${pmTokushu}件×¥20　管理費${pmCount}件×¥20</div>`;
-  h+=`<div>競馬(金-土): 店舗${keibaCount}件×¥250　特殊納品${keibaTokushu}件×¥20　管理費${keibaCount}件×¥20</div>`;
+  // 集計 + 凡例
+  h+=`<div style="margin-top:4px;display:flex;gap:12px;flex-wrap:wrap;font-size:9px;">`;
+  h+=`<table style="border-collapse:collapse;font-size:9px;"><tr>`;
+  h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#f1f5f9;">朝刊店舗</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${amCount}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#f1f5f9;">同梱</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${amDokkon}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#f1f5f9;">朝特殊</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${amTokushu}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#f1f5f9;">雑誌</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${amZasshi}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#faf5ff;">夕刊店舗</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${pmCount}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#faf5ff;">夕特殊</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${pmTokushu}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#fef3c7;">競馬店舗</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${keibaCount}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#fef3c7;">競特殊</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${keibaTokushu}</td>`;
+  h+=`</tr></table>`;
+  h+=`<div style="color:var(--text-sub);">朝刊×¥270 特殊×¥20 雑誌×¥130 同梱×¥50 管理×¥20 ／ 夕刊×¥230 特殊×¥20 管理×¥20 ／ 競馬×¥250 特殊×¥20 管理×¥20</div>`;
   h+=`</div>`;
   h+=`</div>`;
 
@@ -2970,52 +2978,10 @@ async function admBillAllCourses(){
 
   // 各コースの明細を連続生成
   let allHtml='';
-  const summaries=[];
   courses.forEach((course,idx)=>{
-    const result=admBillRenderWithTotals(area,course,monthVal);
     if(idx>0)allHtml+='<div style="page-break-before:always;margin-top:24px;border-top:3px solid var(--primary);padding-top:16px;"></div>';
-    allHtml+=result.html;
-    summaries.push(result);
+    allHtml+=admBillRender(area,course,monthVal);
   });
-  // サマリーテーブル追加
-  const [sy,sm]=monthVal.split('-').map(Number);
-  const reiwa=sy-2018;
-  let sumHtml='<div style="page-break-before:always;margin-top:24px;border-top:3px solid var(--primary);padding-top:16px;"></div>';
-  sumHtml+=`<div class="bill-page" style="background:#fff;padding:16px;border:1px solid var(--border);border-radius:12px;">`;
-  sumHtml+=`<h3 style="margin-bottom:12px;">📊 令和${reiwa}年${sm}月分　${area}営業所　合計</h3>`;
-  sumHtml+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;">`;
-  sumHtml+=`<th style="border:1px solid #999;padding:6px;">コース</th>`;
-  sumHtml+=`<th style="border:1px solid #999;padding:6px;text-align:right;">朝刊店舗数</th>`;
-  sumHtml+=`<th style="border:1px solid #999;padding:6px;text-align:right;">夕刊店舗数</th>`;
-  sumHtml+=`<th style="border:1px solid #999;padding:6px;text-align:right;">競馬店舗数</th>`;
-  sumHtml+=`<th style="border:1px solid #999;padding:6px;text-align:right;">朝刊合計</th>`;
-  sumHtml+=`<th style="border:1px solid #999;padding:6px;text-align:right;">夕刊/競馬合計</th>`;
-  sumHtml+=`<th style="border:1px solid #999;padding:6px;text-align:right;font-weight:bold;">総合計</th>`;
-  sumHtml+=`</tr></thead><tbody>`;
-  let gAm=0,gPm=0,gAll=0,gAmShops=0,gPmShops=0,gKeibaShops=0;
-  summaries.forEach(s=>{
-    gAm+=s.totalAmSum;gPm+=s.totalPmSum;gAll+=s.grandTotal;
-    gAmShops+=s.amCount;gPmShops+=s.pmCount;gKeibaShops+=s.keibaCount;
-    sumHtml+=`<tr>`;
-    sumHtml+=`<td style="border:1px solid #ccc;padding:4px;font-weight:bold;">${s.course}</td>`;
-    sumHtml+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">${s.amCount}</td>`;
-    sumHtml+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">${s.pmCount}</td>`;
-    sumHtml+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">${s.keibaCount}</td>`;
-    sumHtml+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${s.totalAmSum.toLocaleString()}</td>`;
-    sumHtml+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${s.totalPmSum.toLocaleString()}</td>`;
-    sumHtml+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;">¥${s.grandTotal.toLocaleString()}</td>`;
-    sumHtml+=`</tr>`;
-  });
-  sumHtml+=`<tr style="background:#f1f5f9;font-weight:bold;font-size:13px;">`;
-  sumHtml+=`<td style="border:1px solid #999;padding:6px;">合計</td>`;
-  sumHtml+=`<td style="border:1px solid #999;padding:6px;text-align:right;">${gAmShops}</td>`;
-  sumHtml+=`<td style="border:1px solid #999;padding:6px;text-align:right;">${gPmShops}</td>`;
-  sumHtml+=`<td style="border:1px solid #999;padding:6px;text-align:right;">${gKeibaShops}</td>`;
-  sumHtml+=`<td style="border:1px solid #999;padding:6px;text-align:right;">¥${gAm.toLocaleString()}</td>`;
-  sumHtml+=`<td style="border:1px solid #999;padding:6px;text-align:right;">¥${gPm.toLocaleString()}</td>`;
-  sumHtml+=`<td style="border:1px solid #999;padding:6px;text-align:right;font-size:15px;color:var(--primary);">¥${gAll.toLocaleString()}</td>`;
-  sumHtml+=`</tr></tbody></table></div>`;
-  allHtml=sumHtml+allHtml;// サマリーを先頭に
   document.getElementById('adm-bill-preview').innerHTML=allHtml;
   }catch(e){alert('エラー: '+e.message+'\n'+e.stack);console.error(e);}
 }
