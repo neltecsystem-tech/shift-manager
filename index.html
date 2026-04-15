@@ -2471,7 +2471,7 @@ async function adminLoadInvoices(){
   const confirmed=all.filter(r=>r.confirmed);
   // Populate staff filter
   const sel=document.getElementById('adm-inv-staff');
-  const staffNames=[...new Set(confirmed.map(r=>r.staff))].sort();
+  const staffNames=[...new Set(confirmed.map(r=>r.staff))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   const curVal=sel.value;
   sel.innerHTML='<option value="">すべて</option>'+staffNames.map(n=>`<option value="${n}">${n}</option>`).join('');
   sel.value=curVal;
@@ -2725,7 +2725,7 @@ function admBillUpdateCourses(){
     if(h.includes('朝刊コース'))amCourseCol=i;
   });
   const filtered=records.filter(r=>(r[`col_${areaCol}`]||'').split(',')[0].trim()===area);
-  const courses=[...new Set(filtered.map(r=>r[`col_${amCourseCol}`]).filter(Boolean))].sort();
+  const courses=[...new Set(filtered.map(r=>r[`col_${amCourseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   document.getElementById('adm-bill-course').innerHTML='<option value="">選択</option>'+courses.map(c=>`<option>${c}</option>`).join('');
 }
 
@@ -2891,7 +2891,7 @@ function admBillAllCourses(){
   const cols=admBillCols();
   // 営業所の全朝刊コースを取得
   const filtered=records.filter(r=>(r[`col_${cols.area}`]||'').split(',')[0].trim()===area);
-  const courses=[...new Set(filtered.map(r=>r[`col_${cols.amCourse}`]).filter(Boolean))].sort();
+  const courses=[...new Set(filtered.map(r=>r[`col_${cols.amCourse}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   if(!courses.length){alert('該当コースがありません');return;}
 
   // 各コースの明細を連続生成
@@ -2934,8 +2934,8 @@ async function admMsrLoad(){
   const res=await invApi({action:'list_measure'});
   admMsrData=res.records||[];
   // フィルタ選択肢を更新
-  const courses=[...new Set(admMsrData.map(r=>r.course).filter(Boolean))].sort();
-  const staffs=[...new Set(admMsrData.map(r=>r.staff).filter(Boolean))].sort();
+  const courses=[...new Set(admMsrData.map(r=>r.course).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const staffs=[...new Set(admMsrData.map(r=>r.staff).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   const cSel=document.getElementById('adm-msr-course');
   const sSel=document.getElementById('adm-msr-staff');
   const cVal=cSel.value,sVal=sSel.value;
@@ -3090,7 +3090,7 @@ async function adminRunCheck(){
 
   // 3. Build work map: {date|staff|category -> course}
   const workMap={};
-  const dateRange=[...allDates].sort();
+  const dateRange=[...allDates].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   workRecords.forEach(w=>{
     const d=(w.date||'').replace(/\//g,'-');
     if(!allDates.has(d))return;
@@ -3406,10 +3406,10 @@ function msrFilter(){
   // コース一覧を取得（営業所未選択なら全データから）
   let filtered=msrData;
   if(area)filtered=filtered.filter(r=>r[`col_${msrColMap.area??1}`]===area);
-  const courses=[...new Set(filtered.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort();
+  const courses=[...new Set(filtered.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   // 候補がなく営業所が選択されている場合、営業所を外して再検索
   if(!courses.length&&area){
-    const allCourses=[...new Set(msrData.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort();
+    const allCourses=[...new Set(msrData.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
     if(allCourses.length){
       document.getElementById('msr-area').value='';
       filtered=msrData;
