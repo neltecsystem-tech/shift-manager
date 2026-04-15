@@ -2767,9 +2767,13 @@ async function admBillGenerate(){
   const monthVal=document.getElementById('adm-bill-month').value;
   if(!area||!course||!monthVal){alert('営業所・コース・年月を選択してください');return;}
 
+  const html=admBillRender(area,course,monthVal);
+  document.getElementById('adm-bill-preview').innerHTML=html;
+}
+
+function admBillRender(area,course,monthVal){
   // 営業所別にレイアウト関数を呼び分け
-  if(area==='立川')admBillTachikawa(area,course,monthVal);
-  else admBillTachikawa(area,course,monthVal);// 他営業所は後で追加。暫定的に立川と同じ
+  return admBillTachikawa(area,course,monthVal);
 }
 
 function admBillTachikawa(area,course,monthVal){
@@ -2935,7 +2939,7 @@ function admBillTachikawa(area,course,monthVal){
   h+=`</div>`;
   h+=`</div>`;
 
-  document.getElementById('adm-bill-preview').innerHTML=h;
+  return h;
 }
 
 async function admBillAllCourses(){
@@ -2960,14 +2964,8 @@ async function admBillAllCourses(){
   // 各コースの明細を連続生成
   let allHtml='';
   courses.forEach((course,idx)=>{
-    // 一時的にpreviewに書き出してHTMLを取得
-    if(area==='立川')admBillTachikawa(area,course,monthVal);
-    else admBillTachikawa(area,course,monthVal);
-    const content=document.getElementById('adm-bill-print-area');
-    if(content){
-      if(idx>0)allHtml+='<div style="page-break-before:always;margin-top:24px;border-top:3px solid var(--primary);padding-top:16px;"></div>';
-      allHtml+=content.outerHTML.replace('id="adm-bill-print-area"',`id="adm-bill-print-${idx}"`);
-    }
+    if(idx>0)allHtml+='<div style="page-break-before:always;margin-top:24px;border-top:3px solid var(--primary);padding-top:16px;"></div>';
+    allHtml+=admBillRender(area,course,monthVal);
   });
   document.getElementById('adm-bill-preview').innerHTML=allHtml;
 }
