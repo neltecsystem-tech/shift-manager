@@ -1452,19 +1452,12 @@ async function defectSave(){
   const btn=document.getElementById('dfe-submit');
   btn.textContent='保存中...';btn.disabled=true;
   try{
-    if(rowNum){
-      // 更新
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${DEFECT_SHEET_ID}/values/${sheetName}!A${rowNum}:I${rowNum}?valueInputOption=USER_ENTERED&key=${DEFECT_API_KEY}`,{
-        method:'PUT',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({values:[row]})
-      });
-    }else{
-      // 追加
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${DEFECT_SHEET_ID}/values/${sheetName}!A1:I1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS&key=${DEFECT_API_KEY}`,{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({values:[row]})
-      });
-    }
+    const defApi=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/defect-sheet',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(rowNum?{action:'update',sheet_name:month,row,row_number:parseInt(rowNum)}:{action:'append',sheet_name:month,row})
+    });
+    const defRes=await defApi.json();
+    if(defRes.error)throw new Error(defRes.error);
     document.getElementById('df-modal').style.display='none';
     await defectLoad();
   }catch(e){
