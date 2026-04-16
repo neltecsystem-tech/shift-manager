@@ -64,6 +64,23 @@ tbody tr:hover { background:var(--primary-light); }
 </style>
 </head>
 <body>
+<!-- システムログイン画面 -->
+<div id="sys-login" style="position:fixed;inset:0;background:#1a56db;z-index:500;display:flex;justify-content:center;align-items:center;padding:20px;">
+  <div style="background:#fff;border-radius:20px;padding:40px;width:100%;max-width:400px;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.2);">
+    <h2 style="color:#1a56db;margin-bottom:8px;">📰 新聞シフト管理</h2>
+    <p style="color:#64748b;font-size:13px;margin-bottom:24px;">ログインしてください</p>
+    <div style="margin-bottom:12px;text-align:left;"><label style="font-size:12px;color:#64748b;">ログインID</label><input type="text" id="sys-login-id" style="width:100%;padding:12px;border:1px solid #dde1e8;border-radius:10px;font-size:15px;" placeholder="IDを入力"></div>
+    <div style="margin-bottom:16px;text-align:left;"><label style="font-size:12px;color:#64748b;">パスワード</label><input type="password" id="sys-login-pw" style="width:100%;padding:12px;border:1px solid #dde1e8;border-radius:10px;font-size:15px;" placeholder="パスワードを入力"></div>
+    <div id="sys-login-err" style="color:#dc2626;font-size:13px;margin-bottom:12px;display:none;"></div>
+    <button onclick="sysDoLogin()" id="sys-login-btn" style="width:100%;background:#1a56db;color:#fff;border:none;padding:14px;border-radius:12px;font-size:16px;font-weight:bold;cursor:pointer;margin-bottom:12px;">ログイン</button>
+    <button onclick="sysShowAdminLogin()" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:13px;">管理者ログイン</button>
+    <div id="sys-admin-area" style="display:none;margin-top:16px;border-top:1px solid #dde1e8;padding-top:16px;">
+      <div style="margin-bottom:12px;text-align:left;"><label style="font-size:12px;color:#64748b;">管理者パスワード</label><input type="password" id="sys-admin-pw" style="width:100%;padding:12px;border:1px solid #dde1e8;border-radius:10px;font-size:15px;" placeholder="管理者パスワード"></div>
+      <button onclick="sysAdminLogin()" style="width:100%;background:#6366f1;color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">管理者ログイン</button>
+    </div>
+  </div>
+</div>
+
 <div class="nav">
   <h1>新聞シフト管理</h1>
   <div class="nav-links">
@@ -77,6 +94,8 @@ tbody tr:hover { background:var(--primary-light); }
     <button onclick="showView('invoice',this)">請求書</button>
     <button onclick="showView('measure',this)">測定</button>
     <button onclick="adminShowLogin()" style="margin-left:auto;background:rgba(255,255,255,.15);color:#fff;">🔧 管理</button>
+    <span id="sys-user-label" style="color:rgba(255,255,255,.7);font-size:12px;margin-left:8px;"></span>
+    <button onclick="sysLogout()" style="background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;margin-left:4px;">ログアウト</button>
   </div>
 </div>
 <div class="container">
@@ -4031,7 +4050,62 @@ function msrExport(){
 const origShowView=showView;
 showView=function(v,btn){origShowView(v,btn);if(v==='measure')showView_measure();};
 
-init();
+// ===== システムログイン =====
+let sysLoggedIn=false;
+let sysUserName='';
+let sysIsAdmin=false;
+
+function sysShowAdminLogin(){
+  document.getElementById('sys-admin-area').style.display='block';
+}
+
+async function sysDoLogin(){
+  const id=document.getElementById('sys-login-id').value.trim();
+  const pw=document.getElementById('sys-login-pw').value.trim();
+  const errEl=document.getElementById('sys-login-err');
+  if(!id||!pw){errEl.textContent='IDとパスワードを入力してください';errEl.style.display='block';return;}
+  document.getElementById('sys-login-btn').textContent='ログイン中...';
+  // スタッフ認証
+  if(!invRates.length){
+    try{const res=await invApi({action:'get_rates'});invRates=res.rates||[];}catch(_){}
+  }
+  const staff=invRates.find(r=>r.login_id===id&&r.login_pw===pw);
+  if(!staff){
+    errEl.textContent='IDまたはパスワードが正しくありません';errEl.style.display='block';
+    document.getElementById('sys-login-btn').textContent='ログイン';return;
+  }
+  sysLoggedIn=true;sysUserName=staff.name;sysIsAdmin=false;
+  document.getElementById('sys-login').style.display='none';
+  document.getElementById('sys-user-label').textContent='👤 '+sysUserName;
+  init();
+}
+
+function sysAdminLogin(){
+  const pw=document.getElementById('sys-admin-pw').value.trim();
+  const errEl=document.getElementById('sys-login-err');
+  if(!pw){errEl.textContent='管理者パスワードを入力してください';errEl.style.display='block';return;}
+  if(pw!==INV_PW&&pw!==(localStorage.getItem('adminPw')||INV_PW)){
+    errEl.textContent='管理者パスワードが正しくありません';errEl.style.display='block';return;
+  }
+  sysLoggedIn=true;sysUserName='管理者';sysIsAdmin=true;
+  document.getElementById('sys-login').style.display='none';
+  document.getElementById('sys-user-label').textContent='👑 管理者';
+  init();
+}
+
+function sysLogout(){
+  sysLoggedIn=false;sysUserName='';sysIsAdmin=false;
+  document.getElementById('sys-login').style.display='flex';
+  document.getElementById('sys-login-id').value='';
+  document.getElementById('sys-login-pw').value='';
+  document.getElementById('sys-admin-pw').value='';
+  document.getElementById('sys-login-err').style.display='none';
+  document.getElementById('sys-admin-area').style.display='none';
+  document.getElementById('sys-login-btn').textContent='ログイン';
+}
+
+// init()はログイン後に呼ばれる
+
 </script>
 </body>
 </html>
