@@ -2978,14 +2978,25 @@ function admRevRender(){
       });
 
       dh+=`<h4>${saleArea}営業所 ${courseVal} コース 日次収支</h4>`;
-      dh+=`<table style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr style="background:#f1f5f9;">`;
-      dh+=`<th style="border:1px solid #ccc;padding:4px;">日</th><th style="border:1px solid #ccc;padding:4px;">曜</th>`;
-      dh+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;color:#166534;">売上</th>`;
-      dh+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">支払い</th>`;
-      dh+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;">収支</th>`;
+      dh+=`<table style="width:100%;border-collapse:collapse;font-size:11px;"><thead>`;
+      dh+=`<tr style="background:#e8f4fd;"><th colspan="2" style="border:1px solid #ccc;padding:3px;"></th><th colspan="3" style="border:1px solid #ccc;padding:3px;text-align:center;background:#dbeafe;">売上</th><th colspan="3" style="border:1px solid #ccc;padding:3px;text-align:center;background:#fef2f2;">支払い</th><th colspan="3" style="border:1px solid #ccc;padding:3px;text-align:center;background:#f1f5f9;font-weight:bold;">収支</th></tr>`;
+      dh+=`<tr style="background:#f1f5f9;">`;
+      dh+=`<th style="border:1px solid #ccc;padding:3px;">日</th><th style="border:1px solid #ccc;padding:3px;">曜</th>`;
+      dh+=`<th style="border:1px solid #ccc;padding:3px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:3px;text-align:right;">夕刊</th><th style="border:1px solid #ccc;padding:3px;text-align:right;">計</th>`;
+      dh+=`<th style="border:1px solid #ccc;padding:3px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:3px;text-align:right;">夕刊</th><th style="border:1px solid #ccc;padding:3px;text-align:right;">計</th>`;
+      dh+=`<th style="border:1px solid #ccc;padding:3px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:3px;text-align:right;">夕刊</th><th style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;">計</th>`;
       dh+=`</tr></thead><tbody>`;
 
-      let tSales=0,tExp=0;
+      // 支払いを朝刊/夕刊に分けて日別集計
+      const workAmByDate={},workPmByDate={};
+      monthWork.filter(w=>w.course===courseVal).forEach(w=>{
+        const d=(w.date||'').replace(/-/g,'/');
+        const cat=(w.category||'');
+        if(cat.includes('朝'))workAmByDate[d]=(workAmByDate[d]||0)+Number(w.amount||0);
+        else workPmByDate[d]=(workPmByDate[d]||0)+Number(w.amount||0);
+      });
+
+      let tSalesAm=0,tSalesPm=0,tExpAm=0,tExpPm=0;
       for(let d=1;d<=daysInMonth;d++){
         const dt=new Date(y,m-1,d);
         const dow=dt.getDay();
@@ -3000,14 +3011,15 @@ function admRevRender(){
         const isMon=dow===1,isFri=dow===5;
         const isKeiba=(isFri||isSat||isSun||isYesKeiba)&&!isNoPm;
 
-        let daySales=0;
+        // 売上 朝刊/夕刊
+        let sAm=0,sPm=0;
         if(!isHoliday&&!isNoAm){
           const ac=oAm.length;
           const hasDok=isYesDokkon||((!isMon)&&!isNoDokkon);
           const dok=hasDok?oAm.filter(s=>s[`col_${colsB.yuukanDokkon}`]==='TRUE').length:0;
           const tok=oAm.filter(s=>s[`col_${colsB.amTokushu}`]==='TRUE').length;
           const zas=oAm.filter(s=>s[`col_${colsB.zasshi}`]==='TRUE').length;
-          daySales+=ac*270+dok*50+tok*20+zas*130+ac*20;
+          sAm=ac*270+dok*50+tok*20+zas*130+ac*20;
         }
         if(!isHoliday&&!isNoPm&&!(isSun&&!isYesKeiba)){
           if(isKeiba){
@@ -3015,36 +3027,57 @@ function admRevRender(){
             const kAlso=oK.filter(s=>!specialPriceShops.has(s[`col_${colsB.code}`])&&allPmCodes.has(s[`col_${colsB.code}`]));
             const kOnly=oK.filter(s=>!specialPriceShops.has(s[`col_${colsB.code}`])&&!allPmCodes.has(s[`col_${colsB.code}`]));
             const kTok=oK.filter(s=>s[`col_${colsB.keibaTokushu}`]==='TRUE').length;
-            daySales+=kAlso.length*230+kOnly.length*250+kSpec.length*700+kTok*20+oK.length*20;
+            sPm=kAlso.length*230+kOnly.length*250+kSpec.length*700+kTok*20+oK.length*20;
           }else{
             const pSpec=oPm.filter(s=>specialPriceShops.has(s[`col_${colsB.code}`]));
             const pNorm=oPm.filter(s=>!specialPriceShops.has(s[`col_${colsB.code}`]));
             const pTok=oPm.filter(s=>s[`col_${colsB.pmTokushu}`]==='TRUE').length;
-            daySales+=pNorm.length*230+pSpec.length*700+pTok*20+oPm.length*20;
+            sPm=pNorm.length*230+pSpec.length*700+pTok*20+oPm.length*20;
           }
         }
+        const sTotal=sAm+sPm;
 
+        // 支払い 朝刊/夕刊
         const dateKey=`${y}/${m}/${d}`;
         const dateKey2=`${y}/${String(m).padStart(2,'0')}/${String(d).padStart(2,'0')}`;
-        const dayExp=(workByDate[dateKey]||0)+(workByDate[dateKey2]||0);
-        const dayProfit=daySales-dayExp;
-        tSales+=daySales;tExp+=dayExp;
+        const eAm=(workAmByDate[dateKey]||0)+(workAmByDate[dateKey2]||0);
+        const ePm=(workPmByDate[dateKey]||0)+(workPmByDate[dateKey2]||0);
+        const eTotal=eAm+ePm;
+
+        // 収支
+        const pAm=sAm-eAm,pPm=sPm-ePm,pTotal=sTotal-eTotal;
+        tSalesAm+=sAm;tSalesPm+=sPm;tExpAm+=eAm;tExpPm+=ePm;
 
         const rowBg=isHoliday?'background:#fef2f2;':isSun?'background:#fff1f2;':isSat?'background:#f0f9ff;':'';
         const dowColor=isSun?'#dc2626':isSat?'#2563eb':'#333';
+        const v=n=>n?'¥'+n.toLocaleString():'';
+        const pc=n=>n>=0?'#1d4ed8':'#dc2626';
         dh+=`<tr style="${rowBg}">`;
-        dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${d}</td>`;
-        dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;color:${dowColor};font-weight:bold;">${WEEKDAYS[dow]}</td>`;
-        dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:#166534;">${daySales?'¥'+daySales.toLocaleString():''}</td>`;
-        dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:#dc2626;">${dayExp?'¥'+dayExp.toLocaleString():''}</td>`;
-        dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;color:${dayProfit>=0?'#1d4ed8':'#dc2626'};">${(daySales||dayExp)?'¥'+dayProfit.toLocaleString():''}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:center;">${d}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:center;color:${dowColor};font-weight:bold;">${WEEKDAYS[dow]}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:right;color:#166534;">${v(sAm)}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:right;color:#166534;">${v(sPm)}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:right;color:#166534;font-weight:600;">${v(sTotal)}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:right;color:#dc2626;">${v(eAm)}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:right;color:#dc2626;">${v(ePm)}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:right;color:#dc2626;font-weight:600;">${v(eTotal)}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:right;color:${pc(pAm)};">${(sAm||eAm)?'¥'+pAm.toLocaleString():''}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:right;color:${pc(pPm)};">${(sPm||ePm)?'¥'+pPm.toLocaleString():''}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:right;color:${pc(pTotal)};font-weight:bold;">${(sTotal||eTotal)?'¥'+pTotal.toLocaleString():''}</td>`;
         dh+=`</tr>`;
       }
-      const tProfit=tSales-tExp;
-      dh+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="2" style="border:1px solid #ccc;padding:4px;text-align:center;">合計</td>`;
-      dh+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;color:#166534;">¥${tSales.toLocaleString()}</td>`;
-      dh+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">¥${tExp.toLocaleString()}</td>`;
-      dh+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;color:${tProfit>=0?'#1d4ed8':'#dc2626'};">¥${tProfit.toLocaleString()}</td>`;
+      const tSalesT=tSalesAm+tSalesPm,tExpT=tExpAm+tExpPm,tProfitAm=tSalesAm-tExpAm,tProfitPm=tSalesPm-tExpPm,tProfitT=tSalesT-tExpT;
+      const pc=n=>n>=0?'#1d4ed8':'#dc2626';
+      dh+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="2" style="border:1px solid #ccc;padding:3px;text-align:center;">合計</td>`;
+      dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:#166534;">¥${tSalesAm.toLocaleString()}</td>`;
+      dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:#166534;">¥${tSalesPm.toLocaleString()}</td>`;
+      dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:#166534;">¥${tSalesT.toLocaleString()}</td>`;
+      dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:#dc2626;">¥${tExpAm.toLocaleString()}</td>`;
+      dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:#dc2626;">¥${tExpPm.toLocaleString()}</td>`;
+      dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:#dc2626;">¥${tExpT.toLocaleString()}</td>`;
+      dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:${pc(tProfitAm)};">¥${tProfitAm.toLocaleString()}</td>`;
+      dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:${pc(tProfitPm)};">¥${tProfitPm.toLocaleString()}</td>`;
+      dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:${pc(tProfitT)};">¥${tProfitT.toLocaleString()}</td>`;
       dh+=`</tr></tbody></table>`;
     }
   }
