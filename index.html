@@ -2979,12 +2979,13 @@ function admRevRender(){
 
       dh+=`<h4>${saleArea}営業所 ${courseVal} コース 日次収支</h4>`;
       dh+=`<table style="width:100%;border-collapse:collapse;font-size:11px;"><thead>`;
-      dh+=`<tr style="background:#e8f4fd;"><th colspan="2" style="border:1px solid #ccc;padding:3px;"></th><th colspan="3" style="border:1px solid #ccc;padding:3px;text-align:center;background:#dbeafe;">売上</th><th colspan="3" style="border:1px solid #ccc;padding:3px;text-align:center;background:#fef2f2;">支払い</th><th colspan="3" style="border:1px solid #ccc;padding:3px;text-align:center;background:#f1f5f9;font-weight:bold;">収支</th></tr>`;
+      dh+=`<tr style="background:#e8f4fd;"><th colspan="2" style="border:1px solid #ccc;padding:3px;"></th><th colspan="3" style="border:1px solid #ccc;padding:3px;text-align:center;background:#dbeafe;">売上</th><th colspan="3" style="border:1px solid #ccc;padding:3px;text-align:center;background:#fef2f2;">支払い</th><th colspan="3" style="border:1px solid #ccc;padding:3px;text-align:center;background:#f1f5f9;font-weight:bold;">収支</th><th style="border:1px solid #ccc;padding:3px;background:#f1f5f9;"></th></tr>`;
       dh+=`<tr style="background:#f1f5f9;">`;
       dh+=`<th style="border:1px solid #ccc;padding:3px;">日</th><th style="border:1px solid #ccc;padding:3px;">曜</th>`;
       dh+=`<th style="border:1px solid #ccc;padding:3px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:3px;text-align:right;">夕刊</th><th style="border:1px solid #ccc;padding:3px;text-align:right;">計</th>`;
       dh+=`<th style="border:1px solid #ccc;padding:3px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:3px;text-align:right;">夕刊</th><th style="border:1px solid #ccc;padding:3px;text-align:right;">計</th>`;
       dh+=`<th style="border:1px solid #ccc;padding:3px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:3px;text-align:right;">夕刊</th><th style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;">計</th>`;
+      dh+=`<th style="border:1px solid #ccc;padding:3px;text-align:right;">粗利率</th>`;
       dh+=`</tr></thead><tbody>`;
 
       // 支払いを朝刊/夕刊に分けて日別集計
@@ -3064,6 +3065,8 @@ function admRevRender(){
         dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:right;color:${pc(pAm)};">${(sAm||eAm)?'¥'+pAm.toLocaleString():''}</td>`;
         dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:right;color:${pc(pPm)};">${(sPm||ePm)?'¥'+pPm.toLocaleString():''}</td>`;
         dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:right;color:${pc(pTotal)};font-weight:bold;">${(sTotal||eTotal)?'¥'+pTotal.toLocaleString():''}</td>`;
+        const rate=sTotal?Math.round(pTotal/sTotal*100):0;
+        dh+=`<td style="border:1px solid #ccc;padding:2px;text-align:right;color:${pc(rate)};font-weight:600;">${sTotal?rate+'%':''}</td>`;
         dh+=`</tr>`;
       }
       const tSalesT=tSalesAm+tSalesPm,tExpT=tExpAm+tExpPm,tProfitAm=tSalesAm-tExpAm,tProfitPm=tSalesPm-tExpPm,tProfitT=tSalesT-tExpT;
@@ -3078,6 +3081,8 @@ function admRevRender(){
       dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:${pc(tProfitAm)};">¥${tProfitAm.toLocaleString()}</td>`;
       dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:${pc(tProfitPm)};">¥${tProfitPm.toLocaleString()}</td>`;
       dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:${pc(tProfitT)};">¥${tProfitT.toLocaleString()}</td>`;
+      const tRate=tSalesT?Math.round(tProfitT/tSalesT*100):0;
+      dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:${pc(tRate)};font-weight:bold;">${tRate}%</td>`;
       dh+=`</tr></tbody></table>`;
     }
   }
