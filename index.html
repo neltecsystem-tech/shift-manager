@@ -3713,7 +3713,7 @@ function msrRender(){
   const latCol=msrColMap.lat;
   const lngCol=msrColMap.lng;
   const hasGps=msrGpsPos&&latCol!==undefined&&lngCol!==undefined;
-  h+='<table><thead><tr><th style="width:40px">#</th><th>店舗コード</th><th>店舗名</th>'+(hasGps?'<th style="width:60px">距離</th>':'')+'<th style="width:100px">到着時刻</th><th style="width:80px"></th></tr></thead><tbody>';
+  h+='<table><thead><tr><th style="width:40px">#</th><th>店舗名</th>'+(hasGps?'<th style="width:60px">距離</th>':'')+'<th style="width:100px">到着時刻</th><th style="width:80px"></th></tr></thead><tbody>';
   shops.forEach((s,i)=>{
     const code=s[`col_${codeCol}`]||'';
     const name=s[`col_${nameCol}`]||'';
@@ -3732,7 +3732,6 @@ function msrRender(){
     const nearby=distM<=MSR_ARRIVE_DIST&&!done;
     h+=`<tr style="${done?'background:#f0fdf4;':nearby?'background:#fefce8;':''}">
       <td style="text-align:center;color:var(--text-sub);">${i+1}</td>
-      <td>${code}</td>
       <td><b>${name}</b>${nearby?' <span style="color:#f59e0b;font-size:11px;">⚡近い!</span>':''}</td>
       ${hasGps?`<td style="text-align:center;font-size:12px;color:${distM<=MSR_ARRIVE_DIST?'#f59e0b':distM<=200?'#3498DB':'var(--text-sub)'};font-weight:${distM<=MSR_ARRIVE_DIST?'bold':'normal'}">${distStr}</td>`:''}
       <td style="text-align:center;font-weight:bold;color:${done?'#22c55e':'#94a3b8'};">${time||'--:--'}</td>
