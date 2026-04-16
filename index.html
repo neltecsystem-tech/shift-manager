@@ -816,6 +816,14 @@ async function loadDashDefects(){
     const json=await resp.json();
     const rows=(json.values||[]).filter(r=>r[0]||r[3]);
     if(!rows.length){el.innerHTML='<p style="color:var(--text-sub);font-size:12px;">今月の不具合: 0件</p>';return;}
+    // 前日の日付
+    const yesterday=new Date(now);yesterday.setDate(yesterday.getDate()-1);
+    const ydStr=`${yesterday.getFullYear()}/${String(yesterday.getMonth()+1).padStart(2,'0')}/${String(yesterday.getDate()).padStart(2,'0')}`;
+    const ydStr2=`${yesterday.getFullYear()}/${yesterday.getMonth()+1}/${yesterday.getDate()}`;
+    // 前日の不具合
+    const ydRows=rows.filter(r=>{const d=(r[0]||'').trim();return d===ydStr||d===ydStr2;});
+    const ydCounts={};
+    ydRows.forEach(r=>{const area=(r[2]||'').trim()||'不明';ydCounts[area]=(ydCounts[area]||0)+1;});
     // 営業所ごとに集計
     const counts={};
     const catCounts={};
@@ -827,8 +835,18 @@ async function loadDashDefects(){
     });
     const areaColors={'城北':'#1d4ed8','川越':'#166534','立川':'#92400e','川崎高津':'#9d174d'};
     let html=`<div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;"><div style="flex:1;min-width:250px;">`;
+    // 前日の不具合
+    if(ydRows.length){
+      html+=`<div style="background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:10px 16px;margin-bottom:10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">`;
+      html+=`<span style="font-size:13px;font-weight:600;color:#a16207;">📋 前日(${yesterday.getMonth()+1}/${yesterday.getDate()})の不具合: <span style="font-size:20px;">${ydRows.length}</span>件</span>`;
+      Object.entries(ydCounts).forEach(([area,cnt])=>{
+        html+=`<span style="background:#fff;padding:2px 10px;border-radius:8px;font-size:12px;font-weight:600;color:${areaColors[area]||'#475569'}">${area} ${cnt}</span>`;
+      });
+      html+=`</div>`;
+    }
+    // 今月の集計
     html+=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">`;
-    html+=`<div style="background:#fef2f2;border-radius:10px;padding:14px 22px;text-align:center;min-width:90px;"><div style="font-size:28px;font-weight:bold;color:var(--danger);">${rows.length}</div><div style="font-size:12px;color:var(--text-sub);font-weight:600;">合計</div></div>`;
+    html+=`<div style="background:#fef2f2;border-radius:10px;padding:14px 22px;text-align:center;min-width:90px;"><div style="font-size:28px;font-weight:bold;color:var(--danger);">${rows.length}</div><div style="font-size:12px;color:var(--text-sub);font-weight:600;">今月合計</div></div>`;
     Object.entries(counts).sort((a,b)=>b[1]-a[1]).forEach(([area,cnt])=>{
       const color=areaColors[area]||'#475569';
       html+=`<div style="background:#f1f5f9;border-radius:10px;padding:14px 22px;text-align:center;min-width:90px;border-top:3px solid ${color};"><div style="font-size:28px;font-weight:bold;color:${color};">${cnt}</div><div style="font-size:12px;color:var(--text-sub);font-weight:600;">${area}</div></div>`;
