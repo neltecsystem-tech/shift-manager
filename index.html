@@ -427,6 +427,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('data')" id="adm-tab-data" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📁 データ管理</button>
         <button onclick="adminTab('check')" id="adm-tab-check" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🔍 突合せチェック</button>
         <button onclick="adminTab('billing')" id="adm-tab-billing" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📄 請求書作成</button>
+        <button onclick="adminTab('revenue')" id="adm-tab-revenue" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💰 収支管理</button>
         <button onclick="adminTab('billcond')" id="adm-tab-billcond" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 請求条件</button>
         <button onclick="adminTab('measure')" id="adm-tab-measure" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⏱ 測定データ</button>
         <button onclick="adminTab('settings')" id="adm-tab-settings" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⚙ システム設定</button>
@@ -454,6 +455,17 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="adm-bill-totals" style="margin-top:8px;"></div>
         <div id="adm-bill-preview" style="margin-top:12px;"></div>
+      </div>
+
+      <!-- 収支管理 -->
+      <div id="adm-revenue" class="adm-panel" style="display:none;">
+        <div class="filters">
+          <div><label>年月</label><input type="month" id="adm-rev-month" onchange="admRevLoad()"></div>
+          <div><label>表示</label><select id="adm-rev-view" onchange="admRevRender()"><option value="all">全営業所合計</option><option value="area">営業所別</option><option value="course">コース別</option></select></div>
+          <div><label>営業所</label><select id="adm-rev-area" onchange="admRevRender()"><option value="">全て</option></select></div>
+        </div>
+        <div id="adm-rev-summary" style="margin-top:8px;"></div>
+        <div id="adm-rev-detail" style="margin-top:12px;"></div>
       </div>
 
       <!-- 請求条件設定 -->
@@ -2533,6 +2545,7 @@ function adminTab(t){
   if(t==='invoices')adminLoadInvoices();
   if(t==='staff')adminLoadStaff();
   if(t==='billing')admBillInit().catch(()=>{});
+  if(t==='revenue')admRevInit().catch(()=>{});
   if(t==='billcond')admBcInit();
   if(t==='check')adminInitCheck();
   if(t==='measure')admMsrInit();
@@ -2760,6 +2773,151 @@ function loadLiveShifts(){
       parseShift(key);
     });
   }catch(_){}
+}
+
+// --- 収支管理 ---
+let admRevData=null;// {sales:[{area,course,amount}], expenses:[{staff,amount}]}
+
+async function admRevInit(){
+  if(!admBillShopData)await admBillInit();
+  const mInput=document.getElementById('adm-rev-month');
+  if(!mInput.value){
+    const now=new Date();
+    mInput.value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  }
+  // 営業所セレクタ
+  const sel=document.getElementById('adm-rev-area');
+  if(sel.options.length<=1){
+    const records=admBillShopData.records||[];
+    const headers=admBillShopData.headers||[];
+    let areaCol=1;
+    headers.forEach((h,i)=>{if(h.includes('営業所'))areaCol=i;});
+    const areas=[...new Set(records.map(r=>(r[`col_${areaCol}`]||'').split(',')[0].trim()).filter(Boolean))].filter(a=>a!=='池袋');
+    sel.innerHTML='<option value="">全て</option>'+areas.map(a=>`<option>${a}</option>`).join('');
+  }
+  admRevLoad();
+}
+
+async function admRevLoad(){
+  const monthVal=document.getElementById('adm-rev-month').value;
+  if(!monthVal)return;
+  document.getElementById('adm-rev-summary').innerHTML='<p style="color:var(--text-sub);">計算中...</p>';
+  document.getElementById('adm-rev-detail').innerHTML='';
+
+  // 売上: 全コースの請求額を計算
+  const records=admBillShopData.records||[];
+  const cols=admBillCols();
+  const allAreas=['立川','城北','川越','川崎高津'];
+  const sales=[];
+  allAreas.forEach(area=>{
+    const matchAreas=area==='城北'?['城北','池袋']:[area];
+    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&matchAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+    const allC=new Set();
+    filtered.forEach(r=>{
+      if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
+      if(r[`col_${cols.pmCourse}`])allC.add(r[`col_${cols.pmCourse}`]);
+      if(cols.keibaCourse!==undefined&&r[`col_${cols.keibaCourse}`])allC.add(r[`col_${cols.keibaCourse}`]);
+    });
+    const courses=[...allC].filter(c=>matchAreas.some(a=>c.includes(a)));
+    courses.forEach(course=>{
+      const result=admBillRenderWithTotals(area,course,monthVal);
+      sales.push({area,course,amount:result.grandTotal,amTotal:result.totalAmSum,pmTotal:result.totalPmSum});
+    });
+  });
+
+  // 支払い: 稼働記録から該当月の金額合計
+  const workRes=await invApi({action:'list_work'});
+  const allWork=workRes.records||[];
+  const [y,m]=monthVal.split('-').map(Number);
+  const monthPrefix=`${y}/${String(m).padStart(2,'0')}`;
+  const monthPrefix2=`${y}/${m}/`;
+  const monthWork=allWork.filter(w=>{
+    const d=(w.date||'').replace(/-/g,'/');
+    return d.startsWith(monthPrefix)||d.startsWith(monthPrefix2);
+  });
+  // スタッフ別集計
+  const expByStaff={};
+  monthWork.forEach(w=>{
+    const staff=w.staff||'不明';
+    expByStaff[staff]=(expByStaff[staff]||0)+Number(w.amount||0);
+  });
+  const expenses=Object.entries(expByStaff).map(([staff,amount])=>({staff,amount})).sort((a,b)=>b.amount-a.amount);
+
+  admRevData={sales,expenses,monthWork};
+  admRevRender();
+}
+
+function admRevRender(){
+  if(!admRevData)return;
+  const view=document.getElementById('adm-rev-view').value;
+  const areaFilter=document.getElementById('adm-rev-area').value;
+  const {sales,expenses}=admRevData;
+
+  // フィルタ
+  let filteredSales=sales;
+  let filteredExpenses=expenses;
+  if(areaFilter){
+    filteredSales=sales.filter(s=>s.area===areaFilter);
+    // 支払いはスタッフ→営業所の紐付けが難しいので全体のまま
+  }
+
+  const totalSales=filteredSales.reduce((s,r)=>s+r.amount,0);
+  const totalExpenses=filteredExpenses.reduce((s,r)=>s+r.amount,0);
+  const profit=totalSales-totalExpenses;
+
+  // サマリーカード
+  let sh=`<div style="display:flex;gap:12px;flex-wrap:wrap;">`;
+  sh+=`<div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#166534;">売上</div><div style="font-size:24px;font-weight:bold;color:#166534;">¥${totalSales.toLocaleString()}</div></div>`;
+  sh+=`<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#dc2626;">支払い</div><div style="font-size:24px;font-weight:bold;color:#dc2626;">¥${totalExpenses.toLocaleString()}</div></div>`;
+  sh+=`<div style="background:${profit>=0?'#dbeafe':'#fef2f2'};border:1px solid ${profit>=0?'#93c5fd':'#fca5a5'};border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:${profit>=0?'#1d4ed8':'#dc2626'};">収支</div><div style="font-size:24px;font-weight:bold;color:${profit>=0?'#1d4ed8':'#dc2626'};">¥${profit.toLocaleString()}</div></div>`;
+  sh+=`</div>`;
+  document.getElementById('adm-rev-summary').innerHTML=sh;
+
+  // 詳細
+  let dh='';
+  if(view==='all'){
+    // 営業所別サマリー
+    const byArea={};
+    sales.forEach(s=>{byArea[s.area]=(byArea[s.area]||0)+s.amount;});
+    dh+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:6px;">営業所</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">売上</th></tr></thead><tbody>`;
+    Object.entries(byArea).sort((a,b)=>b[1]-a[1]).forEach(([area,amt])=>{
+      dh+=`<tr><td style="border:1px solid #ccc;padding:4px;font-weight:bold;">${area}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${amt.toLocaleString()}</td></tr>`;
+    });
+    dh+=`</tbody></table>`;
+    // 支払い上位
+    dh+=`<h4 style="margin-top:16px;color:var(--danger);">支払い（スタッフ別）</h4>`;
+    dh+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:6px;">スタッフ</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">支払額</th></tr></thead><tbody>`;
+    expenses.forEach(e=>{
+      dh+=`<tr><td style="border:1px solid #ccc;padding:4px;">${e.staff}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${e.amount.toLocaleString()}</td></tr>`;
+    });
+    dh+=`</tbody></table>`;
+
+  }else if(view==='area'){
+    const byArea={};
+    filteredSales.forEach(s=>{
+      if(!byArea[s.area])byArea[s.area]={am:0,pm:0,total:0,courses:[]};
+      byArea[s.area].am+=s.amTotal;byArea[s.area].pm+=s.pmTotal;byArea[s.area].total+=s.amount;
+      byArea[s.area].courses.push(s);
+    });
+    Object.entries(byArea).forEach(([area,d])=>{
+      dh+=`<div style="margin-bottom:16px;"><h4 style="color:var(--primary);">${area}営業所 — ¥${d.total.toLocaleString()}</h4>`;
+      dh+=`<div style="font-size:12px;color:var(--text-sub);margin-bottom:4px;">朝刊: ¥${d.am.toLocaleString()} ／ 夕刊/競馬: ¥${d.pm.toLocaleString()}</div>`;
+      dh+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:4px;">コース</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊/競馬</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">合計</th></tr></thead><tbody>`;
+      d.courses.sort((a,b)=>a.course.localeCompare(b.course,undefined,{numeric:true})).forEach(c=>{
+        dh+=`<tr><td style="border:1px solid #ccc;padding:3px;">${c.course}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${c.amTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${c.pmTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;">¥${c.amount.toLocaleString()}</td></tr>`;
+      });
+      dh+=`</tbody></table></div>`;
+    });
+
+  }else if(view==='course'){
+    dh+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:4px;">営業所</th><th style="border:1px solid #ccc;padding:4px;">コース</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊/競馬</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">合計</th></tr></thead><tbody>`;
+    filteredSales.sort((a,b)=>a.course.localeCompare(b.course,undefined,{numeric:true})).forEach(s=>{
+      dh+=`<tr><td style="border:1px solid #ccc;padding:3px;">${s.area}</td><td style="border:1px solid #ccc;padding:3px;">${s.course}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${s.amTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${s.pmTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;">¥${s.amount.toLocaleString()}</td></tr>`;
+    });
+    dh+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="2" style="border:1px solid #ccc;padding:4px;">合計</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${filteredSales.reduce((s,r)=>s+r.amTotal,0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${filteredSales.reduce((s,r)=>s+r.pmTotal,0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${totalSales.toLocaleString()}</td></tr>`;
+    dh+=`</tbody></table>`;
+  }
+  document.getElementById('adm-rev-detail').innerHTML=dh;
 }
 
 // --- 請求条件設定 ---
