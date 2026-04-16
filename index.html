@@ -4075,8 +4075,10 @@ async function sysDoLogin(){
     document.getElementById('sys-login-btn').textContent='ログイン';return;
   }
   sysLoggedIn=true;sysUserName=staff.name;sysIsAdmin=false;
+  const perms=(staff.permissions||'').split(',').filter(Boolean);
   document.getElementById('sys-login').style.display='none';
   document.getElementById('sys-user-label').textContent='👤 '+sysUserName;
+  sysApplyPermissions(perms);
   init();
 }
 
@@ -4090,7 +4092,36 @@ function sysAdminLogin(){
   sysLoggedIn=true;sysUserName='管理者';sysIsAdmin=true;
   document.getElementById('sys-login').style.display='none';
   document.getElementById('sys-user-label').textContent='👑 管理者';
+  sysApplyPermissions(['all']);
   init();
+}
+
+function sysApplyPermissions(perms){
+  const isAll=perms.includes('all');
+  // ナビボタンの表示制御: data-view属性で対応
+  const navMap={
+    'dashboard':{always:true},
+    'shift':{always:true},
+    'tenpo':{always:true},
+    'staff':{always:true},
+    'defects':{perm:'defects'},
+    'shopmaster':{perm:'shopmaster'},
+    'invoice':{always:true},
+    'measure':{always:true},
+  };
+  document.querySelectorAll('.nav-links button[onclick*="showView"]').forEach(btn=>{
+    const m=btn.getAttribute('onclick').match(/showView\('(\w+)'/);
+    if(!m)return;
+    const view=m[1];
+    const rule=navMap[view];
+    if(!rule){btn.style.display='';return;}
+    if(isAll||rule.always){btn.style.display='';return;}
+    if(rule.perm&&perms.includes(rule.perm)){btn.style.display='';return;}
+    btn.style.display='none';
+  });
+  // 管理ボタン
+  const adminBtn=document.querySelector('.nav-links button[onclick*="adminShowLogin"]');
+  if(adminBtn)adminBtn.style.display=(isAll||perms.includes('admin'))?'':'none';
 }
 
 function sysLogout(){
@@ -4102,6 +4133,8 @@ function sysLogout(){
   document.getElementById('sys-login-err').style.display='none';
   document.getElementById('sys-admin-area').style.display='none';
   document.getElementById('sys-login-btn').textContent='ログイン';
+  // ナビを全部戻す
+  document.querySelectorAll('.nav-links button').forEach(b=>b.style.display='');
 }
 
 // init()はログイン後に呼ばれる
