@@ -461,8 +461,9 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="adm-revenue" class="adm-panel" style="display:none;">
         <div class="filters">
           <div><label>年月</label><input type="month" id="adm-rev-month" onchange="admRevLoad()"></div>
-          <div><label>表示</label><select id="adm-rev-view" onchange="admRevRender()"><option value="all">全営業所合計</option><option value="area">営業所別</option><option value="course">コース別</option></select></div>
+          <div><label>表示</label><select id="adm-rev-view" onchange="admRevRender()"><option value="all">全営業所合計</option><option value="area">営業所別</option><option value="course">コース別</option><option value="daily">コース別日次</option></select></div>
           <div><label>営業所</label><select id="adm-rev-area" onchange="admRevRender()"><option value="">全て</option></select></div>
+          <div id="adm-rev-course-wrap" style="display:none;"><label>コース</label><select id="adm-rev-course" onchange="admRevRender()"><option value="">選択</option></select></div>
         </div>
         <div id="adm-rev-summary" style="margin-top:8px;"></div>
         <div id="adm-rev-detail" style="margin-top:12px;"></div>
@@ -2853,6 +2854,18 @@ function admRevRender(){
   const areaFilter=document.getElementById('adm-rev-area').value;
   const {sales,expenses}=admRevData;
 
+  // コース選択欄の表示/非表示
+  const courseWrap=document.getElementById('adm-rev-course-wrap');
+  courseWrap.style.display=view==='daily'?'':'none';
+  if(view==='daily'){
+    const courseSel=document.getElementById('adm-rev-course');
+    const filtered=areaFilter?sales.filter(s=>s.area===areaFilter):sales;
+    const courses=[...new Set(filtered.map(s=>s.course))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+    const cur=courseSel.value;
+    courseSel.innerHTML='<option value="">選択</option>'+courses.map(c=>`<option>${c}</option>`).join('');
+    if(cur&&courses.includes(cur))courseSel.value=cur;
+  }
+
   // フィルタ
   let filteredSales=sales;
   let filteredExpenses=expenses;
@@ -2916,6 +2929,124 @@ function admRevRender(){
     });
     dh+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="2" style="border:1px solid #ccc;padding:4px;">合計</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${filteredSales.reduce((s,r)=>s+r.amTotal,0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${filteredSales.reduce((s,r)=>s+r.pmTotal,0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${totalSales.toLocaleString()}</td></tr>`;
     dh+=`</tbody></table>`;
+
+  }else if(view==='daily'){
+    const courseVal=document.getElementById('adm-rev-course').value;
+    if(!courseVal){dh='<p style="color:var(--text-sub);text-align:center;padding:20px;">コースを選択してください</p>';}
+    else{
+      const monthVal=document.getElementById('adm-rev-month').value;
+      const [y,m]=monthVal.split('-').map(Number);
+      const daysInMonth=new Date(y,m,0).getDate();
+      const WEEKDAYS=['日','月','火','水','木','金','土'];
+
+      // 売上: 日ごとの計算（admBillTachikawa内のcalcDayを使う）
+      // 該当コースの売上データを再計算
+      const saleItem=sales.find(s=>s.course===courseVal);
+      const saleArea=saleItem?saleItem.area:'立川';
+
+      // calcDayを使うためadmBillTachikawa内の値を取得する簡易版
+      // 日ごとの売上を取得するためresultのgrandTotalを日割りではなく再計算
+      const result=admBillTachikawa(saleArea,courseVal,monthVal,true);
+
+      // 日ごとの売上を計算するためcalcDayを再構築
+      // admBillTachikawa内部のcalcDayと同じロジック
+      const records=admBillShopData.records||[];
+      const colsB=admBillCols();
+      const notCancelled=r=>!(r[`col_${colsB.area}`]||'').includes('納品中止');
+      const matchAreas=saleArea==='城北'?['城北','池袋']:[saleArea];
+      const inArea=r=>matchAreas.includes((r[`col_${colsB.area}`]||'').split(',')[0].trim());
+      const amShops=records.filter(r=>notCancelled(r)&&inArea(r)&&r[`col_${colsB.amCourse}`]===courseVal);
+      const pmShops=records.filter(r=>notCancelled(r)&&r[`col_${colsB.pmCourse}`]===courseVal);
+      const keibaShops=records.filter(r=>notCancelled(r)&&r[`col_${colsB.keibaCourse}`]===courseVal);
+
+      let openDateCol=-1;
+      admBillShopData.headers.forEach((h,i)=>{if(h.includes('開店日'))openDateCol=i;});
+      const monthFirstDay=`${y}-${String(m).padStart(2,'0')}-01`;
+      function isOpen(shop){if(openDateCol<0)return true;const od=(shop[`col_${openDateCol}`]||'').replace(/\//g,'-');if(!od)return true;return od<=monthFirstDay;}
+
+      const oAm=amShops.filter(isOpen),oPm=pmShops.filter(isOpen),oK=keibaShops.filter(isOpen);
+      const specialPriceShops=new Set(['622179','602271','622183','612322','622068','762049','602267','761537','761536','761538','601719']);
+      const allPmCodes=new Set(records.filter(r=>notCancelled(r)&&r[`col_${colsB.pmCourse}`]).map(s=>s[`col_${colsB.code}`]));
+      const cond=getBillConditions(monthVal);
+
+      // 支払い: 日ごと・コースごと
+      const {monthWork}=admRevData;
+      const workByDate={};
+      monthWork.filter(w=>w.course===courseVal).forEach(w=>{
+        const d=(w.date||'').replace(/-/g,'/');
+        workByDate[d]=(workByDate[d]||0)+Number(w.amount||0);
+      });
+
+      dh+=`<h4>${saleArea}営業所 ${courseVal} コース 日次収支</h4>`;
+      dh+=`<table style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr style="background:#f1f5f9;">`;
+      dh+=`<th style="border:1px solid #ccc;padding:4px;">日</th><th style="border:1px solid #ccc;padding:4px;">曜</th>`;
+      dh+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;color:#166534;">売上</th>`;
+      dh+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">支払い</th>`;
+      dh+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;">収支</th>`;
+      dh+=`</tr></thead><tbody>`;
+
+      let tSales=0,tExp=0;
+      for(let d=1;d<=daysInMonth;d++){
+        const dt=new Date(y,m-1,d);
+        const dow=dt.getDay();
+        const isSun=dow===0,isSat=dow===6;
+        // 売上: calcDayと同じロジック（簡易版）
+        const isHoliday=(cond.holiday||[]).includes(d);
+        const isNoAm=(cond.noam||[]).includes(d);
+        const isNoPm=(cond.nopm||[]).includes(d);
+        const isYesKeiba=(cond.yeskeiba||[]).includes(d);
+        const isYesDokkon=(cond.yesdokkon||[]).includes(d);
+        const isNoDokkon=(cond.nodokkon||[]).includes(d);
+        const isMon=dow===1,isFri=dow===5;
+        const isKeiba=(isFri||isSat||isSun||isYesKeiba)&&!isNoPm;
+
+        let daySales=0;
+        if(!isHoliday&&!isNoAm){
+          const ac=oAm.length;
+          const hasDok=isYesDokkon||((!isMon)&&!isNoDokkon);
+          const dok=hasDok?oAm.filter(s=>s[`col_${colsB.yuukanDokkon}`]==='TRUE').length:0;
+          const tok=oAm.filter(s=>s[`col_${colsB.amTokushu}`]==='TRUE').length;
+          const zas=oAm.filter(s=>s[`col_${colsB.zasshi}`]==='TRUE').length;
+          daySales+=ac*270+dok*50+tok*20+zas*130+ac*20;
+        }
+        if(!isHoliday&&!isNoPm&&!(isSun&&!isYesKeiba)){
+          if(isKeiba){
+            const kSpec=oK.filter(s=>specialPriceShops.has(s[`col_${colsB.code}`]));
+            const kAlso=oK.filter(s=>!specialPriceShops.has(s[`col_${colsB.code}`])&&allPmCodes.has(s[`col_${colsB.code}`]));
+            const kOnly=oK.filter(s=>!specialPriceShops.has(s[`col_${colsB.code}`])&&!allPmCodes.has(s[`col_${colsB.code}`]));
+            const kTok=oK.filter(s=>s[`col_${colsB.keibaTokushu}`]==='TRUE').length;
+            daySales+=kAlso.length*230+kOnly.length*250+kSpec.length*700+kTok*20+oK.length*20;
+          }else{
+            const pSpec=oPm.filter(s=>specialPriceShops.has(s[`col_${colsB.code}`]));
+            const pNorm=oPm.filter(s=>!specialPriceShops.has(s[`col_${colsB.code}`]));
+            const pTok=oPm.filter(s=>s[`col_${colsB.pmTokushu}`]==='TRUE').length;
+            daySales+=pNorm.length*230+pSpec.length*700+pTok*20+oPm.length*20;
+          }
+        }
+
+        const dateKey=`${y}/${m}/${d}`;
+        const dateKey2=`${y}/${String(m).padStart(2,'0')}/${String(d).padStart(2,'0')}`;
+        const dayExp=(workByDate[dateKey]||0)+(workByDate[dateKey2]||0);
+        const dayProfit=daySales-dayExp;
+        tSales+=daySales;tExp+=dayExp;
+
+        const rowBg=isHoliday?'background:#fef2f2;':isSun?'background:#fff1f2;':isSat?'background:#f0f9ff;':'';
+        const dowColor=isSun?'#dc2626':isSat?'#2563eb':'#333';
+        dh+=`<tr style="${rowBg}">`;
+        dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;">${d}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:center;color:${dowColor};font-weight:bold;">${WEEKDAYS[dow]}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:#166534;">${daySales?'¥'+daySales.toLocaleString():''}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;color:#dc2626;">${dayExp?'¥'+dayExp.toLocaleString():''}</td>`;
+        dh+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;color:${dayProfit>=0?'#1d4ed8':'#dc2626'};">${(daySales||dayExp)?'¥'+dayProfit.toLocaleString():''}</td>`;
+        dh+=`</tr>`;
+      }
+      const tProfit=tSales-tExp;
+      dh+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="2" style="border:1px solid #ccc;padding:4px;text-align:center;">合計</td>`;
+      dh+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;color:#166534;">¥${tSales.toLocaleString()}</td>`;
+      dh+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">¥${tExp.toLocaleString()}</td>`;
+      dh+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;color:${tProfit>=0?'#1d4ed8':'#dc2626'};">¥${tProfit.toLocaleString()}</td>`;
+      dh+=`</tr></tbody></table>`;
+    }
   }
   document.getElementById('adm-rev-detail').innerHTML=dh;
 }
