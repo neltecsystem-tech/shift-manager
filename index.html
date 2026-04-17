@@ -2800,9 +2800,16 @@ async function admScLoad(){
   // 開店日・閉店日フィルタ
   let openDateCol=-1,closeCol=-1;
   admBillShopData.headers.forEach((h,i)=>{if(h.includes('開店日'))openDateCol=i;if(h.includes('最終納品日'))closeCol=i;});
+  function normDate(d){
+    if(!d)return '';
+    const p=d.replace(/-/g,'/').split('/');
+    if(p.length===2)return `${y}-${p[0].padStart(2,'0')}-${p[1].padStart(2,'0')}`;// M/D → current year
+    if(p.length===3)return `${p[0].length===4?p[0]:'20'+p[0]}-${p[1].padStart(2,'0')}-${p[2].padStart(2,'0')}`;
+    return d;
+  }
   function isActiveOn(shop){
-    if(openDateCol>=0){const od=(shop[`col_${openDateCol}`]||'').replace(/\//g,'-');if(od&&od>monthFirst)return false;}
-    if(closeCol>=0){const cd=(shop[`col_${closeCol}`]||'').replace(/\//g,'-');if(cd&&cd<monthFirst)return false;}
+    if(openDateCol>=0){const od=normDate(shop[`col_${openDateCol}`]);if(od&&od>monthFirst)return false;}
+    if(closeCol>=0){const cd=normDate(shop[`col_${closeCol}`]);if(cd&&cd<monthFirst)return false;}
     return true;
   }
 
