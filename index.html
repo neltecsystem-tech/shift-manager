@@ -427,6 +427,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('data')" id="adm-tab-data" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📁 データ管理</button>
         <button onclick="adminTab('check')" id="adm-tab-check" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🔍 突合せチェック</button>
         <button onclick="adminTab('billing')" id="adm-tab-billing" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📄 請求書作成</button>
+        <button onclick="adminTab('shopcount')" id="adm-tab-shopcount" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📊 店舗集計</button>
         <button onclick="adminTab('revenue')" id="adm-tab-revenue" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💰 収支管理</button>
         <button onclick="adminTab('billcond')" id="adm-tab-billcond" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 請求条件</button>
         <button onclick="adminTab('measure')" id="adm-tab-measure" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⏱ 測定データ</button>
@@ -455,6 +456,11 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="adm-bill-totals" style="margin-top:8px;"></div>
         <div id="adm-bill-preview" style="margin-top:12px;"></div>
+      </div>
+
+      <!-- 店舗集計 -->
+      <div id="adm-shopcount" class="adm-panel" style="display:none;">
+        <div id="adm-sc-content"></div>
       </div>
 
       <!-- 収支管理 -->
@@ -2545,6 +2551,7 @@ function adminTab(t){
   document.getElementById('adm-tab-'+t).style.color='#fff';
   if(t==='invoices')adminLoadInvoices();
   if(t==='staff')adminLoadStaff();
+  if(t==='shopcount')admScLoad().catch(()=>{});
   if(t==='billing')admBillInit().catch(()=>{});
   if(t==='revenue')admRevInit().catch(()=>{});
   if(t==='billcond')admBcInit();
@@ -2774,6 +2781,106 @@ function loadLiveShifts(){
       parseShift(key);
     });
   }catch(_){}
+}
+
+// --- 店舗集計 ---
+async function admScLoad(){
+  if(!admBillShopData)await admBillInit();
+  const records=admBillShopData.records||[];
+  const cols=admBillCols();
+  const notCancelled=r=>!(r[`col_${cols.area}`]||'').includes('納品中止');
+  const allAreas=['立川','城北','川越','川崎高津'];
+
+  let h='';
+  const grandTotal={am:0,pm:0,keiba:0,tokushu:0,kyori:0,zasshi:0,dokkon:0,pmTok:0,keibaTok:0};
+
+  allAreas.forEach(area=>{
+    const matchAreas=area==='城北'?['城北','池袋']:[area];
+    const areaShops=records.filter(r=>notCancelled(r)&&matchAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+    // コース別集計
+    const allC=new Set();
+    areaShops.forEach(r=>{
+      if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
+      if(r[`col_${cols.pmCourse}`])allC.add(r[`col_${cols.pmCourse}`]);
+      if(cols.keibaCourse!==undefined&&r[`col_${cols.keibaCourse}`])allC.add(r[`col_${cols.keibaCourse}`]);
+    });
+    const courses=[...allC].filter(c=>matchAreas.some(a=>c.includes(a))).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+
+    let areaTotal={am:0,pm:0,keiba:0,tokushu:0,kyori:0,zasshi:0,dokkon:0,pmTok:0,keibaTok:0};
+    let rows=[];
+    courses.forEach(course=>{
+      const am=records.filter(r=>notCancelled(r)&&r[`col_${cols.amCourse}`]===course);
+      const pm=records.filter(r=>notCancelled(r)&&r[`col_${cols.pmCourse}`]===course);
+      const kb=records.filter(r=>notCancelled(r)&&r[`col_${cols.keibaCourse}`]===course);
+      const amC=am.length;
+      const pmC=pm.length;
+      const kbC=kb.length;
+      const tok=am.filter(s=>s[`col_${cols.amTokushu}`]==='TRUE').length;
+      const kyo=am.filter(s=>s[`col_${cols.kyori}`]==='TRUE').length;
+      const zas=am.filter(s=>s[`col_${cols.zasshi}`]==='TRUE').length;
+      const dok=am.filter(s=>s[`col_${cols.yuukanDokkon}`]==='TRUE').length;
+      const pmTok=pm.filter(s=>s[`col_${cols.pmTokushu}`]==='TRUE').length;
+      const kbTok=kb.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
+      rows.push({course,amC,pmC,kbC,tok,kyo,zas,dok,pmTok,kbTok});
+      areaTotal.am+=amC;areaTotal.pm+=pmC;areaTotal.keiba+=kbC;areaTotal.tokushu+=tok;areaTotal.kyori+=kyo;areaTotal.zasshi+=zas;areaTotal.dokkon+=dok;areaTotal.pmTok+=pmTok;areaTotal.keibaTok+=kbTok;
+    });
+    Object.keys(grandTotal).forEach(k=>grandTotal[k]+=areaTotal[k]);
+
+    h+=`<div style="margin-bottom:20px;">`;
+    h+=`<h4 style="color:var(--primary);margin-bottom:6px;">${area}営業所</h4>`;
+    h+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;">`;
+    h+=`<th style="border:1px solid #ccc;padding:4px;">コース</th>`;
+    h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊</th>`;
+    h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;">特殊納品</th>`;
+    h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;">距離増</th>`;
+    h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;">雑誌</th>`;
+    h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊同梱</th>`;
+    h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊</th>`;
+    h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;">夕特殊</th>`;
+    h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;">競馬</th>`;
+    h+=`<th style="border:1px solid #ccc;padding:4px;text-align:right;">競特殊</th>`;
+    h+=`</tr></thead><tbody>`;
+    rows.forEach(r=>{
+      h+=`<tr><td style="border:1px solid #ccc;padding:3px;">${r.course}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:600;">${r.amC}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;">${r.tok||''}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;">${r.kyo||''}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;">${r.zas||''}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;">${r.dok||''}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:600;">${r.pmC||''}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;">${r.pmTok||''}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:600;">${r.kbC||''}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:3px;text-align:right;">${r.kbTok||''}</td>`;
+      h+=`</tr>`;
+    });
+    h+=`<tr style="background:#f1f5f9;font-weight:bold;"><td style="border:1px solid #ccc;padding:4px;">小計</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">${areaTotal.am}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">${areaTotal.tokushu}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">${areaTotal.kyori}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">${areaTotal.zasshi}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">${areaTotal.dokkon}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">${areaTotal.pm}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">${areaTotal.pmTok}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">${areaTotal.keiba}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;">${areaTotal.keibaTok}</td>`;
+    h+=`</tr></tbody></table></div>`;
+  });
+
+  // 全営業所合計
+  h+=`<div style="background:#f1f5f9;border-radius:10px;padding:12px;"><h4 style="margin-bottom:6px;">全営業所合計</h4>`;
+  h+=`<table style="border-collapse:collapse;font-size:13px;"><tr>`;
+  h+=`<td style="border:1px solid #ccc;padding:6px;background:#dbeafe;font-weight:600;">朝刊</td><td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;font-size:16px;">${grandTotal.am}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:6px;background:#f1f5f9;">特殊</td><td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;">${grandTotal.tokushu}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:6px;background:#f1f5f9;">距離増</td><td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;">${grandTotal.kyori}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:6px;background:#f1f5f9;">雑誌</td><td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;">${grandTotal.zasshi}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:6px;background:#f1f5f9;">同梱</td><td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;">${grandTotal.dokkon}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:6px;background:#fae8ff;font-weight:600;">夕刊</td><td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;font-size:16px;">${grandTotal.pm}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:6px;background:#f1f5f9;">夕特殊</td><td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;">${grandTotal.pmTok}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:6px;background:#fef3c7;font-weight:600;">競馬</td><td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;font-size:16px;">${grandTotal.keiba}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:6px;background:#f1f5f9;">競特殊</td><td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;">${grandTotal.keibaTok}</td>`;
+  h+=`</tr></table></div>`;
+
+  document.getElementById('adm-sc-content').innerHTML=h;
 }
 
 // --- 収支管理 ---
