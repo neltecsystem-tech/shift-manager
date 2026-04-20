@@ -2074,7 +2074,7 @@ function invCalcAmount(){
   }else if(invCatSel==='庫内夕刊'){
     price=Number(rate.warehouse_pm)||0;
   }
-  // 引継ぎコースは半額
+  // 引継コースは半額
   const course=document.getElementById('inve-course').value||'';
   const isHikitsugi=course.includes('引継');
   // 特別単価チェック
@@ -2104,7 +2104,7 @@ function invCalcAmount(){
     amount+=specialAdd;
     price=koResult.amount;
     const detail=koResult.detail;
-    document.getElementById('inve-price').value=amount?'¥'+amount.toLocaleString()+(isHikitsugi?' (引継ぎ半額)':'')+(specialLabel?' '+specialLabel:''):'コース未選択';
+    document.getElementById('inve-price').value=amount?'¥'+amount.toLocaleString()+(isHikitsugi?' (引継半額)':'')+(specialLabel?' '+specialLabel:''):'コース未選択';
     document.getElementById('inve-amount').value=amount?'¥'+amount.toLocaleString():'';
     if(detail){document.getElementById('inve-price').value+='\n'+detail;}
   }else if(isQty){
@@ -2114,14 +2114,14 @@ function invCalcAmount(){
     if(specialReplace)amount=specialReplace;
     amount+=specialAdd;
     price=unitPriceVal;
-    document.getElementById('inve-price').value=unitPriceVal?'¥'+unitPriceVal.toLocaleString()+(isHikitsugi?' (引継ぎ半額)':'')+(specialLabel?' '+specialLabel:''):'';
+    document.getElementById('inve-price').value=unitPriceVal?'¥'+unitPriceVal.toLocaleString()+(isHikitsugi?' (引継半額)':'')+(specialLabel?' '+specialLabel:''):'';
     document.getElementById('inve-amount').value=qty||specialReplace||specialAdd?'¥'+amount.toLocaleString():'';
   }else{
     let amount=price;
     if(isHikitsugi)amount=Math.floor(price/2);
     if(specialReplace)amount=specialReplace;
     amount+=specialAdd;
-    const label=(isHikitsugi?' (引継ぎ半額)':'')+(specialLabel?' '+specialLabel:'');
+    const label=(isHikitsugi?' (引継半額)':'')+(specialLabel?' '+specialLabel:'');
     document.getElementById('inve-price').value=price?'¥'+price.toLocaleString()+label:'';
     document.getElementById('inve-amount').value=amount?'¥'+amount.toLocaleString():'';
   }
@@ -2188,7 +2188,7 @@ async function invSaveWork(){
       const qty=Number(document.getElementById('inve-qty').value)||0;
       price=uPrice;amount=uPrice*qty;
     }else{amount=price;}
-    // 引継ぎコースは半額
+    // 引継コースは半額
     if((document.getElementById('inve-course').value||'').includes('引継'))amount=Math.floor(amount/2);
     // 特別単価
     const specCat=invCatSel.includes('朝')?'朝刊':'夕刊';
@@ -2905,7 +2905,66 @@ async function admScLoad(){
   h+=`<td style="border:1px solid #ccc;padding:6px;background:#f1f5f9;">競特殊</td><td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;">${grandTotal.keibaTok}</td>`;
   h+=`</tr></table></div>`;
 
+  // CSV出力ボタン
+  h+=`<div style="margin-top:12px;text-align:right;"><button onclick="admScExportCsv()" style="background:#22c55e;color:#fff;border:none;padding:8px 20px;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;">📥 店舗一覧CSV出力</button></div>`;
+
   document.getElementById('adm-sc-content').innerHTML=h;
+}
+
+function admScExportCsv(){
+  if(!admBillShopData)return;
+  const mInput=document.getElementById('adm-sc-month');
+  const [y,m]=mInput.value.split('-').map(Number);
+  const monthFirst=`${y}-${String(m).padStart(2,'0')}-01`;
+  const records=admBillShopData.records||[];
+  const cols=admBillCols();
+
+  // 開店日・閉店日フィルタ
+  let openDateCol=-1,closeCol=-1;
+  admBillShopData.headers.forEach((h,i)=>{if(h.includes('開店日'))openDateCol=i;if(h.includes('最終納品日'))closeCol=i;});
+  function normDate(d){
+    if(!d)return '';
+    const p=d.replace(/-/g,'/').split('/');
+    if(p.length===2)return `${y}-${p[0].padStart(2,'0')}-${p[1].padStart(2,'0')}`;
+    if(p.length===3)return `${p[0].length===4?p[0]:'20'+p[0]}-${p[1].padStart(2,'0')}-${p[2].padStart(2,'0')}`;
+    return d;
+  }
+  function isActiveOn(shop){
+    if(openDateCol>=0){const od=normDate(shop[`col_${openDateCol}`]);if(od&&od>monthFirst)return false;}
+    if(closeCol>=0){const cd=normDate(shop[`col_${closeCol}`]);if(cd&&cd<monthFirst)return false;}
+    return true;
+  }
+  const notCancelled=r=>!(r[`col_${cols.area}`]||'').includes('納品中止');
+  const active=records.filter(r=>notCancelled(r)&&isActiveOn(r));
+
+  // CSV header
+  const csvHeader=['営業所','店舗コード','店舗名','朝刊コース','夕刊コース','競馬コース','朝刊特殊納品','夕刊特殊納品','競馬特殊納品','距離増','雑誌','夕刊同梱'];
+  const rows=[csvHeader];
+  active.forEach(r=>{
+    rows.push([
+      r[`col_${cols.area}`]||'',
+      r[`col_${cols.code}`]||'',
+      r[`col_${cols.name}`]||'',
+      r[`col_${cols.amCourse}`]||'',
+      r[`col_${cols.pmCourse}`]||'',
+      cols.keibaCourse!==undefined?r[`col_${cols.keibaCourse}`]||'':'',
+      r[`col_${cols.amTokushu}`]==='TRUE'?'○':'',
+      r[`col_${cols.pmTokushu}`]==='TRUE'?'○':'',
+      cols.keibaTokushu!==undefined&&r[`col_${cols.keibaTokushu}`]==='TRUE'?'○':'',
+      r[`col_${cols.kyori}`]==='TRUE'?'○':'',
+      r[`col_${cols.zasshi}`]==='TRUE'?'○':'',
+      r[`col_${cols.yuukanDokkon}`]==='TRUE'?'○':'',
+    ]);
+  });
+
+  const bom='\uFEFF';
+  const csv=bom+rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=`店舗一覧_${mInput.value}.csv`;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // --- 収支管理 ---
