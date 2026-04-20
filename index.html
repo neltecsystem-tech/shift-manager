@@ -2797,27 +2797,49 @@ function loadLiveShifts(){
 }
 
 // --- 単価一覧（得意先請求単価） ---
+const BILL_PRICE_DEFAULTS={
+  am_shop:270, am_dokkon:50, am_tokushu:20, am_zasshi:130, am_kanri:20,
+  pm_normal:230, pm_special:700, pm_tokushu:20, pm_kanri:20,
+  keiba_also_pm:230, keiba_only:250, keiba_special:700, keiba_tokushu:20, keiba_kanri:20,
+  kw_am_shop:260, kw_am_dokkon:50, kw_am_tokushu:20, kw_am_zasshi:80, kw_am_kanri:20, kw_kyori:13,
+  kw_pm:280, kw_pm_tokushu:20, kw_pm_kanri:20,
+};
+function getBillPrices(){
+  try{const s=localStorage.getItem('billPrices');if(s)return {...BILL_PRICE_DEFAULTS,...JSON.parse(s)};}catch(_){}
+  return {...BILL_PRICE_DEFAULTS};
+}
+function saveBillPrices(){
+  const p={};
+  document.querySelectorAll('[data-bp]').forEach(el=>{p[el.dataset.bp]=Number(el.value)||0;});
+  localStorage.setItem('billPrices',JSON.stringify(p));
+  alert('単価を保存しました');
+}
+
 function admPriceListRender(){
-  const td=s=>`<td style="border:1px solid #ccc;padding:6px 10px;text-align:right;">¥${Number(s).toLocaleString()}</td>`;
-  const th=s=>`<th style="border:1px solid #ccc;padding:6px 8px;background:#f8fafc;">${s}</th>`;
+  const p=getBillPrices();
+  const inp=(key)=>`<td style="border:1px solid #ccc;padding:2px 4px;"><input type="number" data-bp="${key}" value="${p[key]}" style="width:70px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:13px;text-align:right;"></td>`;
+  const th=s=>`<th style="border:1px solid #ccc;padding:6px 8px;background:#f8fafc;white-space:nowrap;">${s}</th>`;
   const specialCodes=['622179','602271','622183','612322','622068','762049','602267','761537','761536','761538','601719'];
 
-  let h='<h3 style="margin-bottom:12px;color:var(--primary);">得意先請求 単価一覧</h3>';
+  let h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
+  h+='<h3 style="color:var(--primary);margin:0;">得意先請求 単価一覧</h3>';
+  h+='<button onclick="saveBillPrices()" style="background:#22c55e;color:#fff;border:none;padding:8px 20px;border-radius:8px;cursor:pointer;font-weight:600;">💾 単価を保存</button>';
+  h+='</div>';
 
-  // ── 共通単価 ──
+  // ── 朝刊 ──
   h+='<div style="margin-bottom:20px;">';
-  h+='<h4 style="margin-bottom:8px;">📰 共通単価（全営業所共通）</h4>';
+  h+='<h4 style="margin-bottom:8px;">📰 朝刊単価</h4>';
   h+='<table style="border-collapse:collapse;font-size:13px;">';
-  h+='<thead><tr style="background:#dbeafe;"><th colspan="2" style="border:1px solid #ccc;padding:6px 12px;">朝刊</th><th style="border:1px solid #ccc;padding:6px 8px;background:#dbeafe;">川越</th></tr></thead><tbody>';
-  h+='<tr>'+th('店舗料金')+td(270)+td(260)+'</tr>';
-  h+='<tr>'+th('夕刊同梱')+td(50)+td(50)+'</tr>';
-  h+='<tr>'+th('特殊納品')+td(20)+td(20)+'</tr>';
-  h+='<tr>'+th('雑誌')+td(130)+td(80)+'</tr>';
-  h+='<tr>'+th('管理費')+td(20)+td(20)+'</tr>';
+  h+='<thead><tr style="background:#dbeafe;"><th style="border:1px solid #ccc;padding:6px 12px;"></th><th style="border:1px solid #ccc;padding:6px 8px;">通常</th><th style="border:1px solid #ccc;padding:6px 8px;">川越</th></tr></thead><tbody>';
+  h+='<tr>'+th('店舗料金')+inp('am_shop')+inp('kw_am_shop')+'</tr>';
+  h+='<tr>'+th('夕刊同梱')+inp('am_dokkon')+inp('kw_am_dokkon')+'</tr>';
+  h+='<tr>'+th('特殊納品')+inp('am_tokushu')+inp('kw_am_tokushu')+'</tr>';
+  h+='<tr>'+th('雑誌')+inp('am_zasshi')+inp('kw_am_zasshi')+'</tr>';
+  h+='<tr>'+th('管理費')+inp('am_kanri')+inp('kw_am_kanri')+'</tr>';
   h+='</tbody></table>';
   h+='</div>';
 
-  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:20px;">';
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:20px;">';
 
   // ── 夕刊 ──
   h+='<div>';
@@ -2825,10 +2847,10 @@ function admPriceListRender(){
   h+='<table style="border-collapse:collapse;font-size:13px;width:100%;">';
   h+='<thead><tr><th style="border:1px solid #ccc;padding:4px 8px;background:#f8fafc;"></th><th style="border:1px solid #ccc;padding:4px 8px;background:#fae8ff;">通常</th><th style="border:1px solid #ccc;padding:4px 8px;background:#fae8ff;">川越</th></tr></thead>';
   h+='<tbody>';
-  h+='<tr>'+th('通常店舗')+td(230)+td(280)+'</tr>';
-  h+='<tr>'+th('特別単価店舗')+td(700)+'<td style="border:1px solid #ccc;padding:6px 10px;text-align:right;color:var(--text-sub);">なし</td></tr>';
-  h+='<tr>'+th('特殊納品')+td(20)+td(20)+'</tr>';
-  h+='<tr>'+th('管理費')+td(20)+td(20)+'</tr>';
+  h+='<tr>'+th('通常店舗')+inp('pm_normal')+inp('kw_pm')+'</tr>';
+  h+='<tr>'+th('特別単価店舗')+inp('pm_special')+'<td style="border:1px solid #ccc;padding:6px;text-align:center;color:var(--text-sub);font-size:11px;">なし</td></tr>';
+  h+='<tr>'+th('特殊納品')+inp('pm_tokushu')+inp('kw_pm_tokushu')+'</tr>';
+  h+='<tr>'+th('管理費')+inp('pm_kanri')+inp('kw_pm_kanri')+'</tr>';
   h+='</tbody></table>';
   h+='</div>';
 
@@ -2838,29 +2860,29 @@ function admPriceListRender(){
   h+='<table style="border-collapse:collapse;font-size:13px;width:100%;">';
   h+='<thead><tr><th style="border:1px solid #ccc;padding:4px 8px;background:#f8fafc;"></th><th style="border:1px solid #ccc;padding:4px 8px;background:#fef3c7;">通常</th><th style="border:1px solid #ccc;padding:4px 8px;background:#fef3c7;">川越</th></tr></thead>';
   h+='<tbody>';
-  h+='<tr>'+th('夕刊併用店舗')+td(230)+td(280)+'</tr>';
-  h+='<tr>'+th('競馬のみ店舗')+td(250)+td(280)+'</tr>';
-  h+='<tr>'+th('特別単価店舗')+td(700)+'<td style="border:1px solid #ccc;padding:6px 10px;text-align:right;color:var(--text-sub);">なし</td></tr>';
-  h+='<tr>'+th('特殊納品')+td(20)+td(20)+'</tr>';
-  h+='<tr>'+th('管理費')+td(20)+td(20)+'</tr>';
+  h+='<tr>'+th('夕刊併用店舗')+inp('keiba_also_pm')+inp('kw_pm')+'</tr>';
+  h+='<tr>'+th('競馬のみ店舗')+inp('keiba_only')+inp('kw_pm')+'</tr>';
+  h+='<tr>'+th('特別単価店舗')+inp('keiba_special')+'<td style="border:1px solid #ccc;padding:6px;text-align:center;color:var(--text-sub);font-size:11px;">なし</td></tr>';
+  h+='<tr>'+th('特殊納品')+inp('keiba_tokushu')+inp('kw_pm_tokushu')+'</tr>';
+  h+='<tr>'+th('管理費')+inp('keiba_kanri')+inp('kw_pm_kanri')+'</tr>';
   h+='</tbody></table>';
   h+='</div>';
 
   h+='</div>';
 
-  // ── 川越のみ ──
+  // ── 川越 距離増 ──
   h+='<div style="margin-bottom:20px;">';
   h+='<h4 style="margin-bottom:8px;">🟢 川越営業所 追加項目</h4>';
   h+='<table style="border-collapse:collapse;font-size:13px;">';
   h+='<tbody>';
-  h+='<tr>'+th('距離増')+td(13)+'</tr>';
+  h+='<tr>'+th('距離増')+inp('kw_kyori')+'</tr>';
   h+='</tbody></table>';
   h+='</div>';
 
   // ── 特別単価店舗一覧 ──
   h+='<div style="margin-bottom:20px;">';
-  h+='<h4 style="margin-bottom:8px;">⭐ 特別単価店舗（¥700）</h4>';
-  h+='<div style="font-size:12px;color:var(--text-sub);margin-bottom:6px;">夕刊・競馬で通常単価（¥230/¥250）ではなく¥700が適用される店舗</div>';
+  h+='<h4 style="margin-bottom:8px;">⭐ 特別単価店舗</h4>';
+  h+='<div style="font-size:12px;color:var(--text-sub);margin-bottom:6px;">夕刊・競馬で特別単価が適用される店舗（川越は対象外）</div>';
 
   if(admBillShopData){
     const records=admBillShopData.records||[];
@@ -2895,17 +2917,20 @@ function admPriceListRender(){
   }
   h+='</div>';
 
-  // ── 同梱ルール ──
+  // ── 計算ルール ──
   h+='<div style="margin-bottom:12px;padding:12px;background:#f8fafc;border-radius:8px;font-size:12px;">';
   h+='<h4 style="margin-bottom:6px;">📋 計算ルール</h4>';
   h+='<ul style="margin:0;padding-left:18px;line-height:1.8;">';
   h+='<li><b>朝刊同梱:</b> 月曜は基本なし。請求条件の「夕刊同梱有/無」で日別に上書き可。</li>';
   h+='<li><b>夕刊:</b> 月〜木は夕刊コース、金〜日は競馬コースで計算。</li>';
-  h+='<li><b>競馬「夕刊併用」:</b> 夕刊コースにも登録がある店舗 → ¥230。ない店舗 → ¥250。</li>';
+  h+='<li><b>競馬「夕刊併用」:</b> 夕刊コースにも登録がある店舗。</li>';
   h+='<li><b>休刊日:</b> 朝刊・夕刊すべて0。朝刊なし日は朝刊のみ0。</li>';
   h+='<li><b>川越 距離増:</b> 朝刊がある日のみ加算。</li>';
   h+='</ul>';
   h+='</div>';
+
+  // ── 保存ボタン（下部） ──
+  h+='<div style="text-align:right;"><button onclick="saveBillPrices()" style="background:#22c55e;color:#fff;border:none;padding:8px 20px;border-radius:8px;cursor:pointer;font-weight:600;">💾 単価を保存</button></div>';
 
   document.getElementById('adm-pricelist-content').innerHTML=h;
 }
@@ -3622,21 +3647,22 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   // 特別単価店舗（¥700）
   const specialPriceShops=new Set(['622179','602271','622183','612322','622068','762049','602267','761537','761536','761538','601719']);
 
-  // 朝刊の各項目金額（月内固定）— 川越は単価が異なる
-  const amShopFee=amCount*(isKawagoe?260:270);
-  const amDokkonFee=amDokkon*50;
-  const amTokushuFee=amTokushu*20;
-  const amKanriFee=amCount*20;
-  const amZasshiFee=amZasshi*(isKawagoe?80:130);
-  const amKyoriFee=amKyori*13;
+  // 朝刊の各項目金額（月内固定）— 単価は設定画面から取得
+  const bp=getBillPrices();
+  const amShopFee=amCount*(isKawagoe?bp.kw_am_shop:bp.am_shop);
+  const amDokkonFee=amDokkon*(isKawagoe?bp.kw_am_dokkon:bp.am_dokkon);
+  const amTokushuFee=amTokushu*(isKawagoe?bp.kw_am_tokushu:bp.am_tokushu);
+  const amKanriFee=amCount*(isKawagoe?bp.kw_am_kanri:bp.am_kanri);
+  const amZasshiFee=amZasshi*(isKawagoe?bp.kw_am_zasshi:bp.am_zasshi);
+  const amKyoriFee=amKyori*bp.kw_kyori;
   // 夕刊（月〜木）: 川越は全店¥280（特別単価なし）、他は特別単価店舗¥700
   const pmSpecial=isKawagoe?[]:openPmShops.filter(s=>specialPriceShops.has(s[`col_${cols.code}`]));
   const pmNormal=isKawagoe?openPmShops:openPmShops.filter(s=>!specialPriceShops.has(s[`col_${cols.code}`]));
   const pmSpecialCount=pmSpecial.length;
   const pmNormalCount=pmNormal.length;
-  const pmShopFee=pmNormalCount*(isKawagoe?280:230)+pmSpecialCount*700;
-  const pmTokushuFee=pmTokushu*20;
-  const pmKanriFee=pmCount*20;
+  const pmShopFee=pmNormalCount*(isKawagoe?bp.kw_pm:bp.pm_normal)+pmSpecialCount*bp.pm_special;
+  const pmTokushuFee=pmTokushu*(isKawagoe?bp.kw_pm_tokushu:bp.pm_tokushu);
+  const pmKanriFee=pmCount*(isKawagoe?bp.kw_pm_kanri:bp.pm_kanri);
   const pmDayTotal=pmShopFee+pmTokushuFee+pmKanriFee;
   // 競馬（金〜土）: 川越は全店¥280（特別単価なし）、他は夕刊併用→230、金土のみ→250、特別単価→700
   const allPmCodes=new Set(records.filter(r=>notCancelled(r)&&r[`col_${cols.pmCourse}`]).map(s=>s[`col_${cols.code}`]));
@@ -3649,9 +3675,9 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const keibaOnlyTokushu=keibaOnly.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
   const keibaAlsoPmTokushu=keibaAlsoPm.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
   const keibaSpecialTokushu=keibaSpecial.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
-  const keibaShopFee=isKawagoe?keibaOnlyCount*280:keibaAlsoPmCount*230+keibaOnlyCount*250+keibaSpecialCount*700;
-  const keibaTokushuFee=(keibaAlsoPmTokushu+keibaOnlyTokushu+keibaSpecialTokushu)*20;
-  const keibaKanriFee=keibaCount*20;
+  const keibaShopFee=isKawagoe?keibaOnlyCount*bp.kw_pm:keibaAlsoPmCount*bp.keiba_also_pm+keibaOnlyCount*bp.keiba_only+keibaSpecialCount*bp.keiba_special;
+  const keibaTokushuFee=(keibaAlsoPmTokushu+keibaOnlyTokushu+keibaSpecialTokushu)*(isKawagoe?bp.kw_pm_tokushu:bp.keiba_tokushu);
+  const keibaKanriFee=keibaCount*(isKawagoe?bp.kw_pm_kanri:bp.keiba_kanri);
   const keibaDayTotal=keibaShopFee+keibaTokushuFee+keibaKanriFee;
 
   function calcDay(dow,day){
@@ -3784,8 +3810,8 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#fef3c7;">競特殊</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${keibaTokushu}</td>`;
   h+=`</tr></table>`;
   h+=isKawagoe
-    ?`<div style="color:var(--text-sub);">朝刊×¥260 特殊×¥20 距離増×¥13 雑誌×¥80 同梱×¥50 管理×¥20 ／ 夕刊・競馬×¥280 特殊×¥20 管理×¥20</div>`
-    :`<div style="color:var(--text-sub);">朝刊×¥270 特殊×¥20 雑誌×¥130 同梱×¥50 管理×¥20 ／ 夕刊×¥230 特殊×¥20 管理×¥20 ／ 金土のみ×¥250${keibaOnlyCount?'('+keibaOnlyCount+'店)':''}</div>`;
+    ?`<div style="color:var(--text-sub);">朝刊×¥${bp.kw_am_shop} 特殊×¥${bp.kw_am_tokushu} 距離増×¥${bp.kw_kyori} 雑誌×¥${bp.kw_am_zasshi} 同梱×¥${bp.kw_am_dokkon} 管理×¥${bp.kw_am_kanri} ／ 夕刊・競馬×¥${bp.kw_pm} 特殊×¥${bp.kw_pm_tokushu} 管理×¥${bp.kw_pm_kanri}</div>`
+    :`<div style="color:var(--text-sub);">朝刊×¥${bp.am_shop} 特殊×¥${bp.am_tokushu} 雑誌×¥${bp.am_zasshi} 同梱×¥${bp.am_dokkon} 管理×¥${bp.am_kanri} ／ 夕刊×¥${bp.pm_normal} 特殊×¥${bp.pm_tokushu} 管理×¥${bp.pm_kanri} ／ 金土のみ×¥${bp.keiba_only}${keibaOnlyCount?'('+keibaOnlyCount+'店)':''}</div>`;
   h+=`</div>`;
   h+=`</div>`;
 
