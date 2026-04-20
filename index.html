@@ -532,9 +532,11 @@ tbody tr:hover { background:var(--primary-light); }
 
       <!-- スタッフ管理 -->
       <div id="adm-staff" class="adm-panel" style="display:none;">
-        <div style="margin-bottom:10px;"><input type="text" id="adm-staff-search" oninput="adminFilterStaff()" placeholder="氏名で検索..." style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;width:100%;max-width:300px;"></div>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
+          <input type="text" id="adm-staff-search" oninput="adminFilterStaff()" placeholder="氏名で検索..." style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;flex:1;max-width:300px;">
+          <button onclick="admStaffAdd()" style="background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;white-space:nowrap;">＋ スタッフ追加</button>
+        </div>
         <div id="adm-staff-list"></div>
-        <button onclick="admStaffAdd()" style="background:#6366f1;color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:12px;">＋ スタッフ追加</button>
       </div>
 
       <!-- データ管理 -->
