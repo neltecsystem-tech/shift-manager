@@ -535,6 +535,72 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
           <input type="text" id="adm-staff-search" oninput="adminFilterStaff()" placeholder="氏名で検索..." style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;flex:1;max-width:300px;">
           <button onclick="admStaffAdd()" style="background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;white-space:nowrap;">＋ スタッフ追加</button>
+          <button onclick="document.getElementById('adm-staff-guide').style.display=document.getElementById('adm-staff-guide').style.display==='none'?'':'none'" style="background:#94a3b8;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;white-space:nowrap;">❓ 計算方式ガイド</button>
+        </div>
+        <!-- 計算方式ガイド（初期非表示） -->
+        <div id="adm-staff-guide" style="display:none;margin-bottom:16px;border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+          <div style="background:#f8fafc;padding:12px 16px;border-bottom:1px solid var(--border);"><h4 style="margin:0;color:var(--primary);">📋 計算方式ガイド</h4></div>
+          <div style="padding:16px;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
+              <!-- 固定 -->
+              <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+                <div style="background:#dbeafe;padding:8px 12px;font-weight:bold;color:#1d4ed8;">📌 固定制</div>
+                <div style="padding:12px;font-size:12px;line-height:1.8;">
+                  <p style="margin:0 0 6px;"><b>概要:</b> 曜日ごとに決まった固定金額を支払う方式</p>
+                  <p style="margin:0 0 6px;"><b>設定項目:</b></p>
+                  <table style="border-collapse:collapse;width:100%;font-size:11px;margin-bottom:6px;">
+                    <tr><td style="border:1px solid #eee;padding:2px 6px;background:#f8fafc;">朝刊(月-金)</td><td style="border:1px solid #eee;padding:2px 6px;">平日の朝刊単価</td></tr>
+                    <tr><td style="border:1px solid #eee;padding:2px 6px;background:#f8fafc;">朝刊(土)</td><td style="border:1px solid #eee;padding:2px 6px;">土曜の朝刊単価</td></tr>
+                    <tr><td style="border:1px solid #eee;padding:2px 6px;background:#f8fafc;">朝刊(日)</td><td style="border:1px solid #eee;padding:2px 6px;">日曜の朝刊単価（未設定時は土曜と同額）</td></tr>
+                    <tr><td style="border:1px solid #eee;padding:2px 6px;background:#f8fafc;">夕刊(月-木)</td><td style="border:1px solid #eee;padding:2px 6px;">平日の夕刊/競馬単価</td></tr>
+                    <tr><td style="border:1px solid #eee;padding:2px 6px;background:#f8fafc;">夕刊(金-土)</td><td style="border:1px solid #eee;padding:2px 6px;">週末の夕刊/競馬単価</td></tr>
+                    <tr><td style="border:1px solid #eee;padding:2px 6px;background:#f8fafc;">夕刊(日)</td><td style="border:1px solid #eee;padding:2px 6px;">日曜の夕刊単価（未設定時は週末と同額）</td></tr>
+                  </table>
+                  <p style="margin:0;color:#64748b;"><b>計算:</b> 金額 = 曜日に応じた固定単価</p>
+                </div>
+              </div>
+              <!-- 個数制 -->
+              <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+                <div style="background:#dcfce7;padding:8px 12px;font-weight:bold;color:#166534;">📦 個数制</div>
+                <div style="padding:12px;font-size:12px;line-height:1.8;">
+                  <p style="margin:0 0 6px;"><b>概要:</b> 配送個数 × 個数単価で計算する方式</p>
+                  <p style="margin:0 0 6px;"><b>設定項目:</b></p>
+                  <table style="border-collapse:collapse;width:100%;font-size:11px;margin-bottom:6px;">
+                    <tr><td style="border:1px solid #eee;padding:2px 6px;background:#f8fafc;">朝刊 個数単価</td><td style="border:1px solid #eee;padding:2px 6px;">1個あたりの朝刊単価</td></tr>
+                    <tr><td style="border:1px solid #eee;padding:2px 6px;background:#f8fafc;">夕刊 個数単価</td><td style="border:1px solid #eee;padding:2px 6px;">1個あたりの夕刊単価（朝刊と別設定可）</td></tr>
+                  </table>
+                  <p style="margin:0 0 4px;color:#64748b;"><b>計算:</b> 金額 = 個数単価 × 配送個数</p>
+                  <p style="margin:0;color:#64748b;">稼働入力時に「配送個数」欄が表示されます</p>
+                </div>
+              </div>
+              <!-- 個建制 -->
+              <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+                <div style="background:#fef3c7;padding:8px 12px;font-weight:bold;color:#92400e;">🏪 個建制</div>
+                <div style="padding:12px;font-size:12px;line-height:1.8;">
+                  <p style="margin:0 0 6px;"><b>概要:</b> 店舗マスタからコースの店舗数・属性を自動集計して計算する方式</p>
+                  <p style="margin:0 0 6px;"><b>計算内訳:</b></p>
+                  <table style="border-collapse:collapse;width:100%;font-size:11px;margin-bottom:6px;">
+                    <tr><td style="border:1px solid #eee;padding:2px 6px;background:#f8fafc;">店舗数</td><td style="border:1px solid #eee;padding:2px 6px;">× ¥265</td></tr>
+                    <tr><td style="border:1px solid #eee;padding:2px 6px;background:#f8fafc;">夕刊同梱</td><td style="border:1px solid #eee;padding:2px 6px;">× ¥50</td></tr>
+                    <tr><td style="border:1px solid #eee;padding:2px 6px;background:#f8fafc;">距離増</td><td style="border:1px solid #eee;padding:2px 6px;">× ¥13</td></tr>
+                    <tr><td style="border:1px solid #eee;padding:2px 6px;background:#f8fafc;">特殊納品</td><td style="border:1px solid #eee;padding:2px 6px;">× ¥20</td></tr>
+                    <tr><td style="border:1px solid #eee;padding:2px 6px;background:#f8fafc;">雑誌</td><td style="border:1px solid #eee;padding:2px 6px;">× ¥80</td></tr>
+                  </table>
+                  <p style="margin:0;color:#64748b;"><b>計算:</b> 各項目の合計が金額になります。単価設定不要（自動計算）</p>
+                </div>
+              </div>
+            </div>
+            <!-- 共通ルール -->
+            <div style="margin-top:12px;padding:10px;background:#faf5ff;border-radius:8px;font-size:11px;line-height:1.8;">
+              <b>📝 共通ルール:</b>
+              <ul style="margin:4px 0 0;padding-left:16px;">
+                <li><b>引継コース:</b> コース名に「引継」を含む場合、算出金額が半額になります</li>
+                <li><b>特別単価:</b> 日当（金額置換）や日当+（金額加算）で個別上書きが可能です</li>
+                <li><b>川越パターン:</b> 旧/新パターンを選ぶとコース別×曜日別の単価がマスタから自動適用されます</li>
+                <li><b>庫内:</b> 庫内朝刊・庫内夕刊は別途固定単価を設定します</li>
+              </ul>
+            </div>
+          </div>
         </div>
         <div id="adm-staff-list"></div>
       </div>
