@@ -427,6 +427,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('data')" id="adm-tab-data" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📁 データ管理</button>
         <button onclick="adminTab('check')" id="adm-tab-check" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🔍 突合せチェック</button>
         <button onclick="adminTab('billing')" id="adm-tab-billing" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📄 請求書作成</button>
+        <button onclick="adminTab('pricelist')" id="adm-tab-pricelist" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💲 単価一覧</button>
         <button onclick="adminTab('shopcount')" id="adm-tab-shopcount" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📊 店舗集計</button>
         <button onclick="adminTab('revenue')" id="adm-tab-revenue" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💰 収支管理</button>
         <button onclick="adminTab('billcond')" id="adm-tab-billcond" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 請求条件</button>
@@ -456,6 +457,11 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="adm-bill-totals" style="margin-top:8px;"></div>
         <div id="adm-bill-preview" style="margin-top:12px;"></div>
+      </div>
+
+      <!-- 単価一覧 -->
+      <div id="adm-pricelist" class="adm-panel" style="display:none;">
+        <div id="adm-pricelist-content"></div>
       </div>
 
       <!-- 店舗集計 -->
@@ -2561,6 +2567,7 @@ function adminTab(t){
   if(t==='billing')admBillInit().catch(()=>{});
   if(t==='revenue')admRevInit().catch(()=>{});
   if(t==='billcond')admBcInit();
+  if(t==='pricelist')admPriceListRender();
   if(t==='check')adminInitCheck();
   if(t==='measure')admMsrInit();
   if(t==='data')adminShowDataInfo();
@@ -2787,6 +2794,66 @@ function loadLiveShifts(){
       parseShift(key);
     });
   }catch(_){}
+}
+
+// --- 単価一覧 ---
+function admPriceListRender(){
+  if(!invRates.length){document.getElementById('adm-pricelist-content').innerHTML='<p style="color:var(--text-sub);text-align:center;padding:40px;">単価データがありません。先にスタッフ管理でデータを読み込んでください。</p>';return;}
+  const DAYS=['月','火','水','木','金','土','日'];
+  let h='<div style="overflow-x:auto;">';
+  h+='<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+  h+='<thead><tr style="background:#e8f4fd;">';
+  h+='<th style="border:1px solid #ccc;padding:6px 8px;position:sticky;left:0;background:#e8f4fd;z-index:1;">スタッフ名</th>';
+  h+='<th style="border:1px solid #ccc;padding:6px 4px;">区分</th>';
+  h+='<th style="border:1px solid #ccc;padding:6px 4px;">計算方式</th>';
+  h+='<th style="border:1px solid #ccc;padding:6px 4px;background:#dbeafe;" colspan="3">朝刊単価</th>';
+  h+='<th style="border:1px solid #ccc;padding:6px 4px;background:#fae8ff;" colspan="3">夕刊単価</th>';
+  h+='<th style="border:1px solid #ccc;padding:6px 4px;background:#dcfce7;" colspan="2">庫内</th>';
+  h+='<th style="border:1px solid #ccc;padding:6px 4px;background:#fef3c7;">個数単価</th>';
+  h+='<th style="border:1px solid #ccc;padding:6px 4px;background:#dcfce7;" colspan="7">川越 曜日別朝刊</th>';
+  h+='</tr>';
+  h+='<tr style="background:#f8fafc;font-size:10px;">';
+  h+='<th style="border:1px solid #ccc;padding:3px;position:sticky;left:0;background:#f8fafc;z-index:1;"></th>';
+  h+='<th style="border:1px solid #ccc;padding:3px;"></th>';
+  h+='<th style="border:1px solid #ccc;padding:3px;"></th>';
+  h+='<th style="border:1px solid #ccc;padding:3px;">平日</th><th style="border:1px solid #ccc;padding:3px;">土曜</th><th style="border:1px solid #ccc;padding:3px;">日曜</th>';
+  h+='<th style="border:1px solid #ccc;padding:3px;">平日</th><th style="border:1px solid #ccc;padding:3px;">週末</th><th style="border:1px solid #ccc;padding:3px;">日曜</th>';
+  h+='<th style="border:1px solid #ccc;padding:3px;">朝刊</th><th style="border:1px solid #ccc;padding:3px;">夕刊</th>';
+  h+='<th style="border:1px solid #ccc;padding:3px;">朝/夕</th>';
+  DAYS.forEach(d=>{h+='<th style="border:1px solid #ccc;padding:3px;">'+d+'</th>';});
+  h+='</tr></thead><tbody>';
+
+  invRates.forEach(r=>{
+    const kwD=(r.kw_am_daily||'').split(',');
+    const hasKw=kwD.some(v=>v);
+    const calcLabel=r.calc_type==='個建'?'個建制':r.calc_type==='個数'?'個数制':'固定';
+    h+='<tr>';
+    h+='<td style="border:1px solid #ccc;padding:4px 8px;font-weight:600;white-space:nowrap;position:sticky;left:0;background:#fff;z-index:1;">'+r.name+'</td>';
+    h+='<td style="border:1px solid #ccc;padding:4px;text-align:center;font-size:11px;">'+(r.biz_type||'-')+'</td>';
+    h+='<td style="border:1px solid #ccc;padding:4px;text-align:center;font-size:11px;">'+calcLabel+'</td>';
+    // 朝刊
+    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.am_weekday?'¥'+Number(r.am_weekday).toLocaleString():'-')+'</td>';
+    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.am_weekend?'¥'+Number(r.am_weekend).toLocaleString():'-')+'</td>';
+    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.am_sunday?'¥'+Number(r.am_sunday).toLocaleString():'-')+'</td>';
+    // 夕刊
+    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.pm_weekday?'¥'+Number(r.pm_weekday).toLocaleString():'-')+'</td>';
+    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.pm_weekend?'¥'+Number(r.pm_weekend).toLocaleString():'-')+'</td>';
+    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.pm_sunday?'¥'+Number(r.pm_sunday).toLocaleString():'-')+'</td>';
+    // 庫内
+    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.warehouse_am?'¥'+Number(r.warehouse_am).toLocaleString():'-')+'</td>';
+    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.warehouse_pm?'¥'+Number(r.warehouse_pm).toLocaleString():'-')+'</td>';
+    // 個数単価
+    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.unit_price?'¥'+Number(r.unit_price).toLocaleString():'-')+'</td>';
+    // 川越曜日別
+    DAYS.forEach((d,i)=>{
+      const v=kwD[i];
+      h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;'+(v?'background:#f0fdf4;':'')+'">'+(v?'¥'+Number(v).toLocaleString():'-')+'</td>';
+    });
+    h+='</tr>';
+  });
+
+  h+='</tbody></table></div>';
+  document.getElementById('adm-pricelist-content').innerHTML=h;
 }
 
 // --- 店舗集計 ---
