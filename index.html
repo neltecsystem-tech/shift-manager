@@ -377,7 +377,8 @@ tbody tr:hover { background:var(--primary-light); }
           </div>
           </div>
           <div id="inv-re-kw-auto" style="display:none;padding:10px;background:#f0fdf4;border-radius:8px;margin-top:8px;">
-            <p style="font-size:12px;color:#166534;margin:0;">コース別の曜日単価がマスタから自動適用されます。<br>マスタにないコースの場合は通常タブの単価が使われます。</p>
+            <p style="font-size:12px;color:#166534;margin:0 0 6px;"><b>朝刊:</b> コース別の曜日単価がマスタから自動適用されます。<br>マスタにないコースの場合は通常タブの単価が使われます。</p>
+            <p style="font-size:12px;color:#c2410c;margin:0;background:#fff7ed;padding:6px 8px;border-radius:4px;">⚠ <b>夕刊/競馬は自動適用されません。</b>通常タブの夕刊単価を必ず設定してください。</p>
           </div>
         </div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人</option><option value="社員">社員</option></select></div>
