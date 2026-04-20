@@ -363,6 +363,8 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <!-- 川越タブ -->
         <div id="inv-re-panel-kawagoe" style="display:none;">
+          <div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-sub)">川越パターン</label><select id="inv-re-kw-pattern" onchange="invKwPatternChange()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">従来（曜日別手動）</option><option value="旧">旧パターン（コース別自動）</option><option value="新">新パターン（コース別自動）</option></select></div>
+          <div id="inv-re-kw-manual">
           <p style="font-size:12px;color:var(--text-sub);margin-bottom:10px;">朝刊の単価を曜日ごとに設定します。未入力の曜日は通常タブの単価が適用されます。</p>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
             <div><label style="font-size:12px;color:var(--text-sub)">月曜</label><input type="number" id="inv-re-kw-mon" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="未入力=通常"></div>
@@ -372,6 +374,10 @@ tbody tr:hover { background:var(--primary-light); }
             <div><label style="font-size:12px;color:var(--text-sub)">金曜</label><input type="number" id="inv-re-kw-fri" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="未入力=通常"></div>
             <div><label style="font-size:12px;color:var(--text-sub)">土曜</label><input type="number" id="inv-re-kw-sat" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="未入力=通常"></div>
             <div><label style="font-size:12px;color:var(--text-sub)">日曜</label><input type="number" id="inv-re-kw-sun" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="未入力=通常"></div>
+          </div>
+          </div>
+          <div id="inv-re-kw-auto" style="display:none;padding:10px;background:#f0fdf4;border-radius:8px;margin-top:8px;">
+            <p style="font-size:12px;color:#166534;margin:0;">コース別の曜日単価がマスタから自動適用されます。<br>マスタにないコースの場合は通常タブの単価が使われます。</p>
           </div>
         </div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人</option><option value="社員">社員</option></select></div>
@@ -1767,6 +1773,7 @@ let invRates=[];
 let invWork=[];
 let invStaffNames=[];
 let invSpecial=[];// 特別単価データ
+let kwCoursePrices={old:[],new:[]};// 川越コース別単価マスタ
 let invTab='work';
 let invCatSel='朝刊';
 const INV_CATS=['朝刊','夕刊/競馬','庫内朝刊','庫内夕刊'];
@@ -1865,17 +1872,21 @@ function invApplyUI(){
 
 // バックグラウンドで残りデータを読み込む
 async function invLoadAllBackground(){
-  const [namesRes,specialRes]=await Promise.all([invApi({action:'get_staff_names'}),invApi({action:'get_special_rates'})]);
+  const [namesRes,specialRes,kwRes]=await Promise.all([invApi({action:'get_staff_names'}),invApi({action:'get_special_rates'}),invApi({action:'get_kawagoe_course_prices'})]);
   invStaffNames=namesRes.names||[];
   invSpecial=specialRes.records||[];
+  if(kwRes.old)kwCoursePrices.old=kwRes.old;
+  if(kwRes.new)kwCoursePrices.new=kwRes.new;
   invApplyUI();
 }
 
 async function invLoadAll(){
-  const [ratesRes,workRes,namesRes,specialRes]=await Promise.all([invApi({action:'get_rates'}),invApi({action:'list_work'}),invApi({action:'get_staff_names'}),invApi({action:'get_special_rates'})]);
+  const [ratesRes,workRes,namesRes,specialRes,kwRes]=await Promise.all([invApi({action:'get_rates'}),invApi({action:'list_work'}),invApi({action:'get_staff_names'}),invApi({action:'get_special_rates'}),invApi({action:'get_kawagoe_course_prices'})]);
   invRates=ratesRes.rates||[];
   invWork=workRes.records||[];
   invSpecial=specialRes.records||[];
+  if(kwRes.old)kwCoursePrices.old=kwRes.old;
+  if(kwRes.new)kwCoursePrices.new=kwRes.new;
   invStaffNames=namesRes.names||[];
   if(!invIsAdmin&&invStaffName){
     invWork=invWork.filter(w=>w.staff===invStaffName);
@@ -2064,14 +2075,27 @@ function invCalcAmount(){
   const d=new Date(date);
   const dow=d.getDay();// 0=Sun
   let price=0;
-  // 川越曜日別朝刊チェック (kw_am_daily: mon,tue,wed,thu,fri,sat,sun)
+  // 川越コース別単価 or 曜日別朝刊チェック
+  const kwPattern=rate.kw_pattern||'';
   const kwDays=(rate.kw_am_daily||'').split(',');
   const kwDowMap=[6,0,1,2,3,4,5];// dow(0=Sun→idx6, 1=Mon→idx0, ...)
+  const DOW_KEYS=['sun','mon','tue','wed','thu','fri','sat'];
   if(invCatSel==='朝刊'){
-    const kwPrice=kwDays[kwDowMap[dow]];
-    if(kwPrice)price=Number(kwPrice)||0;
-    else if(dow===0&&rate.am_sunday)price=Number(rate.am_sunday)||0;
-    else price=Number((dow>=1&&dow<=5)?rate.am_weekday:rate.am_weekend)||0;
+    let kwCoursePrice=0;
+    const courseVal=document.getElementById('inve-course').value||'';
+    // 川越パターン（旧/新）: コース名でマスタからルックアップ
+    if(kwPattern&&courseVal.startsWith('川越')){
+      const masterList=kwPattern==='旧'?kwCoursePrices.old:kwCoursePrices.new;
+      const found=masterList.find(m=>m.course===courseVal);
+      if(found){kwCoursePrice=found[DOW_KEYS[dow]]||0;}
+    }
+    if(kwCoursePrice){price=kwCoursePrice;}
+    else{
+      const kwPrice=kwDays[kwDowMap[dow]];
+      if(kwPrice)price=Number(kwPrice)||0;
+      else if(dow===0&&rate.am_sunday)price=Number(rate.am_sunday)||0;
+      else price=Number((dow>=1&&dow<=5)?rate.am_weekday:rate.am_weekend)||0;
+    }
   }else if(invCatSel==='夕刊/競馬'){
     if(dow===0&&rate.pm_sunday)price=Number(rate.pm_sunday)||0;
     else price=Number((dow>=1&&dow<=4)?rate.pm_weekday:rate.pm_weekend)||0;
@@ -2180,7 +2204,8 @@ async function invSaveWork(){
   let price=0,amount=0;
   if(rate){
     const kwD=(rate.kw_am_daily||'').split(',');const kwM=[6,0,1,2,3,4,5];
-    if(invCatSel==='朝刊'){const kwP=kwD[kwM[dow]];if(kwP)price=Number(kwP)||0;else if(dow===0&&rate.am_sunday)price=Number(rate.am_sunday)||0;else price=Number((dow>=1&&dow<=5)?rate.am_weekday:rate.am_weekend)||0;}
+    const kwPat=rate.kw_pattern||'';const courseV=document.getElementById('inve-course').value||'';const DK=['sun','mon','tue','wed','thu','fri','sat'];
+    if(invCatSel==='朝刊'){let kwCP=0;if(kwPat&&courseV.startsWith('川越')){const ml=kwPat==='旧'?kwCoursePrices.old:kwCoursePrices.new;const fd=ml.find(m=>m.course===courseV);if(fd)kwCP=fd[DK[dow]]||0;}if(kwCP){price=kwCP;}else{const kwP=kwD[kwM[dow]];if(kwP)price=Number(kwP)||0;else if(dow===0&&rate.am_sunday)price=Number(rate.am_sunday)||0;else price=Number((dow>=1&&dow<=5)?rate.am_weekday:rate.am_weekend)||0;}}
     else if(invCatSel==='夕刊/競馬'){if(dow===0&&rate.pm_sunday)price=Number(rate.pm_sunday)||0;else price=Number((dow>=1&&dow<=4)?rate.pm_weekday:rate.pm_weekend)||0;}
     else if(invCatSel==='庫内朝刊')price=Number(rate.warehouse_am)||0;
     else if(invCatSel==='庫内夕刊')price=Number(rate.warehouse_pm)||0;
@@ -2240,6 +2265,12 @@ function invShowRates(){
   document.getElementById('inv-rate-modal').style.display='flex';
 }
 
+function invKwPatternChange(){
+  const v=document.getElementById('inv-re-kw-pattern').value;
+  document.getElementById('inv-re-kw-manual').style.display=v?'none':'';
+  document.getElementById('inv-re-kw-auto').style.display=v?'':'none';
+}
+
 function invRateTab(t){
   document.getElementById('inv-re-panel-normal').style.display=t==='normal'?'':'none';
   document.getElementById('inv-re-panel-kawagoe').style.display=t==='kawagoe'?'':'none';
@@ -2270,6 +2301,8 @@ function invAddRate(){
   document.getElementById('inv-re-perm-defects').checked=false;
   document.getElementById('inv-re-perm-shopmaster').checked=false;
   ['inv-re-kw-mon','inv-re-kw-tue','inv-re-kw-wed','inv-re-kw-thu','inv-re-kw-fri','inv-re-kw-sat','inv-re-kw-sun'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('inv-re-kw-pattern').value='';
+  invKwPatternChange();
   invRateTab('normal');
   document.getElementById('inv-rate-edit').style.display='flex';
 }
@@ -2302,7 +2335,9 @@ function invEditRate(rowNum){
   const kw=r.kw_am_daily||'';
   const kwDays=kw.split(',');
   ['mon','tue','wed','thu','fri','sat','sun'].forEach((d,i)=>{document.getElementById('inv-re-kw-'+d).value=kwDays[i]||'';});
-  invRateTab(kw?'kawagoe':'normal');
+  document.getElementById('inv-re-kw-pattern').value=r.kw_pattern||'';
+  invKwPatternChange();
+  invRateTab((kw||r.kw_pattern)?'kawagoe':'normal');
   // アクセス権限
   const permStr=r.permissions||'';
   document.getElementById('inv-re-perm-admin').checked=permStr.includes('admin');
@@ -2327,7 +2362,8 @@ async function invSaveRate(){
   if(document.getElementById('inv-re-perm-shopmaster').checked)permArr.push('shopmaster');
   const perms=permArr.join(',');
   const kwAmDaily=['mon','tue','wed','thu','fri','sat','sun'].map(d=>document.getElementById('inv-re-kw-'+d).value).join(',');
-  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,am_sunday:document.getElementById('inv-re-am-sun').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,pm_sunday:document.getElementById('inv-re-pm-sun').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value,calc_type_pm:document.getElementById('inv-re-calc-pm').value,unit_price_pm:document.getElementById('inv-re-unit-pm').value,permissions:perms,kw_am_daily:kwAmDaily.replace(/^,+$/,'')};
+  const kwPattern=document.getElementById('inv-re-kw-pattern').value;
+  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,am_sunday:document.getElementById('inv-re-am-sun').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,pm_sunday:document.getElementById('inv-re-pm-sun').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value,calc_type_pm:document.getElementById('inv-re-calc-pm').value,unit_price_pm:document.getElementById('inv-re-unit-pm').value,permissions:perms,kw_am_daily:kwAmDaily.replace(/^,+$/,''),kw_pattern:kwPattern};
   await invApi({action:'save_rate',record,row_number:rowNum?parseInt(rowNum):undefined});
   document.getElementById('inv-rate-edit').style.display='none';
   await invLoadAll();
