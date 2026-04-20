@@ -2825,9 +2825,12 @@ async function admScLoad(){
     const areaShops=records.filter(r=>notCancelled(r)&&isActiveOn(r)&&matchAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
 
     // 営業所全体の集計
+    // 朝刊: 店舗の営業所で分類
     const amAll=areaShops.filter(r=>r[`col_${cols.amCourse}`]);
-    const pmAll=areaShops.filter(r=>r[`col_${cols.pmCourse}`]);
-    const kbAll=areaShops.filter(r=>cols.keibaCourse!==undefined&&r[`col_${cols.keibaCourse}`]);
+    // 夕刊・競馬: コース名に営業所名が含まれるかで分類（他営業所の店舗でもコースが該当すればカウント）
+    const allActive=records.filter(r=>notCancelled(r)&&isActiveOn(r));
+    const pmAll=allActive.filter(r=>{const c=r[`col_${cols.pmCourse}`]||'';return c&&matchAreas.some(a=>c.includes(a));});
+    const kbAll=allActive.filter(r=>{if(cols.keibaCourse===undefined)return false;const c=r[`col_${cols.keibaCourse}`]||'';return c&&matchAreas.some(a=>c.includes(a));});
     const at={
       am:amAll.length,pm:pmAll.length,keiba:kbAll.length,
       tokushu:amAll.filter(s=>s[`col_${cols.amTokushu}`]==='TRUE').length,
