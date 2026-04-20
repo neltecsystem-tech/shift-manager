@@ -2564,10 +2564,10 @@ function adminTab(t){
   if(t==='invoices')adminLoadInvoices();
   if(t==='staff')adminLoadStaff();
   if(t==='shopcount')admScLoad().catch(()=>{});
-  if(t==='billing')admBillInit().catch(()=>{});
+  if(t==='billing'){admBillInit().catch(()=>{});if(!billPricesCache)loadBillPrices().catch(()=>{});}
   if(t==='revenue')admRevInit().catch(()=>{});
   if(t==='billcond')admBcInit();
-  if(t==='pricelist')admPriceListRender();
+  if(t==='pricelist'){document.getElementById('adm-pricelist-content').innerHTML='<p style="text-align:center;padding:40px;color:var(--text-sub);">読み込み中...</p>';loadBillPrices().then(()=>admPriceListRender());}
   if(t==='check')adminInitCheck();
   if(t==='measure')admMsrInit();
   if(t==='data')adminShowDataInfo();
@@ -2804,15 +2804,29 @@ const BILL_PRICE_DEFAULTS={
   kw_am_shop:260, kw_am_dokkon:50, kw_am_tokushu:20, kw_am_zasshi:80, kw_am_kanri:20, kw_kyori:13,
   kw_pm:280, kw_pm_tokushu:20, kw_pm_kanri:20,
 };
+let billPricesCache=null;
 function getBillPrices(){
-  try{const s=localStorage.getItem('billPrices');if(s)return {...BILL_PRICE_DEFAULTS,...JSON.parse(s)};}catch(_){}
+  if(billPricesCache)return {...BILL_PRICE_DEFAULTS,...billPricesCache};
   return {...BILL_PRICE_DEFAULTS};
 }
-function saveBillPrices(){
+async function loadBillPrices(){
+  try{
+    const res=await invApi({action:'get_bill_prices'});
+    if(res.prices){billPricesCache=res.prices;}
+  }catch(_){}
+  return getBillPrices();
+}
+async function saveBillPrices(){
   const p={};
   document.querySelectorAll('[data-bp]').forEach(el=>{p[el.dataset.bp]=Number(el.value)||0;});
-  localStorage.setItem('billPrices',JSON.stringify(p));
-  alert('単価を保存しました');
+  try{
+    const btn=document.querySelector('#adm-pricelist-content button');
+    if(btn){btn.textContent='保存中...';btn.disabled=true;}
+    await invApi({action:'save_bill_prices',bill_prices:p});
+    billPricesCache=p;
+    alert('単価を保存しました');
+    if(btn){btn.textContent='💾 単価を保存';btn.disabled=false;}
+  }catch(e){alert('保存に失敗しました: '+e.message);}
 }
 
 function admPriceListRender(){
