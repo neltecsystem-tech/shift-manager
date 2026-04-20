@@ -2796,63 +2796,115 @@ function loadLiveShifts(){
   }catch(_){}
 }
 
-// --- 単価一覧 ---
+// --- 単価一覧（得意先請求単価） ---
 function admPriceListRender(){
-  if(!invRates.length){document.getElementById('adm-pricelist-content').innerHTML='<p style="color:var(--text-sub);text-align:center;padding:40px;">単価データがありません。先にスタッフ管理でデータを読み込んでください。</p>';return;}
-  const DAYS=['月','火','水','木','金','土','日'];
-  let h='<div style="overflow-x:auto;">';
-  h+='<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-  h+='<thead><tr style="background:#e8f4fd;">';
-  h+='<th style="border:1px solid #ccc;padding:6px 8px;position:sticky;left:0;background:#e8f4fd;z-index:1;">スタッフ名</th>';
-  h+='<th style="border:1px solid #ccc;padding:6px 4px;">区分</th>';
-  h+='<th style="border:1px solid #ccc;padding:6px 4px;">計算方式</th>';
-  h+='<th style="border:1px solid #ccc;padding:6px 4px;background:#dbeafe;" colspan="3">朝刊単価</th>';
-  h+='<th style="border:1px solid #ccc;padding:6px 4px;background:#fae8ff;" colspan="3">夕刊単価</th>';
-  h+='<th style="border:1px solid #ccc;padding:6px 4px;background:#dcfce7;" colspan="2">庫内</th>';
-  h+='<th style="border:1px solid #ccc;padding:6px 4px;background:#fef3c7;">個数単価</th>';
-  h+='<th style="border:1px solid #ccc;padding:6px 4px;background:#dcfce7;" colspan="7">川越 曜日別朝刊</th>';
-  h+='</tr>';
-  h+='<tr style="background:#f8fafc;font-size:10px;">';
-  h+='<th style="border:1px solid #ccc;padding:3px;position:sticky;left:0;background:#f8fafc;z-index:1;"></th>';
-  h+='<th style="border:1px solid #ccc;padding:3px;"></th>';
-  h+='<th style="border:1px solid #ccc;padding:3px;"></th>';
-  h+='<th style="border:1px solid #ccc;padding:3px;">平日</th><th style="border:1px solid #ccc;padding:3px;">土曜</th><th style="border:1px solid #ccc;padding:3px;">日曜</th>';
-  h+='<th style="border:1px solid #ccc;padding:3px;">平日</th><th style="border:1px solid #ccc;padding:3px;">週末</th><th style="border:1px solid #ccc;padding:3px;">日曜</th>';
-  h+='<th style="border:1px solid #ccc;padding:3px;">朝刊</th><th style="border:1px solid #ccc;padding:3px;">夕刊</th>';
-  h+='<th style="border:1px solid #ccc;padding:3px;">朝/夕</th>';
-  DAYS.forEach(d=>{h+='<th style="border:1px solid #ccc;padding:3px;">'+d+'</th>';});
-  h+='</tr></thead><tbody>';
+  const td=s=>`<td style="border:1px solid #ccc;padding:6px 10px;text-align:right;">¥${Number(s).toLocaleString()}</td>`;
+  const th=s=>`<th style="border:1px solid #ccc;padding:6px 8px;background:#f8fafc;">${s}</th>`;
+  const specialCodes=['622179','602271','622183','612322','622068','762049','602267','761537','761536','761538','601719'];
 
-  invRates.forEach(r=>{
-    const kwD=(r.kw_am_daily||'').split(',');
-    const hasKw=kwD.some(v=>v);
-    const calcLabel=r.calc_type==='個建'?'個建制':r.calc_type==='個数'?'個数制':'固定';
-    h+='<tr>';
-    h+='<td style="border:1px solid #ccc;padding:4px 8px;font-weight:600;white-space:nowrap;position:sticky;left:0;background:#fff;z-index:1;">'+r.name+'</td>';
-    h+='<td style="border:1px solid #ccc;padding:4px;text-align:center;font-size:11px;">'+(r.biz_type||'-')+'</td>';
-    h+='<td style="border:1px solid #ccc;padding:4px;text-align:center;font-size:11px;">'+calcLabel+'</td>';
-    // 朝刊
-    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.am_weekday?'¥'+Number(r.am_weekday).toLocaleString():'-')+'</td>';
-    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.am_weekend?'¥'+Number(r.am_weekend).toLocaleString():'-')+'</td>';
-    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.am_sunday?'¥'+Number(r.am_sunday).toLocaleString():'-')+'</td>';
-    // 夕刊
-    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.pm_weekday?'¥'+Number(r.pm_weekday).toLocaleString():'-')+'</td>';
-    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.pm_weekend?'¥'+Number(r.pm_weekend).toLocaleString():'-')+'</td>';
-    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.pm_sunday?'¥'+Number(r.pm_sunday).toLocaleString():'-')+'</td>';
-    // 庫内
-    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.warehouse_am?'¥'+Number(r.warehouse_am).toLocaleString():'-')+'</td>';
-    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.warehouse_pm?'¥'+Number(r.warehouse_pm).toLocaleString():'-')+'</td>';
-    // 個数単価
-    h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;">'+(r.unit_price?'¥'+Number(r.unit_price).toLocaleString():'-')+'</td>';
-    // 川越曜日別
-    DAYS.forEach((d,i)=>{
-      const v=kwD[i];
-      h+='<td style="border:1px solid #ccc;padding:4px;text-align:right;'+(v?'background:#f0fdf4;':'')+'">'+(v?'¥'+Number(v).toLocaleString():'-')+'</td>';
-    });
-    h+='</tr>';
-  });
+  let h='<h3 style="margin-bottom:12px;color:var(--primary);">得意先請求 単価一覧</h3>';
 
-  h+='</tbody></table></div>';
+  // ── 共通単価 ──
+  h+='<div style="margin-bottom:20px;">';
+  h+='<h4 style="margin-bottom:8px;">📰 共通単価（全営業所共通）</h4>';
+  h+='<table style="border-collapse:collapse;font-size:13px;">';
+  h+='<thead><tr style="background:#dbeafe;"><th colspan="2" style="border:1px solid #ccc;padding:6px 12px;">朝刊</th></tr></thead><tbody>';
+  h+='<tr>'+th('店舗料金')+td(270)+'</tr>';
+  h+='<tr>'+th('夕刊同梱')+td(50)+'</tr>';
+  h+='<tr>'+th('特殊納品')+td(20)+'</tr>';
+  h+='<tr>'+th('雑誌')+td(130)+'</tr>';
+  h+='<tr>'+th('管理費')+td(20)+'</tr>';
+  h+='</tbody></table>';
+  h+='</div>';
+
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:20px;">';
+
+  // ── 夕刊 ──
+  h+='<div>';
+  h+='<h4 style="margin-bottom:8px;">🌙 夕刊単価（月〜木）</h4>';
+  h+='<table style="border-collapse:collapse;font-size:13px;width:100%;">';
+  h+='<tbody>';
+  h+='<tr>'+th('通常店舗')+td(230)+'</tr>';
+  h+='<tr>'+th('特別単価店舗')+td(700)+'</tr>';
+  h+='<tr>'+th('特殊納品')+td(20)+'</tr>';
+  h+='<tr>'+th('管理費')+td(20)+'</tr>';
+  h+='</tbody></table>';
+  h+='</div>';
+
+  // ── 競馬 ──
+  h+='<div>';
+  h+='<h4 style="margin-bottom:8px;">🏇 競馬単価（金〜日）</h4>';
+  h+='<table style="border-collapse:collapse;font-size:13px;width:100%;">';
+  h+='<tbody>';
+  h+='<tr>'+th('夕刊併用店舗')+td(230)+'</tr>';
+  h+='<tr>'+th('競馬のみ店舗')+td(250)+'</tr>';
+  h+='<tr>'+th('特別単価店舗')+td(700)+'</tr>';
+  h+='<tr>'+th('特殊納品')+td(20)+'</tr>';
+  h+='<tr>'+th('管理費')+td(20)+'</tr>';
+  h+='</tbody></table>';
+  h+='</div>';
+
+  h+='</div>';
+
+  // ── 川越のみ ──
+  h+='<div style="margin-bottom:20px;">';
+  h+='<h4 style="margin-bottom:8px;">🟢 川越営業所 追加項目</h4>';
+  h+='<table style="border-collapse:collapse;font-size:13px;">';
+  h+='<tbody>';
+  h+='<tr>'+th('距離増')+td(13)+'</tr>';
+  h+='</tbody></table>';
+  h+='</div>';
+
+  // ── 特別単価店舗一覧 ──
+  h+='<div style="margin-bottom:20px;">';
+  h+='<h4 style="margin-bottom:8px;">⭐ 特別単価店舗（¥700）</h4>';
+  h+='<div style="font-size:12px;color:var(--text-sub);margin-bottom:6px;">夕刊・競馬で通常単価（¥230/¥250）ではなく¥700が適用される店舗</div>';
+
+  if(admBillShopData){
+    const records=admBillShopData.records||[];
+    const cols=admBillCols();
+    const specSet=new Set(specialCodes);
+    const specShops=records.filter(r=>specSet.has(r[`col_${cols.code}`]));
+    h+='<table style="border-collapse:collapse;font-size:12px;width:100%;">';
+    h+='<thead><tr style="background:#fef3c7;">';
+    h+='<th style="border:1px solid #ccc;padding:4px 8px;">店舗コード</th>';
+    h+='<th style="border:1px solid #ccc;padding:4px 8px;">店舗名</th>';
+    h+='<th style="border:1px solid #ccc;padding:4px 8px;">営業所</th>';
+    h+='<th style="border:1px solid #ccc;padding:4px 8px;">夕刊コース</th>';
+    h+='<th style="border:1px solid #ccc;padding:4px 8px;">競馬コース</th>';
+    h+='</tr></thead><tbody>';
+    if(specShops.length){
+      specShops.forEach(s=>{
+        h+='<tr>';
+        h+='<td style="border:1px solid #ccc;padding:3px 8px;">'+s[`col_${cols.code}`]+'</td>';
+        h+='<td style="border:1px solid #ccc;padding:3px 8px;">'+s[`col_${cols.name}`]+'</td>';
+        h+='<td style="border:1px solid #ccc;padding:3px 8px;">'+(s[`col_${cols.area}`]||'')+'</td>';
+        h+='<td style="border:1px solid #ccc;padding:3px 8px;">'+(s[`col_${cols.pmCourse}`]||'-')+'</td>';
+        h+='<td style="border:1px solid #ccc;padding:3px 8px;">'+(cols.keibaCourse!==undefined?s[`col_${cols.keibaCourse}`]||'-':'-')+'</td>';
+        h+='</tr>';
+      });
+    }else{
+      h+='<tr><td colspan="5" style="border:1px solid #ccc;padding:8px;text-align:center;color:var(--text-sub);">該当店舗なし（店舗マスタ未読込の場合は請求書作成タブを先に開いてください）</td></tr>';
+    }
+    h+='</tbody></table>';
+    h+='<div style="margin-top:4px;font-size:11px;color:var(--text-sub);">対象コード: '+specialCodes.join(', ')+'</div>';
+  }else{
+    h+='<p style="color:var(--text-sub);font-size:12px;">店舗マスタ未読込です。先に「請求書作成」タブを開いてからご確認ください。</p>';
+  }
+  h+='</div>';
+
+  // ── 同梱ルール ──
+  h+='<div style="margin-bottom:12px;padding:12px;background:#f8fafc;border-radius:8px;font-size:12px;">';
+  h+='<h4 style="margin-bottom:6px;">📋 計算ルール</h4>';
+  h+='<ul style="margin:0;padding-left:18px;line-height:1.8;">';
+  h+='<li><b>朝刊同梱:</b> 月曜は基本なし。請求条件の「夕刊同梱有/無」で日別に上書き可。</li>';
+  h+='<li><b>夕刊:</b> 月〜木は夕刊コース、金〜日は競馬コースで計算。</li>';
+  h+='<li><b>競馬「夕刊併用」:</b> 夕刊コースにも登録がある店舗 → ¥230。ない店舗 → ¥250。</li>';
+  h+='<li><b>休刊日:</b> 朝刊・夕刊すべて0。朝刊なし日は朝刊のみ0。</li>';
+  h+='<li><b>川越 距離増:</b> 朝刊がある日のみ加算。</li>';
+  h+='</ul>';
+  h+='</div>';
+
   document.getElementById('adm-pricelist-content').innerHTML=h;
 }
 
