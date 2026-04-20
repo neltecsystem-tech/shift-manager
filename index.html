@@ -2282,9 +2282,11 @@ function invRateTab(t){
   document.getElementById('inv-re-tab-kawagoe').style.color=t==='kawagoe'?'#fff':'var(--text-sub)';
 }
 
-function invUpdateNameSelect(selectedName){
+function invUpdateNameSelect(selectedName,excludeRegistered){
   const sel=document.getElementById('inv-re-name');
-  sel.innerHTML='<option value="">選択</option>'+invStaffNames.map(n=>`<option${n===selectedName?' selected':''}>${n}</option>`).join('');
+  const registeredNames=new Set(invRates.map(r=>r.name));
+  const names=excludeRegistered?invStaffNames.filter(n=>!registeredNames.has(n)):invStaffNames;
+  sel.innerHTML='<option value="">選択</option>'+names.map(n=>`<option${n===selectedName?' selected':''}>${n}</option>`).join('');
 }
 
 function invAddRate(){
@@ -2294,7 +2296,7 @@ function invAddRate(){
   document.getElementById('inv-re-biztype').value='';
   document.getElementById('inv-re-company').value='';
   document.getElementById('inv-re-company-wrap').style.display='none';
-  invUpdateNameSelect('');
+  invUpdateNameSelect('',true);
   document.getElementById('inv-re-calc').value='固定';
   document.getElementById('inv-re-unit-wrap').style.display='none';
   document.getElementById('inv-re-calc-pm').value='固定';
