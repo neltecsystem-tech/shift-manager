@@ -1799,7 +1799,7 @@ async function smBatchGeocode(){
         updates.push({row_number:r.row_number,lat:loc.lat,lng:loc.lng});
         okCount++;
       }else{
-        failures.push({name:rawName,expanded:name,reason:json.status});
+        failures.push({name:rawName,expanded:name,reason:json.status+(json.error_message?' - '+json.error_message:'')});
       }
     }catch(e){
       failures.push({name:rawName,expanded:name,reason:e.message});
