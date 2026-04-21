@@ -3286,11 +3286,12 @@ async function admRevLoad(){
     const courses=[...allC].filter(c=>matchAreas.some(a=>c.includes(a)));
     courses.forEach(course=>{
       const confirmed=getConfirmedSale(monthVal,area,course);
+      // 店舗数は常に計算結果から取得（確定時も表示する）
+      const result=admBillRenderWithTotals(area,course,monthVal);
       if(confirmed){
-        sales.push({area,course,amount:confirmed.grand_total,amTotal:confirmed.am_total,pmTotal:confirmed.pm_total,confirmed:true,confirmed_at:confirmed.confirmed_at});
+        sales.push({area,course,amount:confirmed.grand_total,amTotal:confirmed.am_total,pmTotal:confirmed.pm_total,confirmed:true,confirmed_at:confirmed.confirmed_at,amCount:result.amCount,pmCount:result.pmCount,keibaCount:result.keibaCount});
       }else{
-        const result=admBillRenderWithTotals(area,course,monthVal);
-        sales.push({area,course,amount:result.grandTotal,amTotal:result.totalAmSum,pmTotal:result.totalPmSum,confirmed:false});
+        sales.push({area,course,amount:result.grandTotal,amTotal:result.totalAmSum,pmTotal:result.totalPmSum,confirmed:false,amCount:result.amCount,pmCount:result.pmCount,keibaCount:result.keibaCount});
       }
     });
   });
@@ -3352,12 +3353,17 @@ function admRevRender(){
   const totalCnt=filteredSales.length;
   const confirmedAmount=filteredSales.filter(s=>s.confirmed).reduce((a,s)=>a+s.amount,0);
   const unconfirmedAmount=filteredSales.filter(s=>!s.confirmed).reduce((a,s)=>a+s.amount,0);
+  // 店舗数合計（重複を避ける: 朝刊/夕刊/競馬はコースごとの独立カウント）
+  const totalAmShops=filteredSales.reduce((s,r)=>s+(r.amCount||0),0);
+  const totalPmShops=filteredSales.reduce((s,r)=>s+(r.pmCount||0),0);
+  const totalKeibaShops=filteredSales.reduce((s,r)=>s+(r.keibaCount||0),0);
 
   // サマリーカード
   let sh=`<div style="display:flex;gap:12px;flex-wrap:wrap;">`;
   sh+=`<div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#166534;">売上</div><div style="font-size:24px;font-weight:bold;color:#166534;">¥${totalSales.toLocaleString()}</div><div style="font-size:10px;color:#166534;margin-top:2px;">確定 ${confirmedCnt}/${totalCnt}コース</div></div>`;
   sh+=`<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#dc2626;">支払い</div><div style="font-size:24px;font-weight:bold;color:#dc2626;">¥${totalExpenses.toLocaleString()}</div></div>`;
   sh+=`<div style="background:${profit>=0?'#dbeafe':'#fef2f2'};border:1px solid ${profit>=0?'#93c5fd':'#fca5a5'};border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:${profit>=0?'#1d4ed8':'#dc2626'};">収支</div><div style="font-size:24px;font-weight:bold;color:${profit>=0?'#1d4ed8':'#dc2626'};">¥${profit.toLocaleString()}</div></div>`;
+  sh+=`<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:10px 18px;flex:1;min-width:180px;"><div style="font-size:11px;color:var(--text-sub);margin-bottom:4px;">店舗数（延べ）</div><div style="display:flex;gap:10px;font-size:13px;"><span>📰朝刊 <b>${totalAmShops}</b></span><span>🌙夕刊 <b>${totalPmShops}</b></span><span>🏇競馬 <b>${totalKeibaShops}</b></span></div></div>`;
   sh+=`</div>`;
   if(totalCnt>confirmedCnt){
     sh+=`<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border-radius:6px;font-size:12px;color:#92400e;">⚠ ${totalCnt-confirmedCnt}コースが未確定（計算値 ¥${unconfirmedAmount.toLocaleString()}）。請求書作成画面から確定してください。</div>`;
@@ -3367,12 +3373,18 @@ function admRevRender(){
   // 詳細
   let dh='';
   if(view==='all'){
-    // 営業所別サマリー
+    // 営業所別サマリー（店舗数含む）
     const byArea={};
-    sales.forEach(s=>{byArea[s.area]=(byArea[s.area]||0)+s.amount;});
-    dh+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:6px;">営業所</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">売上</th></tr></thead><tbody>`;
-    Object.entries(byArea).sort((a,b)=>b[1]-a[1]).forEach(([area,amt])=>{
-      dh+=`<tr><td style="border:1px solid #ccc;padding:4px;font-weight:bold;">${area}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${amt.toLocaleString()}</td></tr>`;
+    sales.forEach(s=>{
+      if(!byArea[s.area])byArea[s.area]={amount:0,am:0,pm:0,keiba:0};
+      byArea[s.area].amount+=s.amount;
+      byArea[s.area].am+=(s.amCount||0);
+      byArea[s.area].pm+=(s.pmCount||0);
+      byArea[s.area].keiba+=(s.keibaCount||0);
+    });
+    dh+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:6px;">営業所</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">朝刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">夕刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">競馬店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">売上</th></tr></thead><tbody>`;
+    Object.entries(byArea).sort((a,b)=>b[1].amount-a[1].amount).forEach(([area,d])=>{
+      dh+=`<tr><td style="border:1px solid #ccc;padding:4px;font-weight:bold;">${area}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.am}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.pm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.keiba}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;">¥${d.amount.toLocaleString()}</td></tr>`;
     });
     dh+=`</tbody></table>`;
     // 支払い上位
@@ -3386,26 +3398,30 @@ function admRevRender(){
   }else if(view==='area'){
     const byArea={};
     filteredSales.forEach(s=>{
-      if(!byArea[s.area])byArea[s.area]={am:0,pm:0,total:0,courses:[]};
+      if(!byArea[s.area])byArea[s.area]={am:0,pm:0,total:0,amC:0,pmC:0,kbC:0,courses:[]};
       byArea[s.area].am+=s.amTotal;byArea[s.area].pm+=s.pmTotal;byArea[s.area].total+=s.amount;
+      byArea[s.area].amC+=(s.amCount||0);byArea[s.area].pmC+=(s.pmCount||0);byArea[s.area].kbC+=(s.keibaCount||0);
       byArea[s.area].courses.push(s);
     });
     Object.entries(byArea).forEach(([area,d])=>{
       dh+=`<div style="margin-bottom:16px;"><h4 style="color:var(--primary);">${area}営業所 — ¥${d.total.toLocaleString()}</h4>`;
-      dh+=`<div style="font-size:12px;color:var(--text-sub);margin-bottom:4px;">朝刊: ¥${d.am.toLocaleString()} ／ 夕刊/競馬: ¥${d.pm.toLocaleString()}</div>`;
-      dh+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:4px;">コース</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊/競馬</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">合計</th></tr></thead><tbody>`;
+      dh+=`<div style="font-size:12px;color:var(--text-sub);margin-bottom:4px;">朝刊: ¥${d.am.toLocaleString()} ／ 夕刊/競馬: ¥${d.pm.toLocaleString()} ／ 店舗: 朝刊${d.amC} 夕刊${d.pmC} 競馬${d.kbC}</div>`;
+      dh+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:4px;">コース</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">競馬店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊/競馬</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">合計</th></tr></thead><tbody>`;
       d.courses.sort((a,b)=>a.course.localeCompare(b.course,undefined,{numeric:true})).forEach(c=>{
-        dh+=`<tr><td style="border:1px solid #ccc;padding:3px;">${c.course}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${c.amTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${c.pmTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;">¥${c.amount.toLocaleString()}</td></tr>`;
+        dh+=`<tr><td style="border:1px solid #ccc;padding:3px;">${c.course}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${c.amCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${c.pmCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${c.keibaCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${c.amTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${c.pmTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;">¥${c.amount.toLocaleString()}</td></tr>`;
       });
       dh+=`</tbody></table></div>`;
     });
 
   }else if(view==='course'){
-    dh+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:4px;">営業所</th><th style="border:1px solid #ccc;padding:4px;">コース</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊/競馬</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">合計</th></tr></thead><tbody>`;
+    dh+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:4px;">営業所</th><th style="border:1px solid #ccc;padding:4px;">コース</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">競馬店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊/競馬</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">合計</th></tr></thead><tbody>`;
     filteredSales.sort((a,b)=>a.course.localeCompare(b.course,undefined,{numeric:true})).forEach(s=>{
-      dh+=`<tr><td style="border:1px solid #ccc;padding:3px;">${s.area}</td><td style="border:1px solid #ccc;padding:3px;">${s.course}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${s.amTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${s.pmTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;">¥${s.amount.toLocaleString()}</td></tr>`;
+      dh+=`<tr><td style="border:1px solid #ccc;padding:3px;">${s.area}</td><td style="border:1px solid #ccc;padding:3px;">${s.course}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.amCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.pmCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.keibaCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${s.amTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${s.pmTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;">¥${s.amount.toLocaleString()}</td></tr>`;
     });
-    dh+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="2" style="border:1px solid #ccc;padding:4px;">合計</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${filteredSales.reduce((s,r)=>s+r.amTotal,0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${filteredSales.reduce((s,r)=>s+r.pmTotal,0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${totalSales.toLocaleString()}</td></tr>`;
+    const sumAm=filteredSales.reduce((s,r)=>s+(r.amCount||0),0);
+    const sumPm=filteredSales.reduce((s,r)=>s+(r.pmCount||0),0);
+    const sumKb=filteredSales.reduce((s,r)=>s+(r.keibaCount||0),0);
+    dh+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="2" style="border:1px solid #ccc;padding:4px;">合計</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumAm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumPm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumKb}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${filteredSales.reduce((s,r)=>s+r.amTotal,0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${filteredSales.reduce((s,r)=>s+r.pmTotal,0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${totalSales.toLocaleString()}</td></tr>`;
     dh+=`</tbody></table>`;
 
   }else if(view==='daily'){
