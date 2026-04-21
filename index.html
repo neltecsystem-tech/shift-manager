@@ -148,7 +148,7 @@ tbody tr:hover { background:var(--primary-light); }
     <div class="card"><h2>店舗検索</h2>
       <div class="filters">
         <div><label>日付</label><input type="date" id="tp-date" onchange="renderTenpo()"></div>
-        <div><label>店舗名</label><input type="text" id="tp-name" placeholder="店舗名で検索..." oninput="renderTenpo()"></div>
+        <div><label>店舗名</label><input type="search" id="tp-name" autocomplete="off" placeholder="店舗名で検索..." oninput="renderTenpo()"></div>
         <div><label>営業所</label><select id="tp-area" onchange="renderTenpo()"><option value="">すべて</option></select></div>
         <div><label>コース</label><input type="text" id="tp-course" placeholder="コース名で検索..." oninput="renderTenpo()"></div>
       </div>
@@ -174,7 +174,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div><label>月</label><select id="df-month" onchange="defectLoad()"></select></div>
         <div><label>営業所</label><select id="df-area" onchange="defectFilter()"><option value="">すべて</option><option>城北</option><option>川越</option><option>立川</option><option>川崎高津</option></select></div>
         <div><label>不具合項目</label><select id="df-category" onchange="defectFilter()"><option value="">すべて</option></select></div>
-        <div><label>検索</label><input type="text" id="df-search" placeholder="店舗名・ドライバー..." oninput="defectFilter()"></div>
+        <div><label>検索</label><input type="search" id="df-search" autocomplete="off" placeholder="店舗名・ドライバー..." oninput="defectFilter()"></div>
       </div>
       <div id="df-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
       <div class="table-wrap" id="df-table"></div>
@@ -216,7 +216,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="sm-geocode-progress" style="display:none;margin-bottom:10px;padding:10px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;font-size:13px;"></div>
       <div class="filters">
         <div><label>営業所</label><select id="sm-area" onchange="smFilter()"><option value="">すべて</option></select></div>
-        <div><label>検索</label><input type="text" id="sm-search" placeholder="店舗名・コード..." oninput="smFilter()" style="width:200px;"></div>
+        <div><label>検索</label><input type="search" id="sm-search" autocomplete="off" placeholder="店舗名・コード..." oninput="smFilter()" style="width:200px;"></div>
       </div>
       <div id="sm-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
       <div class="table-wrap" id="sm-table"></div>
@@ -537,7 +537,7 @@ tbody tr:hover { background:var(--primary-light); }
       <!-- スタッフ管理 -->
       <div id="adm-staff" class="adm-panel" style="display:none;">
         <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
-          <input type="text" id="adm-staff-search" oninput="adminFilterStaff()" placeholder="氏名で検索..." style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;flex:1;max-width:300px;">
+          <input type="search" id="adm-staff-search" name="adm-staff-search" autocomplete="off" oninput="adminFilterStaff()" placeholder="氏名で検索..." style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;flex:1;max-width:300px;">
           <button onclick="admStaffAdd()" style="background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;white-space:nowrap;">＋ スタッフ追加</button>
           <button onclick="document.getElementById('adm-staff-guide').style.display=document.getElementById('adm-staff-guide').style.display==='none'?'':'none'" style="background:#94a3b8;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;white-space:nowrap;">❓ 計算方式ガイド</button>
         </div>
