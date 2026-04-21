@@ -3266,7 +3266,10 @@ async function admRevLoad(){
   document.getElementById('adm-rev-summary').innerHTML='<p style="color:var(--text-sub);">計算中...</p>';
   document.getElementById('adm-rev-detail').innerHTML='';
 
-  // 売上: 全コースの請求額を計算
+  // 確定済み売上を読み込む
+  await loadConfirmedSales();
+
+  // 売上: 確定済みを優先、なければ計算値
   const records=admBillShopData.records||[];
   const cols=admBillCols();
   const allAreas=['立川','城北','川越','川崎高津'];
@@ -3282,8 +3285,13 @@ async function admRevLoad(){
     });
     const courses=[...allC].filter(c=>matchAreas.some(a=>c.includes(a)));
     courses.forEach(course=>{
-      const result=admBillRenderWithTotals(area,course,monthVal);
-      sales.push({area,course,amount:result.grandTotal,amTotal:result.totalAmSum,pmTotal:result.totalPmSum});
+      const confirmed=getConfirmedSale(monthVal,area,course);
+      if(confirmed){
+        sales.push({area,course,amount:confirmed.grand_total,amTotal:confirmed.am_total,pmTotal:confirmed.pm_total,confirmed:true,confirmed_at:confirmed.confirmed_at});
+      }else{
+        const result=admBillRenderWithTotals(area,course,monthVal);
+        sales.push({area,course,amount:result.grandTotal,amTotal:result.totalAmSum,pmTotal:result.totalPmSum,confirmed:false});
+      }
     });
   });
 
@@ -3339,12 +3347,21 @@ function admRevRender(){
   const totalExpenses=filteredExpenses.reduce((s,r)=>s+r.amount,0);
   const profit=totalSales-totalExpenses;
 
+  // 確定状況
+  const confirmedCnt=filteredSales.filter(s=>s.confirmed).length;
+  const totalCnt=filteredSales.length;
+  const confirmedAmount=filteredSales.filter(s=>s.confirmed).reduce((a,s)=>a+s.amount,0);
+  const unconfirmedAmount=filteredSales.filter(s=>!s.confirmed).reduce((a,s)=>a+s.amount,0);
+
   // サマリーカード
   let sh=`<div style="display:flex;gap:12px;flex-wrap:wrap;">`;
-  sh+=`<div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#166534;">売上</div><div style="font-size:24px;font-weight:bold;color:#166534;">¥${totalSales.toLocaleString()}</div></div>`;
+  sh+=`<div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#166534;">売上</div><div style="font-size:24px;font-weight:bold;color:#166534;">¥${totalSales.toLocaleString()}</div><div style="font-size:10px;color:#166534;margin-top:2px;">確定 ${confirmedCnt}/${totalCnt}コース</div></div>`;
   sh+=`<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#dc2626;">支払い</div><div style="font-size:24px;font-weight:bold;color:#dc2626;">¥${totalExpenses.toLocaleString()}</div></div>`;
   sh+=`<div style="background:${profit>=0?'#dbeafe':'#fef2f2'};border:1px solid ${profit>=0?'#93c5fd':'#fca5a5'};border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:${profit>=0?'#1d4ed8':'#dc2626'};">収支</div><div style="font-size:24px;font-weight:bold;color:${profit>=0?'#1d4ed8':'#dc2626'};">¥${profit.toLocaleString()}</div></div>`;
   sh+=`</div>`;
+  if(totalCnt>confirmedCnt){
+    sh+=`<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border-radius:6px;font-size:12px;color:#92400e;">⚠ ${totalCnt-confirmedCnt}コースが未確定（計算値 ¥${unconfirmedAmount.toLocaleString()}）。請求書作成画面から確定してください。</div>`;
+  }
   document.getElementById('adm-rev-summary').innerHTML=sh;
 
   // 詳細
@@ -3695,17 +3712,68 @@ function admBillCols(){
   return cols;
 }
 
+// 確定済み売上キャッシュ
+let confirmedSalesCache=null;
+async function loadConfirmedSales(){
+  try{
+    const res=await invApi({action:'get_confirmed_sales'});
+    confirmedSalesCache=res.records||[];
+  }catch(_){confirmedSalesCache=[];}
+  return confirmedSalesCache;
+}
+function getConfirmedSale(monthVal,area,course){
+  if(!confirmedSalesCache)return null;
+  return confirmedSalesCache.find(r=>r.year_month===monthVal&&r.area===area&&r.course===course);
+}
+
+async function admBillConfirm(area,course,monthVal,grandTotal,amTotal,pmTotal){
+  const ok=window.confirm(`${area} ${course} ${monthVal} の売上 ¥${Number(grandTotal).toLocaleString()} を確定しますか？\n収支管理にこの金額が反映されます。`);
+  if(!ok)return;
+  try{
+    await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course,grand_total:grandTotal,am_total:amTotal,pm_total:pmTotal}});
+    confirmedSalesCache=null;
+    await loadConfirmedSales();
+    alert('売上を確定しました');
+    admBillGenerate();
+  }catch(e){alert('確定に失敗しました: '+e.message);}
+}
+async function admBillUnconfirm(area,course,monthVal){
+  const ok=window.confirm(`${area} ${course} ${monthVal} の売上確定を解除しますか？`);
+  if(!ok)return;
+  try{
+    await invApi({action:'unconfirm_sale',year_month:monthVal,area,course});
+    confirmedSalesCache=null;
+    await loadConfirmedSales();
+    alert('確定を解除しました');
+    admBillGenerate();
+  }catch(e){alert('解除に失敗しました: '+e.message);}
+}
+
 async function admBillGenerate(){
   try{
   if(!admBillShopData)await admBillInit();
+  if(!confirmedSalesCache)await loadConfirmedSales();
   const area=document.getElementById('adm-bill-area').value;
   const course=document.getElementById('adm-bill-course').value;
   const monthVal=document.getElementById('adm-bill-month').value;
   if(!area||!course||!monthVal){alert('営業所・コース・年月を選択してください');return;}
 
-  const html=admBillRender(area,course,monthVal);
+  const result=admBillRenderWithTotals(area,course,monthVal);
+  const confirmed=getConfirmedSale(monthVal,area,course);
+  let topBar='';
+  if(confirmed){
+    topBar=`<div style="background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
+      <div><span style="color:#166534;font-weight:bold;">✓ 確定済み</span> <span style="color:var(--text-sub);font-size:12px;margin-left:8px;">確定日時: ${confirmed.confirmed_at} / 確定額: ¥${Number(confirmed.grand_total).toLocaleString()}</span></div>
+      <button onclick="admBillUnconfirm('${area}','${course}','${monthVal}')" style="background:#ef4444;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">確定解除</button>
+    </div>`;
+  }else{
+    topBar=`<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
+      <div><span style="color:#92400e;font-weight:bold;">⚠ 未確定</span> <span style="color:var(--text-sub);font-size:12px;margin-left:8px;">収支管理にはまだ反映されていません</span></div>
+      <button onclick="admBillConfirm('${area}','${course}','${monthVal}',${result.grandTotal},${result.totalAmSum},${result.totalPmSum})" style="background:#22c55e;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">✓ 売上を確定する</button>
+    </div>`;
+  }
   document.getElementById('adm-bill-totals').innerHTML='';
-  document.getElementById('adm-bill-preview').innerHTML=html;
+  document.getElementById('adm-bill-preview').innerHTML=topBar+result.html;
   }catch(e){alert('エラー: '+e.message+'\n'+e.stack);console.error(e);}
 }
 
