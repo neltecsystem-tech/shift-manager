@@ -3358,11 +3358,15 @@ function admRevRender(){
   const totalPmShops=filteredSales.reduce((s,r)=>s+(r.pmCount||0),0);
   const totalKeibaShops=filteredSales.reduce((s,r)=>s+(r.keibaCount||0),0);
 
+  // 粗利率
+  const grossMarginRate=totalSales>0?(profit/totalSales*100):0;
+  const expenseRate=totalSales>0?(totalExpenses/totalSales*100):0;
+
   // サマリーカード
   let sh=`<div style="display:flex;gap:12px;flex-wrap:wrap;">`;
   sh+=`<div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#166534;">売上</div><div style="font-size:24px;font-weight:bold;color:#166534;">¥${totalSales.toLocaleString()}</div><div style="font-size:10px;color:#166534;margin-top:2px;">確定 ${confirmedCnt}/${totalCnt}コース</div></div>`;
-  sh+=`<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#dc2626;">支払い</div><div style="font-size:24px;font-weight:bold;color:#dc2626;">¥${totalExpenses.toLocaleString()}</div></div>`;
-  sh+=`<div style="background:${profit>=0?'#dbeafe':'#fef2f2'};border:1px solid ${profit>=0?'#93c5fd':'#fca5a5'};border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:${profit>=0?'#1d4ed8':'#dc2626'};">収支</div><div style="font-size:24px;font-weight:bold;color:${profit>=0?'#1d4ed8':'#dc2626'};">¥${profit.toLocaleString()}</div></div>`;
+  sh+=`<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#dc2626;">支払い</div><div style="font-size:24px;font-weight:bold;color:#dc2626;">¥${totalExpenses.toLocaleString()}</div><div style="font-size:10px;color:#dc2626;margin-top:2px;">原価率 ${expenseRate.toFixed(1)}%</div></div>`;
+  sh+=`<div style="background:${profit>=0?'#dbeafe':'#fef2f2'};border:1px solid ${profit>=0?'#93c5fd':'#fca5a5'};border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:${profit>=0?'#1d4ed8':'#dc2626'};">粗利</div><div style="font-size:24px;font-weight:bold;color:${profit>=0?'#1d4ed8':'#dc2626'};">¥${profit.toLocaleString()}</div><div style="font-size:10px;color:${profit>=0?'#1d4ed8':'#dc2626'};margin-top:2px;">粗利率 ${grossMarginRate.toFixed(1)}%</div></div>`;
   sh+=`<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:10px 18px;flex:1;min-width:180px;"><div style="font-size:11px;color:var(--text-sub);margin-bottom:4px;">店舗数（延べ）</div><div style="display:flex;gap:10px;font-size:13px;"><span>📰朝刊 <b>${totalAmShops}</b></span><span>🌙夕刊 <b>${totalPmShops}</b></span><span>🏇競馬 <b>${totalKeibaShops}</b></span></div></div>`;
   sh+=`</div>`;
   if(totalCnt>confirmedCnt){
