@@ -1766,19 +1766,29 @@ async function smBatchGeocode(){
   });
   if(nameIdx<0||latIdx<0||lngIdx<0){alert('店舗名/緯度/経度の列が見つかりません');return;}
 
-  // 未設定の店舗のみ対象
-  const targets=smData.filter(r=>{
-    const lat=(r[`col_${latIdx}`]||'').trim();
-    const lng=(r[`col_${lngIdx}`]||'').trim();
+  // 緯度経度が既に入っているかの厳密判定（数値として解釈できる値があるなら「設定済み」）
+  const hasValidLatLng=r=>{
+    const lat=(r[`col_${latIdx}`]||'').toString().trim();
+    const lng=(r[`col_${lngIdx}`]||'').toString().trim();
+    if(!lat||!lng)return false;
+    const ln=parseFloat(lat),gn=parseFloat(lng);
+    return !isNaN(ln)&&!isNaN(gn)&&ln!==0&&gn!==0;
+  };
+
+  // 納品中止・店舗名なしを除外した有効な店舗
+  const validShops=smData.filter(r=>{
     const name=(r[`col_${nameIdx}`]||'').trim();
     const area=areaIdx>=0?((r[`col_${areaIdx}`]||'')):'';
-    // 納品中止の店舗は除外
     if(area.includes('納品中止'))return false;
-    return name&&(!lat||!lng);
+    return !!name;
   });
 
-  if(targets.length===0){alert('緯度経度が未設定の店舗はありません');return;}
-  if(!window.confirm(`${targets.length}件の店舗を自動検索します。\nGoogle Maps API無料枠内（月10万件）で実行されます。\n続行しますか？`))return;
+  const alreadyHas=validShops.filter(hasValidLatLng);
+  const targets=validShops.filter(r=>!hasValidLatLng(r));
+
+  if(targets.length===0){alert('すべての店舗の緯度経度が既に設定されています');return;}
+  const confirmMsg=`📊 店舗状況:\n ・取得済み: ${alreadyHas.length}件（スキップ）\n ・未取得: ${targets.length}件（これから検索）\n ・納品中止を除く\n\nGoogle Maps APIで ${targets.length}件を検索します。\n続行しますか？`;
+  if(!window.confirm(confirmMsg))return;
 
   const prog=document.getElementById('sm-geocode-progress');
   prog.style.display='block';
