@@ -3314,7 +3314,21 @@ async function admRevLoad(){
   });
   const expenses=Object.entries(expByStaff).map(([staff,amount])=>({staff,amount})).sort((a,b)=>b.amount-a.amount);
 
-  admRevData={sales,expenses,monthWork};
+  // コース別支払い集計
+  const expByCourse={};
+  monthWork.forEach(w=>{
+    const c=(w.course||'').trim();
+    if(!c)return;
+    expByCourse[c]=(expByCourse[c]||0)+Number(w.amount||0);
+  });
+  // sales各行に支払い・粗利を付与
+  sales.forEach(s=>{
+    s.expense=expByCourse[s.course]||0;
+    s.profit=s.amount-s.expense;
+    s.marginRate=s.amount>0?(s.profit/s.amount*100):0;
+  });
+
+  admRevData={sales,expenses,monthWork,expByCourse};
   admRevRender();
 }
 
@@ -3377,18 +3391,22 @@ function admRevRender(){
   // 詳細
   let dh='';
   if(view==='all'){
-    // 営業所別サマリー（店舗数含む）
+    // 営業所別サマリー（店舗数 + 粗利含む）
     const byArea={};
     sales.forEach(s=>{
-      if(!byArea[s.area])byArea[s.area]={amount:0,am:0,pm:0,keiba:0};
+      if(!byArea[s.area])byArea[s.area]={amount:0,am:0,pm:0,keiba:0,exp:0};
       byArea[s.area].amount+=s.amount;
       byArea[s.area].am+=(s.amCount||0);
       byArea[s.area].pm+=(s.pmCount||0);
       byArea[s.area].keiba+=(s.keibaCount||0);
+      byArea[s.area].exp+=(s.expense||0);
     });
-    dh+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:6px;">営業所</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">朝刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">夕刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">競馬店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">売上</th></tr></thead><tbody>`;
+    dh+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:6px;">営業所</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">朝刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">夕刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">競馬店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">売上</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">支払い</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">粗利</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">粗利率</th></tr></thead><tbody>`;
     Object.entries(byArea).sort((a,b)=>b[1].amount-a[1].amount).forEach(([area,d])=>{
-      dh+=`<tr><td style="border:1px solid #ccc;padding:4px;font-weight:bold;">${area}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.am}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.pm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.keiba}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;">¥${d.amount.toLocaleString()}</td></tr>`;
+      const aProfit=d.amount-d.exp;
+      const aMargin=d.amount>0?(aProfit/d.amount*100):0;
+      const aColor=aProfit>=0?'#1d4ed8':'#dc2626';
+      dh+=`<tr><td style="border:1px solid #ccc;padding:4px;font-weight:bold;">${area}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.am}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.pm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.keiba}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;">¥${d.amount.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">¥${d.exp.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;color:${aColor};">¥${aProfit.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${aColor};">${aMargin.toFixed(1)}%</td></tr>`;
     });
     dh+=`</tbody></table>`;
     // 支払い上位
@@ -3402,30 +3420,39 @@ function admRevRender(){
   }else if(view==='area'){
     const byArea={};
     filteredSales.forEach(s=>{
-      if(!byArea[s.area])byArea[s.area]={am:0,pm:0,total:0,amC:0,pmC:0,kbC:0,courses:[]};
+      if(!byArea[s.area])byArea[s.area]={am:0,pm:0,total:0,amC:0,pmC:0,kbC:0,exp:0,courses:[]};
       byArea[s.area].am+=s.amTotal;byArea[s.area].pm+=s.pmTotal;byArea[s.area].total+=s.amount;
       byArea[s.area].amC+=(s.amCount||0);byArea[s.area].pmC+=(s.pmCount||0);byArea[s.area].kbC+=(s.keibaCount||0);
+      byArea[s.area].exp+=(s.expense||0);
       byArea[s.area].courses.push(s);
     });
     Object.entries(byArea).forEach(([area,d])=>{
-      dh+=`<div style="margin-bottom:16px;"><h4 style="color:var(--primary);">${area}営業所 — ¥${d.total.toLocaleString()}</h4>`;
-      dh+=`<div style="font-size:12px;color:var(--text-sub);margin-bottom:4px;">朝刊: ¥${d.am.toLocaleString()} ／ 夕刊/競馬: ¥${d.pm.toLocaleString()} ／ 店舗: 朝刊${d.amC} 夕刊${d.pmC} 競馬${d.kbC}</div>`;
-      dh+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:4px;">コース</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">競馬店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊/競馬</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">合計</th></tr></thead><tbody>`;
+      const aProfit=d.total-d.exp;
+      const aMargin=d.total>0?(aProfit/d.total*100):0;
+      const aColor=aProfit>=0?'#1d4ed8':'#dc2626';
+      dh+=`<div style="margin-bottom:16px;"><h4 style="color:var(--primary);">${area}営業所 — 売上¥${d.total.toLocaleString()} / 支払い¥${d.exp.toLocaleString()} / <span style="color:${aColor};">粗利¥${aProfit.toLocaleString()} (${aMargin.toFixed(1)}%)</span></h4>`;
+      dh+=`<div style="font-size:12px;color:var(--text-sub);margin-bottom:4px;">店舗: 朝刊${d.amC} 夕刊${d.pmC} 競馬${d.kbC}</div>`;
+      dh+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:4px;">コース</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">競馬店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">売上</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">支払い</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">粗利</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">粗利率</th></tr></thead><tbody>`;
       d.courses.sort((a,b)=>a.course.localeCompare(b.course,undefined,{numeric:true})).forEach(c=>{
-        dh+=`<tr><td style="border:1px solid #ccc;padding:3px;">${c.course}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${c.amCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${c.pmCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${c.keibaCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${c.amTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${c.pmTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;">¥${c.amount.toLocaleString()}</td></tr>`;
+        const cColor=c.profit>=0?'#1d4ed8':'#dc2626';
+        dh+=`<tr><td style="border:1px solid #ccc;padding:3px;">${c.course}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${c.amCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${c.pmCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${c.keibaCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${c.amount.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:#dc2626;">¥${(c.expense||0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;color:${cColor};">¥${(c.profit||0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:${cColor};">${(c.marginRate||0).toFixed(1)}%</td></tr>`;
       });
       dh+=`</tbody></table></div>`;
     });
 
   }else if(view==='course'){
-    dh+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:4px;">営業所</th><th style="border:1px solid #ccc;padding:4px;">コース</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">競馬店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊/競馬</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">合計</th></tr></thead><tbody>`;
+    dh+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:4px;">営業所</th><th style="border:1px solid #ccc;padding:4px;">コース</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">競馬店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">売上</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">支払い</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">粗利</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">粗利率</th></tr></thead><tbody>`;
     filteredSales.sort((a,b)=>a.course.localeCompare(b.course,undefined,{numeric:true})).forEach(s=>{
-      dh+=`<tr><td style="border:1px solid #ccc;padding:3px;">${s.area}</td><td style="border:1px solid #ccc;padding:3px;">${s.course}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.amCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.pmCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.keibaCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${s.amTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${s.pmTotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;">¥${s.amount.toLocaleString()}</td></tr>`;
+      const profitColor=s.profit>=0?'#1d4ed8':'#dc2626';
+      dh+=`<tr><td style="border:1px solid #ccc;padding:3px;">${s.area}</td><td style="border:1px solid #ccc;padding:3px;">${s.course}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.amCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.pmCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.keibaCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${s.amount.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:#dc2626;">¥${(s.expense||0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;color:${profitColor};">¥${(s.profit||0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:${profitColor};">${(s.marginRate||0).toFixed(1)}%</td></tr>`;
     });
     const sumAm=filteredSales.reduce((s,r)=>s+(r.amCount||0),0);
     const sumPm=filteredSales.reduce((s,r)=>s+(r.pmCount||0),0);
     const sumKb=filteredSales.reduce((s,r)=>s+(r.keibaCount||0),0);
-    dh+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="2" style="border:1px solid #ccc;padding:4px;">合計</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumAm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumPm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumKb}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${filteredSales.reduce((s,r)=>s+r.amTotal,0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${filteredSales.reduce((s,r)=>s+r.pmTotal,0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${totalSales.toLocaleString()}</td></tr>`;
+    const sumExp=filteredSales.reduce((s,r)=>s+(r.expense||0),0);
+    const sumProfit=totalSales-sumExp;
+    const sumMargin=totalSales>0?(sumProfit/totalSales*100):0;
+    dh+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="2" style="border:1px solid #ccc;padding:4px;">合計</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumAm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumPm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumKb}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${totalSales.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">¥${sumExp.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${sumProfit>=0?'#1d4ed8':'#dc2626'};">¥${sumProfit.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${sumProfit>=0?'#1d4ed8':'#dc2626'};">${sumMargin.toFixed(1)}%</td></tr>`;
     dh+=`</tbody></table>`;
 
   }else if(view==='daily'){
