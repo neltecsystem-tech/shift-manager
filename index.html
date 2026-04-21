@@ -465,7 +465,6 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>年月</label><input type="month" id="adm-bill-month"></div>
           <div><button onclick="admBillGenerate()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">明細作成</button></div>
           <div><button onclick="admBillAllCourses()" style="background:#6366f1;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📄 営業所一括作成</button></div>
-          <div><button onclick="admBillAreaTotal()" style="background:#14b8a6;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📊 営業所合計請求書</button></div>
           <div><button onclick="admBillPrint()" style="background:#64748b;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">🖨 印刷</button></div>
           <div><button onclick="admBillSavePDF()" id="adm-bill-pdf-btn" style="background:#dc2626;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📄 PDF保存</button></div>
         </div>
@@ -4320,95 +4319,63 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   return h;
 }
 
-async function admBillAreaTotal(){
-  try{
-    if(!admBillShopData)await admBillInit();
-    if(!billPricesCache)await loadBillPrices();
-    const area=document.getElementById('adm-bill-area').value;
-    const monthVal=document.getElementById('adm-bill-month').value;
-    if(!area||!monthVal){alert('営業所と年月を選択してください');return;}
+// 営業所合計ページのHTML生成（admBillAllCoursesの先頭ページとして使用）
+function buildAreaTotalPage(area,monthVal,courses){
+  const [y,m]=monthVal.split('-').map(Number);
+  const reiwa=y-2018;
+  const rows=[];
+  const tot={am:0,pm:0,grand:0,amCount:0,pmCount:0,keibaCount:0};
+  let confirmedCnt=0;
+  courses.forEach(course=>{
+    const confirmed=typeof getConfirmedSale==='function'?getConfirmedSale(monthVal,area,course):null;
+    const r=admBillRenderWithTotals(area,course,monthVal);
+    const grand=confirmed?confirmed.grand_total:r.grandTotal;
+    const am=confirmed?confirmed.am_total:r.totalAmSum;
+    const pm=confirmed?confirmed.pm_total:r.totalPmSum;
+    rows.push({course,am,pm,grand,amCount:r.amCount,pmCount:r.pmCount,keibaCount:r.keibaCount,confirmed:!!confirmed});
+    tot.am+=am;tot.pm+=pm;tot.grand+=grand;
+    tot.amCount+=r.amCount;tot.pmCount+=r.pmCount;tot.keibaCount+=r.keibaCount;
+    if(confirmed)confirmedCnt++;
+  });
 
-    const records=admBillShopData.records||[];
-    const cols=admBillCols();
-    const bulkAreas=area==='城北'?['城北','池袋']:[area];
-    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&bulkAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
-    const allC=new Set();
-    filtered.forEach(r=>{
-      if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
-      if(r[`col_${cols.pmCourse}`])allC.add(r[`col_${cols.pmCourse}`]);
-      if(r[`col_${cols.keibaCourse}`])allC.add(r[`col_${cols.keibaCourse}`]);
-    });
-    const courses=[...allC].filter(c=>bulkAreas.some(a=>c.includes(a))).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
-    if(!courses.length){alert('該当コースがありません');return;}
-
-    const [y,m]=monthVal.split('-').map(Number);
-    const reiwa=y-2018;
-
-    // 各コースの合計値を取得
-    const rows=[];
-    const tot={am:0,pm:0,grand:0,amCount:0,pmCount:0,keibaCount:0};
-    let confirmedCnt=0;
-    courses.forEach(course=>{
-      const confirmed=getConfirmedSale?getConfirmedSale(monthVal,area,course):null;
-      const r=admBillRenderWithTotals(area,course,monthVal);
-      const grand=confirmed?confirmed.grand_total:r.grandTotal;
-      const am=confirmed?confirmed.am_total:r.totalAmSum;
-      const pm=confirmed?confirmed.pm_total:r.totalPmSum;
-      rows.push({course,am,pm,grand,amCount:r.amCount,pmCount:r.pmCount,keibaCount:r.keibaCount,confirmed:!!confirmed});
-      tot.am+=am;tot.pm+=pm;tot.grand+=grand;
-      tot.amCount+=r.amCount;tot.pmCount+=r.pmCount;tot.keibaCount+=r.keibaCount;
-      if(confirmed)confirmedCnt++;
-    });
-
-    // 請求書HTML
-    let h=`<div id="adm-bill-print-area" class="bill-page" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:12px;max-width:900px;margin:0 auto;">`;
-    h+=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;border-bottom:2px solid var(--primary);padding-bottom:12px;">`;
-    h+=`<div><h2 style="margin:0;color:var(--primary);font-size:22px;">請求書（営業所合計）</h2><p style="margin:4px 0;font-size:14px;">令和${reiwa}年 ${m}月分</p></div>`;
-    h+=`<div style="text-align:right;"><p style="margin:0;font-size:18px;font-weight:bold;">${area}営業所</p><p style="margin:4px 0;font-size:12px;color:var(--text-sub);">作成日: ${new Date().toLocaleDateString('ja-JP')}</p></div>`;
-    h+=`</div>`;
-
-    // サマリー
-    h+=`<div style="display:flex;gap:12px;margin-bottom:16px;">`;
-    h+=`<div style="flex:1;background:#dbeafe;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#1d4ed8;">朝刊合計</div><div style="font-size:20px;font-weight:bold;color:#1d4ed8;">¥${tot.am.toLocaleString()}</div><div style="font-size:10px;color:#1d4ed8;">朝刊店舗 ${tot.amCount}店（延べ）</div></div>`;
-    h+=`<div style="flex:1;background:#fae8ff;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#9333ea;">夕刊/競馬合計</div><div style="font-size:20px;font-weight:bold;color:#9333ea;">¥${tot.pm.toLocaleString()}</div><div style="font-size:10px;color:#9333ea;">夕刊 ${tot.pmCount}店 ／ 競馬 ${tot.keibaCount}店</div></div>`;
-    h+=`<div style="flex:1;background:#fef3c7;border:2px solid #f59e0b;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#92400e;">総合計（税込）</div><div style="font-size:24px;font-weight:bold;color:#92400e;">¥${tot.grand.toLocaleString()}</div><div style="font-size:10px;color:#92400e;">${courses.length}コース</div></div>`;
-    h+=`</div>`;
-
-    // 確定状況
-    if(confirmedCnt>0){
-      h+=`<div style="padding:8px 12px;background:#dcfce7;border-radius:6px;font-size:12px;margin-bottom:12px;color:#166534;">✓ ${confirmedCnt}/${courses.length}コースが確定済みです（確定金額を優先使用）</div>`;
-    }
-
-    // コース別明細テーブル
-    h+=`<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px;">`;
-    h+=`<thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:8px;">コース</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">朝刊店</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">夕刊店</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">競馬店</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">夕刊/競馬</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">小計</th></tr></thead><tbody>`;
-    rows.forEach(r=>{
-      h+=`<tr>`;
-      h+=`<td style="border:1px solid #ccc;padding:6px 10px;">${r.course}${r.confirmed?' <span style="font-size:10px;color:#16a34a;">✓確定</span>':''}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">${r.amCount||'-'}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">${r.pmCount||'-'}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">${r.keibaCount||'-'}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;">¥${r.am.toLocaleString()}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;">¥${r.pm.toLocaleString()}</td>`;
-      h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;">¥${r.grand.toLocaleString()}</td>`;
-      h+=`</tr>`;
-    });
-    h+=`<tr style="background:#fef3c7;font-weight:bold;font-size:15px;">`;
-    h+=`<td style="border:1px solid #999;padding:10px;">合計</td>`;
-    h+=`<td style="border:1px solid #999;padding:10px;text-align:right;">${tot.amCount}</td>`;
-    h+=`<td style="border:1px solid #999;padding:10px;text-align:right;">${tot.pmCount}</td>`;
-    h+=`<td style="border:1px solid #999;padding:10px;text-align:right;">${tot.keibaCount}</td>`;
-    h+=`<td style="border:1px solid #999;padding:10px;text-align:right;">¥${tot.am.toLocaleString()}</td>`;
-    h+=`<td style="border:1px solid #999;padding:10px;text-align:right;">¥${tot.pm.toLocaleString()}</td>`;
-    h+=`<td style="border:1px solid #999;padding:10px;text-align:right;font-size:17px;color:#92400e;">¥${tot.grand.toLocaleString()}</td>`;
-    h+=`</tr></tbody></table>`;
-
-    h+=`<p style="font-size:11px;color:var(--text-sub);margin-top:12px;">※ 店舗数は延べ数です（同じ店舗が朝刊・夕刊・競馬それぞれカウントされることがあります）</p>`;
-    h+=`</div>`;
-
-    document.getElementById('adm-bill-totals').innerHTML='';
-    document.getElementById('adm-bill-preview').innerHTML=h;
-  }catch(e){alert('エラー: '+e.message);console.error(e);}
+  let h=`<div class="bill-page" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:12px;margin-bottom:16px;">`;
+  h+=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;border-bottom:2px solid var(--primary);padding-bottom:12px;">`;
+  h+=`<div><h2 style="margin:0;color:var(--primary);font-size:22px;">請求書（営業所合計）</h2><p style="margin:4px 0;font-size:14px;">令和${reiwa}年 ${m}月分</p></div>`;
+  h+=`<div style="text-align:right;"><p style="margin:0;font-size:18px;font-weight:bold;">${area}営業所</p><p style="margin:4px 0;font-size:12px;color:var(--text-sub);">作成日: ${new Date().toLocaleDateString('ja-JP')}</p></div>`;
+  h+=`</div>`;
+  h+=`<div style="display:flex;gap:12px;margin-bottom:16px;">`;
+  h+=`<div style="flex:1;background:#dbeafe;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#1d4ed8;">朝刊合計</div><div style="font-size:20px;font-weight:bold;color:#1d4ed8;">¥${tot.am.toLocaleString()}</div><div style="font-size:10px;color:#1d4ed8;">朝刊店舗 ${tot.amCount}店（延べ）</div></div>`;
+  h+=`<div style="flex:1;background:#fae8ff;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#9333ea;">夕刊/競馬合計</div><div style="font-size:20px;font-weight:bold;color:#9333ea;">¥${tot.pm.toLocaleString()}</div><div style="font-size:10px;color:#9333ea;">夕刊 ${tot.pmCount}店 ／ 競馬 ${tot.keibaCount}店</div></div>`;
+  h+=`<div style="flex:1;background:#fef3c7;border:2px solid #f59e0b;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#92400e;">総合計（税込）</div><div style="font-size:24px;font-weight:bold;color:#92400e;">¥${tot.grand.toLocaleString()}</div><div style="font-size:10px;color:#92400e;">${courses.length}コース</div></div>`;
+  h+=`</div>`;
+  if(confirmedCnt>0){
+    h+=`<div style="padding:8px 12px;background:#dcfce7;border-radius:6px;font-size:12px;margin-bottom:12px;color:#166534;">✓ ${confirmedCnt}/${courses.length}コースが確定済み（確定金額を優先使用）</div>`;
+  }
+  h+=`<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;">`;
+  h+=`<thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:8px;">コース</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">朝刊店</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">夕刊店</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">競馬店</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">夕刊/競馬</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">小計</th></tr></thead><tbody>`;
+  rows.forEach(r=>{
+    h+=`<tr>`;
+    h+=`<td style="border:1px solid #ccc;padding:6px 10px;">${r.course}${r.confirmed?' <span style="font-size:10px;color:#16a34a;">✓</span>':''}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">${r.amCount||'-'}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">${r.pmCount||'-'}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">${r.keibaCount||'-'}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;">¥${r.am.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;">¥${r.pm.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;">¥${r.grand.toLocaleString()}</td>`;
+    h+=`</tr>`;
+  });
+  h+=`<tr style="background:#fef3c7;font-weight:bold;font-size:15px;">`;
+  h+=`<td style="border:1px solid #999;padding:10px;">合計</td>`;
+  h+=`<td style="border:1px solid #999;padding:10px;text-align:right;">${tot.amCount}</td>`;
+  h+=`<td style="border:1px solid #999;padding:10px;text-align:right;">${tot.pmCount}</td>`;
+  h+=`<td style="border:1px solid #999;padding:10px;text-align:right;">${tot.keibaCount}</td>`;
+  h+=`<td style="border:1px solid #999;padding:10px;text-align:right;">¥${tot.am.toLocaleString()}</td>`;
+  h+=`<td style="border:1px solid #999;padding:10px;text-align:right;">¥${tot.pm.toLocaleString()}</td>`;
+  h+=`<td style="border:1px solid #999;padding:10px;text-align:right;font-size:17px;color:#92400e;">¥${tot.grand.toLocaleString()}</td>`;
+  h+=`</tr></tbody></table>`;
+  h+=`<p style="font-size:11px;color:var(--text-sub);margin-top:8px;">※ 店舗数は延べ数（同じ店舗が朝刊・夕刊・競馬それぞれカウント）</p>`;
+  h+=`</div>`;
+  return h;
 }
 
 async function admBillAllCourses(){
@@ -4432,8 +4399,11 @@ async function admBillAllCourses(){
   const courses=[...allC].filter(c=>bulkAreas.some(a=>c.includes(a))).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   if(!courses.length){alert('該当コースがありません');return;}
 
+  // 先頭ページ: 営業所合計請求書
+  let allHtml=buildAreaTotalPage(area,monthVal,courses);
+  allHtml+='<div style="page-break-before:always;margin-top:24px;border-top:3px solid var(--primary);padding-top:16px;"></div>';
+
   // 各コースの明細を連続生成
-  let allHtml='';
   const sums=[];
   courses.forEach((course,idx)=>{
     const r=admBillRenderWithTotals(area,course,monthVal);
