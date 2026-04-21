@@ -4037,6 +4037,7 @@ async function admBillUnconfirm(area,course,monthVal){
 async function admBillGenerate(){
   try{
   if(!admBillShopData)await admBillInit();
+  if(!billPricesCache)await loadBillPrices();
   if(!confirmedSalesCache)await loadConfirmedSales();
   const area=document.getElementById('adm-bill-area').value;
   const course=document.getElementById('adm-bill-course').value;
@@ -4381,6 +4382,8 @@ function buildAreaTotalPage(area,monthVal,courses){
 async function admBillAllCourses(){
   try{
   if(!admBillShopData)await admBillInit();
+  if(!billPricesCache)await loadBillPrices();
+  if(!confirmedSalesCache)await loadConfirmedSales();
   const area=document.getElementById('adm-bill-area').value;
   const monthVal=document.getElementById('adm-bill-month').value;
   if(!area||!monthVal){alert('営業所と年月を選択してください');return;}
