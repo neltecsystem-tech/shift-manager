@@ -207,11 +207,13 @@ tbody tr:hover { background:var(--primary-light); }
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <h2 style="margin-bottom:0">店舗マスタ</h2>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button onclick="smBatchGeocode()" id="sm-geocode-btn" style="background:#3b82f6;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 緯度経度を一括取得</button>
           <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
           <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 新店登録</button>
         </div>
       </div>
+      <div id="sm-geocode-progress" style="display:none;margin-bottom:10px;padding:10px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;font-size:13px;"></div>
       <div class="filters">
         <div><label>営業所</label><select id="sm-area" onchange="smFilter()"><option value="">すべて</option></select></div>
         <div><label>検索</label><input type="text" id="sm-search" placeholder="店舗名・コード..." oninput="smFilter()" style="width:200px;"></div>
@@ -1720,6 +1722,97 @@ function smRender(){
 
 // Google Maps Geocoding APIキー
 const GEOCODING_API_KEY='AIzaSyB2B8Aa8KtgckWzySRA_Ox50GlG3iFlshk';
+
+// 一括緯度経度取得（店舗マスタ）
+async function smBatchGeocode(){
+  if(!smData||smData.length===0){alert('店舗データがまだ読み込まれていません');return;}
+  // 列マッピング
+  let nameIdx=-1,addrIdx=-1,areaIdx=-1,latIdx=-1,lngIdx=-1;
+  smHeaders.forEach((h,i)=>{
+    if(h==='店舗名')nameIdx=i;
+    if(h==='住所'||h.includes('住所'))addrIdx=i;
+    if(h==='営業所')areaIdx=i;
+    if(h==='緯度')latIdx=i;
+    if(h==='経度')lngIdx=i;
+  });
+  if(nameIdx<0||latIdx<0||lngIdx<0){alert('店舗名/緯度/経度の列が見つかりません');return;}
+
+  // 未設定の店舗のみ対象
+  const targets=smData.filter(r=>{
+    const lat=(r[`col_${latIdx}`]||'').trim();
+    const lng=(r[`col_${lngIdx}`]||'').trim();
+    const name=(r[`col_${nameIdx}`]||'').trim();
+    const area=areaIdx>=0?((r[`col_${areaIdx}`]||'')):'';
+    // 納品中止の店舗は除外
+    if(area.includes('納品中止'))return false;
+    return name&&(!lat||!lng);
+  });
+
+  if(targets.length===0){alert('緯度経度が未設定の店舗はありません');return;}
+  if(!window.confirm(`${targets.length}件の店舗を自動検索します。\nGoogle Maps API無料枠内（月10万件）で実行されます。\n続行しますか？`))return;
+
+  const prog=document.getElementById('sm-geocode-progress');
+  prog.style.display='block';
+  const btn=document.getElementById('sm-geocode-btn');
+  btn.disabled=true;btn.style.opacity='0.5';
+
+  const updates=[];
+  const failures=[];
+  let okCount=0;
+
+  for(let i=0;i<targets.length;i++){
+    const r=targets[i];
+    const name=(r[`col_${nameIdx}`]||'').trim();
+    const addr=addrIdx>=0?((r[`col_${addrIdx}`]||'').trim()):'';
+    const q=addr?(name+' '+addr):name;
+    prog.innerHTML=`🔍 <b>${i+1}/${targets.length}</b> 検索中: ${name}<br><div style="margin-top:4px;height:6px;background:#e5e7eb;border-radius:3px;"><div style="width:${(i/targets.length*100).toFixed(1)}%;height:100%;background:#3b82f6;border-radius:3px;"></div></div>`;
+    try{
+      const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
+      const res=await fetch(url);
+      const json=await res.json();
+      if(json.status==='OK'&&json.results[0]){
+        const loc=json.results[0].geometry.location;
+        updates.push({row_number:r.row_number,lat:loc.lat,lng:loc.lng});
+        okCount++;
+      }else{
+        failures.push({name,reason:json.status});
+      }
+    }catch(e){
+      failures.push({name,reason:e.message});
+    }
+    // Rate limit: 10 req/sec
+    await new Promise(r=>setTimeout(r,120));
+  }
+
+  // スプレッドシート一括保存
+  prog.innerHTML=`💾 スプレッドシート保存中...（${updates.length}件）`;
+  if(updates.length>0){
+    try{
+      const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({action:'batch_update_latlng',updates})
+      });
+      const res=await resp.json();
+      if(res.error)throw new Error(res.error);
+    }catch(e){
+      prog.innerHTML=`<span style="color:#dc2626;">❌ 保存失敗: ${e.message}</span>`;
+      btn.disabled=false;btn.style.opacity='1';
+      return;
+    }
+  }
+
+  let summary=`<b style="color:#16a34a;">✅ 完了</b>: 成功 ${okCount}件 / 失敗 ${failures.length}件`;
+  if(failures.length>0){
+    summary+=`<details style="margin-top:6px;"><summary style="cursor:pointer;color:#dc2626;">失敗一覧を表示</summary><ul style="margin:4px 0;padding-left:20px;font-size:12px;">`;
+    failures.slice(0,50).forEach(f=>{summary+=`<li>${f.name} — ${f.reason}</li>`;});
+    if(failures.length>50)summary+=`<li>他 ${failures.length-50}件</li>`;
+    summary+='</ul></details>';
+  }
+  prog.innerHTML=summary;
+  btn.disabled=false;btn.style.opacity='1';
+  // データリロード
+  await smLoad();
+}
 
 // 店舗名から緯度経度を取得
 async function smGeocode(){
