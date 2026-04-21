@@ -3803,6 +3803,17 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
 
   // 立川朝刊30コース: 月・水・木・金は朝刊なし（火/土/日のみ朝刊請求、JRAは通常通り）
   const isTachikawa30=area==='立川'&&course==='立川30';
+  // 立川30 火曜日は「ウインズ立川A」を朝刊対象から除外
+  const tachi30TueExcluded=isTachikawa30?openAmShops.filter(s=>(s[`col_${cols.name}`]||'').includes('ウインズ立川A')):[];
+  const amCountTue=isTachikawa30?amCount-tachi30TueExcluded.length:amCount;
+  const amTokushuTue=isTachikawa30?amTokushu-tachi30TueExcluded.filter(s=>s[`col_${cols.amTokushu}`]==='TRUE').length:amTokushu;
+  const amZasshiTue=isTachikawa30?amZasshi-tachi30TueExcluded.filter(s=>s[`col_${cols.zasshi}`]==='TRUE').length:amZasshi;
+  const amDokkonTue=isTachikawa30?amDokkon-tachi30TueExcluded.filter(s=>s[`col_${cols.yuukanDokkon}`]==='TRUE').length:amDokkon;
+  const amShopFeeTue=amCountTue*(isKawagoe?bp.kw_am_shop:bp.am_shop);
+  const amTokushuFeeTue=amTokushuTue*(isKawagoe?bp.kw_am_tokushu:bp.am_tokushu);
+  const amZasshiFeeTue=amZasshiTue*(isKawagoe?bp.kw_am_zasshi:bp.am_zasshi);
+  const amDokkonFeeTue=amDokkonTue*(isKawagoe?bp.kw_am_dokkon:bp.am_dokkon);
+  const amKanriFeeTue=amCountTue*(isKawagoe?bp.kw_am_kanri:bp.am_kanri);
 
   function calcDay(dow,day){
     const isHoliday=(cond.holiday||[]).includes(day);
@@ -3812,20 +3823,26 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
     const isNoPm=(cond.nopm||[]).includes(day);
     const isYesKeiba=(cond.yeskeiba||[]).includes(day);
 
-    const isMon=dow===1,isWed=dow===3,isThu=dow===4,isSun=dow===0,isFri=dow===5,isSat=dow===6;
+    const isMon=dow===1,isTue=dow===2,isWed=dow===3,isThu=dow===4,isSun=dow===0,isFri=dow===5,isSat=dow===6;
     const isKeiba=(isFri||isSat||isSun||isYesKeiba)&&!isNoPm;
     // 立川30: 月/水/木/金は朝刊なし（JRAのみ請求）
     const skipAm=isTachikawa30&&(isMon||isWed||isThu||isFri);
+    // 立川30 火曜日はウインズ立川A除外
+    const useTue=isTachikawa30&&isTue;
 
     // 朝刊
     let dayAm=0,amSF=0,ac=0,amDF=0,ad=0,amTF=0,amZF=0,amKF=0,amKyF=0;
     if(!isHoliday&&!isNoAm&&!skipAm){
-      amSF=amShopFee;ac=amCount;amTF=amTokushuFee;amZF=amZasshiFee;amKF=amKanriFee;
+      if(useTue){
+        amSF=amShopFeeTue;ac=amCountTue;amTF=amTokushuFeeTue;amZF=amZasshiFeeTue;amKF=amKanriFeeTue;
+      }else{
+        amSF=amShopFee;ac=amCount;amTF=amTokushuFee;amZF=amZasshiFee;amKF=amKanriFee;
+      }
       if(isKawagoe)amKyF=amKyoriFee;
       // 同梱: 月曜は基本なし、ただしyesDokkonで上書き可。noDokkonで除外可。
       const hasDokkon=isYesDokkon||((!isMon)&&!isNoDokkon);
-      ad=hasDokkon?amDokkon:0;
-      amDF=hasDokkon?amDokkonFee:0;
+      ad=hasDokkon?(useTue?amDokkonTue:amDokkon):0;
+      amDF=hasDokkon?(useTue?amDokkonFeeTue:amDokkonFee):0;
       dayAm=amSF+amDF+amTF+amZF+amKF+amKyF;
     }
 
