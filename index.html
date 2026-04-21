@@ -394,7 +394,10 @@ tbody tr:hover { background:var(--primary-light); }
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-defects"> 🔧 不具合管理</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-shopmaster"> 🏪 店舗マスタ</label>
         </div>
-        <button onclick="invSaveRate()" style="width:100%;background:#6366f1;color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">保存する</button>
+        <div style="display:flex;gap:8px;">
+          <button onclick="invDeleteRate()" id="inv-re-delete-btn" style="display:none;background:#dc2626;color:#fff;border:none;padding:12px 20px;border-radius:10px;font-size:14px;font-weight:bold;cursor:pointer;">🗑 削除</button>
+          <button onclick="invSaveRate()" style="flex:1;background:#6366f1;color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">保存する</button>
+        </div>
       </div>
     </div>
 
@@ -2571,12 +2574,14 @@ function invAddRate(){
   document.getElementById('inv-re-kw-pattern').value='';
   invKwPatternChange();
   invRateTab('normal');
+  document.getElementById('inv-re-delete-btn').style.display='none';
   document.getElementById('inv-rate-edit').style.display='flex';
 }
 
 function invEditRate(rowNum){
   const r=invRates[rowNum-2];if(!r)return;
   document.getElementById('inv-re-row').value=rowNum;
+  document.getElementById('inv-re-delete-btn').style.display='block';
   document.getElementById('inv-re-title').textContent=r.name+'の単価を編集';
   invUpdateNameSelect(r.name);
   document.getElementById('inv-re-am-wd').value=r.am_weekday;
@@ -2611,6 +2616,28 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-perm-defects').checked=permStr.includes('defects');
   document.getElementById('inv-re-perm-shopmaster').checked=permStr.includes('shopmaster');
   document.getElementById('inv-rate-edit').style.display='flex';
+}
+
+async function invDeleteRate(){
+  const rowNum=document.getElementById('inv-re-row').value;
+  if(!rowNum){alert('編集中のスタッフが特定できません');return;}
+  const r=invRates[parseInt(rowNum)-2];
+  const name=r?r.name:'このスタッフ';
+  if(!window.confirm(`「${name}」を削除します。\n\nこの操作は取り消せません。続行しますか？`))return;
+  const btn=document.getElementById('inv-re-delete-btn');
+  btn.textContent='削除中...';btn.disabled=true;
+  try{
+    const res=await invApi({action:'delete_rate',row_number:parseInt(rowNum)});
+    if(res.error)throw new Error(res.error);
+    alert(`「${name}」を削除しました`);
+    document.getElementById('inv-rate-edit').style.display='none';
+    await invLoadAll();
+    if(adminAuthed)adminLoadStaff();
+    else invShowRates();
+  }catch(e){
+    alert('削除に失敗しました: '+e.message);
+  }
+  btn.textContent='🗑 削除';btn.disabled=false;
 }
 
 async function invSaveRate(){
