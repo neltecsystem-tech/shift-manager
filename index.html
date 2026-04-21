@@ -419,6 +419,12 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="msr-gps-status" style="display:none;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:12px;color:#1d4ed8;">
         📍 GPS追跡中... <span id="msr-gps-info"></span>
       </div>
+      <div id="msr-sort-controls" style="display:none;margin-bottom:8px;display:flex;gap:8px;align-items:center;font-size:12px;">
+        <span style="color:var(--text-sub);">並び替え:</span>
+        <button onclick="msrSetSort('order')" id="msr-sort-order" style="background:var(--primary);color:#fff;border:none;padding:4px 12px;border-radius:12px;cursor:pointer;font-size:12px;">コース順</button>
+        <button onclick="msrSetSort('distance')" id="msr-sort-distance" style="background:#f1f5f9;color:var(--text-sub);border:none;padding:4px 12px;border-radius:12px;cursor:pointer;font-size:12px;">近い順</button>
+      </div>
+      <div id="msr-nearest" style="display:none;margin-bottom:8px;padding:10px;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;font-size:13px;"></div>
       <div id="msr-table" style="margin-top:8px;"></div>
     </div>
   </div>
@@ -4656,6 +4662,16 @@ let msrTimes={};// key: "course|shopCode" → arrival time
 let msrLoaded=false;
 let msrGpsWatchId=null;
 let msrGpsPos=null;// {lat,lng,accuracy}
+let msrSortMode='order';// 'order' | 'distance'
+
+function msrSetSort(mode){
+  msrSortMode=mode;
+  document.getElementById('msr-sort-order').style.background=mode==='order'?'var(--primary)':'#f1f5f9';
+  document.getElementById('msr-sort-order').style.color=mode==='order'?'#fff':'var(--text-sub)';
+  document.getElementById('msr-sort-distance').style.background=mode==='distance'?'var(--primary)':'#f1f5f9';
+  document.getElementById('msr-sort-distance').style.color=mode==='distance'?'#fff':'var(--text-sub)';
+  msrRender();
+}
 let msrStaffName='';
 let msrAuthed=false;
 const MSR_ARRIVE_DIST=50;// 到着判定距離(m)
@@ -4867,8 +4883,23 @@ function msrRender(){
     if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
     return r[`col_${courseCol}`]===course;
   });
-  // 順番列でソート（数値順、未入力は末尾）
-  if(orderCol!==undefined){
+  const latCol0=msrColMap.lat;
+  const lngCol0=msrColMap.lng;
+  const gpsActive=msrGpsPos&&latCol0!==undefined&&lngCol0!==undefined;
+
+  // 距離計算を各店舗に付与
+  if(gpsActive){
+    shops.forEach(s=>{
+      const sLat=parseFloat(s[`col_${latCol0}`]);
+      const sLng=parseFloat(s[`col_${lngCol0}`]);
+      s._dist=(!isNaN(sLat)&&!isNaN(sLng))?msrCalcDist(msrGpsPos.lat,msrGpsPos.lng,sLat,sLng):Infinity;
+    });
+  }
+
+  // ソート
+  if(gpsActive&&msrSortMode==='distance'){
+    shops.sort((a,b)=>a._dist-b._dist);
+  }else if(orderCol!==undefined){
     shops.sort((a,b)=>{
       const oa=parseInt(a[`col_${orderCol}`])||99999;
       const ob=parseInt(b[`col_${orderCol}`])||99999;
@@ -4876,6 +4907,30 @@ function msrRender(){
     });
   }
   if(!shops.length){document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">該当する店舗がありません</p>';return;}
+
+  // GPS有効時: 未到着・近い3店舗のサマリーを上部に表示
+  const nearestEl=document.getElementById('msr-nearest');
+  if(gpsActive){
+    const pending=shops.filter(s=>{
+      const code=s[`col_${msrColMap.code??2}`]||'';
+      return !msrTimes[`${course}|${code}`]&&s._dist<Infinity;
+    }).sort((a,b)=>a._dist-b._dist).slice(0,3);
+    if(pending.length>0){
+      let nh='<b style="color:#065f46;">🎯 近い未到着店舗:</b> ';
+      nh+=pending.map((s,i)=>{
+        const nm=s[`col_${msrColMap.name??3}`]||'';
+        const d=s._dist<1000?Math.round(s._dist)+'m':(s._dist/1000).toFixed(1)+'km';
+        const color=s._dist<=MSR_ARRIVE_DIST?'#f59e0b':s._dist<=200?'#3498DB':'#065f46';
+        return `<span style="color:${color};font-weight:${s._dist<=MSR_ARRIVE_DIST?'bold':'normal'};">${i+1}. ${nm} (${d})</span>`;
+      }).join(' ／ ');
+      nearestEl.innerHTML=nh;
+      nearestEl.style.display='block';
+    }else{
+      nearestEl.style.display='none';
+    }
+  }else{
+    nearestEl.style.display='none';
+  }
   const now=new Date();
   const today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   let h=`<div style="margin-bottom:8px;font-size:13px;color:var(--text-sub);">${today} ／ ${course} ／ ${shops.length}店舗</div>`;
@@ -4955,9 +5010,12 @@ function msrToggleGps(){
   document.getElementById('msr-gps-btn').style.background='var(--danger)';
   document.getElementById('msr-gps-status').style.display='block';
   document.getElementById('msr-gps-info').textContent='位置取得中...';
+  document.getElementById('msr-sort-controls').style.display='flex';
   msrGpsWatchId=navigator.geolocation.watchPosition(pos=>{
     msrGpsPos={lat:pos.coords.latitude,lng:pos.coords.longitude,accuracy:pos.coords.accuracy};
-    document.getElementById('msr-gps-info').textContent=`精度: ${Math.round(pos.coords.accuracy)}m`;
+    const acc=Math.round(pos.coords.accuracy);
+    const accWarn=acc>50?' <span style="color:#dc2626;font-weight:bold;">⚠ 精度低下</span>':acc>20?' <span style="color:#f59e0b;">（やや低精度）</span>':'';
+    document.getElementById('msr-gps-info').innerHTML=`精度: ${acc}m${accWarn}`;
     msrCheckAutoArrive();
     msrRender();
   },err=>{
@@ -4970,6 +5028,9 @@ function msrStopGps(){
   msrGpsPos=null;
   document.getElementById('msr-gps-btn').textContent='📍 GPS開始';
   document.getElementById('msr-gps-btn').style.background='#3498DB';
+  document.getElementById('msr-sort-controls').style.display='none';
+  document.getElementById('msr-nearest').style.display='none';
+  msrSortMode='order';
   document.getElementById('msr-gps-status').style.display='none';
   msrRender();
 }
