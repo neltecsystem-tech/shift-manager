@@ -2550,9 +2550,24 @@ function invRateTab(t){
 
 function invUpdateNameSelect(selectedName,excludeRegistered){
   const sel=document.getElementById('inv-re-name');
-  const registeredNames=new Set(invRates.map(r=>r.name));
-  const names=excludeRegistered?invStaffNames.filter(n=>!registeredNames.has(n)):invStaffNames;
-  sel.innerHTML='<option value="">選択</option>'+names.map(n=>`<option${n===selectedName?' selected':''}>${n}</option>`).join('');
+  // スペース正規化（全角/半角スペース、連続スペースを1つに）で比較用のキーを作成
+  const normKey=s=>(s||'').replace(/[\s　]+/g,' ').trim();
+  const registeredKeys=new Set(invRates.map(r=>normKey(r.name)));
+  const names=excludeRegistered?invStaffNames.filter(n=>!registeredKeys.has(normKey(n))):invStaffNames;
+  const selKey=normKey(selectedName);
+  // 選択名が人員名簿にない場合でも選択肢として先頭に追加（保存時の値は単価マスタの値を維持）
+  let opts='<option value="">選択</option>';
+  let matched=false;
+  names.forEach(n=>{
+    const isMatch=normKey(n)===selKey;
+    if(isMatch)matched=true;
+    opts+=`<option${isMatch?' selected':''}>${n}</option>`;
+  });
+  if(selectedName&&!matched){
+    // 単価マスタ側の名前を選択肢として追加
+    opts=`<option value="">選択</option><option selected>${selectedName}</option>`+names.map(n=>`<option>${n}</option>`).join('');
+  }
+  sel.innerHTML=opts;
 }
 
 function invAddRate(){
