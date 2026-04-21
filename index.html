@@ -1718,10 +1718,53 @@ function smRender(){
   document.getElementById('sm-table').innerHTML=h;
 }
 
+// Google Maps Geocoding APIキー
+const GEOCODING_API_KEY='AIzaSyB2B8Aa8KtgckWzySRA_Ox50GlG3iFlshk';
+
+// 店舗名から緯度経度を取得
+async function smGeocode(){
+  const msg=document.getElementById('sme-geo-msg');
+  // 店舗名カラムを検索
+  let nameIdx=-1,addrIdx=-1,latIdx=-1,lngIdx=-1;
+  smHeaders.forEach((h,i)=>{
+    if(h==='店舗名')nameIdx=i;
+    if(h==='住所'||h.includes('住所'))addrIdx=i;
+    if(h==='緯度')latIdx=i;
+    if(h==='経度')lngIdx=i;
+  });
+  if(nameIdx<0||latIdx<0||lngIdx<0){msg.textContent='必要な列が見つかりません';msg.style.color='#dc2626';return;}
+
+  const name=(document.getElementById('sme-'+nameIdx)||{}).value||'';
+  const addr=addrIdx>=0?((document.getElementById('sme-'+addrIdx)||{}).value||''):'';
+  if(!name&&!addr){msg.textContent='店舗名か住所を入力してください';msg.style.color='#dc2626';return;}
+
+  // 検索クエリ: 住所優先、なければ店舗名、両方あれば結合
+  const q=addr?(name?name+' '+addr:addr):name;
+  msg.textContent='検索中...';msg.style.color='#3b82f6';
+  try{
+    const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
+    const res=await fetch(url);
+    const json=await res.json();
+    if(json.status!=='OK'){msg.textContent='検索失敗: '+(json.status||'unknown')+(json.error_message?' - '+json.error_message:'');msg.style.color='#dc2626';return;}
+    const loc=json.results[0].geometry.location;
+    const formatted=json.results[0].formatted_address||'';
+    document.getElementById('sme-'+latIdx).value=loc.lat;
+    document.getElementById('sme-'+lngIdx).value=loc.lng;
+    msg.textContent='✓ 取得成功: '+formatted;msg.style.color='#16a34a';
+  }catch(e){
+    msg.textContent='エラー: '+e.message;msg.style.color='#dc2626';
+  }
+}
+
 function smBuildForm(record){
   let html='';
   const isAreaCol=i=>smHeaders[i]&&smHeaders[i].includes('営業所');
   const isCourseCol=i=>smHeaders[i]&&(smHeaders[i].includes('コース名')||smHeaders[i].includes('コース'));
+  // 緯度経度自動取得ボタン
+  const hasLatLng=smHeaders.some(h=>h==='緯度')&&smHeaders.some(h=>h==='経度');
+  if(hasLatLng){
+    html+='<div style="margin-bottom:12px;padding:10px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;"><button type="button" onclick="smGeocode()" style="background:#3b82f6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📍 店舗名から緯度経度を取得</button><span id="sme-geo-msg" style="margin-left:10px;font-size:12px;color:var(--text-sub);"></span></div>';
+  }
   // チェックボックス列: 値がTRUE/FALSEか、ヘッダー名に特定キーワードを含む
   const checkHeaders=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝'];
   const isCheckCol=i=>{
