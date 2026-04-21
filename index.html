@@ -3825,8 +3825,10 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
 
     const isMon=dow===1,isTue=dow===2,isWed=dow===3,isThu=dow===4,isSun=dow===0,isFri=dow===5,isSat=dow===6;
     const isKeiba=(isFri||isSat||isSun||isYesKeiba)&&!isNoPm;
-    // 立川30: 月/水/木/金は朝刊なし（JRAのみ請求）
-    const skipAm=isTachikawa30&&(isMon||isWed||isThu||isFri);
+    // 立川30: 前日に競馬配送有りが設定されていたら当日の朝刊は請求する
+    const prevYesKeiba=isTachikawa30&&(cond.yeskeiba||[]).includes(day-1);
+    // 立川30: 月/水/木/金は朝刊なし（JRAのみ請求）ただし前日yeskeibaなら朝刊あり
+    const skipAm=isTachikawa30&&(isMon||isWed||isThu||isFri)&&!prevYesKeiba;
     // 立川30 火曜日はウインズ立川A除外
     const useTue=isTachikawa30&&isTue;
 
