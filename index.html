@@ -1723,6 +1723,29 @@ function smRender(){
 // Google Maps Geocoding APIキー
 const GEOCODING_API_KEY='AIzaSyB2B8Aa8KtgckWzySRA_Ox50GlG3iFlshk';
 
+// 店舗名の略称展開（長い略称を先にマッチさせる）
+const SHOP_NAME_MAPPING=[
+  ['LATF','ローソンスリーエフ'],
+  ['T]7','セブンイレブン'],
+  ['FM','ファミリーマート'],
+  ['LS','ローソンストア100'],
+  ['LA','ローソン'],
+  ['MS','ミニストップ'],
+  ['SY','西友'],
+  ['ＳＹ','西友'],
+  ['F','ファミリーマート'],
+  ['Ｆ','ファミリーマート'],
+];
+function expandShopName(name){
+  if(!name)return name;
+  for(const[code,full]of SHOP_NAME_MAPPING){
+    if(name.startsWith(code)){
+      return full+' '+name.slice(code.length).trim();
+    }
+  }
+  return name;
+}
+
 // 一括緯度経度取得（店舗マスタ）
 async function smBatchGeocode(){
   if(!smData||smData.length===0){alert('店舗データがまだ読み込まれていません');return;}
@@ -1762,10 +1785,11 @@ async function smBatchGeocode(){
 
   for(let i=0;i<targets.length;i++){
     const r=targets[i];
-    const name=(r[`col_${nameIdx}`]||'').trim();
+    const rawName=(r[`col_${nameIdx}`]||'').trim();
+    const name=expandShopName(rawName);
     const addr=addrIdx>=0?((r[`col_${addrIdx}`]||'').trim()):'';
     const q=addr?(name+' '+addr):name;
-    prog.innerHTML=`🔍 <b>${i+1}/${targets.length}</b> 検索中: ${name}<br><div style="margin-top:4px;height:6px;background:#e5e7eb;border-radius:3px;"><div style="width:${(i/targets.length*100).toFixed(1)}%;height:100%;background:#3b82f6;border-radius:3px;"></div></div>`;
+    prog.innerHTML=`🔍 <b>${i+1}/${targets.length}</b> 検索中: ${rawName}${rawName!==name?' → '+name:''}<br><div style="margin-top:4px;height:6px;background:#e5e7eb;border-radius:3px;"><div style="width:${(i/targets.length*100).toFixed(1)}%;height:100%;background:#3b82f6;border-radius:3px;"></div></div>`;
     try{
       const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
       const res=await fetch(url);
@@ -1775,10 +1799,10 @@ async function smBatchGeocode(){
         updates.push({row_number:r.row_number,lat:loc.lat,lng:loc.lng});
         okCount++;
       }else{
-        failures.push({name,reason:json.status});
+        failures.push({name:rawName,expanded:name,reason:json.status});
       }
     }catch(e){
-      failures.push({name,reason:e.message});
+      failures.push({name:rawName,expanded:name,reason:e.message});
     }
     // Rate limit: 10 req/sec
     await new Promise(r=>setTimeout(r,120));
@@ -1804,7 +1828,7 @@ async function smBatchGeocode(){
   let summary=`<b style="color:#16a34a;">✅ 完了</b>: 成功 ${okCount}件 / 失敗 ${failures.length}件`;
   if(failures.length>0){
     summary+=`<details style="margin-top:6px;"><summary style="cursor:pointer;color:#dc2626;">失敗一覧を表示</summary><ul style="margin:4px 0;padding-left:20px;font-size:12px;">`;
-    failures.slice(0,50).forEach(f=>{summary+=`<li>${f.name} — ${f.reason}</li>`;});
+    failures.slice(0,50).forEach(f=>{summary+=`<li>${f.name}${f.expanded&&f.expanded!==f.name?'（→'+f.expanded+'）':''} — ${f.reason}</li>`;});
     if(failures.length>50)summary+=`<li>他 ${failures.length-50}件</li>`;
     summary+='</ul></details>';
   }
@@ -1831,8 +1855,10 @@ async function smGeocode(){
   const addr=addrIdx>=0?((document.getElementById('sme-'+addrIdx)||{}).value||''):'';
   if(!name&&!addr){msg.textContent='店舗名か住所を入力してください';msg.style.color='#dc2626';return;}
 
+  // 略称展開（T]7→セブンイレブン 等）
+  const expandedName=expandShopName(name);
   // 検索クエリ: 住所優先、なければ店舗名、両方あれば結合
-  const q=addr?(name?name+' '+addr:addr):name;
+  const q=addr?(expandedName?expandedName+' '+addr:addr):expandedName;
   msg.textContent='検索中...';msg.style.color='#3b82f6';
   try{
     const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
