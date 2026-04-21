@@ -3801,7 +3801,7 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const keibaKanriFee=keibaCount*(isKawagoe?bp.kw_pm_kanri:bp.keiba_kanri);
   const keibaDayTotal=keibaShopFee+keibaTokushuFee+keibaKanriFee;
 
-  // 立川朝刊30コース: 火曜・土曜・日曜は朝刊無し（JRAのみ請求）
+  // 立川朝刊30コース: 月・水・木・金は朝刊なし（火/土/日のみ朝刊請求、JRAは通常通り）
   const isTachikawa30=area==='立川'&&course==='立川30';
 
   function calcDay(dow,day){
@@ -3812,10 +3812,10 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
     const isNoPm=(cond.nopm||[]).includes(day);
     const isYesKeiba=(cond.yeskeiba||[]).includes(day);
 
-    const isMon=dow===1,isTue=dow===2,isSun=dow===0,isFri=dow===5,isSat=dow===6;
+    const isMon=dow===1,isWed=dow===3,isThu=dow===4,isSun=dow===0,isFri=dow===5,isSat=dow===6;
     const isKeiba=(isFri||isSat||isSun||isYesKeiba)&&!isNoPm;
-    // 立川30: 火/土/日は朝刊なし（JRAのみ）
-    const skipAm=isTachikawa30&&(isTue||isSat||isSun);
+    // 立川30: 月/水/木/金は朝刊なし（JRAのみ請求）
+    const skipAm=isTachikawa30&&(isMon||isWed||isThu||isFri);
 
     // 朝刊
     let dayAm=0,amSF=0,ac=0,amDF=0,ad=0,amTF=0,amZF=0,amKF=0,amKyF=0;
