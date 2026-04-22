@@ -535,6 +535,27 @@ tbody tr:hover { background:var(--primary-light); }
             <button onclick="admBcAddDate('yeskeiba')" style="margin-top:4px;background:none;border:1px dashed var(--border);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px;color:var(--text-sub);">＋ 追加</button>
           </div>
         </div>
+        <!-- 返品新聞作業料 -->
+        <div style="margin-top:24px;padding:16px;background:#f8fafc;border:1px solid var(--border);border-radius:10px;">
+          <h4 style="margin:0 0 12px;color:var(--primary);">📦 返品新聞 開梱+カゴ分け作業料</h4>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div>
+              <label style="font-size:13px;color:var(--text-sub);display:block;margin-bottom:4px;">立川</label>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:15px;">¥</span>
+                <input type="number" id="adm-bc-work-tachikawa" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;" placeholder="0">
+              </div>
+            </div>
+            <div>
+              <label style="font-size:13px;color:var(--text-sub);display:block;margin-bottom:4px;">川崎高津</label>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:15px;">¥</span>
+                <input type="number" id="adm-bc-work-kawasaki" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;" placeholder="0">
+              </div>
+            </div>
+          </div>
+          <p style="margin:8px 0 0;font-size:11px;color:var(--text-sub);">※ 「保存」ボタンで年月ごとに保存されます</p>
+        </div>
       </div>
 
       <!-- スタッフ管理 -->
@@ -3873,6 +3894,9 @@ function admBcLoad(){
   ['holiday','noam','nodokkon','yesdokkon','nopm','yeskeiba'].forEach(key=>{
     admBcRenderDates(key,cond[key]||[],month);
   });
+  // 作業料フィールド
+  document.getElementById('adm-bc-work-tachikawa').value=cond.work_tachikawa||'';
+  document.getElementById('adm-bc-work-kawasaki').value=cond.work_kawasaki||'';
 }
 
 function admBcRenderDates(key,dates,month){
@@ -3912,6 +3936,12 @@ function admBcRemoveDate(key,d){
 }
 
 function admBcSave(){
+  const month=document.getElementById('adm-bc-month').value;
+  if(month){
+    if(!admBcData[month])admBcData[month]={holiday:[],noam:[],nodokkon:[],yesdokkon:[],nopm:[],yeskeiba:[]};
+    admBcData[month].work_tachikawa=Number(document.getElementById('adm-bc-work-tachikawa').value)||0;
+    admBcData[month].work_kawasaki=Number(document.getElementById('adm-bc-work-kawasaki').value)||0;
+  }
   localStorage.setItem('billConditions',JSON.stringify(admBcData));
   alert('請求条件を保存しました');
 }
