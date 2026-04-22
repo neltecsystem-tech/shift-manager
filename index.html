@@ -4438,6 +4438,29 @@ function buildAreaTotalPage(area,monthVal,courses){
   else if(area==='川崎高津'){workFee=Number(cond.work_kawasaki)||0;workLabel='川崎高津/返品新聞 開梱+カゴ分け作業料';}
   tot.grand+=workFee;
 
+  // 立川のみ: 庫内作業費（朝刊/競馬）
+  let kuchiAmFee=0,kuchiKeibaFee=0,amDays=0,keibaDays=0;
+  if(area==='立川'){
+    const daysInMonth=new Date(y,m,0).getDate();
+    const holiday=cond.holiday||[];
+    const noam=cond.noam||[];
+    const nopm=cond.nopm||[];
+    const yeskeiba=cond.yeskeiba||[];
+    for(let d=1;d<=daysInMonth;d++){
+      const dow=new Date(y,m-1,d).getDay();
+      const isHoliday=holiday.includes(d);
+      const isNoAm=noam.includes(d);
+      const isNoPm=nopm.includes(d);
+      const isFri=dow===5,isSat=dow===6,isSun=dow===0;
+      if(!isHoliday&&!isNoAm)amDays++;
+      const isKeiba=(isFri||isSat||isSun||yeskeiba.includes(d))&&!isNoPm;
+      if(!isHoliday&&isKeiba)keibaDays++;
+    }
+    kuchiAmFee=amDays*6000;
+    kuchiKeibaFee=keibaDays*9000;
+    tot.grand+=kuchiAmFee+kuchiKeibaFee;
+  }
+
   let h=`<div class="bill-page" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:12px;margin-bottom:16px;">`;
   h+=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;border-bottom:2px solid var(--primary);padding-bottom:12px;">`;
   h+=`<div><h2 style="margin:0;color:var(--primary);font-size:22px;">請求書（営業所合計）</h2><p style="margin:4px 0;font-size:14px;">令和${reiwa}年 ${m}月分</p></div>`;
@@ -4459,7 +4482,7 @@ function buildAreaTotalPage(area,monthVal,courses){
   h+=`<div style="display:flex;gap:12px;margin-bottom:16px;">`;
   h+=`<div style="flex:1;background:#dbeafe;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#1d4ed8;">朝刊合計</div><div style="font-size:20px;font-weight:bold;color:#1d4ed8;">¥${tot.am.toLocaleString()}</div><div style="font-size:10px;color:#1d4ed8;">朝刊店舗 ${tot.amCount}店（延べ）</div></div>`;
   h+=`<div style="flex:1;background:#fae8ff;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#9333ea;">夕刊/競馬合計</div><div style="font-size:20px;font-weight:bold;color:#9333ea;">¥${tot.pm.toLocaleString()}</div><div style="font-size:10px;color:#9333ea;">夕刊 ${tot.pmCount}店 ／ 競馬 ${tot.keibaCount}店</div></div>`;
-  h+=`<div style="flex:1;background:#fef3c7;border:2px solid #f59e0b;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#92400e;">総合計（税込）</div><div style="font-size:24px;font-weight:bold;color:#92400e;">¥${tot.grand.toLocaleString()}</div><div style="font-size:10px;color:#92400e;">${courses.length}コース${workFee>0?' +作業料':''}</div></div>`;
+  h+=`<div style="flex:1;background:#fef3c7;border:2px solid #f59e0b;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#92400e;">総合計（税込）</div><div style="font-size:24px;font-weight:bold;color:#92400e;">¥${tot.grand.toLocaleString()}</div><div style="font-size:10px;color:#92400e;">${courses.length}コース${(workFee+kuchiAmFee+kuchiKeibaFee)>0?' +作業料':''}</div></div>`;
   h+=`</div>`;
   if(confirmedCnt>0){
     h+=`<div style="padding:8px 12px;background:#dcfce7;border-radius:6px;font-size:12px;margin-bottom:12px;color:#166534;">✓ ${confirmedCnt}/${courses.length}コースが確定済み（確定金額を優先使用）</div>`;
@@ -4478,17 +4501,21 @@ function buildAreaTotalPage(area,monthVal,courses){
     h+=`</tr>`;
   });
   // 作業料行を追加（該当営業所のみ）
-  if(workFee>0){
-    h+=`<tr style="background:#fef9c3;">`;
-    h+=`<td style="border:1px solid #ccc;padding:6px 10px;">${workLabel}</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">-</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">-</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">-</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">-</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">-</td>`;
-    h+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;">¥${workFee.toLocaleString()}</td>`;
-    h+=`</tr>`;
-  }
+  const extraRow=(label,fee)=>{
+    let r=`<tr style="background:#fef9c3;">`;
+    r+=`<td style="border:1px solid #ccc;padding:6px 10px;">${label}</td>`;
+    r+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">-</td>`;
+    r+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">-</td>`;
+    r+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">-</td>`;
+    r+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">-</td>`;
+    r+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;color:var(--text-sub);">-</td>`;
+    r+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold;">¥${fee.toLocaleString()}</td>`;
+    r+=`</tr>`;
+    return r;
+  };
+  if(workFee>0)h+=extraRow(workLabel,workFee);
+  if(kuchiAmFee>0)h+=extraRow(`庫内作業費（朝刊） ${amDays}日 × ¥6,000`,kuchiAmFee);
+  if(kuchiKeibaFee>0)h+=extraRow(`庫内作業費（競馬） ${keibaDays}日 × ¥9,000`,kuchiKeibaFee);
   h+=`<tr style="background:#fef3c7;font-weight:bold;font-size:15px;">`;
   h+=`<td style="border:1px solid #999;padding:10px;">合計</td>`;
   h+=`<td style="border:1px solid #999;padding:10px;text-align:right;">${tot.amCount}</td>`;
