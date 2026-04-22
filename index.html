@@ -4041,6 +4041,68 @@ function getConfirmedSale(monthVal,area,course){
   return confirmedSalesCache.find(r=>r.year_month===monthVal&&r.area===area&&r.course===course);
 }
 
+async function admBillAreaConfirmAll(area,monthVal){
+  try{
+    if(!admBillShopData)await admBillInit();
+    if(!billPricesCache)await loadBillPrices();
+    const records=admBillShopData.records||[];
+    const cols=admBillCols();
+    const bulkAreas=area==='城北'?['城北','池袋']:[area];
+    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&bulkAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+    const allC=new Set();
+    filtered.forEach(r=>{
+      if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
+      if(r[`col_${cols.pmCourse}`])allC.add(r[`col_${cols.pmCourse}`]);
+      if(r[`col_${cols.keibaCourse}`])allC.add(r[`col_${cols.keibaCourse}`]);
+    });
+    const courses=[...allC].filter(c=>bulkAreas.some(a=>c.includes(a))).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+    if(!courses.length){alert('該当コースがありません');return;}
+    // 総額を事前計算してユーザーに確認
+    let total=0;
+    const results=[];
+    courses.forEach(course=>{
+      const r=admBillRenderWithTotals(area,course,monthVal);
+      results.push({course,grand:r.grandTotal,am:r.totalAmSum,pm:r.totalPmSum});
+      total+=r.grandTotal;
+    });
+    const ok=window.confirm(`${area}営業所 ${monthVal} の全${courses.length}コースを確定します。\n総額 ¥${total.toLocaleString()}\n\n続行しますか？`);
+    if(!ok)return;
+    // 順次保存
+    for(const res of results){
+      await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course:res.course,grand_total:res.grand,am_total:res.am,pm_total:res.pm}});
+    }
+    confirmedSalesCache=null;
+    await loadConfirmedSales();
+    alert(`✓ ${courses.length}コースを確定しました`);
+    admBillAllCourses();
+  }catch(e){alert('確定失敗: '+e.message);console.error(e);}
+}
+
+async function admBillAreaUnconfirmAll(area,monthVal){
+  try{
+    if(!admBillShopData)await admBillInit();
+    const records=admBillShopData.records||[];
+    const cols=admBillCols();
+    const bulkAreas=area==='城北'?['城北','池袋']:[area];
+    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&bulkAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+    const allC=new Set();
+    filtered.forEach(r=>{
+      if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
+      if(r[`col_${cols.pmCourse}`])allC.add(r[`col_${cols.pmCourse}`]);
+      if(r[`col_${cols.keibaCourse}`])allC.add(r[`col_${cols.keibaCourse}`]);
+    });
+    const courses=[...allC].filter(c=>bulkAreas.some(a=>c.includes(a)));
+    if(!window.confirm(`${area}営業所 ${monthVal} の全${courses.length}コースの確定を解除します。\n続行しますか？`))return;
+    for(const course of courses){
+      await invApi({action:'unconfirm_sale',year_month:monthVal,area,course});
+    }
+    confirmedSalesCache=null;
+    await loadConfirmedSales();
+    alert(`確定を解除しました（${courses.length}コース）`);
+    admBillAllCourses();
+  }catch(e){alert('解除失敗: '+e.message);console.error(e);}
+}
+
 async function admBillConfirm(area,course,monthVal,grandTotal,amTotal,pmTotal){
   const ok=window.confirm(`${area} ${course} ${monthVal} の売上 ¥${Number(grandTotal).toLocaleString()} を確定しますか？\n収支管理にこの金額が反映されます。`);
   if(!ok)return;
@@ -4381,6 +4443,19 @@ function buildAreaTotalPage(area,monthVal,courses){
   h+=`<div><h2 style="margin:0;color:var(--primary);font-size:22px;">請求書（営業所合計）</h2><p style="margin:4px 0;font-size:14px;">令和${reiwa}年 ${m}月分</p></div>`;
   h+=`<div style="text-align:right;"><p style="margin:0;font-size:18px;font-weight:bold;">${area}営業所</p><p style="margin:4px 0;font-size:12px;color:var(--text-sub);">作成日: ${new Date().toLocaleDateString('ja-JP')}</p></div>`;
   h+=`</div>`;
+
+  // 確定ボタンエリア
+  if(confirmedCnt===courses.length&&courses.length>0){
+    h+=`<div style="background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
+      <div><span style="color:#166534;font-weight:bold;">✓ 全${courses.length}コース確定済み</span> <span style="color:var(--text-sub);font-size:12px;margin-left:8px;">収支管理に反映されます</span></div>
+      <button onclick="admBillAreaUnconfirmAll('${area}','${monthVal}')" style="background:#ef4444;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">全確定解除</button>
+    </div>`;
+  }else{
+    h+=`<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
+      <div><span style="color:#92400e;font-weight:bold;">⚠ 未確定 ${courses.length-confirmedCnt}/${courses.length}コース</span> <span style="color:var(--text-sub);font-size:12px;margin-left:8px;">ボタンで一括確定できます</span></div>
+      <button onclick="admBillAreaConfirmAll('${area}','${monthVal}')" style="background:#22c55e;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">✓ 営業所全コース確定</button>
+    </div>`;
+  }
   h+=`<div style="display:flex;gap:12px;margin-bottom:16px;">`;
   h+=`<div style="flex:1;background:#dbeafe;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#1d4ed8;">朝刊合計</div><div style="font-size:20px;font-weight:bold;color:#1d4ed8;">¥${tot.am.toLocaleString()}</div><div style="font-size:10px;color:#1d4ed8;">朝刊店舗 ${tot.amCount}店（延べ）</div></div>`;
   h+=`<div style="flex:1;background:#fae8ff;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#9333ea;">夕刊/競馬合計</div><div style="font-size:20px;font-weight:bold;color:#9333ea;">¥${tot.pm.toLocaleString()}</div><div style="font-size:10px;color:#9333ea;">夕刊 ${tot.pmCount}店 ／ 競馬 ${tot.keibaCount}店</div></div>`;
