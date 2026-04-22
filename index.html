@@ -4469,7 +4469,7 @@ function buildAreaTotalPage(area,monthVal,courses){
     tot.grand+=yumaFee;
   }
 
-  let h=`<div class="bill-page" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:12px;margin-bottom:16px;">`;
+  let h=`<div class="bill-page summary-page" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:12px;margin-bottom:16px;">`;
   h+=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;border-bottom:2px solid var(--primary);padding-bottom:12px;">`;
   h+=`<div><h2 style="margin:0;color:var(--primary);font-size:22px;">請求書（営業所合計）</h2><p style="margin:4px 0;font-size:14px;">令和${reiwa}年 ${m}月分</p></div>`;
   h+=`<div style="text-align:right;"><p style="margin:0;font-size:18px;font-weight:bold;">${area}営業所</p><p style="margin:4px 0;font-size:12px;color:var(--text-sub);">作成日: ${new Date().toLocaleDateString('ja-JP')}</p></div>`;
@@ -4603,7 +4603,8 @@ function admBillSavePDF(){
   const fileName=`R${reiwa}年${m}月度${area}明細`;
 
   const win=window.open('','_blank');
-  win.document.write(`<!DOCTYPE html><html><head><title>${fileName}</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 4px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:2mm;box-sizing:border-box;}@media print{@page{size:A4 landscape;margin:0;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>document.title='${fileName}';setTimeout(()=>window.print(),500)<\/script></body></html>`);
+  const printCss=`body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 4px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:2mm;box-sizing:border-box;}.summary-page{page:summary;font-size:10px!important;padding:4mm!important;border:none!important;}.summary-page h2{font-size:16px!important;}.summary-page table{font-size:10px!important;}.summary-page table th,.summary-page table td{padding:3px 5px!important;}@page{size:A4 landscape;margin:0;}@page summary{size:A4 portrait;margin:5mm;}@media print{div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}.summary-page{page-break-inside:avoid!important;}}`;
+  win.document.write(`<!DOCTYPE html><html><head><title>${fileName}</title><style>${printCss}</style></head><body>${preview.innerHTML}<script>document.title='${fileName}';setTimeout(()=>window.print(),500)<\/script></body></html>`);
   win.document.close();
 }
 
@@ -4611,7 +4612,8 @@ function admBillPrint(){
   const preview=document.getElementById('adm-bill-preview');
   if(!preview||!preview.innerHTML.trim()){alert('先に明細を作成してください');return;}
   const win=window.open('','_blank');
-  win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 4px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:2mm;box-sizing:border-box;}@media print{button{display:none!important;}@page{size:A4 landscape;margin:0;}div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}}</style></head><body>${preview.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
+  const printCss=`body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 4px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:2mm;box-sizing:border-box;}.summary-page{page:summary;font-size:10px!important;padding:4mm!important;border:none!important;}.summary-page h2{font-size:16px!important;}.summary-page table{font-size:10px!important;}.summary-page table th,.summary-page table td{padding:3px 5px!important;}button{display:none!important;}@page{size:A4 landscape;margin:0;}@page summary{size:A4 portrait;margin:5mm;}@media print{div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}.summary-page{page-break-inside:avoid!important;}}`;
+  win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>${printCss}</style></head><body>${preview.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
   win.document.close();
 }
 
