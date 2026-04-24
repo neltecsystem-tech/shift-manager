@@ -5618,18 +5618,24 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
   const timeCol=type==='am'?diagColMap.amTime:type==='pm'?diagColMap.pmTime:diagColMap.keibaTime;
   let shops=diagShopData.filter(r=>r[`col_${courseCol}`]===courseName);
   if(areaFilter)shops=shops.filter(r=>r[`col_${diagColMap.area}`]===areaFilter);
-  if(orderCol!==undefined){
-    shops.sort((a,b)=>{
+  // 店着時間の早い順でソート。時間なしは末尾。同時刻は順番→店舗コードでタイブレーク
+  shops.sort((a,b)=>{
+    const ta=timeCol!==undefined?diagParseTime(a[`col_${timeCol}`]):null;
+    const tb=timeCol!==undefined?diagParseTime(b[`col_${timeCol}`]):null;
+    const va=ta!=null?ta:Infinity;
+    const vb=tb!=null?tb:Infinity;
+    if(va!==vb)return va-vb;
+    if(orderCol!==undefined){
       const oa=parseFloat(a[`col_${orderCol}`]);
       const ob=parseFloat(b[`col_${orderCol}`]);
-      const va=isFinite(oa)?oa:99999;
-      const vb=isFinite(ob)?ob:99999;
-      if(va!==vb)return va-vb;
-      const ca=(a[`col_${diagColMap.code}`]||'').toString();
-      const cb=(b[`col_${diagColMap.code}`]||'').toString();
-      return ca.localeCompare(cb);
-    });
-  }
+      const xa=isFinite(oa)?oa:99999;
+      const xb=isFinite(ob)?ob:99999;
+      if(xa!==xb)return xa-xb;
+    }
+    const ca=(diagColMap.code!==undefined?(a[`col_${diagColMap.code}`]||''):'').toString();
+    const cb=(diagColMap.code!==undefined?(b[`col_${diagColMap.code}`]||''):'').toString();
+    return ca.localeCompare(cb);
+  });
   return shops.map((r,i)=>{
     const lat=parseFloat(r[`col_${diagColMap.lat}`]);
     const lng=parseFloat(r[`col_${diagColMap.lng}`]);
