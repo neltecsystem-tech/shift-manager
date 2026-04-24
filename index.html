@@ -5741,13 +5741,9 @@ function diagRender(){
     h+=`</div></div>`;
 
     // 詳細テーブル
-    h+=`<table style="font-size:13px;"><thead><tr><th style="width:40px;">順</th><th>店舗名</th><th>住所</th><th style="width:80px;">店着</th><th style="width:70px;">間隔</th></tr></thead><tbody>`;
-    let prevT=null;
+    h+=`<table style="font-size:13px;"><thead><tr><th style="width:40px;">順</th><th>店舗名</th><th>住所</th><th style="width:80px;">店着</th></tr></thead><tbody>`;
     shops.forEach(s=>{
       const tm=diagParseTime(s.schedTime);
-      let gap='';
-      if(tm!=null&&prevT!=null)gap=`+${tm-prevT}分`;
-      if(tm!=null)prevT=tm;
       const hasLL=s.lat!=null&&s.lng!=null;
       let addrCell;
       if(s.addr){
@@ -5757,7 +5753,7 @@ function diagRender(){
       }else{
         addrCell=`<span style="color:#cbd5e1;">（緯度経度なし）</span>`;
       }
-      h+=`<tr><td style="text-align:center;color:var(--text-sub);">${s.seq}</td><td style="font-weight:600;">${s.name}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;color:${tm!=null?'#1e40af':'#cbd5e1'};">${s.schedTime||'--:--'}</td><td style="font-size:11px;color:var(--text-sub);">${gap}</td></tr>`;
+      h+=`<tr><td style="text-align:center;color:var(--text-sub);">${s.seq}</td><td style="font-weight:600;">${s.name}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;color:${tm!=null?'#1e40af':'#cbd5e1'};">${s.schedTime||'--:--'}</td></tr>`;
     });
     h+=`</tbody></table></div>`;
   });
