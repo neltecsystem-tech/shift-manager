@@ -5620,16 +5620,23 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
   if(areaFilter)shops=shops.filter(r=>r[`col_${diagColMap.area}`]===areaFilter);
   if(orderCol!==undefined){
     shops.sort((a,b)=>{
-      const oa=parseInt(a[`col_${orderCol}`])||99999;
-      const ob=parseInt(b[`col_${orderCol}`])||99999;
-      return oa-ob;
+      const oa=parseFloat(a[`col_${orderCol}`]);
+      const ob=parseFloat(b[`col_${orderCol}`]);
+      const va=isFinite(oa)?oa:99999;
+      const vb=isFinite(ob)?ob:99999;
+      if(va!==vb)return va-vb;
+      const ca=(a[`col_${diagColMap.code}`]||'').toString();
+      const cb=(b[`col_${diagColMap.code}`]||'').toString();
+      return ca.localeCompare(cb);
     });
   }
   return shops.map((r,i)=>{
     const lat=parseFloat(r[`col_${diagColMap.lat}`]);
     const lng=parseFloat(r[`col_${diagColMap.lng}`]);
+    const rawOrder=orderCol!==undefined?(r[`col_${orderCol}`]||''):'';
     return {
-      order:orderCol!==undefined?(parseInt(r[`col_${orderCol}`])||(i+1)):(i+1),
+      seq:i+1,
+      rawOrder,
       code:diagColMap.code!==undefined?(r[`col_${diagColMap.code}`]||''):'',
       name:diagColMap.name!==undefined?(r[`col_${diagColMap.name}`]||''):'',
       area:diagColMap.area!==undefined?(r[`col_${diagColMap.area}`]||''):'',
@@ -5699,9 +5706,9 @@ function diagRender(){
     shops.forEach((s)=>{
       const tm=diagParseTime(s.schedTime);if(tm==null)return;
       const p=xPct(tm);
-      const label=`${s.order}. ${s.name} ${s.schedTime}`.replace(/"/g,'&quot;');
+      const label=`${s.seq}. ${s.name} ${s.schedTime}`.replace(/"/g,'&quot;');
       h+=`<div title="${label}" style="position:absolute;left:${p}%;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:#3b82f6;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.25);z-index:2;"></div>`;
-      h+=`<div style="position:absolute;left:${p}%;top:4px;transform:translateX(-50%);font-size:9px;color:#1e40af;font-weight:700;">${s.order}</div>`;
+      h+=`<div style="position:absolute;left:${p}%;top:4px;transform:translateX(-50%);font-size:9px;color:#1e40af;font-weight:700;">${s.seq}</div>`;
     });
     h+=`</div></div>`;
 
@@ -5722,7 +5729,7 @@ function diagRender(){
       }else{
         addrCell=`<span style="color:#cbd5e1;">（緯度経度なし）</span>`;
       }
-      h+=`<tr><td style="text-align:center;color:var(--text-sub);">${s.order}</td><td style="font-weight:600;">${s.name}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;color:${tm!=null?'#1e40af':'#cbd5e1'};">${s.schedTime||'--:--'}</td><td style="font-size:11px;color:var(--text-sub);">${gap}</td></tr>`;
+      h+=`<tr><td style="text-align:center;color:var(--text-sub);">${s.seq}</td><td style="font-weight:600;">${s.name}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;color:${tm!=null?'#1e40af':'#cbd5e1'};">${s.schedTime||'--:--'}</td><td style="font-size:11px;color:var(--text-sub);">${gap}</td></tr>`;
     });
     h+=`</tbody></table></div>`;
   });
