@@ -5162,14 +5162,36 @@ function msrRender(){
     });
   }
 
-  // ソート（コース順固定）
-  if(orderCol!==undefined){
-    shops.sort((a,b)=>{
-      const oa=parseInt(a[`col_${orderCol}`])||99999;
-      const ob=parseInt(b[`col_${orderCol}`])||99999;
-      return oa-ob;
-    });
-  }
+  // ソート: 店着時間の早い順（時間なしは末尾）、同時刻は順番→店舗コード
+  const timeColForSort=type==='am'?msrColMap.amTime:type==='keiba'?msrColMap.keibaTime:msrColMap.pmTime;
+  const parseTimeForSort=t=>{
+    if(t==null)return null;
+    const s=String(t).trim();if(!s)return null;
+    let m=s.match(/(\d{1,2}):(\d{2})/);
+    if(m)return parseInt(m[1],10)*60+parseInt(m[2],10);
+    m=s.match(/(\d{1,2})時(\d{1,2})分?/);
+    if(m)return parseInt(m[1],10)*60+parseInt(m[2],10);
+    m=s.match(/^(\d{3,4})$/);
+    if(m){const v=m[1].padStart(4,'0');return parseInt(v.slice(0,2),10)*60+parseInt(v.slice(2,4),10);}
+    return null;
+  };
+  shops.sort((a,b)=>{
+    const ta=timeColForSort!==undefined?parseTimeForSort(a[`col_${timeColForSort}`]):null;
+    const tb=timeColForSort!==undefined?parseTimeForSort(b[`col_${timeColForSort}`]):null;
+    const va=ta!=null?ta:Infinity;
+    const vb=tb!=null?tb:Infinity;
+    if(va!==vb)return va-vb;
+    if(orderCol!==undefined){
+      const oa=parseFloat(a[`col_${orderCol}`]);
+      const ob=parseFloat(b[`col_${orderCol}`]);
+      const xa=isFinite(oa)?oa:99999;
+      const xb=isFinite(ob)?ob:99999;
+      if(xa!==xb)return xa-xb;
+    }
+    const ca=(a[`col_${codeCol}`]||'').toString();
+    const cb=(b[`col_${codeCol}`]||'').toString();
+    return ca.localeCompare(cb);
+  });
   if(!shops.length){document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">該当する店舗がありません</p>';return;}
 
   // GPS有効時: 未到着・近い3店舗のサマリーを上部に表示
