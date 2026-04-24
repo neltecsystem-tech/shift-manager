@@ -5778,52 +5778,108 @@ function diagRender(){
 }
 
 function diagExportPdf(){
-  const content=document.getElementById('diag-content');
-  const summary=document.getElementById('diag-summary');
-  if(!content||!content.innerHTML.trim()||content.querySelector('p')&&!content.querySelector('table')){
-    alert('先にコースを表示してください');return;
-  }
-  const area=document.getElementById('diag-area').value||'全営業所';
+  if(!diagShopData.length){alert('データ未読込');return;}
+  const area=document.getElementById('diag-area').value;
   const type=document.getElementById('diag-type').value;
   const typeLabel=type==='am'?'朝刊':type==='pm'?'夕刊':'競馬';
-  const course=document.getElementById('diag-course').value||'全コース';
+  const course=document.getElementById('diag-course').value;
+  const courseCol=type==='am'?diagColMap.amCourse:type==='pm'?diagColMap.pmCourse:diagColMap.keibaCourse;
+
+  let targetCourses=[];
+  if(course){
+    targetCourses=[course];
+  }else{
+    let pool=diagShopData;
+    if(area)pool=pool.filter(r=>r[`col_${diagColMap.area}`]===area);
+    targetCourses=[...new Set(pool.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  }
+  if(!targetCourses.length){alert('対象コースがありません');return;}
+
   const now=new Date();
   const dateStr=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
-  const title=`ダイヤグラム_${area}_${typeLabel}_${course}_${dateStr}`;
+  const title=`ダイヤグラム_${area||'全営業所'}_${typeLabel}_${course||'全コース'}_${dateStr}`;
 
   const printCss=`
-    @page{size:A4 portrait;margin:8mm;}
+    @page{size:A4 portrait;margin:6mm;}
     *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-    body{font-family:'Meiryo','Hiragino Sans',sans-serif;margin:0;padding:0;color:#1e293b;font-size:11px;}
-    h1{font-size:16px;margin:0 0 4px 0;}
-    .doc-head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:8px;border-bottom:2px solid #1e293b;padding-bottom:4px;}
-    .doc-sub{font-size:11px;color:#475569;}
-    .course-card{border:1px solid #cbd5e1;border-radius:6px;margin-bottom:10px;overflow:hidden;page-break-inside:avoid;}
-    .course-card:not(:first-child){page-break-before:always;}
-    .course-head{background:#f1f5f9;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #cbd5e1;font-size:12px;}
+    body{font-family:'Meiryo','Hiragino Sans',sans-serif;margin:0;padding:0;color:#1e293b;font-size:9px;line-height:1.25;}
+    h1{font-size:13px;margin:0;}
+    .doc-head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:4px;border-bottom:1.5px solid #1e293b;padding-bottom:2px;}
+    .doc-sub{font-size:9px;color:#475569;}
+    .course-card{border:1px solid #cbd5e1;border-radius:4px;margin-bottom:4px;overflow:hidden;page-break-inside:avoid;break-inside:avoid;}
+    .course-card:not(:first-of-type){page-break-before:always;break-before:page;}
+    .course-head{background:#f1f5f9;padding:3px 8px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #cbd5e1;font-size:10px;}
     .course-head b{color:#1d4ed8;}
-    .bar-wrap{padding:18px 14px 22px;background:#fafbfc;border-bottom:1px solid #cbd5e1;}
-    .bar{position:relative;height:40px;background:#fff;border:1px solid #cbd5e1;border-radius:4px;}
-    table{width:100%;border-collapse:collapse;font-size:10.5px;}
-    th,td{padding:3px 6px;border:1px solid #e2e8f0;}
-    th{background:#f8fafc;font-weight:600;text-align:left;}
-    tr td:first-child{text-align:center;color:#64748b;width:8mm;}
-    td[data-col=time]{font-weight:bold;color:#1e40af;width:16mm;}
-    td[data-col=name]{font-weight:600;}
-    .no-print{display:none;}
-    @media print{
-      .course-card{page-break-inside:avoid;}
-    }
+    .bar-wrap{padding:14px 10px 18px;background:#fafbfc;border-bottom:1px solid #cbd5e1;position:relative;}
+    .bar{position:relative;height:26px;background:#fff;border:1px solid #cbd5e1;border-radius:3px;}
+    .bar .tick{position:absolute;top:0;bottom:0;border-left:1px dashed #e2e8f0;}
+    .bar .tick-lbl{position:absolute;bottom:-14px;transform:translateX(-50%);font-size:7.5px;color:#64748b;}
+    .bar .pt{position:absolute;top:50%;transform:translate(-50%,-50%);width:8px;height:8px;background:#3b82f6;border:1.5px solid #fff;border-radius:50%;box-shadow:0 0 0 0.5px #1e40af;}
+    .bar .pt-lbl{position:absolute;top:2px;transform:translateX(-50%);font-size:6.5px;color:#1e40af;font-weight:700;}
+    .tbl-wrap{columns:2;column-gap:4mm;padding:3px 6px;}
+    table{width:100%;border-collapse:collapse;font-size:8.5px;break-inside:avoid;}
+    th,td{padding:1.5px 4px;border:1px solid #e2e8f0;vertical-align:top;}
+    th{background:#f8fafc;font-weight:600;text-align:left;font-size:8px;}
+    td.seq{text-align:center;color:#64748b;width:6mm;}
+    td.time{font-weight:bold;color:#1e40af;width:12mm;white-space:nowrap;}
+    td.name{font-weight:600;}
+    td.addr{font-size:8px;color:#475569;}
   `;
-  const docHead=`<div class="doc-head"><div><h1>🚚 運行ダイヤグラム</h1><div class="doc-sub">${typeLabel} ／ 営業所: ${area} ／ コース: ${course}</div></div><div class="doc-sub">${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} 出力</div></div>`;
-  // コンテンツの見た目を整える: 既存HTMLをそのまま使うが、不要な操作系のスタイルを印刷用に調整
-  const body=(summary?`<div class="doc-sub" style="margin-bottom:6px;">${summary.innerHTML}</div>`:'')+
-    content.innerHTML
-      .replace(/margin-bottom:16px/g,'margin-bottom:10px')
-      .replace(/border-radius:12px/g,'border-radius:6px');
+
+  let body=`<div class="doc-head"><div><h1>🚚 運行ダイヤグラム</h1><div class="doc-sub">${typeLabel} ／ 営業所: ${area||'全営業所'} ／ コース: ${course||'全コース'}</div></div><div class="doc-sub">${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} 出力</div></div>`;
+
+  targetCourses.forEach(cn=>{
+    const shops=diagBuildCourseRoute(type,cn,area);
+    if(!shops.length)return;
+    const times=shops.map(s=>diagParseTime(s.schedTime)).filter(x=>x!=null);
+    let vMin=times.length?Math.min(...times):6*60;
+    let vMax=times.length?Math.max(...times):vMin+60;
+    if(vMax<=vMin)vMax=vMin+60;
+    const span=vMax-vMin;
+    const pad=Math.max(5,Math.round(span*0.06));
+    vMin-=pad;vMax+=pad;
+    const xPct=mm=>((mm-vMin)/(vMax-vMin))*100;
+
+    const firstT=times.length?Math.min(...times):null;
+    const lastT=times.length?Math.max(...times):null;
+    body+=`<div class="course-card">`;
+    body+=`<div class="course-head"><div><b>${cn}</b> ／ ${typeLabel}</div><div class="doc-sub">🏪 ${shops.length}店舗 ／ 🕐 ${firstT!=null?diagFmtMin(firstT):'--:--'} 〜 ${lastT!=null?diagFmtMin(lastT):'--:--'} ／ 店着時間設定: ${times.length}/${shops.length}</div></div>`;
+    body+=`<div class="bar-wrap"><div class="bar">`;
+    const ticks=6;
+    for(let ti=0;ti<=ticks;ti++){
+      const mm=vMin+span*ti/ticks;
+      const pos=(ti/ticks)*100;
+      body+=`<div class="tick" style="left:${pos}%"></div>`;
+      body+=`<div class="tick-lbl" style="left:${pos}%">${diagFmtMin(mm)}</div>`;
+    }
+    shops.forEach(s=>{
+      const tm=diagParseTime(s.schedTime);if(tm==null)return;
+      const p=xPct(tm);
+      body+=`<div class="pt" style="left:${p}%"></div>`;
+      body+=`<div class="pt-lbl" style="left:${p}%">${s.seq}</div>`;
+    });
+    body+=`</div></div>`;
+
+    // 2段組み明細
+    body+=`<div class="tbl-wrap"><table><thead><tr><th>#</th><th>店舗名</th><th>住所</th><th>店着</th></tr></thead><tbody>`;
+    shops.forEach(s=>{
+      let addr=s.addr||'';
+      if(!addr){
+        if(s.lat!=null&&s.lng!=null){
+          const cache=diagGeocodeCacheLoad();
+          addr=cache[diagLatLngKey(s.lat,s.lng)]||`(${s.lat.toFixed(4)}, ${s.lng.toFixed(4)})`;
+        }else{
+          addr='';
+        }
+      }
+      body+=`<tr><td class="seq">${s.seq}</td><td class="name">${s.name||''}</td><td class="addr">${addr}</td><td class="time">${s.schedTime||'--:--'}</td></tr>`;
+    });
+    body+=`</tbody></table></div>`;
+    body+=`</div>`;
+  });
 
   const win=window.open('','_blank');
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${printCss}</style></head><body>${docHead}${body}<script>document.title=${JSON.stringify(title)};setTimeout(()=>window.print(),400);<\/script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${printCss}</style></head><body>${body}<script>document.title=${JSON.stringify(title)};setTimeout(()=>window.print(),500);<\/script></body></html>`);
   win.document.close();
 }
 
