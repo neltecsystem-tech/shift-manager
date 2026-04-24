@@ -433,7 +433,10 @@ tbody tr:hover { background:var(--primary-light); }
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:8px;">
         <h2 style="margin-bottom:0;">🚚 ダイヤグラム <span style="font-size:13px;color:var(--text-sub);font-weight:normal;">店舗マスタ・店着時間ベースの運行図</span></h2>
-        <button onclick="diagLoad()" style="background:#3b82f6;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">🔄 再読み込み</button>
+        <div style="display:flex;gap:6px;">
+          <button onclick="diagExportPdf()" style="background:#ef4444;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">📄 PDF</button>
+          <button onclick="diagLoad()" style="background:#3b82f6;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">🔄 再読み込み</button>
+        </div>
       </div>
       <div class="filters">
         <div><label>営業所</label><select id="diag-area" onchange="diagFilter()"><option value="">すべて</option></select></div>
@@ -5772,6 +5775,56 @@ function diagRender(){
       await new Promise(r=>setTimeout(r,130));
     }
   })();
+}
+
+function diagExportPdf(){
+  const content=document.getElementById('diag-content');
+  const summary=document.getElementById('diag-summary');
+  if(!content||!content.innerHTML.trim()||content.querySelector('p')&&!content.querySelector('table')){
+    alert('先にコースを表示してください');return;
+  }
+  const area=document.getElementById('diag-area').value||'全営業所';
+  const type=document.getElementById('diag-type').value;
+  const typeLabel=type==='am'?'朝刊':type==='pm'?'夕刊':'競馬';
+  const course=document.getElementById('diag-course').value||'全コース';
+  const now=new Date();
+  const dateStr=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+  const title=`ダイヤグラム_${area}_${typeLabel}_${course}_${dateStr}`;
+
+  const printCss=`
+    @page{size:A4 portrait;margin:8mm;}
+    *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    body{font-family:'Meiryo','Hiragino Sans',sans-serif;margin:0;padding:0;color:#1e293b;font-size:11px;}
+    h1{font-size:16px;margin:0 0 4px 0;}
+    .doc-head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:8px;border-bottom:2px solid #1e293b;padding-bottom:4px;}
+    .doc-sub{font-size:11px;color:#475569;}
+    .course-card{border:1px solid #cbd5e1;border-radius:6px;margin-bottom:10px;overflow:hidden;page-break-inside:avoid;}
+    .course-card:not(:first-child){page-break-before:always;}
+    .course-head{background:#f1f5f9;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #cbd5e1;font-size:12px;}
+    .course-head b{color:#1d4ed8;}
+    .bar-wrap{padding:18px 14px 22px;background:#fafbfc;border-bottom:1px solid #cbd5e1;}
+    .bar{position:relative;height:40px;background:#fff;border:1px solid #cbd5e1;border-radius:4px;}
+    table{width:100%;border-collapse:collapse;font-size:10.5px;}
+    th,td{padding:3px 6px;border:1px solid #e2e8f0;}
+    th{background:#f8fafc;font-weight:600;text-align:left;}
+    tr td:first-child{text-align:center;color:#64748b;width:8mm;}
+    td[data-col=time]{font-weight:bold;color:#1e40af;width:16mm;}
+    td[data-col=name]{font-weight:600;}
+    .no-print{display:none;}
+    @media print{
+      .course-card{page-break-inside:avoid;}
+    }
+  `;
+  const docHead=`<div class="doc-head"><div><h1>🚚 運行ダイヤグラム</h1><div class="doc-sub">${typeLabel} ／ 営業所: ${area} ／ コース: ${course}</div></div><div class="doc-sub">${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} 出力</div></div>`;
+  // コンテンツの見た目を整える: 既存HTMLをそのまま使うが、不要な操作系のスタイルを印刷用に調整
+  const body=(summary?`<div class="doc-sub" style="margin-bottom:6px;">${summary.innerHTML}</div>`:'')+
+    content.innerHTML
+      .replace(/margin-bottom:16px/g,'margin-bottom:10px')
+      .replace(/border-radius:12px/g,'border-radius:6px');
+
+  const win=window.open('','_blank');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${printCss}</style></head><body>${docHead}${body}<script>document.title=${JSON.stringify(title)};setTimeout(()=>window.print(),400);<\/script></body></html>`);
+  win.document.close();
 }
 
 // showView拡張: 測定画面初期化
