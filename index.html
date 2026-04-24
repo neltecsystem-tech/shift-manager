@@ -432,14 +432,13 @@ tbody tr:hover { background:var(--primary-light); }
   <div id="view-diagram" class="hidden">
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:8px;">
-        <h2 style="margin-bottom:0;">🚚 ダイヤグラム <span style="font-size:13px;color:var(--text-sub);font-weight:normal;">測定記録ベースの運行図</span></h2>
+        <h2 style="margin-bottom:0;">🚚 ダイヤグラム <span style="font-size:13px;color:var(--text-sub);font-weight:normal;">店舗マスタ・店着時間ベースの運行図</span></h2>
         <button onclick="diagLoad()" style="background:#3b82f6;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">🔄 再読み込み</button>
       </div>
       <div class="filters">
-        <div><label>日付</label><input type="date" id="diag-date" onchange="diagRender()"></div>
-        <div><label>営業所</label><select id="diag-area" onchange="diagRender()"><option value="">すべて</option></select></div>
+        <div><label>営業所</label><select id="diag-area" onchange="diagFilter()"><option value="">すべて</option></select></div>
+        <div><label>区分</label><select id="diag-type" onchange="diagFilter()"><option value="am">朝刊</option><option value="pm">夕刊</option><option value="keiba">競馬</option></select></div>
         <div><label>コース</label><select id="diag-course" onchange="diagRender()"><option value="">すべて</option></select></div>
-        <div><label>スタッフ</label><select id="diag-staff" onchange="diagRender()"><option value="">すべて</option></select></div>
       </div>
       <div id="diag-summary" style="margin-bottom:12px;color:var(--text-sub);font-size:13px;"></div>
       <div id="diag-content"></div>
@@ -5504,8 +5503,10 @@ function msrExport(){
 }
 
 // ===== ダイヤグラム(運行図) =====
-let diagMsrData=[];
-let diagShopIndex={};
+// 店舗マスタの「コース・順番・店着時間・緯度経度」から運行ダイヤを描画
+let diagShopData=[];
+let diagHeaders=[];
+let diagColMap={};
 let diagInited=false;
 const DIAG_GEOCODE_CACHE_KEY='shiftmgr_reverse_geocode_cache_v1';
 let diagGeocodeCache=null;
@@ -5539,179 +5540,199 @@ async function diagReverseGeocode(lat,lng){
 }
 
 function diagInit(){
-  const dateInput=document.getElementById('diag-date');
-  if(!dateInput.value){
-    const now=new Date();
-    dateInput.value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
-  }
   diagInited=true;
-  diagLoad();
+  if(!diagShopData.length)diagLoad();
+  else diagFilter();
 }
 
 async function diagLoad(){
   const content=document.getElementById('diag-content');
-  content.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">読み込み中...</p>';
+  content.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">店舗マスタ読み込み中...</p>';
   try{
-    const [mRes,sRes]=await Promise.all([
-      invApi({action:'list_measure'}),
-      fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})}).then(r=>r.json()),
-    ]);
-    diagMsrData=mRes.records||[];
-    const hdrs=sRes.headers||[];
-    let nameIdx=-1,addrIdx=-1,areaIdx=-1,latIdx=-1,lngIdx=-1,codeIdx=-1;
-    hdrs.forEach((h,i)=>{
-      if(h==='店舗名')nameIdx=i;
-      if(h==='店舗コード')codeIdx=i;
-      if(h==='住所'||(h.includes&&h.includes('住所')))addrIdx=i;
-      if(h==='営業所')areaIdx=i;
-      if(h==='緯度')latIdx=i;
-      if(h==='経度')lngIdx=i;
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})});
+    const json=await resp.json();
+    if(json.error)throw new Error(json.error);
+    diagHeaders=json.headers||[];
+    diagShopData=json.records||[];
+    diagColMap={};
+    diagHeaders.forEach((h,i)=>{
+      if(h.includes('営業所'))diagColMap.area=i;
+      if(h.includes('店舗コード'))diagColMap.code=i;
+      if(h.includes('店舗名'))diagColMap.name=i;
+      if(h==='住所'||h.includes('住所'))diagColMap.addr=i;
+      if(h.includes('朝刊コース'))diagColMap.amCourse=i;
+      if(h.includes('朝刊順番'))diagColMap.amOrder=i;
+      if(h.includes('夕刊コース'))diagColMap.pmCourse=i;
+      if(h.includes('夕刊順番'))diagColMap.pmOrder=i;
+      if(h.includes('競馬コース'))diagColMap.keibaCourse=i;
+      if(h.includes('競馬順番'))diagColMap.keibaOrder=i;
+      if(i===13&&h.includes('店着時間'))diagColMap.amTime=i;
+      if(i===18&&h.includes('店着時間'))diagColMap.pmTime=i;
+      if(i===24&&h.includes('店着時間'))diagColMap.keibaTime=i;
+      if(h==='緯度')diagColMap.lat=i;
+      if(h==='経度')diagColMap.lng=i;
     });
-    diagShopIndex={};
-    (sRes.records||[]).forEach(r=>{
-      const name=(r[`col_${nameIdx}`]||'').toString().trim();if(!name)return;
-      const addr=addrIdx>=0?(r[`col_${addrIdx}`]||'').toString().trim():'';
-      const area=areaIdx>=0?(r[`col_${areaIdx}`]||'').toString().trim():'';
-      const latS=latIdx>=0?(r[`col_${latIdx}`]||'').toString().trim():'';
-      const lngS=lngIdx>=0?(r[`col_${lngIdx}`]||'').toString().trim():'';
-      const lat=parseFloat(latS),lng=parseFloat(lngS);
-      diagShopIndex[name]={addr,area,lat:isFinite(lat)?lat:null,lng:isFinite(lng)?lng:null};
-    });
-    const areas=[...new Set(diagMsrData.map(r=>{const i=diagShopIndex[r.shop_name];return i?i.area:'';}).filter(Boolean))].sort();
-    const courses=[...new Set(diagMsrData.map(r=>r.course).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
-    const staffs=[...new Set(diagMsrData.map(r=>r.staff).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+    const areas=[...new Set(diagShopData.map(r=>r[`col_${diagColMap.area}`]).filter(Boolean))];
     const aSel=document.getElementById('diag-area');
-    const cSel=document.getElementById('diag-course');
-    const sSel=document.getElementById('diag-staff');
-    const aVal=aSel.value,cVal=cSel.value,sVal=sSel.value;
+    const aVal=aSel.value;
     aSel.innerHTML='<option value="">すべて</option>'+areas.map(a=>`<option>${a}</option>`).join('');
-    cSel.innerHTML='<option value="">すべて</option>'+courses.map(c=>`<option>${c}</option>`).join('');
-    sSel.innerHTML='<option value="">すべて</option>'+staffs.map(s=>`<option>${s}</option>`).join('');
-    aSel.value=aVal;cSel.value=cVal;sSel.value=sVal;
-    diagRender();
+    aSel.value=aVal;
+    diagFilter();
   }catch(e){
     content.innerHTML=`<p style="color:var(--danger);padding:20px;">読み込みエラー: ${e.message}</p>`;
   }
 }
 
-function diagParseTime(t){
-  if(!t)return null;
-  const m=String(t).match(/(\d{1,2}):(\d{2})/);
-  if(!m)return null;
-  return parseInt(m[1],10)*60+parseInt(m[2],10);
+function diagFilter(){
+  const area=document.getElementById('diag-area').value;
+  const type=document.getElementById('diag-type').value;
+  const courseCol=type==='am'?diagColMap.amCourse:type==='pm'?diagColMap.pmCourse:diagColMap.keibaCourse;
+  const cSel=document.getElementById('diag-course');
+  const cVal=cSel.value;
+  if(courseCol===undefined){cSel.innerHTML='<option value="">該当列なし</option>';diagRender();return;}
+  let filtered=diagShopData;
+  if(area)filtered=filtered.filter(r=>r[`col_${diagColMap.area}`]===area);
+  const courses=[...new Set(filtered.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  cSel.innerHTML='<option value="">すべて</option>'+courses.map(c=>`<option>${c}</option>`).join('');
+  if(cVal&&courses.includes(cVal))cSel.value=cVal;
+  diagRender();
 }
-function diagFmtMin(mm){const hh=Math.floor(mm/60),mn=Math.round(mm%60);return `${String(hh).padStart(2,'0')}:${String(mn).padStart(2,'0')}`;}
+
+function diagParseTime(t){
+  if(t==null)return null;
+  const s=String(t).trim();if(!s)return null;
+  // "6:15" "06:15" "6時15分" "615" などに対応
+  let m=s.match(/(\d{1,2}):(\d{2})/);
+  if(m)return parseInt(m[1],10)*60+parseInt(m[2],10);
+  m=s.match(/(\d{1,2})時(\d{1,2})分?/);
+  if(m)return parseInt(m[1],10)*60+parseInt(m[2],10);
+  m=s.match(/^(\d{3,4})$/);
+  if(m){const v=m[1].padStart(4,'0');return parseInt(v.slice(0,2),10)*60+parseInt(v.slice(2,4),10);}
+  return null;
+}
+function diagFmtMin(mm){mm=((mm%1440)+1440)%1440;const hh=Math.floor(mm/60),mn=Math.round(mm%60);return `${String(hh).padStart(2,'0')}:${String(mn).padStart(2,'0')}`;}
+
+function diagBuildCourseRoute(type,courseName,areaFilter){
+  const courseCol=type==='am'?diagColMap.amCourse:type==='pm'?diagColMap.pmCourse:diagColMap.keibaCourse;
+  const orderCol=type==='am'?diagColMap.amOrder:type==='pm'?diagColMap.pmOrder:diagColMap.keibaOrder;
+  const timeCol=type==='am'?diagColMap.amTime:type==='pm'?diagColMap.pmTime:diagColMap.keibaTime;
+  let shops=diagShopData.filter(r=>r[`col_${courseCol}`]===courseName);
+  if(areaFilter)shops=shops.filter(r=>r[`col_${diagColMap.area}`]===areaFilter);
+  if(orderCol!==undefined){
+    shops.sort((a,b)=>{
+      const oa=parseInt(a[`col_${orderCol}`])||99999;
+      const ob=parseInt(b[`col_${orderCol}`])||99999;
+      return oa-ob;
+    });
+  }
+  return shops.map((r,i)=>{
+    const lat=parseFloat(r[`col_${diagColMap.lat}`]);
+    const lng=parseFloat(r[`col_${diagColMap.lng}`]);
+    return {
+      order:orderCol!==undefined?(parseInt(r[`col_${orderCol}`])||(i+1)):(i+1),
+      code:diagColMap.code!==undefined?(r[`col_${diagColMap.code}`]||''):'',
+      name:diagColMap.name!==undefined?(r[`col_${diagColMap.name}`]||''):'',
+      area:diagColMap.area!==undefined?(r[`col_${diagColMap.area}`]||''):'',
+      addr:diagColMap.addr!==undefined?(r[`col_${diagColMap.addr}`]||''):'',
+      schedTime:timeCol!==undefined?(r[`col_${timeCol}`]||''):'',
+      lat:isFinite(lat)?lat:null,
+      lng:isFinite(lng)?lng:null,
+    };
+  });
+}
 
 function diagRender(){
   const content=document.getElementById('diag-content');
   const summary=document.getElementById('diag-summary');
-  const dateVal=document.getElementById('diag-date').value;
-  const areaVal=document.getElementById('diag-area').value;
-  const courseVal=document.getElementById('diag-course').value;
-  const staffVal=document.getElementById('diag-staff').value;
+  if(!diagShopData.length){content.innerHTML='';summary.innerHTML='';return;}
+  const area=document.getElementById('diag-area').value;
+  const type=document.getElementById('diag-type').value;
+  const course=document.getElementById('diag-course').value;
+  const typeLabel=type==='am'?'朝刊':type==='pm'?'夕刊':'競馬';
+  const courseCol=type==='am'?diagColMap.amCourse:type==='pm'?diagColMap.pmCourse:diagColMap.keibaCourse;
 
-  let filtered=diagMsrData;
-  if(dateVal){
-    const dFmt=dateVal.replace(/-/g,'/').replace(/^0/,'').replace(/\/0/g,'/');
-    filtered=filtered.filter(r=>{const rd=(r.date||'').replace(/-/g,'/').replace(/^0/,'').replace(/\/0/g,'/');return rd===dFmt||r.date===dateVal;});
+  let targetCourses=[];
+  if(course){
+    targetCourses=[course];
+  }else{
+    let pool=diagShopData;
+    if(area)pool=pool.filter(r=>r[`col_${diagColMap.area}`]===area);
+    targetCourses=[...new Set(pool.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   }
-  if(courseVal)filtered=filtered.filter(r=>r.course===courseVal);
-  if(staffVal)filtered=filtered.filter(r=>r.staff===staffVal);
-  if(areaVal)filtered=filtered.filter(r=>{const info=diagShopIndex[r.shop_name];return info&&info.area===areaVal;});
+  if(!targetCourses.length){content.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">該当コースがありません</p>';summary.innerHTML='';return;}
 
-  const groups={};
-  filtered.forEach(r=>{
-    const key=`${r.date}|${r.course}|${r.staff}|${r.start_time}`;
-    if(!groups[key])groups[key]={date:r.date,course:r.course,type:r.type,start_time:r.start_time,end_time:r.end_time,staff:r.staff,shops:[],isProgress:(r.start_time||'').includes('途中')};
-    groups[key].shops.push({name:r.shop_name,time:r.arrival_time});
-    if(r.end_time&&!groups[key].end_time)groups[key].end_time=r.end_time;
-  });
-  const gList=Object.values(groups).sort((a,b)=>(b.date+(b.start_time||'')).localeCompare(a.date+(a.start_time||'')));
-
-  summary.innerHTML=`検索結果: <b>${gList.length}</b>便 / 測定記録 ${filtered.length}件`;
-
-  if(!gList.length){content.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">該当する測定データがありません</p>';return;}
+  const totalShops=targetCourses.reduce((acc,c)=>acc+diagBuildCourseRoute(type,c,area).length,0);
+  summary.innerHTML=`${typeLabel} ／ <b>${targetCourses.length}</b>コース ／ 合計 <b>${totalShops}</b>店舗${area?` ／ 営業所: <b>${area}</b>`:''}`;
 
   let h='';
-  gList.forEach(g=>{
-    const st=diagParseTime(g.start_time);
-    const et=diagParseTime(g.end_time);
-    const arrMins=g.shops.map(s=>diagParseTime(s.time)).filter(x=>x!=null);
-    let minT=st!=null?st:(arrMins.length?Math.min(...arrMins):0);
-    let maxT=et!=null?et:(arrMins.length?Math.max(...arrMins):minT+60);
-    if(maxT<=minT)maxT=minT+60;
-    const pad=Math.max(2,Math.round((maxT-minT)*0.04));
-    const vMin=minT-pad,vMax=maxT+pad;
+  targetCourses.forEach(cn=>{
+    const shops=diagBuildCourseRoute(type,cn,area);
+    if(!shops.length)return;
+    const times=shops.map(s=>diagParseTime(s.schedTime)).filter(x=>x!=null);
+    let vMin=times.length?Math.min(...times):6*60;
+    let vMax=times.length?Math.max(...times):vMin+60;
+    if(vMax<=vMin)vMax=vMin+60;
+    const span=vMax-vMin;
+    const pad=Math.max(5,Math.round(span*0.06));
+    vMin-=pad;vMax+=pad;
     const xPct=mm=>((mm-vMin)/(vMax-vMin))*100;
 
-    const badge=g.isProgress?'<span style="background:#fefce8;color:#a16207;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;">途中</span>':'<span style="background:#dcfce7;color:#166534;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;">確定</span>';
-    const doneCnt=g.shops.filter(s=>s.time).length;
-
+    const timedCnt=times.length;
     h+=`<div style="background:#fff;border:1px solid var(--border);border-radius:12px;margin-bottom:16px;overflow:hidden;">`;
     h+=`<div style="padding:12px 16px;background:#f8fafc;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--border);">`;
-    h+=`<div><b>${g.date||'-'}</b> ／ <b style="color:var(--primary);">${g.course||'-'}</b> ／ ${g.type||''} ${badge}</div>`;
-    h+=`<div style="font-size:13px;color:var(--text-sub);">👤 ${g.staff||'-'} ／ 🕐 ${(g.start_time||'').replace('(途中)','')} → ${(g.end_time||'').replace('(途中)','')} ／ 🏪 ${doneCnt}/${g.shops.length}店</div>`;
+    h+=`<div><b style="color:var(--primary);">${cn}</b> ／ ${typeLabel}</div>`;
+    const firstT=times.length?Math.min(...times):null;
+    const lastT=times.length?Math.max(...times):null;
+    h+=`<div style="font-size:13px;color:var(--text-sub);">🏪 ${shops.length}店舗 ／ 🕐 ${firstT!=null?diagFmtMin(firstT):'--:--'} 〜 ${lastT!=null?diagFmtMin(lastT):'--:--'} ／ 店着時間設定: ${timedCnt}/${shops.length}</div>`;
     h+=`</div>`;
 
     // 運行バー
     h+=`<div style="padding:22px 20px 28px;background:#fafbfc;border-bottom:1px solid var(--border);">`;
-    h+=`<div style="position:relative;height:48px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;">`;
+    h+=`<div style="position:relative;height:52px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;">`;
     const ticks=6;
     for(let ti=0;ti<=ticks;ti++){
-      const mm=vMin+(vMax-vMin)*ti/ticks;
+      const mm=vMin+span*ti/ticks;
       const pos=(ti/ticks)*100;
       h+=`<div style="position:absolute;left:${pos}%;top:0;bottom:0;border-left:1px dashed #e2e8f0;"></div>`;
-      h+=`<div style="position:absolute;left:${pos}%;bottom:-20px;transform:translateX(-50%);font-size:10px;color:var(--text-sub);">${diagFmtMin(mm)}</div>`;
+      h+=`<div style="position:absolute;left:${pos}%;bottom:-20px;transform:translateX(-50%);font-size:10px;color:var(--text-sub);">${diagFmtMin(mm+0)}</div>`;
     }
-    if(st!=null){
-      const p=xPct(st);
-      h+=`<div style="position:absolute;left:${p}%;top:0;bottom:0;border-left:2px solid #16a34a;"></div>`;
-      h+=`<div style="position:absolute;left:${p}%;top:-16px;transform:translateX(-50%);font-size:10px;color:#16a34a;font-weight:600;white-space:nowrap;">▶ 開始</div>`;
-    }
-    if(et!=null){
-      const p=xPct(et);
-      h+=`<div style="position:absolute;left:${p}%;top:0;bottom:0;border-left:2px solid #dc2626;"></div>`;
-      h+=`<div style="position:absolute;left:${p}%;top:-16px;transform:translateX(-50%);font-size:10px;color:#dc2626;font-weight:600;white-space:nowrap;">■ 終了</div>`;
-    }
-    g.shops.forEach((s,i)=>{
-      const tm=diagParseTime(s.time);if(tm==null)return;
+    shops.forEach((s)=>{
+      const tm=diagParseTime(s.schedTime);if(tm==null)return;
       const p=xPct(tm);
-      const label=`${i+1}. ${s.name||''} ${s.time||''}`.replace(/"/g,'&quot;');
-      h+=`<div title="${label}" style="position:absolute;left:${p}%;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:#3b82f6;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.25);cursor:pointer;z-index:2;"></div>`;
-      h+=`<div style="position:absolute;left:${p}%;top:4px;transform:translateX(-50%);font-size:9px;color:#1e40af;font-weight:700;">${i+1}</div>`;
+      const label=`${s.order}. ${s.name} ${s.schedTime}`.replace(/"/g,'&quot;');
+      h+=`<div title="${label}" style="position:absolute;left:${p}%;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:#3b82f6;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.25);z-index:2;"></div>`;
+      h+=`<div style="position:absolute;left:${p}%;top:4px;transform:translateX(-50%);font-size:9px;color:#1e40af;font-weight:700;">${s.order}</div>`;
     });
     h+=`</div></div>`;
 
     // 詳細テーブル
-    h+=`<table style="font-size:13px;"><thead><tr><th style="width:40px;">#</th><th>店舗名</th><th>住所</th><th style="width:80px;">到着</th><th style="width:70px;">経過</th></tr></thead><tbody>`;
+    h+=`<table style="font-size:13px;"><thead><tr><th style="width:40px;">順</th><th>店舗名</th><th>住所</th><th style="width:80px;">店着</th><th style="width:70px;">間隔</th></tr></thead><tbody>`;
     let prevT=null;
-    g.shops.forEach((s,i)=>{
-      const info=diagShopIndex[s.name]||{};
-      const addr=info.addr||'';
-      const hasLL=info.lat!=null&&info.lng!=null;
-      const tm=diagParseTime(s.time);
-      let elapsed='';
-      if(tm!=null&&prevT!=null)elapsed=`+${tm-prevT}分`;
+    shops.forEach(s=>{
+      const tm=diagParseTime(s.schedTime);
+      let gap='';
+      if(tm!=null&&prevT!=null)gap=`+${tm-prevT}分`;
       if(tm!=null)prevT=tm;
+      const hasLL=s.lat!=null&&s.lng!=null;
       let addrCell;
-      if(addr){
-        addrCell=`<span style="color:#475569;">${addr}</span>`;
+      if(s.addr){
+        addrCell=`<span style="color:#475569;">${s.addr}</span>`;
       }else if(hasLL){
-        addrCell=`<span class="diag-addr" data-lat="${info.lat}" data-lng="${info.lng}" style="color:#94a3b8;font-style:italic;">住所検索中...</span>`;
+        addrCell=`<span class="diag-addr" data-lat="${s.lat}" data-lng="${s.lng}" style="color:#94a3b8;font-style:italic;">住所検索中...</span>`;
       }else{
         addrCell=`<span style="color:#cbd5e1;">（緯度経度なし）</span>`;
       }
-      const late=tm==null;
-      h+=`<tr style="${late?'color:#dc2626;':''}"><td>${i+1}</td><td style="font-weight:600;">${s.name||''}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;">${s.time||'未到着'}</td><td style="font-size:11px;color:var(--text-sub);">${elapsed}</td></tr>`;
+      h+=`<tr><td style="text-align:center;color:var(--text-sub);">${s.order}</td><td style="font-weight:600;">${s.name}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;color:${tm!=null?'#1e40af':'#cbd5e1'};">${s.schedTime||'--:--'}</td><td style="font-size:11px;color:var(--text-sub);">${gap}</td></tr>`;
     });
     h+=`</tbody></table></div>`;
   });
   content.innerHTML=h;
 
-  // 住所なしの店舗を逆ジオコーディング（キャッシュ優先・逐次）
+  // 住所なしを逆ジオコーディング
   const pending=Array.from(content.querySelectorAll('.diag-addr'));
   (async()=>{
     for(const el of pending){
+      if(!el.isConnected)continue;
       const lat=parseFloat(el.dataset.lat),lng=parseFloat(el.dataset.lng);
       if(!isFinite(lat)||!isFinite(lng))continue;
       const addr=await diagReverseGeocode(lat,lng);
