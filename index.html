@@ -513,6 +513,10 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>表示</label><select id="adm-rev-view" onchange="admRevRender()"><option value="all">全営業所合計</option><option value="area">営業所別</option><option value="course">コース別</option><option value="daily">コース別日次</option></select></div>
           <div><label>営業所</label><select id="adm-rev-area" onchange="admRevRender()"><option value="">全て</option></select></div>
           <div id="adm-rev-course-wrap" style="display:none;"><label>コース</label><select id="adm-rev-course" onchange="admRevRender()"><option value="">選択</option></select></div>
+          <div style="margin-left:auto;display:flex;align-items:flex-end;gap:8px;">
+            <input type="month" id="adm-bulk-before" value="2026-04" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;" />
+            <button onclick="admBillBulkConfirmBefore(document.getElementById('adm-bulk-before').value)" style="background:#7c3aed;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📋 これより前を一括確定</button>
+          </div>
         </div>
         <div id="adm-rev-summary" style="margin-top:8px;"></div>
         <div id="adm-rev-detail" style="margin-top:12px;"></div>
@@ -4147,6 +4151,122 @@ async function admBillUnconfirm(area,course,monthVal){
   }catch(e){alert('解除に失敗しました: '+e.message);}
 }
 
+// 確定済み売上の手動編集
+function admBillEditConfirmed(area,course,monthVal){
+  const c=getConfirmedSale(monthVal,area,course);
+  if(!c){alert('確定済み記録が見つかりません');return;}
+  // 既存モーダルがあれば削除
+  const old=document.getElementById('edit-conf-modal');
+  if(old)old.remove();
+  const html=`
+    <div id="edit-conf-modal" style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div style="background:#fff;border-radius:12px;padding:20px;width:90%;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+        <div style="font-size:16px;font-weight:700;margin-bottom:6px;">✏️ 確定値を編集</div>
+        <div style="font-size:12px;color:#64748B;margin-bottom:14px;">${monthVal} / ${area} / ${course}</div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:10px 12px;align-items:center;font-size:13px;">
+          <label>合計金額 (grand_total)</label>
+          <input type="number" id="edit-conf-grand" value="${Number(c.grand_total)||0}" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;text-align:right;" />
+          <label>朝刊小計 (am_total)</label>
+          <input type="number" id="edit-conf-am" value="${Number(c.am_total)||0}" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;text-align:right;" />
+          <label>夕刊小計 (pm_total)</label>
+          <input type="number" id="edit-conf-pm" value="${Number(c.pm_total)||0}" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;text-align:right;" />
+        </div>
+        <div style="margin-top:10px;font-size:11px;color:#94a3b8;">※ 合計 = 朝刊+夕刊 で整合性を取ることを推奨</div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+          <button onclick="document.getElementById('edit-conf-modal').remove()" style="padding:8px 16px;background:#e2e8f0;color:#1e293b;border:none;border-radius:6px;cursor:pointer;font-weight:600;">キャンセル</button>
+          <button onclick="admBillSaveEditedConfirmed('${area}','${course}','${monthVal}')" style="padding:8px 16px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">保存</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+
+async function admBillSaveEditedConfirmed(area,course,monthVal){
+  const grand_total=Number(document.getElementById('edit-conf-grand').value)||0;
+  const am_total=Number(document.getElementById('edit-conf-am').value)||0;
+  const pm_total=Number(document.getElementById('edit-conf-pm').value)||0;
+  try{
+    await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course,grand_total,am_total,pm_total}});
+    confirmedSalesCache=null;
+    await loadConfirmedSales();
+    document.getElementById('edit-conf-modal')?.remove();
+    alert('確定値を更新しました');
+    admBillGenerate();
+  }catch(e){alert('保存失敗: '+e.message);}
+}
+
+// 過去月一括確定 (指定月より前の全月・全営業所・全コースを確定)
+async function admBillBulkConfirmBefore(beforeMonth){
+  if(!beforeMonth)beforeMonth='2026-04';
+  if(!window.confirm(`${beforeMonth} より前の月をすべて確定します。\n各月・全営業所・全コースについて売上を計算し、未確定のものを確定済みに登録します。\n\n※ 既に確定済みのものはスキップされます。\n※ 数分かかる場合があります。\n\n続行しますか？`))return;
+  try{
+    if(!admBillShopData)await admBillInit();
+    if(!billPricesCache)await loadBillPrices();
+    await loadConfirmedSales();
+
+    // 稼働記録から全月を取得
+    const wRes=await invApi({action:'list_work'});
+    const monthSet=new Set();
+    (wRes.records||[]).forEach(w=>{
+      const d=w.date||'';
+      const m=d.match(/^(\d{4})[\/\-](\d{1,2})/);
+      if(m){monthSet.add(`${m[1]}-${String(Number(m[2])).padStart(2,'0')}`);}
+    });
+    const months=[...monthSet].filter(ym=>ym<beforeMonth).sort();
+    if(!months.length){alert('対象月がありません (稼働記録に該当月のデータが無い)');return;}
+
+    // 営業所別コースリストを構築
+    const records=admBillShopData.records||[];
+    const cols=admBillCols();
+    const allAreas=['立川','城北','川越','川崎高津'];
+    const areaCoursesMap={};
+    for(const area of allAreas){
+      const bulkAreas=area==='城北'?['城北','池袋']:[area];
+      const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&bulkAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+      const allC=new Set();
+      filtered.forEach(r=>{
+        if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
+        if(r[`col_${cols.pmCourse}`])allC.add(r[`col_${cols.pmCourse}`]);
+        if(r[`col_${cols.keibaCourse}`])allC.add(r[`col_${cols.keibaCourse}`]);
+      });
+      areaCoursesMap[area]=[...allC].filter(c=>bulkAreas.some(a=>c.includes(a))).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+    }
+    const totalOps=months.length*allAreas.reduce((s,a)=>s+areaCoursesMap[a].length,0);
+
+    // 進捗表示
+    const progEl=document.createElement('div');
+    progEl.id='bulk-progress';
+    progEl.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border:2px solid #16a34a;border-radius:12px;padding:24px;z-index:99999;font-size:14px;box-shadow:0 20px 60px rgba(0,0,0,0.3);min-width:360px;text-align:center;';
+    progEl.innerHTML='<div style="font-weight:700;font-size:16px;margin-bottom:10px;">処理中...</div><div id="bulk-prog-bar" style="height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;margin-bottom:10px;"><div id="bulk-prog-fill" style="height:100%;background:#16a34a;width:0%;transition:width 0.2s;"></div></div><div id="bulk-prog-text">準備中...</div>';
+    document.body.appendChild(progEl);
+
+    let done=0,saved=0,skipped=0,failed=0;
+    for(const monthVal of months){
+      for(const area of allAreas){
+        for(const course of areaCoursesMap[area]){
+          if(getConfirmedSale(monthVal,area,course)){skipped++;done++;}
+          else{
+            try{
+              const r=admBillRenderWithTotals(area,course,monthVal);
+              await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course,grand_total:r.grandTotal,am_total:r.totalAmSum,pm_total:r.totalPmSum}});
+              saved++;
+            }catch(e){failed++;console.error('Failed:',monthVal,area,course,e);}
+            done++;
+          }
+          const pct=Math.floor(done/totalOps*100);
+          document.getElementById('bulk-prog-fill').style.width=pct+'%';
+          document.getElementById('bulk-prog-text').innerHTML=`${pct}% (${done}/${totalOps})<br><small style="color:#64748b;">${monthVal} / ${area} / ${course}</small>`;
+        }
+      }
+    }
+    progEl.remove();
+    confirmedSalesCache=null;
+    await loadConfirmedSales();
+    alert(`✓ 一括確定 完了\n対象月: ${months.length}ヶ月 (${months[0]}〜${months[months.length-1]})\n新規確定: ${saved}件\nスキップ(既確定): ${skipped}件\n失敗: ${failed}件`);
+    if(typeof admRevLoad==='function')admRevLoad();
+  }catch(e){alert('一括確定エラー: '+e.message);console.error(e);document.getElementById('bulk-progress')?.remove();}
+}
+
 async function admBillGenerate(){
   try{
   if(!admBillShopData)await admBillInit();
@@ -4161,9 +4281,12 @@ async function admBillGenerate(){
   const confirmed=getConfirmedSale(monthVal,area,course);
   let topBar='';
   if(confirmed){
-    topBar=`<div style="background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
+    topBar=`<div style="background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
       <div><span style="color:#166534;font-weight:bold;">✓ 確定済み</span> <span style="color:var(--text-sub);font-size:12px;margin-left:8px;">確定日時: ${confirmed.confirmed_at} / 確定額: ¥${Number(confirmed.grand_total).toLocaleString()}</span></div>
-      <button onclick="admBillUnconfirm('${area}','${course}','${monthVal}')" style="background:#ef4444;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">確定解除</button>
+      <div style="display:flex;gap:6px;">
+        <button onclick="admBillEditConfirmed('${area}','${course}','${monthVal}')" style="background:#2563eb;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">✏️ 編集</button>
+        <button onclick="admBillUnconfirm('${area}','${course}','${monthVal}')" style="background:#ef4444;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">確定解除</button>
+      </div>
     </div>`;
   }else{
     topBar=`<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
