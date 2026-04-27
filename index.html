@@ -513,7 +513,8 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>表示</label><select id="adm-rev-view" onchange="admRevRender()"><option value="all">全営業所合計</option><option value="area">営業所別</option><option value="course">コース別</option><option value="daily">コース別日次</option></select></div>
           <div><label>営業所</label><select id="adm-rev-area" onchange="admRevRender()"><option value="">全て</option></select></div>
           <div id="adm-rev-course-wrap" style="display:none;"><label>コース</label><select id="adm-rev-course" onchange="admRevRender()"><option value="">選択</option></select></div>
-          <div style="margin-left:auto;display:flex;align-items:flex-end;gap:8px;">
+          <div style="margin-left:auto;display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;">
+            <button onclick="admRevManualOpen()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">✏️ 手入力</button>
             <input type="month" id="adm-bulk-before" value="2026-04" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;" />
             <button onclick="admBillBulkConfirmBefore(document.getElementById('adm-bulk-before').value)" style="background:#7c3aed;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📋 これより前を一括確定</button>
           </div>
@@ -4265,6 +4266,75 @@ async function admBillBulkConfirmBefore(beforeMonth){
     alert(`✓ 一括確定 完了\n対象月: ${months.length}ヶ月 (${months[0]}〜${months[months.length-1]})\n新規確定: ${saved}件\nスキップ(既確定): ${skipped}件\n失敗: ${failed}件`);
     if(typeof admRevLoad==='function')admRevLoad();
   }catch(e){alert('一括確定エラー: '+e.message);console.error(e);document.getElementById('bulk-progress')?.remove();}
+}
+
+// 手入力モーダル: 月・営業所単位で売上を直接入力
+function admRevManualOpen(){
+  document.getElementById('adm-rev-manual-modal')?.remove();
+  const curMonth=document.getElementById('adm-rev-month')?.value||document.getElementById('adm-bulk-before')?.value||'2026-03';
+  const html=`
+    <div id="adm-rev-manual-modal" style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;">
+      <div style="background:#fff;border-radius:12px;padding:20px;width:92%;max-width:520px;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+        <div style="font-size:16px;font-weight:700;margin-bottom:6px;">✏️ 売上を手入力</div>
+        <div style="font-size:12px;color:#64748B;margin-bottom:14px;">過去の月など、計算ではなく実数値を直接入力します。</div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:10px 12px;align-items:center;font-size:13px;">
+          <label>年月</label>
+          <input type="month" id="adm-rev-manual-month" value="${curMonth}" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;" />
+          <label>営業所</label>
+          <select id="adm-rev-manual-area" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;">
+            <option value="立川">立川</option>
+            <option value="城北">城北</option>
+            <option value="川越">川越</option>
+            <option value="川崎高津">川崎高津</option>
+          </select>
+          <label>売上合計 (¥)</label>
+          <input type="number" id="adm-rev-manual-grand" value="0" min="0" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;text-align:right;" />
+          <label>朝刊小計 (¥)</label>
+          <input type="number" id="adm-rev-manual-am" value="0" min="0" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;text-align:right;" />
+          <label>夕刊小計 (¥)</label>
+          <input type="number" id="adm-rev-manual-pm" value="0" min="0" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;text-align:right;" />
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;margin-top:14px;font-size:13px;color:#475569;">
+          <input type="checkbox" id="adm-rev-manual-overwrite" />
+          同じ月・営業所のコース別確定データを削除してから保存 (重複加算を防ぐ)
+        </label>
+        <div style="margin-top:10px;font-size:11px;color:#94a3b8;line-height:1.6;">※ 保存先: <code>course="(手入力)"</code> として登録され、NexPort 収支画面の営業所合計に加算されます。<br>※ 既にコース別の確定データがある場合は二重加算を避けるため上書きチェックを ON にしてください。</div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+          <button onclick="document.getElementById('adm-rev-manual-modal').remove()" style="padding:8px 16px;background:#e2e8f0;color:#1e293b;border:none;border-radius:6px;cursor:pointer;font-weight:600;">キャンセル</button>
+          <button onclick="admRevManualSave()" style="padding:8px 16px;background:#0ea5e9;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">保存</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+
+async function admRevManualSave(){
+  const monthVal=document.getElementById('adm-rev-manual-month').value;
+  const area=document.getElementById('adm-rev-manual-area').value;
+  const grand_total=Number(document.getElementById('adm-rev-manual-grand').value)||0;
+  const am_total=Number(document.getElementById('adm-rev-manual-am').value)||0;
+  const pm_total=Number(document.getElementById('adm-rev-manual-pm').value)||0;
+  const overwrite=document.getElementById('adm-rev-manual-overwrite').checked;
+  if(!monthVal||!area){alert('年月と営業所を入力してください');return;}
+  if(grand_total===0&&am_total===0&&pm_total===0){
+    if(!confirm('全て 0 で保存しますか?')){return;}
+  }
+  try{
+    if(!confirmedSalesCache)await loadConfirmedSales();
+    if(overwrite){
+      // 同じ (年月, 営業所) で course="(手入力)" 以外を削除
+      const targets=(confirmedSalesCache||[]).filter(r=>r.year_month===monthVal&&r.area===area&&r.course!=='(手入力)');
+      for(const t of targets){
+        await invApi({action:'unconfirm_sale',year_month:monthVal,area,course:t.course});
+      }
+    }
+    await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course:'(手入力)',grand_total,am_total,pm_total}});
+    confirmedSalesCache=null;
+    await loadConfirmedSales();
+    document.getElementById('adm-rev-manual-modal')?.remove();
+    alert(`✓ 保存しました\n${monthVal} / ${area}\n売上合計: ¥${grand_total.toLocaleString()}`);
+    if(typeof admRevLoad==='function')admRevLoad();
+  }catch(e){alert('保存失敗: '+e.message);console.error(e);}
 }
 
 async function admBillGenerate(){
