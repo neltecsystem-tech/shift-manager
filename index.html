@@ -5872,10 +5872,45 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
   });
 }
 
+async function diagNavOpen(routeId){
+  const r=window.__diagNavRoutes&&window.__diagNavRoutes[routeId];
+  if(!r){alert('ナビ情報が見つかりません。再読み込みしてください。');return;}
+  // ポップアップブロック回避: 同期的に空タブを開いてから後でURLを差し込む
+  const w=window.open('about:blank','_blank');
+  try{
+    // 最新マスタを再取得 (UI再描画も走るが、現在画面が表示中なので問題なし)
+    await diagLoad();
+    // 再取得後の最新データでルート再構築
+    const shops=diagBuildCourseRoute(r.type,r.cn,r.area||undefined).filter(s=>s.lat!=null&&s.lng!=null);
+    const start=r.chunkIdx*9;
+    const chunk=shops.slice(start,start+9);
+    if(chunk.length===0){
+      if(w)w.close();
+      alert('対象店舗がありません（マスタが変更された可能性があります）');
+      return;
+    }
+    const last=chunk[chunk.length-1];
+    const rest=chunk.slice(0,-1);
+    const params=new URLSearchParams();
+    params.set('api','1');
+    params.set('destination',`${last.lat},${last.lng}`);
+    if(rest.length>0)params.set('waypoints',rest.map(s=>`${s.lat},${s.lng}`).join('|'));
+    params.set('travelmode','driving');
+    const url=`https://www.google.com/maps/dir/?${params.toString()}`;
+    if(w)w.location.href=url;
+    else window.location.href=url; // ポップアップブロックされた場合のフォールバック
+  }catch(e){
+    if(w)w.close();
+    alert('ナビ起動エラー: '+(e&&e.message?e.message:e));
+  }
+}
+
 function diagRender(){
   const content=document.getElementById('diag-content');
   const summary=document.getElementById('diag-summary');
   if(!diagShopData.length){content.innerHTML='';summary.innerHTML='';return;}
+  // ナビボタンの引数保管(各レンダーでリセット)
+  window.__diagNavRoutes=[];
   const area=document.getElementById('diag-area').value;
   const type=document.getElementById('diag-type').value;
   const course=document.getElementById('diag-course').value;
@@ -5954,26 +5989,25 @@ function diagRender(){
     h+=`</tbody></table>`;
 
     // Google Maps ナビゲーション (9店舗/リンクで分割: origin=現在地 + waypoints最大8 + destination=1)
+    // タップ時に最新マスタを再取得してから開く
     const navShops=shops.filter(s=>s.lat!=null&&s.lng!=null);
     if(navShops.length>0){
       h+=`<div style="padding:12px 16px;background:#fef3c7;border-top:1px solid #fbbf24;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">`;
       h+=`<span style="font-size:13px;color:#92400e;font-weight:700;">📍 Googleマップで順番にナビ:</span>`;
       const CHUNK=9;
+      let chunkIdx=0;
       for(let i=0;i<navShops.length;i+=CHUNK){
         const chunk=navShops.slice(i,i+CHUNK);
         const last=chunk[chunk.length-1];
-        const rest=chunk.slice(0,-1);
-        const params=new URLSearchParams();
-        params.set('api','1');
-        params.set('destination',`${last.lat},${last.lng}`);
-        if(rest.length>0)params.set('waypoints',rest.map(s=>`${s.lat},${s.lng}`).join('|'));
-        params.set('travelmode','driving');
-        const url=`https://www.google.com/maps/dir/?${params.toString()}`;
-        h+=`<a href="${url}" target="_blank" rel="noopener" style="background:#3b82f6;color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;">${chunk[0].seq}〜${last.seq} (${chunk.length}店舗)</a>`;
+        const routeId=window.__diagNavRoutes.length;
+        window.__diagNavRoutes.push({type,cn,area:area||'',chunkIdx});
+        h+=`<button onclick="diagNavOpen(${routeId})" style="background:#3b82f6;color:#fff;padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:600;">${chunk[0].seq}〜${last.seq} (${chunk.length}店舗)</button>`;
+        chunkIdx++;
       }
       if(shops.length>navShops.length){
         h+=`<span style="font-size:11px;color:#dc2626;">※ 緯度経度なしの ${shops.length-navShops.length} 店舗は除外</span>`;
       }
+      h+=`<span style="font-size:11px;color:#92400e;margin-left:auto;">※ タップ時に最新マスタを再取得します</span>`;
       h+=`</div>`;
     }
     h+=`</div>`;
