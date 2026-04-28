@@ -5951,7 +5951,32 @@ function diagRender(){
       }
       h+=`<tr><td style="text-align:center;color:var(--text-sub);">${s.seq}</td><td style="font-weight:600;">${s.name}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;color:${tm!=null?'#1e40af':'#cbd5e1'};">${s.schedTime||'--:--'}</td></tr>`;
     });
-    h+=`</tbody></table></div>`;
+    h+=`</tbody></table>`;
+
+    // Google Maps ナビゲーション (9店舗/リンクで分割: origin=現在地 + waypoints最大8 + destination=1)
+    const navShops=shops.filter(s=>s.lat!=null&&s.lng!=null);
+    if(navShops.length>0){
+      h+=`<div style="padding:12px 16px;background:#fef3c7;border-top:1px solid #fbbf24;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">`;
+      h+=`<span style="font-size:13px;color:#92400e;font-weight:700;">📍 Googleマップで順番にナビ:</span>`;
+      const CHUNK=9;
+      for(let i=0;i<navShops.length;i+=CHUNK){
+        const chunk=navShops.slice(i,i+CHUNK);
+        const last=chunk[chunk.length-1];
+        const rest=chunk.slice(0,-1);
+        const params=new URLSearchParams();
+        params.set('api','1');
+        params.set('destination',`${last.lat},${last.lng}`);
+        if(rest.length>0)params.set('waypoints',rest.map(s=>`${s.lat},${s.lng}`).join('|'));
+        params.set('travelmode','driving');
+        const url=`https://www.google.com/maps/dir/?${params.toString()}`;
+        h+=`<a href="${url}" target="_blank" rel="noopener" style="background:#3b82f6;color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;">${chunk[0].seq}〜${last.seq} (${chunk.length}店舗)</a>`;
+      }
+      if(shops.length>navShops.length){
+        h+=`<span style="font-size:11px;color:#dc2626;">※ 緯度経度なしの ${shops.length-navShops.length} 店舗は除外</span>`;
+      }
+      h+=`</div>`;
+    }
+    h+=`</div>`;
   });
   content.innerHTML=h;
 
