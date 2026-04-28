@@ -210,6 +210,7 @@ tbody tr:hover { background:var(--primary-light); }
         <h2 style="margin-bottom:0">店舗マスタ</h2>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button onclick="smBatchGeocode()" id="sm-geocode-btn" style="background:#3b82f6;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 緯度経度を一括取得</button>
+          <button onclick="smBatchAddrGeocode()" id="sm-addr-btn" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📝 住所を一括取得</button>
           <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
           <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 新店登録</button>
         </div>
@@ -1710,6 +1711,9 @@ async function smLoad(){
       if(h.includes('夕刊コース'))smColMap.pmCourse=i;
       if(h.includes('競馬コース'))smColMap.keibaCourse=i;
       if(h.includes('備考'))smColMap.note=i;
+      if(h==='住所'||h.includes('住所'))smColMap.addr=i;
+      if(h==='緯度')smColMap.lat=i;
+      if(h==='経度')smColMap.lng=i;
     });
     // 営業所フィルタ
     const areas=[...new Set(smData.map(r=>r[`col_${smColMap.area??1}`]).filter(Boolean))];
@@ -1747,9 +1751,10 @@ function smRender(){
   // 表示する主要列
   const showCols=[
     smColMap.area??1, smColMap.code??2, smColMap.name??3, smColMap.openDate??4,
-    smColMap.amCourse??5, smColMap.pmCourse, smColMap.keibaCourse, smColMap.note
+    smColMap.amCourse??5, smColMap.pmCourse, smColMap.keibaCourse, smColMap.addr, smColMap.note
   ].filter(c=>c!==undefined);
   const showHeaders=showCols.map(i=>smHeaders[i]||`列${i}`);
+  const addrColIdx=showCols.indexOf(smColMap.addr);
 
   let h='<table><thead><tr>';
   showHeaders.forEach(hd=>{h+=`<th>${hd}</th>`;});
@@ -1761,6 +1766,7 @@ function smRender(){
       let val=r[`col_${ci}`]||'';
       if(idx===0&&areaVal)val=`<span class="badge ${bc(areaVal)}">${areaVal}</span>`;
       if(idx===2)val=`<b>${val}</b>`;
+      if(idx===addrColIdx&&addrColIdx>=0&&val.length>40)val=`<span title="${val.replace(/"/g,'&quot;')}">${val.slice(0,40)}…</span>`;
       h+=`<td>${val}</td>`;
     });
     h+=`<td><button onclick="smEdit(${r.row_number})" style="background:none;border:none;cursor:pointer;font-size:14px;" title="編集">✏️</button></td>`;
@@ -1919,6 +1925,106 @@ async function smBatchGeocode(){
   prog.innerHTML=summary;
   btn.disabled=false;btn.style.opacity='1';
   // データリロード
+  await smLoad();
+}
+
+// 一括住所取得（緯度経度から逆ジオコーディング）
+async function smBatchAddrGeocode(){
+  if(!smData||smData.length===0){alert('店舗データがまだ読み込まれていません');return;}
+  let nameIdx=-1,addrIdx=-1,areaIdx=-1,latIdx=-1,lngIdx=-1;
+  smHeaders.forEach((h,i)=>{
+    if(h==='店舗名')nameIdx=i;
+    if(h==='住所'||h.includes('住所'))addrIdx=i;
+    if(h==='営業所')areaIdx=i;
+    if(h==='緯度')latIdx=i;
+    if(h==='経度')lngIdx=i;
+  });
+  if(addrIdx<0||latIdx<0||lngIdx<0){alert('住所/緯度/経度の列が見つかりません');return;}
+
+  const hasLatLng=r=>{
+    const lat=(r[`col_${latIdx}`]||'').toString().trim();
+    const lng=(r[`col_${lngIdx}`]||'').toString().trim();
+    if(!lat||!lng)return false;
+    const ln=parseFloat(lat),gn=parseFloat(lng);
+    return !isNaN(ln)&&!isNaN(gn)&&ln!==0&&gn!==0;
+  };
+  const hasAddr=r=>((r[`col_${addrIdx}`]||'').toString().trim().length>0);
+
+  // 納品中止除外
+  const validShops=smData.filter(r=>{
+    const area=areaIdx>=0?((r[`col_${areaIdx}`]||'')):'';
+    return !area.includes('納品中止');
+  });
+
+  const candidates=validShops.filter(hasLatLng);
+  const targets=candidates.filter(r=>!hasAddr(r));
+  const skipped=candidates.length-targets.length;
+  const noLatLng=validShops.length-candidates.length;
+
+  if(targets.length===0){alert('住所未取得の店舗はありません（'+candidates.length+'件すべて取得済み）');return;}
+  const confirmMsg=`📊 店舗状況:\n ・住所取得済み: ${skipped}件（スキップ）\n ・住所未取得: ${targets.length}件（これから取得）\n ・緯度経度なし: ${noLatLng}件（除外）\n\nGoogle Maps 逆ジオコーディングAPIで ${targets.length}件を検索します。\n続行しますか？`;
+  if(!window.confirm(confirmMsg))return;
+
+  const btn=document.getElementById('sm-addr-btn');
+  btn.disabled=true;btn.style.opacity='0.6';
+  const prog=document.getElementById('sm-geocode-progress');
+  prog.style.display='block';
+  prog.innerHTML='開始中...';
+
+  let okCount=0;
+  const updates=[];
+  const failures=[];
+
+  for(let i=0;i<targets.length;i++){
+    const r=targets[i];
+    const lat=parseFloat(r[`col_${latIdx}`]);
+    const lng=parseFloat(r[`col_${lngIdx}`]);
+    const name=(r[`col_${nameIdx}`]||'').trim();
+    prog.innerHTML=`🔍 取得中 (${i+1}/${targets.length}): ${name}`;
+    try{
+      const url=`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
+      const resp=await fetch(url);
+      const json=await resp.json();
+      if(json.status==='OK'&&json.results&&json.results[0]){
+        const addr=json.results[0].formatted_address.replace(/^日本、?\s*/,'').replace(/^〒\d{3}-?\d{4}\s*/,'');
+        updates.push({row_number:r.row_number,addr});
+        okCount++;
+      }else{
+        failures.push({name,reason:json.status||'unknown'});
+      }
+    }catch(e){
+      failures.push({name,reason:e.message});
+    }
+    // レート制限対策で少し待つ
+    await new Promise(res=>setTimeout(res,80));
+  }
+
+  // スプレッドシート保存
+  prog.innerHTML=`💾 スプレッドシート保存中...（${updates.length}件）`;
+  if(updates.length>0){
+    try{
+      const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({action:'batch_update_addr',updates})
+      });
+      const res=await resp.json();
+      if(res.error)throw new Error(res.error);
+    }catch(e){
+      prog.innerHTML=`<span style="color:#dc2626;">❌ 保存失敗: ${e.message}</span>`;
+      btn.disabled=false;btn.style.opacity='1';
+      return;
+    }
+  }
+
+  let summary=`<b style="color:#16a34a;">✅ 完了</b>: 成功 ${okCount}件 / 失敗 ${failures.length}件`;
+  if(failures.length>0){
+    summary+=`<details style="margin-top:6px;"><summary style="cursor:pointer;color:#dc2626;">失敗一覧を表示</summary><ul style="margin:4px 0;padding-left:20px;font-size:12px;">`;
+    failures.slice(0,50).forEach(f=>{summary+=`<li>${f.name} — ${f.reason}</li>`;});
+    if(failures.length>50)summary+=`<li>他 ${failures.length-50}件</li>`;
+    summary+='</ul></details>';
+  }
+  prog.innerHTML=summary;
+  btn.disabled=false;btn.style.opacity='1';
   await smLoad();
 }
 
