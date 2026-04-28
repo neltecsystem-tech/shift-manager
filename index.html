@@ -1669,6 +1669,8 @@ let smAuthed=false;
 let smData=[];
 let smFiltered=[];
 let smHeaders=[];
+let smVerifyResults=[];
+let smVerifyFilter='all';
 let smInited=false;
 let smEditRow=null;
 let smMasterAreas=[];
@@ -2274,16 +2276,49 @@ async function smVerifyNavLocation(){
     return o!==0?o:b.verdict.score-a.verdict.score;
   });
 
-  const stat={match:0,partial:0,mismatch:0};
-  results.forEach(r=>stat[r.verdict.kind]++);
+  smVerifyResults=results;
+  smVerifyFilter='all';
+  smRenderVerifyResult();
+  btn.disabled=false;btn.style.opacity='1';
+}
 
-  let h=`<div style="margin-bottom:8px;"><b style="color:#a855f7;">🔍 ナビ位置検証 完了</b> ／ 合計 ${results.length}件</div>`;
-  h+=`<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">`;
-  h+=`<span style="background:#dcfce7;color:#15803d;padding:4px 10px;border-radius:6px;font-size:13px;font-weight:700;">◎ 一致 ${stat.match}件</span>`;
-  h+=`<span style="background:#fef3c7;color:#b45309;padding:4px 10px;border-radius:6px;font-size:13px;font-weight:700;">△ 部分一致 ${stat.partial}件</span>`;
-  h+=`<span style="background:#fee2e2;color:#b91c1c;padding:4px 10px;border-radius:6px;font-size:13px;font-weight:700;">✕ 不一致 ${stat.mismatch}件</span>`;
-  h+=`<button onclick="smHideVerifyResult()" style="background:#94a3b8;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">閉じる</button>`;
+function smSetVerifyFilter(f){
+  smVerifyFilter=f;
+  smRenderVerifyResult();
+}
+
+function smRenderVerifyResult(){
+  const prog=document.getElementById('sm-geocode-progress');
+  if(!prog||!smVerifyResults||smVerifyResults.length===0){
+    if(prog){prog.style.display='none';prog.innerHTML='';}
+    return;
+  }
+  const stat={match:0,partial:0,mismatch:0};
+  smVerifyResults.forEach(r=>stat[r.verdict.kind]++);
+
+  const filtered=smVerifyFilter==='all'?smVerifyResults:smVerifyResults.filter(r=>r.verdict.kind===smVerifyFilter);
+
+  const tabBtn=(key,label,bg,color,count)=>{
+    const active=smVerifyFilter===key;
+    const style=active
+      ? `background:${bg};color:${color};border:2px solid ${color};font-weight:700;`
+      : `background:#fff;color:${color};border:1px solid ${color};font-weight:600;`;
+    return `<button onclick="smSetVerifyFilter('${key}')" style="${style}padding:5px 12px;border-radius:6px;font-size:13px;cursor:pointer;">${label} ${count}件</button>`;
+  };
+
+  let h=`<div style="margin-bottom:8px;"><b style="color:#a855f7;">🔍 ナビ位置検証 完了</b> ／ 合計 ${smVerifyResults.length}件 (表示中: ${filtered.length}件)</div>`;
+  h+=`<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center;">`;
+  h+=tabBtn('all','すべて','#f1f5f9','#0f172a',smVerifyResults.length);
+  h+=tabBtn('match','◎ 一致','#dcfce7','#15803d',stat.match);
+  h+=tabBtn('partial','△ 部分一致','#fef3c7','#b45309',stat.partial);
+  h+=tabBtn('mismatch','✕ 不一致','#fee2e2','#b91c1c',stat.mismatch);
+  h+=`<button onclick="smHideVerifyResult()" style="background:#94a3b8;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;margin-left:auto;">閉じる</button>`;
   h+=`</div>`;
+  if(filtered.length===0){
+    h+=`<div style="padding:30px;text-align:center;color:var(--text-sub);">該当する店舗がありません</div>`;
+    prog.innerHTML=h;
+    return;
+  }
   h+=`<div style="max-height:60vh;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:#fff;">`;
   h+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead style="position:sticky;top:0;background:#f1f5f9;z-index:1;"><tr>`;
   h+=`<th style="padding:6px;border-bottom:1px solid var(--border);width:50px;">判定</th>`;
@@ -2294,7 +2329,7 @@ async function smVerifyNavLocation(){
   h+=`<th style="padding:6px;border-bottom:1px solid var(--border);width:120px;">確認</th>`;
   h+=`<th style="padding:6px;border-bottom:1px solid var(--border);width:60px;">編集</th>`;
   h+=`</tr></thead><tbody>`;
-  results.forEach(r=>{
+  filtered.forEach(r=>{
     const v=r.verdict;
     const cMap={match:'#16a34a',partial:'#f59e0b',mismatch:'#dc2626'};
     const iMap={match:'◎',partial:'△',mismatch:'✕'};
@@ -2315,12 +2350,12 @@ async function smVerifyNavLocation(){
     h+=`</tr>`;
   });
   h+=`</tbody></table></div>`;
-
   prog.innerHTML=h;
-  btn.disabled=false;btn.style.opacity='1';
 }
 
 function smHideVerifyResult(){
+  smVerifyResults=[];
+  smVerifyFilter='all';
   const prog=document.getElementById('sm-geocode-progress');
   if(prog){prog.style.display='none';prog.innerHTML='';}
 }
