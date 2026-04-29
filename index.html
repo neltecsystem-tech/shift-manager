@@ -213,6 +213,7 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="smBatchAddrGeocode()" id="sm-addr-btn" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📝 住所を一括取得</button>
           <button onclick="smBatchLatLngFromAddr()" id="sm-ll-from-addr-btn" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 GPSを住所から取得</button>
           <button onclick="smVerifyNavLocation()" id="sm-verify-btn" style="background:#a855f7;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔍 ナビ位置検証</button>
+          <button onclick="smBatchOfficialName()" id="sm-official-btn" style="background:#f97316;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 正式店舗名を一括生成</button>
           <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
           <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 新店登録</button>
         </div>
@@ -1718,6 +1719,7 @@ async function smLoad(){
       if(h.includes('備考'))smColMap.note=i;
       if(h==='住所精度')smColMap.accuracy=i;
       else if(h==='ナビ判定')smColMap.verify=i;
+      else if(h==='正式店舗名')smColMap.officialName=i;
       else if(h==='住所'||h.includes('住所'))smColMap.addr=i;
       if(h==='緯度')smColMap.lat=i;
       if(h==='経度')smColMap.lng=i;
@@ -1782,7 +1784,7 @@ function smRender(){
 
   // 表示する主要列
   const showCols=[
-    smColMap.area??1, smColMap.code??2, smColMap.name??3, smColMap.openDate??4,
+    smColMap.area??1, smColMap.code??2, smColMap.name??3, smColMap.officialName, smColMap.openDate??4,
     smColMap.amCourse??5, smColMap.pmCourse, smColMap.keibaCourse, smColMap.addr, smColMap.verify, smColMap.note
   ].filter(c=>c!==undefined);
   const showHeaders=showCols.map(i=>smHeaders[i]||`列${i}`);
@@ -2400,6 +2402,81 @@ function smHideVerifyResult(){
   smVerifyFilter='all';
   const prog=document.getElementById('sm-geocode-progress');
   if(prog){prog.style.display='none';prog.innerHTML='';}
+}
+
+// 正式店舗名を expandShopName で一括生成
+async function smBatchOfficialName(){
+  if(!smData||smData.length===0){alert('店舗データがまだ読み込まれていません');return;}
+  let nameIdx=-1,areaIdx=-1,officialIdx=-1;
+  smHeaders.forEach((h,i)=>{
+    if(h==='店舗名')nameIdx=i;
+    if(h==='営業所')areaIdx=i;
+    if(h==='正式店舗名')officialIdx=i;
+  });
+  if(nameIdx<0||officialIdx<0){alert('店舗名/正式店舗名 の列が見つかりません');return;}
+
+  // 納品中止 + 店舗名なし除外
+  const validShops=smData.filter(r=>{
+    const area=areaIdx>=0?((r[`col_${areaIdx}`]||'')):'';
+    if(area.includes('納品中止'))return false;
+    return !!((r[`col_${nameIdx}`]||'').trim());
+  });
+
+  // 既存値の有無で2モード
+  const targets=validShops;
+  const overwrite=window.confirm(`📊 対象: ${targets.length}件\n\nOK = すべて上書き生成（既存の正式店舗名も上書き）\nキャンセル = 未生成のみ`);
+
+  const finalTargets=overwrite?targets:targets.filter(r=>!((r[`col_${officialIdx}`]||'').trim()));
+  if(finalTargets.length===0){alert('対象の店舗がありません');return;}
+
+  const btn=document.getElementById('sm-official-btn');
+  btn.disabled=true;btn.style.opacity='0.6';
+  const prog=document.getElementById('sm-geocode-progress');
+  prog.style.display='block';
+  prog.innerHTML=`生成中... (0 / ${finalTargets.length})`;
+
+  // 略称展開してマッピング
+  const updates=finalTargets.map(r=>{
+    const original=(r[`col_${nameIdx}`]||'').trim();
+    const expanded=expandShopName(original);
+    return {row_number:r.row_number,official_name:expanded,_original:original,_expanded:expanded};
+  });
+
+  // 略称展開なし(変化なし)の件数
+  const expandedCount=updates.filter(u=>u._expanded!==u._original).length;
+  const unchangedCount=updates.length-expandedCount;
+
+  prog.innerHTML=`💾 スプレッドシート保存中... (${updates.length}件)`;
+  try{
+    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'batch_update_official_name',updates})
+    });
+    const res=await resp.json();
+    if(res.error)throw new Error(res.error);
+
+    // ローカル smData も同期更新
+    updates.forEach(u=>{
+      const tgt=smData.find(x=>x.row_number===u.row_number);
+      if(tgt)tgt[`col_${officialIdx}`]=u.official_name;
+    });
+  }catch(e){
+    prog.innerHTML=`<span style="color:#dc2626;">❌ 保存失敗: ${e.message}</span>`;
+    btn.disabled=false;btn.style.opacity='1';
+    return;
+  }
+
+  let summary=`<b style="color:#16a34a;">✅ 完了</b>: 生成 ${updates.length}件 (略称展開 ${expandedCount}件 / 変化なし ${unchangedCount}件)`;
+  // サンプル表示
+  const samples=updates.filter(u=>u._expanded!==u._original).slice(0,5);
+  if(samples.length>0){
+    summary+=`<details style="margin-top:6px;"><summary style="cursor:pointer;color:#475569;font-size:12px;">サンプル ${samples.length}件を表示</summary><ul style="margin:4px 0;padding-left:20px;font-size:12px;">`;
+    samples.forEach(s=>{summary+=`<li>${s._original} → ${s._expanded}</li>`;});
+    summary+='</ul></details>';
+  }
+  prog.innerHTML=summary;
+  btn.disabled=false;btn.style.opacity='1';
+  smRender();
 }
 
 // 店舗名から緯度経度を取得
