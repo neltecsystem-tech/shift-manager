@@ -220,6 +220,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="sm-geocode-progress" style="display:none;margin-bottom:10px;padding:10px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;font-size:13px;"></div>
       <div class="filters">
         <div><label>営業所</label><select id="sm-area" onchange="smFilter()"><option value="">すべて</option></select></div>
+        <div><label>ナビ判定</label><select id="sm-verify-filter" onchange="smFilter()"><option value="">すべて</option><option value="mismatch">✕ 不一致のみ</option><option value="partial">△ 部分一致のみ</option><option value="match">◎ 一致のみ</option><option value="empty">未検証のみ</option></select></div>
         <div><label>検索</label><input type="search" id="sm-search" autocomplete="off" placeholder="店舗名・コード..." oninput="smFilter()" style="width:200px;"></div>
       </div>
       <div id="sm-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
@@ -1716,6 +1717,7 @@ async function smLoad(){
       if(h.includes('競馬コース'))smColMap.keibaCourse=i;
       if(h.includes('備考'))smColMap.note=i;
       if(h==='住所精度')smColMap.accuracy=i;
+      else if(h==='ナビ判定')smColMap.verify=i;
       else if(h==='住所'||h.includes('住所'))smColMap.addr=i;
       if(h==='緯度')smColMap.lat=i;
       if(h==='経度')smColMap.lng=i;
@@ -1733,14 +1735,22 @@ async function smLoad(){
 function smFilter(){
   const area=document.getElementById('sm-area').value;
   const q=(document.getElementById('sm-search').value||'').toLowerCase();
+  const verifyEl=document.getElementById('sm-verify-filter');
+  const verify=verifyEl?verifyEl.value:'';
   const aIdx=smColMap.area??1;
   const cIdx=smColMap.code??2;
   const nIdx=smColMap.name??3;
+  const vIdx=smColMap.verify;
   smFiltered=smData.filter(r=>{
     if(area&&(r[`col_${aIdx}`]||'')!==area)return false;
     if(q){
       const text=[r[`col_${nIdx}`],r[`col_${cIdx}`],r[`col_${aIdx}`]].join(' ').toLowerCase();
       if(!text.includes(q))return false;
+    }
+    if(verify&&vIdx!=null){
+      const v=(r[`col_${vIdx}`]||'').trim();
+      if(verify==='empty'){if(v)return false;}
+      else{if(v!==verify)return false;}
     }
     return true;
   });
@@ -1761,14 +1771,23 @@ function smRender(){
     if(!m)return `<span style="font-size:10px;color:#94a3b8;">${t}</span>`;
     return `<span title="${t} (${m.l})" style="display:inline-block;background:${m.c};color:#fff;border-radius:50%;width:18px;height:18px;line-height:18px;text-align:center;font-size:11px;font-weight:700;">${m.i}</span>`;
   };
+  // ナビ判定のバッジ
+  const verifyBadge=(v)=>{
+    if(!v)return `<span title="未検証" style="color:#cbd5e1;font-size:11px;">—</span>`;
+    const map={match:{i:'◎',c:'#16a34a',l:'一致'},partial:{i:'△',c:'#f59e0b',l:'部分一致'},mismatch:{i:'✕',c:'#dc2626',l:'不一致'}};
+    const m=map[v];
+    if(!m)return `<span style="font-size:10px;color:#94a3b8;">${v}</span>`;
+    return `<span title="${m.l}" style="display:inline-block;background:${m.c};color:#fff;border-radius:50%;width:18px;height:18px;line-height:18px;text-align:center;font-size:11px;font-weight:700;">${m.i}</span>`;
+  };
 
   // 表示する主要列
   const showCols=[
     smColMap.area??1, smColMap.code??2, smColMap.name??3, smColMap.openDate??4,
-    smColMap.amCourse??5, smColMap.pmCourse, smColMap.keibaCourse, smColMap.addr, smColMap.note
+    smColMap.amCourse??5, smColMap.pmCourse, smColMap.keibaCourse, smColMap.addr, smColMap.verify, smColMap.note
   ].filter(c=>c!==undefined);
   const showHeaders=showCols.map(i=>smHeaders[i]||`列${i}`);
   const addrColIdx=showCols.indexOf(smColMap.addr);
+  const verifyColIdx=showCols.indexOf(smColMap.verify);
 
   let h='<table><thead><tr>';
   showHeaders.forEach((hd,i)=>{h+=`<th>${hd}${i===addrColIdx?' <span style="font-size:10px;font-weight:normal;color:#94a3b8;">(精度)</span>':''}</th>`;});
@@ -1782,9 +1801,11 @@ function smRender(){
       if(idx===0&&areaVal)val=`<span class="badge ${bc(areaVal)}">${areaVal}</span>`;
       if(idx===2)val=`<b>${val}</b>`;
       if(idx===addrColIdx&&addrColIdx>=0){
-        const fullVal=val;
         const display=val.length>40?`<span title="${val.replace(/"/g,'&quot;')}">${val.slice(0,40)}…</span>`:val;
         val=`${accBadge(accVal)} ${display}`;
+      }
+      if(idx===verifyColIdx&&verifyColIdx>=0){
+        val=verifyBadge(val);
       }
       h+=`<td>${val}</td>`;
     });
@@ -2275,6 +2296,27 @@ async function smVerifyNavLocation(){
     const o=orderMap[a.verdict.kind]-orderMap[b.verdict.kind];
     return o!==0?o:b.verdict.score-a.verdict.score;
   });
+
+  // スプレッドシート保存
+  prog.innerHTML=`💾 判定結果をスプレッドシートに保存中... (${results.length}件)`;
+  try{
+    const verifyUpdates=results.map(r=>({row_number:r.row_number,verdict:r.verdict.kind}));
+    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'batch_update_verify',updates:verifyUpdates})
+    });
+    const res=await resp.json();
+    if(res.error)console.warn('判定保存エラー:',res.error);
+    else{
+      // ローカル smData も更新（再リロードせず即時反映）
+      if(smColMap.verify!=null){
+        results.forEach(r=>{
+          const tgt=smData.find(x=>x.row_number===r.row_number);
+          if(tgt)tgt[`col_${smColMap.verify}`]=r.verdict.kind;
+        });
+      }
+    }
+  }catch(e){console.warn('判定保存例外:',e);}
 
   smVerifyResults=results;
   smVerifyFilter='all';
