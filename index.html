@@ -2080,13 +2080,26 @@ async function smBatchAddrUnified(){
     let resolved=null;
     let lastErr=null;
 
-    // ── 1. Yahoo!ローカルサーチ (3段階フォールバック)
+    // 重複ワード除去版のクエリも用意
+    // 例: 営業所=川越, expanded="セブンイレブン 川越豊田本" → "セブンイレブン 豊田本"
+    let qStripped=expanded;
+    if(area){
+      const m=expanded.match(/^(\S+)\s+(.+)$/);
+      if(m&&m[2].startsWith(area)){
+        qStripped=m[1]+' '+m[2].slice(area.length);
+      }
+    }
+    const qNoArea=expanded;
+
+    // ── 1. Yahoo!ローカルサーチ (多段フォールバック)
     const yahooAttempts=[];
     if(hasLL){
       yahooAttempts.push({query:q,lat:curLat,lon:curLng,dist:2,results:3});
       yahooAttempts.push({query:q,lat:curLat,lon:curLng,dist:10,results:3});
     }
     yahooAttempts.push({query:q,results:3});
+    if(qNoArea!==q)yahooAttempts.push({query:qNoArea,results:3});
+    if(qStripped!==expanded&&qStripped!==q&&qStripped!==qNoArea)yahooAttempts.push({query:qStripped,results:3});
     for(const body of yahooAttempts){
       try{
         const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/yahoo-local-search',{
