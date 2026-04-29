@@ -1692,6 +1692,18 @@ function verifyKind(v){
   if(v==='✕'||v==='mismatch')return 'mismatch';
   return '';
 }
+
+// 検索キー: 正式店舗名 (AI列) を優先、無ければ expandShopName(店舗名)
+function smSearchName(record){
+  const officialIdx=smColMap.officialName;
+  const nameIdx=smColMap.name??3;
+  const name=(record[`col_${nameIdx}`]||'').trim();
+  if(officialIdx!=null){
+    const official=(record[`col_${officialIdx}`]||'').trim();
+    if(official)return official;
+  }
+  return expandShopName(name);
+}
 let smInited=false;
 let smEditRow=null;
 let smMasterAreas=[];
@@ -1947,7 +1959,7 @@ async function smBatchGeocode(){
   for(let i=0;i<targets.length;i++){
     const r=targets[i];
     const rawName=(r[`col_${nameIdx}`]||'').trim();
-    const name=expandShopName(rawName);
+    const name=smSearchName(r);
     const addr=addrIdx>=0?((r[`col_${addrIdx}`]||'').trim()):'';
     const area=areaIdx>=0?((r[`col_${areaIdx}`]||'').split(',')[0].trim()):'';
     const areaHint=AREA_HINT[area]||'';
@@ -2058,7 +2070,7 @@ async function smBatchAddrGeocode(){
     const r=targets[i];
     const name=(r[`col_${nameIdx}`]||'').trim();
     const area=areaIdx>=0?((r[`col_${areaIdx}`]||'').trim()):'';
-    const expanded=expandShopName(name);
+    const expanded=smSearchName(r);
     // 営業所を地域ヒントとして付与（例: 城北 → 板橋区/北区/豊島区周辺）
     const q=expanded+(area?' '+area:'');
     prog.innerHTML=`🔍 取得中 (${i+1}/${targets.length}): ${name}`;
@@ -2501,7 +2513,7 @@ async function smBatchAddrYahoo(){
     const r=targets[i];
     const name=(r[`col_${nameIdx}`]||'').trim();
     const area=areaIdx>=0?((r[`col_${areaIdx}`]||'').trim()):'';
-    const expanded=expandShopName(name);
+    const expanded=smSearchName(r);
     const q=expanded+(area?' '+area:'');
     const curLat=parseFloat(r[`col_${latIdx}`]);
     const curLng=parseFloat(r[`col_${lngIdx}`]);
@@ -2741,10 +2753,11 @@ async function smBatchOfficialName(){
 async function smGeocode(){
   const msg=document.getElementById('sme-geo-msg');
   // 店舗名カラムを検索
-  let nameIdx=-1,addrIdx=-1,latIdx=-1,lngIdx=-1;
+  let nameIdx=-1,addrIdx=-1,latIdx=-1,lngIdx=-1,officialIdx=-1;
   smHeaders.forEach((h,i)=>{
     if(h==='店舗名')nameIdx=i;
-    if(h==='住所'||h.includes('住所'))addrIdx=i;
+    if(h==='正式店舗名')officialIdx=i;
+    else if(h==='住所'||h.includes('住所'))addrIdx=i;
     if(h==='緯度')latIdx=i;
     if(h==='経度')lngIdx=i;
   });
@@ -2752,10 +2765,11 @@ async function smGeocode(){
 
   const name=(document.getElementById('sme-'+nameIdx)||{}).value||'';
   const addr=addrIdx>=0?((document.getElementById('sme-'+addrIdx)||{}).value||''):'';
+  const official=officialIdx>=0?((document.getElementById('sme-'+officialIdx)||{}).value||'').trim():'';
   if(!name&&!addr){msg.textContent='店舗名か住所を入力してください';msg.style.color='#dc2626';return;}
 
-  // 略称展開（T]7→セブンイレブン 等）
-  const expandedName=expandShopName(name);
+  // 検索キー: 正式店舗名 (AI列) を優先、無ければ略称展開
+  const expandedName=official||expandShopName(name);
   // 検索クエリ: 住所優先、なければ店舗名、両方あれば結合
   const q=addr?(expandedName?expandedName+' '+addr:addr):expandedName;
   msg.textContent='検索中...';msg.style.color='#3b82f6';
