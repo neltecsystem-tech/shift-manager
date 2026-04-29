@@ -210,12 +210,11 @@ tbody tr:hover { background:var(--primary-light); }
         <h2 style="margin-bottom:0">店舗マスタ</h2>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button onclick="smBatchGeocode()" id="sm-geocode-btn" style="background:#3b82f6;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 緯度経度を一括取得</button>
-          <button onclick="smBatchAddrGeocode()" id="sm-addr-btn" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📝 住所を一括取得</button>
+          <button onclick="smBatchAddrUnified()" id="sm-addr-btn" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📝 住所を一括取得</button>
           <button onclick="smBatchLatLngFromAddr()" id="sm-ll-from-addr-btn" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 GPSを住所から取得</button>
           <button onclick="smVerifyNavLocation()" id="sm-verify-btn" style="background:#a855f7;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔍 ナビ位置検証</button>
           <button onclick="smBatchOfficialName()" id="sm-official-btn" style="background:#f97316;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 正式店舗名を一括生成</button>
           <button onclick="smMigrateIcons()" id="sm-migrate-icons-btn" style="background:#64748b;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔄 旧表記をアイコンに変換</button>
-          <button onclick="smBatchAddrYahoo()" id="sm-yahoo-btn" style="background:#dc2626;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🌐 Yahoo!で住所取得</button>
           <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
           <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 新店登録</button>
         </div>
@@ -2017,7 +2016,180 @@ async function smBatchGeocode(){
   await smLoad();
 }
 
-// 一括住所取得（店舗名から forward geocoding、失敗時は緯度経度から逆ジオコーディング）
+// 統合: Yahoo!ローカルサーチ優先 + Google Geocoding フォールバック
+async function smBatchAddrUnified(){
+  if(!smData||smData.length===0){alert('店舗データがまだ読み込まれていません');return;}
+  let nameIdx=-1,addrIdx=-1,areaIdx=-1,latIdx=-1,lngIdx=-1;
+  smHeaders.forEach((h,i)=>{
+    if(h==='店舗名')nameIdx=i;
+    if(h==='住所精度')return;
+    if(h==='住所'||h.includes('住所'))addrIdx=i;
+    if(h==='営業所')areaIdx=i;
+    if(h==='緯度')latIdx=i;
+    if(h==='経度')lngIdx=i;
+  });
+  if(nameIdx<0||addrIdx<0){alert('店舗名/住所 列が見つかりません');return;}
+
+  const validShops=smData.filter(r=>{
+    const area=areaIdx>=0?((r[`col_${areaIdx}`]||'')):'';
+    if(area.includes('納品中止'))return false;
+    return !!((r[`col_${nameIdx}`]||'').trim());
+  });
+
+  const choice=prompt(`📊 住所一括取得 (Yahoo!→Google フォールバック)\n対象候補: ${validShops.length}件\n\n0: すべて再取得（既存住所も上書き）\n1: 住所未取得のみ\n2: ナビ判定 ✕不一致 のみ\n空欄: キャンセル`);
+  if(!['0','1','2'].includes(choice))return;
+
+  let targets;
+  if(choice==='0')targets=validShops;
+  else if(choice==='1')targets=validShops.filter(r=>!((r[`col_${addrIdx}`]||'').trim()));
+  else{
+    const verIdx=smColMap.verify;
+    if(verIdx==null){alert('ナビ判定 列が見つかりません');return;}
+    targets=validShops.filter(r=>{
+      const v=(r[`col_${verIdx}`]||'').trim();
+      return v==='✕'||v==='mismatch';
+    });
+  }
+  if(targets.length===0){alert('対象店舗がありません');return;}
+
+  if(!window.confirm(`${targets.length}件 を処理します。約 ${Math.ceil(targets.length*0.2)} 秒かかる見込み。続行?`))return;
+
+  const btn=document.getElementById('sm-addr-btn');
+  btn.disabled=true;btn.style.opacity='0.6';
+  const prog=document.getElementById('sm-geocode-progress');
+  prog.style.display='block';
+
+  const cleanAddr=s=>(s||'').replace(/^日本、?\s*/,'').replace(/^〒\d{3}-?\d{4}\s*/,'').trim();
+  const matchStat={'◎':0,'○':0,'△':0,'✕':0};
+  const sourceStat={yahoo:0,google_fwd:0,google_rev:0};
+  const addrUpdates=[];
+  const llUpdates=[];
+  const failures=[];
+
+  for(let i=0;i<targets.length;i++){
+    const r=targets[i];
+    const name=(r[`col_${nameIdx}`]||'').trim();
+    const area=areaIdx>=0?((r[`col_${areaIdx}`]||'').trim()):'';
+    const expanded=smSearchName(r);
+    const q=expanded+(area?' '+area:'');
+    const curLat=parseFloat(r[`col_${latIdx}`]);
+    const curLng=parseFloat(r[`col_${lngIdx}`]);
+    const hasLL=isFinite(curLat)&&isFinite(curLng)&&curLat!==0&&curLng!==0;
+    prog.innerHTML=`🔍 取得中 (${i+1}/${targets.length}): ${name}`;
+
+    let resolved=null;
+    let lastErr=null;
+
+    // ── 1. Yahoo!ローカルサーチ (3段階フォールバック)
+    const yahooAttempts=[];
+    if(hasLL){
+      yahooAttempts.push({query:q,lat:curLat,lon:curLng,dist:2,results:3});
+      yahooAttempts.push({query:q,lat:curLat,lon:curLng,dist:10,results:3});
+    }
+    yahooAttempts.push({query:q,results:3});
+    for(const body of yahooAttempts){
+      try{
+        const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/yahoo-local-search',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(body),
+        });
+        const json=await resp.json();
+        if(json.error){lastErr=json.error;continue;}
+        const f=(json.features||[])[0];
+        if(f&&f.address){
+          resolved={addr:f.address,accuracy:yahooMatchToIcon(f.match_level),lat:f.lat,lng:f.lng,source:'yahoo'};
+          break;
+        }
+      }catch(e){lastErr=e.message;}
+      await new Promise(res=>setTimeout(res,40));
+    }
+
+    // ── 2. Yahoo 全滅 → Google forward (店舗名+営業所)
+    if(!resolved){
+      try{
+        const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
+        const resp=await fetch(url);
+        const json=await resp.json();
+        if(json.status==='OK'&&json.results&&json.results[0]&&json.results[0].formatted_address){
+          const addr=cleanAddr(json.results[0].formatted_address);
+          const acc=json.results[0].geometry?.location_type||'';
+          const loc=json.results[0].geometry?.location;
+          if(addr)resolved={addr,accuracy:accuracyToIcon(acc),lat:loc?.lat,lng:loc?.lng,source:'google_fwd'};
+        }
+      }catch(e){lastErr=e.message;}
+    }
+
+    // ── 3. Google forward 失敗 → Google reverse (緯度経度から)
+    if(!resolved&&hasLL){
+      try{
+        const url=`https://maps.googleapis.com/maps/api/geocode/json?latlng=${curLat},${curLng}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
+        const resp=await fetch(url);
+        const json=await resp.json();
+        if(json.status==='OK'&&json.results&&json.results[0]){
+          const addr=cleanAddr(json.results[0].formatted_address);
+          const acc=json.results[0].geometry?.location_type||'';
+          if(addr)resolved={addr,accuracy:accuracyToIcon(acc),lat:null,lng:null,source:'google_rev'};
+        }
+      }catch(e){lastErr=e.message;}
+    }
+
+    if(resolved){
+      addrUpdates.push({row_number:r.row_number,addr:resolved.addr,accuracy:resolved.accuracy});
+      matchStat[resolved.accuracy]=(matchStat[resolved.accuracy]||0)+1;
+      sourceStat[resolved.source]=(sourceStat[resolved.source]||0)+1;
+      if(resolved.lat!=null&&resolved.lng!=null){
+        llUpdates.push({row_number:r.row_number,lat:resolved.lat,lng:resolved.lng,accuracy:resolved.accuracy});
+      }
+    }else{
+      failures.push({name,reason:lastErr||'全方法でヒットなし'});
+    }
+    await new Promise(res=>setTimeout(res,40));
+  }
+
+  // 住所保存
+  if(addrUpdates.length>0){
+    prog.innerHTML=`💾 住所を保存中... (${addrUpdates.length}件)`;
+    try{
+      const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({action:'batch_update_addr',updates:addrUpdates})
+      });
+      const res=await resp.json();
+      if(res.error)throw new Error(res.error);
+    }catch(e){
+      prog.innerHTML=`<span style="color:#dc2626;">❌ 住所保存失敗: ${e.message}</span>`;
+      btn.disabled=false;btn.style.opacity='1';
+      return;
+    }
+  }
+  // 緯度経度保存 (Yahoo / Google forward から取れた場合のみ)
+  if(llUpdates.length>0){
+    prog.innerHTML=`💾 緯度経度を保存中... (${llUpdates.length}件)`;
+    try{
+      const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({action:'batch_update_latlng',updates:llUpdates})
+      });
+      const res=await resp.json();
+      if(res.error)console.warn('緯度経度保存エラー:',res.error);
+    }catch(e){console.warn('緯度経度保存例外:',e);}
+  }
+
+  let summary=`<b style="color:#16a34a;">✅ 完了</b>: 成功 ${addrUpdates.length}件 / 失敗 ${failures.length}件<br>`;
+  summary+=`<span style="font-size:12px;color:#475569;">取得元: 🌐Yahoo ${sourceStat.yahoo}件 / 🟦Google順引き ${sourceStat.google_fwd}件 / 🟧Google逆引き ${sourceStat.google_rev}件</span><br>`;
+  summary+=`<span style="font-size:12px;color:#475569;">精度: ◎ ${matchStat['◎']||0}件 / ○ ${matchStat['○']||0}件 / △ ${matchStat['△']||0}件 / ✕ ${matchStat['✕']||0}件</span>`;
+  if(failures.length>0){
+    summary+=`<details style="margin-top:6px;"><summary style="cursor:pointer;color:#dc2626;">失敗一覧を表示</summary><ul style="margin:4px 0;padding-left:20px;font-size:12px;">`;
+    failures.slice(0,50).forEach(f=>{summary+=`<li>${f.name} — ${f.reason}</li>`;});
+    if(failures.length>50)summary+=`<li>他 ${failures.length-50}件</li>`;
+    summary+='</ul></details>';
+  }
+  prog.innerHTML=summary;
+  btn.disabled=false;btn.style.opacity='1';
+  await smLoad();
+}
+
+// (旧) Google ベースの一括住所取得 — 統合版 smBatchAddrUnified に統合済み (互換用に残す)
 async function smBatchAddrGeocode(){
   if(!smData||smData.length===0){alert('店舗データがまだ読み込まれていません');return;}
   let nameIdx=-1,addrIdx=-1,areaIdx=-1,latIdx=-1,lngIdx=-1;
