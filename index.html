@@ -2870,7 +2870,19 @@ async function smMigrateIcons(){
   smRender();
 }
 
-// 正式店舗名を expandShopName で一括生成
+// 略称展開 + 営業所名重複削除 (より検索しやすい正式店舗名を生成)
+function smartExpandName(rawName,area){
+  const expanded=expandShopName(rawName);
+  if(!area)return expanded;
+  // 例: 営業所=川越, expanded='セブンイレブン 川越豊田本' → 'セブンイレブン 豊田本'
+  const m=expanded.match(/^(\S+)\s+(.+)$/);
+  if(m&&m[2].startsWith(area)){
+    return m[1]+' '+m[2].slice(area.length);
+  }
+  return expanded;
+}
+
+// 正式店舗名を一括生成 (3モード、手動編集を保護)
 async function smBatchOfficialName(){
   if(!smData||smData.length===0){alert('店舗データがまだ読み込まれていません');return;}
   let nameIdx=-1,areaIdx=-1,officialIdx=-1;
@@ -2888,12 +2900,30 @@ async function smBatchOfficialName(){
     return !!((r[`col_${nameIdx}`]||'').trim());
   });
 
-  // 既存値の有無で2モード
-  const targets=validShops;
-  const overwrite=window.confirm(`📊 対象: ${targets.length}件\n\nOK = すべて上書き生成（既存の正式店舗名も上書き）\nキャンセル = 未生成のみ`);
+  const choice=prompt(`📊 正式店舗名を一括生成\n対象候補: ${validShops.length}件\n\n0: 旧自動生成のみ更新（手動編集は保持） ★推奨\n1: 未生成のみ生成\n2: すべて強制上書き（手動編集も消去）\n空欄: キャンセル`);
+  if(!['0','1','2'].includes(choice))return;
 
-  const finalTargets=overwrite?targets:targets.filter(r=>!((r[`col_${officialIdx}`]||'').trim()));
+  let finalTargets;
+  if(choice==='1'){
+    finalTargets=validShops.filter(r=>!((r[`col_${officialIdx}`]||'').trim()));
+  }else if(choice==='2'){
+    if(!window.confirm('⚠ 警告: 手動編集された AI列も全て上書きされます。本当に続行?'))return;
+    finalTargets=validShops;
+  }else{
+    // mode 0: 旧自動生成のみ更新
+    // 旧自動生成 = AI が expandShopName(D) と一致するもの
+    finalTargets=validShops.filter(r=>{
+      const ai=(r[`col_${officialIdx}`]||'').trim();
+      const original=(r[`col_${nameIdx}`]||'').trim();
+      const oldAuto=expandShopName(original);
+      // 空セル または 旧ロジックの結果と一致しているセルを対象
+      return !ai || ai===oldAuto;
+    });
+  }
+
   if(finalTargets.length===0){alert('対象の店舗がありません');return;}
+
+  if(!window.confirm(`${finalTargets.length}件 を処理します。続行?`))return;
 
   const btn=document.getElementById('sm-official-btn');
   btn.disabled=true;btn.style.opacity='0.6';
@@ -2901,10 +2931,11 @@ async function smBatchOfficialName(){
   prog.style.display='block';
   prog.innerHTML=`生成中... (0 / ${finalTargets.length})`;
 
-  // 略称展開してマッピング
+  // 略称展開 + 営業所名重複削除
   const updates=finalTargets.map(r=>{
     const original=(r[`col_${nameIdx}`]||'').trim();
-    const expanded=expandShopName(original);
+    const area=areaIdx>=0?((r[`col_${areaIdx}`]||'').trim()):'';
+    const expanded=smartExpandName(original,area);
     return {row_number:r.row_number,official_name:expanded,_original:original,_expanded:expanded};
   });
 
