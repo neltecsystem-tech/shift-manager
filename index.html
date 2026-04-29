@@ -214,6 +214,7 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="smBatchLatLngFromAddr()" id="sm-ll-from-addr-btn" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 GPSを住所から取得</button>
           <button onclick="smVerifyNavLocation()" id="sm-verify-btn" style="background:#a855f7;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔍 ナビ位置検証</button>
           <button onclick="smBatchOfficialName()" id="sm-official-btn" style="background:#f97316;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 正式店舗名を一括生成</button>
+          <button onclick="smMigrateIcons()" id="sm-migrate-icons-btn" style="background:#64748b;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔄 旧表記をアイコンに変換</button>
           <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
           <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 新店登録</button>
         </div>
@@ -1673,6 +1674,23 @@ let smFiltered=[];
 let smHeaders=[];
 let smVerifyResults=[];
 let smVerifyFilter='all';
+
+// 住所精度の raw → アイコン変換 (シート保存用)
+function accuracyToIcon(t){
+  return ({ROOFTOP:'◎',RANGE_INTERPOLATED:'○',GEOMETRIC_CENTER:'△',APPROXIMATE:'✕'})[t]||t||'';
+}
+// ナビ判定の raw → アイコン変換
+function verdictToIcon(v){
+  return ({match:'◎',partial:'△',mismatch:'✕'})[v]||v||'';
+}
+// アイコン or raw → 内部 kind 値 ('match'/'partial'/'mismatch')
+function verifyKind(v){
+  if(!v)return '';
+  if(v==='◎'||v==='match')return 'match';
+  if(v==='△'||v==='partial')return 'partial';
+  if(v==='✕'||v==='mismatch')return 'mismatch';
+  return '';
+}
 let smInited=false;
 let smEditRow=null;
 let smMasterAreas=[];
@@ -1752,7 +1770,7 @@ function smFilter(){
     if(verify&&vIdx!=null){
       const v=(r[`col_${vIdx}`]||'').trim();
       if(verify==='empty'){if(v)return false;}
-      else{if(v!==verify)return false;}
+      else{if(verifyKind(v)!==verify)return false;}
     }
     return true;
   });
@@ -1765,18 +1783,34 @@ function smRender(){
     document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">データがありません</p>';
     return;
   }
-  // 住所精度のバッジ
+  // 住所精度のバッジ (旧 raw 値とアイコンの両方に対応)
   const accBadge=(t)=>{
     if(!t)return '';
-    const map={ROOFTOP:{i:'◎',c:'#16a34a',l:'屋根上'},RANGE_INTERPOLATED:{i:'○',c:'#0ea5e9',l:'補間'},GEOMETRIC_CENTER:{i:'△',c:'#f59e0b',l:'区画中心'},APPROXIMATE:{i:'✕',c:'#dc2626',l:'近似'}};
+    const map={
+      ROOFTOP:{i:'◎',c:'#16a34a',l:'屋根上'},
+      RANGE_INTERPOLATED:{i:'○',c:'#0ea5e9',l:'補間'},
+      GEOMETRIC_CENTER:{i:'△',c:'#f59e0b',l:'区画中心'},
+      APPROXIMATE:{i:'✕',c:'#dc2626',l:'近似'},
+      '◎':{i:'◎',c:'#16a34a',l:'屋根上'},
+      '○':{i:'○',c:'#0ea5e9',l:'補間'},
+      '△':{i:'△',c:'#f59e0b',l:'区画中心'},
+      '✕':{i:'✕',c:'#dc2626',l:'近似'},
+    };
     const m=map[t];
     if(!m)return `<span style="font-size:10px;color:#94a3b8;">${t}</span>`;
-    return `<span title="${t} (${m.l})" style="display:inline-block;background:${m.c};color:#fff;border-radius:50%;width:18px;height:18px;line-height:18px;text-align:center;font-size:11px;font-weight:700;">${m.i}</span>`;
+    return `<span title="${m.l}" style="display:inline-block;background:${m.c};color:#fff;border-radius:50%;width:18px;height:18px;line-height:18px;text-align:center;font-size:11px;font-weight:700;">${m.i}</span>`;
   };
-  // ナビ判定のバッジ
+  // ナビ判定のバッジ (旧 raw 値とアイコンの両方に対応)
   const verifyBadge=(v)=>{
     if(!v)return `<span title="未検証" style="color:#cbd5e1;font-size:11px;">—</span>`;
-    const map={match:{i:'◎',c:'#16a34a',l:'一致'},partial:{i:'△',c:'#f59e0b',l:'部分一致'},mismatch:{i:'✕',c:'#dc2626',l:'不一致'}};
+    const map={
+      match:{i:'◎',c:'#16a34a',l:'一致'},
+      partial:{i:'△',c:'#f59e0b',l:'部分一致'},
+      mismatch:{i:'✕',c:'#dc2626',l:'不一致'},
+      '◎':{i:'◎',c:'#16a34a',l:'一致'},
+      '△':{i:'△',c:'#f59e0b',l:'部分一致'},
+      '✕':{i:'✕',c:'#dc2626',l:'不一致'},
+    };
     const m=map[v];
     if(!m)return `<span style="font-size:10px;color:#94a3b8;">${v}</span>`;
     return `<span title="${m.l}" style="display:inline-block;background:${m.c};color:#fff;border-radius:50%;width:18px;height:18px;line-height:18px;text-align:center;font-size:11px;font-weight:700;">${m.i}</span>`;
@@ -2055,7 +2089,7 @@ async function smBatchAddrGeocode(){
       }catch(_){}
     }
     if(resolved){
-      updates.push({row_number:r.row_number,addr:resolved,accuracy});
+      updates.push({row_number:r.row_number,addr:resolved,accuracy:accuracyToIcon(accuracy)});
     }else{
       failures.push({name,reason:hasLatLng(r)?'forward+reverse 共に失敗':'forward失敗+緯度経度なし'});
     }
@@ -2152,7 +2186,7 @@ async function smBatchLatLngFromAddr(){
       if(json.status==='OK'&&json.results&&json.results[0]){
         const loc=json.results[0].geometry.location;
         const accuracy=json.results[0].geometry.location_type||'';
-        updates.push({row_number:r.row_number,lat:loc.lat,lng:loc.lng,accuracy});
+        updates.push({row_number:r.row_number,lat:loc.lat,lng:loc.lng,accuracy:accuracyToIcon(accuracy)});
         okCount++;
         if(accStat[accuracy]!=null)accStat[accuracy]++;
       }else{
@@ -2302,7 +2336,7 @@ async function smVerifyNavLocation(){
   // スプレッドシート保存
   prog.innerHTML=`💾 判定結果をスプレッドシートに保存中... (${results.length}件)`;
   try{
-    const verifyUpdates=results.map(r=>({row_number:r.row_number,verdict:r.verdict.kind}));
+    const verifyUpdates=results.map(r=>({row_number:r.row_number,verdict:verdictToIcon(r.verdict.kind)}));
     const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({action:'batch_update_verify',updates:verifyUpdates})
@@ -2314,7 +2348,7 @@ async function smVerifyNavLocation(){
       if(smColMap.verify!=null){
         results.forEach(r=>{
           const tgt=smData.find(x=>x.row_number===r.row_number);
-          if(tgt)tgt[`col_${smColMap.verify}`]=r.verdict.kind;
+          if(tgt)tgt[`col_${smColMap.verify}`]=verdictToIcon(r.verdict.kind);
         });
       }
     }
@@ -2402,6 +2436,93 @@ function smHideVerifyResult(){
   smVerifyFilter='all';
   const prog=document.getElementById('sm-geocode-progress');
   if(prog){prog.style.display='none';prog.innerHTML='';}
+}
+
+// 旧フォーマット (ROOFTOP / match 等) をアイコンに一括変換
+async function smMigrateIcons(){
+  if(!smData||smData.length===0){alert('店舗データがまだ読み込まれていません');return;}
+  const accIdx=smColMap.accuracy;
+  const verIdx=smColMap.verify;
+  if(accIdx==null&&verIdx==null){alert('住所精度/ナビ判定 列が見つかりません');return;}
+
+  const rawAcc=new Set(['ROOFTOP','RANGE_INTERPOLATED','GEOMETRIC_CENTER','APPROXIMATE']);
+  const rawVer=new Set(['match','partial','mismatch']);
+
+  // 変換対象を収集
+  const accUpdates=[],verUpdates=[];
+  smData.forEach(r=>{
+    if(accIdx!=null){
+      const v=(r[`col_${accIdx}`]||'').trim();
+      if(rawAcc.has(v))accUpdates.push({row_number:r.row_number,accuracy:accuracyToIcon(v),_old:v});
+    }
+    if(verIdx!=null){
+      const v=(r[`col_${verIdx}`]||'').trim();
+      if(rawVer.has(v))verUpdates.push({row_number:r.row_number,verdict:verdictToIcon(v),_old:v});
+    }
+  });
+
+  if(accUpdates.length===0&&verUpdates.length===0){alert('変換対象の旧フォーマットはありません（既にアイコン化済み）');return;}
+
+  if(!window.confirm(`📊 変換対象:\n  住所精度 (raw → アイコン): ${accUpdates.length}件\n  ナビ判定 (raw → アイコン): ${verUpdates.length}件\n\n続行?`))return;
+
+  const btn=document.getElementById('sm-migrate-icons-btn');
+  btn.disabled=true;btn.style.opacity='0.6';
+  const prog=document.getElementById('sm-geocode-progress');
+  prog.style.display='block';
+
+  // 住所精度を batch_update_addr 経由で書き込み (addr は変更しないので row の現在値を保持)
+  // ただし batch_update_addr は addr が必須っぽいので、batch_update_latlng 経由で AG だけ更新
+  if(accUpdates.length>0){
+    prog.innerHTML=`💾 住所精度を変換中... (${accUpdates.length}件)`;
+    // batch_update_latlng で lat/lng 値を変更しないように、現在値をそのまま渡しつつ accuracy を更新
+    const payload=accUpdates.map(u=>{
+      const r=smData.find(x=>x.row_number===u.row_number);
+      const lat=r?r[`col_${smColMap.lat}`]||'':'';
+      const lng=r?r[`col_${smColMap.lng}`]||'':'';
+      return {row_number:u.row_number,lat,lng,accuracy:u.accuracy};
+    });
+    try{
+      const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({action:'batch_update_latlng',updates:payload})
+      });
+      const res=await resp.json();
+      if(res.error)throw new Error(res.error);
+      // ローカルも更新
+      accUpdates.forEach(u=>{
+        const tgt=smData.find(x=>x.row_number===u.row_number);
+        if(tgt)tgt[`col_${accIdx}`]=u.accuracy;
+      });
+    }catch(e){
+      prog.innerHTML=`<span style="color:#dc2626;">❌ 住所精度の変換失敗: ${e.message}</span>`;
+      btn.disabled=false;btn.style.opacity='1';
+      return;
+    }
+  }
+
+  if(verUpdates.length>0){
+    prog.innerHTML=`💾 ナビ判定を変換中... (${verUpdates.length}件)`;
+    try{
+      const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({action:'batch_update_verify',updates:verUpdates})
+      });
+      const res=await resp.json();
+      if(res.error)throw new Error(res.error);
+      verUpdates.forEach(u=>{
+        const tgt=smData.find(x=>x.row_number===u.row_number);
+        if(tgt)tgt[`col_${verIdx}`]=u.verdict;
+      });
+    }catch(e){
+      prog.innerHTML=`<span style="color:#dc2626;">❌ ナビ判定の変換失敗: ${e.message}</span>`;
+      btn.disabled=false;btn.style.opacity='1';
+      return;
+    }
+  }
+
+  prog.innerHTML=`<b style="color:#16a34a;">✅ 完了</b>: 住所精度 ${accUpdates.length}件 / ナビ判定 ${verUpdates.length}件 をアイコンに変換しました`;
+  btn.disabled=false;btn.style.opacity='1';
+  smRender();
 }
 
 // 正式店舗名を expandShopName で一括生成
