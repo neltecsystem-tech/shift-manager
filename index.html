@@ -2510,12 +2510,20 @@ function smEditMapMoveTo(lat,lng){
 }
 
 // 編集モーダル内: 「ナビ判定」を ◎ (一致) にする
-// 手動で位置を更新した場合に呼ぶ。判定列が無いフォームでは何もしない。
+// 手動で位置を更新した場合に呼ぶ。
+// smColMap.verify が無い場合はヘッダー名 (空白除去) でフォールバック検索。
 function smSetVerifyMatch(){
-  const verifyIdx=smColMap.verify;
-  if(verifyIdx==null)return;
+  let verifyIdx=smColMap.verify;
+  if(verifyIdx==null||verifyIdx<0){
+    verifyIdx=smHeaders.findIndex(h=>h&&h.replace(/\s/g,'')==='ナビ判定');
+    if(verifyIdx<0){console.warn('[smSetVerifyMatch] ナビ判定列が見つかりません');return;}
+  }
   const el=document.getElementById(`sme-${verifyIdx}`);
-  if(el)el.value='◎';
+  if(!el){console.warn(`[smSetVerifyMatch] sme-${verifyIdx} が DOM に存在しません`);return;}
+  el.value='◎';
+  // 念のため input/change を発火 (リスナーがある場合に備えて)
+  el.dispatchEvent(new Event('input',{bubbles:true}));
+  el.dispatchEvent(new Event('change',{bubbles:true}));
 }
 
 // 編集モーダル内の地図検索: 住所/場所名を Geocoding してピンを移動
