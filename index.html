@@ -736,6 +736,7 @@ tbody tr:hover { background:var(--primary-light); }
     </div>
   </div>
 </div>
+<script src="js/utils.js"></script>
 <script>
 const DEFS={
   course_staff_table:{type:'roster'},sheet26:{type:'course'},
@@ -746,8 +747,6 @@ const DEFS={
   shift_11:{label:'11月シフト',type:'shift',year:2025},
 };
 const DB={staff:[],courses:[],shifts:{},shiftsByCourse:{},tenpo:[],raw:{}};
-
-function b64utf8(b){const n=atob(b),a=new Uint8Array(n.length);for(let i=0;i<n.length;i++)a[i]=n.charCodeAt(i);return new TextDecoder('utf-8').decode(a);}
 
 function load(k){if(CSVDATA_B64&&CSVDATA_B64[k]){DB.raw[k]=Papa.parse(b64utf8(CSVDATA_B64[k]),{skipEmptyLines:false}).data;}}
 
@@ -796,15 +795,6 @@ function parseTenpo(){
       note:(r[26]||'').trim(),
     });
   }
-}
-function isDateVal(v){return v&&/^0?\d{1,2}\/\d{1,2}$/.test(v);}
-function areaOfCourse(c){
-  if(!c)return'';
-  if(c.startsWith('城北'))return'城北';
-  if(c.startsWith('川越'))return'川越';
-  if(c.startsWith('立川'))return'立川';
-  if(c.startsWith('川崎'))return'川崎高津';
-  return'';
 }
 function parseShift(key){
   const R=DB.raw[key];if(!R||R.length<10)return;
@@ -1323,9 +1313,6 @@ function gSearch(){
   if(!h)h='<p style="color:var(--text-sub)">該当なし</p>';el.innerHTML=h;
 }
 
-function ao(c){if(!c)return'';if(c.startsWith('城北'))return'城北';if(c.startsWith('川越'))return'川越';if(c.startsWith('立川'))return'立川';if(c.startsWith('川崎'))return'川崎';return'';}
-function bc(a){return{'城北':'badge-johoku','川越':'badge-kawagoe','立川':'badge-tachikawa','川崎':'badge-kawasaki'}[a]||'';}
-function hl(t,q){if(!t||!q||!t.includes(q))return t;return t.replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'g'),`<span class="highlight">${q}</span>`);}
 
 // ── 不具合管理（Google Sheets連携）──
 const DEFECT_SHEET_ID='1AoE_of_ZhKl1ebncnwl5-_h2RrnVuSmqFDHc01CWoJs';
@@ -1673,22 +1660,6 @@ let smVerifyResults=[];
 let smVerifyFilter='all';
 
 // 住所精度の raw → アイコン変換 (シート保存用)
-function accuracyToIcon(t){
-  return ({ROOFTOP:'◎',RANGE_INTERPOLATED:'○',GEOMETRIC_CENTER:'△',APPROXIMATE:'✕'})[t]||t||'';
-}
-// ナビ判定の raw → アイコン変換
-function verdictToIcon(v){
-  return ({match:'◎',partial:'△',mismatch:'✕'})[v]||v||'';
-}
-// アイコン or raw → 内部 kind 値 ('match'/'partial'/'mismatch')
-function verifyKind(v){
-  if(!v)return '';
-  if(v==='◎'||v==='match')return 'match';
-  if(v==='△'||v==='partial')return 'partial';
-  if(v==='✕'||v==='mismatch')return 'mismatch';
-  return '';
-}
-
 // 検索キー: 正式店舗名 (AI列) を優先、無ければ expandShopName(店舗名)
 function smSearchName(record){
   const officialIdx=smColMap.officialName;
@@ -1865,36 +1836,6 @@ function smRender(){
 // Google Maps Geocoding APIキー
 const GEOCODING_API_KEY='AIzaSyB2B8Aa8KtgckWzySRA_Ox50GlG3iFlshk';
 
-// 店舗名の略称展開（長い略称を先にマッチさせる）
-const SHOP_NAME_MAPPING=[
-  ['LATF','ローソンスリーエフ'],
-  ['T]7','セブンイレブン'],
-  ['T]７','セブンイレブン'],
-  ['T)7','セブンイレブン'],
-  ['T)７','セブンイレブン'],
-  ['FM','ファミリーマート'],
-  ['LS','ローソンストア100'],
-  ['LA','ローソン'],
-  ['NL','ナチュラルローソン'],
-  ['MS','ミニストップ'],
-  ['SY','西友'],
-  ['ＳＹ','西友'],
-  ['YS','ヤマザキY'],
-  ['D)','デイリーヤマザキ'],
-  ['D]','デイリーヤマザキ'],
-  ['西武','西武線'],
-  ['F','ファミリーマート'],
-  ['Ｆ','ファミリーマート'],
-];
-function expandShopName(name){
-  if(!name)return name;
-  for(const[code,full]of SHOP_NAME_MAPPING){
-    if(name.startsWith(code)){
-      return full+' '+name.slice(code.length).trim();
-    }
-  }
-  return name;
-}
 
 // 統合: Yahoo!ローカルサーチ優先 + Google Geocoding フォールバック
 async function smBatchAddrUnified(){
@@ -2339,43 +2280,6 @@ async function smBatchLatLngFromAddr(){
 }
 
 // ナビ位置検証: lat/lng が指す場所と住所列の整合性を確認
-function smNormalizeAddr(s){
-  if(!s)return '';
-  return String(s)
-    .replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))  // 全角→半角数字
-    .replace(/[‐‒–—―−ｰー]/g,'-')                                          // ダッシュ統一
-    .replace(/[ 　\s]+/g,'')                                                  // スペース除去
-    .replace(/^〒\d{3}-?\d{4}/,'')
-    .replace(/^日本、?/,'')
-    .trim();
-}
-
-function smCompareAddr(a,b){
-  const na=smNormalizeAddr(a);
-  const nb=smNormalizeAddr(b);
-  if(!na||!nb)return {kind:'mismatch',score:0};
-  if(na===nb)return {kind:'match',score:100};
-  // 包含関係 (片方が他方を含む)
-  if(na.includes(nb)||nb.includes(na))return {kind:'match',score:95};
-  // 市区町村まで一致
-  const cityRe=/^(.{2,3}[都道府県])?(.{1,15}?[市区町村])/;
-  const ma=na.match(cityRe);
-  const mb=nb.match(cityRe);
-  const cityA=ma?(ma[1]||'')+(ma[2]||''):'';
-  const cityB=mb?(mb[1]||'')+(mb[2]||''):'';
-  if(cityA&&cityB&&cityA===cityB){
-    // 丁目まで取れるか
-    const choumeRe=/^(.{2,3}[都道府県])?(.{1,15}?[市区町村])(.{1,20}?\d+丁目)?/;
-    const ca=na.match(choumeRe);
-    const cb=nb.match(choumeRe);
-    const cha=ca?[ca[1]||'',ca[2]||'',ca[3]||''].join(''):'';
-    const chb=cb?[cb[1]||'',cb[2]||'',cb[3]||''].join(''):'';
-    if(cha&&chb&&cha===chb)return {kind:'match',score:85};
-    return {kind:'partial',score:50};
-  }
-  return {kind:'mismatch',score:0};
-}
-
 async function smVerifyNavLocation(){
   if(!smFiltered||smFiltered.length===0){alert('対象店舗がありません。フィルタを絞ってから実行してください');return;}
   let nameIdx=-1,addrIdx=-1,areaIdx=-1,latIdx=-1,lngIdx=-1;
@@ -2551,14 +2455,6 @@ function smHideVerifyResult(){
 
 // Yahoo! ローカルサーチで住所一括取得 (lat/lng アンカーで精度向上)
 // AddressMatchingLevel: 6=号, 5=番地, 4=字/丁目, 1-3=広域
-function yahooMatchToIcon(level){
-  const n=parseInt(level);
-  if(n>=6)return '◎';
-  if(n>=5)return '○';
-  if(n>=4)return '△';
-  return '✕';
-}
-
 async function smBatchAddrYahoo(){
   if(!smData||smData.length===0){alert('店舗データがまだ読み込まれていません');return;}
   let nameIdx=-1,addrIdx=-1,areaIdx=-1,latIdx=-1,lngIdx=-1;
@@ -3034,7 +2930,7 @@ function invRenderCatBtns(){
 }
 function invSetCat(c){invCatSel=c;invRenderCatBtns();invUpdateCourseSuggest();invCalcAmount();}
 
-function invNormName(n){return(n||'').replace(/[\s\u3000\u00A0]+/g,'').trim();}
+
 
 function invUpdateCourseSuggest(){
   const staff=document.getElementById('inve-staff').value;
@@ -6254,14 +6150,6 @@ function msrResetAll(){
 }
 
 // GPS距離計算（Haversine公式）
-function msrCalcDist(lat1,lng1,lat2,lng2){
-  const R=6371000;
-  const dLat=(lat2-lat1)*Math.PI/180;
-  const dLng=(lng2-lng1)*Math.PI/180;
-  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
-  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
-}
-
 function msrToggleGps(){
   if(msrGpsWatchId!==null){msrStopGps();return;}
   if(!navigator.geolocation){alert('このブラウザはGPSに対応していません');return;}
