@@ -2377,6 +2377,11 @@ function smBuildForm(record){
   const hasLatLng=smHeaders.some(h=>h==='緯度')&&smHeaders.some(h=>h==='経度');
   if(hasLatLng){
     html+='<div style="margin-bottom:12px;padding:10px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;"><button type="button" onclick="smGeocode()" style="background:#3b82f6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📍 店舗名から緯度経度を取得</button><span id="sme-geo-msg" style="margin-left:10px;font-size:12px;color:var(--text-sub);"></span></div>';
+    html+='<div style="display:flex;gap:6px;margin-bottom:6px;">'
+       +'<input type="text" id="sme-map-search" placeholder="住所や場所名で検索 (例: 東京都立川市曙町2-7-16)" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key===\'Enter\'){event.preventDefault();smMapSearchAddr();}">'
+       +'<button type="button" onclick="smMapSearchAddr()" style="background:#0ea5e9;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap;">🔍 検索</button>'
+       +'</div>';
+    html+='<div id="sme-map-search-msg" style="font-size:11px;margin-bottom:6px;min-height:14px;"></div>';
     html+='<div id="sme-map" style="height:300px;width:100%;border-radius:8px;margin-bottom:6px;border:1px solid var(--border);"></div>';
     html+='<div style="font-size:11px;color:var(--text-sub);margin-bottom:12px;">📍 地図をクリック または ピンをドラッグで位置を微調整できます (緯度・経度欄が自動更新されます)</div>';
   }
@@ -2500,6 +2505,40 @@ function smEditMapMoveTo(lat,lng){
   const ll=L.latLng(lat,lng);
   smEditMarker.setLatLng(ll);
   smEditMap.setView(ll,18);
+}
+
+// 編集モーダル内の地図検索: 住所/場所名を Geocoding してピンを移動
+async function smMapSearchAddr(){
+  const inp=document.getElementById('sme-map-search');
+  const msg=document.getElementById('sme-map-search-msg');
+  if(!inp||!msg)return;
+  const q=(inp.value||'').trim();
+  if(!q){msg.textContent='検索する住所/場所名を入力してください';msg.style.color='#dc2626';return;}
+  msg.textContent='🔍 検索中...';msg.style.color='#3b82f6';
+  try{
+    const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
+    const res=await fetch(url);
+    const json=await res.json();
+    if(json.status!=='OK'||!json.results||!json.results[0]){
+      msg.textContent='検索失敗: '+(json.status||'unknown')+(json.error_message?' - '+json.error_message:'');
+      msg.style.color='#dc2626';
+      return;
+    }
+    const loc=json.results[0].geometry.location;
+    const formatted=json.results[0].formatted_address||'';
+    // 緯度経度 input を更新
+    const latIdx=smColMap.lat,lngIdx=smColMap.lng;
+    if(latIdx!=null&&lngIdx!=null){
+      const latInput=document.getElementById(`sme-${latIdx}`);
+      const lngInput=document.getElementById(`sme-${lngIdx}`);
+      if(latInput)latInput.value=loc.lat.toFixed(7);
+      if(lngInput)lngInput.value=loc.lng.toFixed(7);
+    }
+    smEditMapMoveTo(loc.lat,loc.lng);
+    msg.textContent='✓ '+formatted;msg.style.color='#16a34a';
+  }catch(e){
+    msg.textContent='エラー: '+e.message;msg.style.color='#dc2626';
+  }
 }
 
 async function smSave(){
