@@ -761,6 +761,9 @@ function init(){
     loadLiveShifts();
     document.getElementById('loading').classList.add('hidden');
     showView('dashboard',document.querySelector('.nav-links button'));
+    // 0/8/16時を過ぎていたら裏で自動取込 (起動時 + 5分ごとに再チェック)
+    tryAutoRefreshShifts();
+    setInterval(tryAutoRefreshShifts,5*60*1000);
   }catch(e){document.getElementById('loading').innerHTML='<div style="color:red;max-width:600px;margin:0 auto"><p><b>読み込み失敗</b></p><p>'+e.message+'</p></div>';}
 }
 
@@ -913,6 +916,7 @@ function parseShift(key){
 function parseShiftEv(key){parseShift(key);}
 
 function showView(v,btn){
+  currentView=v;
   document.querySelectorAll('[id^="view-"]').forEach(e=>e.classList.add('hidden'));
   const e=document.getElementById('view-'+v);if(e)e.classList.remove('hidden');
   document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
@@ -3719,6 +3723,92 @@ function loadLiveShifts(){
       parseShift(key);
     });
   }catch(_){}
+}
+
+// ── 自動取込: 0時/8時/16時を過ぎたら取込済みシートを再取得 ──
+
+const SHIFT_REFRESH_HOURS=[0,8,16];
+
+// 「直近の定刻」: 今が 9:30 なら今日 8:00、今が 7:30 なら昨日 16:00
+function getMostRecentShiftScheduleTime(){
+  const now=new Date();
+  for(let dayOffset=0;dayOffset>=-1;dayOffset--){
+    for(let i=SHIFT_REFRESH_HOURS.length-1;i>=0;i--){
+      const t=new Date(now);
+      t.setDate(t.getDate()+dayOffset);
+      t.setHours(SHIFT_REFRESH_HOURS[i],0,0,0);
+      if(t<=now)return t;
+    }
+  }
+  return new Date(now.getTime()-86400000);
+}
+
+function shouldRefreshShifts(){
+  const last=parseInt(localStorage.getItem('lastShiftsRefreshAt')||'0');
+  return getMostRecentShiftScheduleTime().getTime()>last;
+}
+
+async function refreshLiveShiftsSilently(){
+  const liveKeys=Object.keys(DEFS).filter(k=>k.startsWith('live_'));
+  if(!liveKeys.length)return false;
+  let updated=0;
+  for(const key of liveKeys){
+    const sheetName=DEFS[key].label||key.replace(/^live_/,'');
+    try{
+      const resp=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
+      const json=await resp.json();
+      if(json.error||!json.rows||json.rows.length<10)continue;
+      DB.raw[key]=json.rows;
+      parseShift(key);
+      updated++;
+    }catch(_){}
+  }
+  if(updated>0){
+    try{
+      const saveData={};
+      liveKeys.forEach(k=>{saveData[k]={def:DEFS[k],rows:DB.raw[k]};});
+      localStorage.setItem('liveShifts',JSON.stringify(saveData));
+    }catch(_){}
+    localStorage.setItem('lastShiftsRefreshAt',String(Date.now()));
+    return true;
+  }
+  return false;
+}
+
+function showShiftRefreshToast(msg){
+  let el=document.getElementById('shift-refresh-toast');
+  if(!el){
+    el=document.createElement('div');
+    el.id='shift-refresh-toast';
+    el.style.cssText='position:fixed;bottom:20px;right:20px;background:#16a34a;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;font-weight:600;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:9999;transition:opacity .3s;';
+    document.body.appendChild(el);
+  }
+  el.textContent=msg;
+  el.style.opacity='1';
+  clearTimeout(el._timer);
+  el._timer=setTimeout(()=>{el.style.opacity='0';},3000);
+}
+
+let currentView='dashboard';
+function rerenderCurrentView(){
+  const map={dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView};
+  const fn=map[currentView];
+  if(typeof fn==='function')fn();
+}
+
+async function tryAutoRefreshShifts(){
+  if(!shouldRefreshShifts())return;
+  if(window._shiftRefreshing)return;
+  window._shiftRefreshing=true;
+  try{
+    const updated=await refreshLiveShiftsSilently();
+    if(updated){
+      rerenderCurrentView();
+      showShiftRefreshToast('🔄 シフトデータを最新化しました');
+    }
+  }finally{
+    window._shiftRefreshing=false;
+  }
 }
 
 // --- 単価一覧（得意先請求単価） ---
