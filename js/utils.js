@@ -152,3 +152,14 @@ function msrCalcDist(lat1,lng1,lat2,lng2){
   const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
+
+// ──────────────────────────────────────────────────────────────
+// 入力デバウンス (検索ボックスの oninput 用)
+// ──────────────────────────────────────────────────────────────
+
+const _dbTimers={};
+function dbInput(fnName,ms){
+  ms=ms||200;
+  clearTimeout(_dbTimers[fnName]);
+  _dbTimers[fnName]=setTimeout(()=>{const f=window[fnName];if(typeof f==='function')f();},ms);
+}

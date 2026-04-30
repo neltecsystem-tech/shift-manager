@@ -110,7 +110,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div class="filters">
         <div><label>拠点</label><select id="sf-area" onchange="renderStaff()"><option value="">すべて</option></select></div>
         <div><label>契約範囲</label><select id="sf-contract" onchange="renderStaff()"><option value="">すべて</option></select></div>
-        <div><label>名前検索</label><input type="text" id="sf-name" placeholder="名前で検索..." oninput="renderStaff()"></div>
+        <div><label>名前検索</label><input type="text" id="sf-name" placeholder="名前で検索..." oninput="dbInput('renderStaff')"></div>
       </div>
       <div class="table-wrap" id="staff-wrap"></div>
     </div>
@@ -120,7 +120,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div class="sub-tabs" id="ct"><button class="active" onclick="setEd('morning',this)">朝刊</button><button onclick="setEd('evening',this)">夕刊</button></div>
       <div class="filters">
         <div><label>エリア</label><select id="cf-area" onchange="renderCourse()"><option value="">すべて</option></select></div>
-        <div><label>コース検索</label><input type="text" id="cf-name" placeholder="コースで検索..." oninput="renderCourse()"></div>
+        <div><label>コース検索</label><input type="text" id="cf-name" placeholder="コースで検索..." oninput="dbInput('renderCourse')"></div>
       </div>
       <div class="table-wrap" id="course-wrap"></div>
     </div>
@@ -139,8 +139,8 @@ tbody tr:hover { background:var(--primary-light); }
       <div class="filters">
         <div><label>月</label><select id="sh-month" onchange="renderShift()"></select></div>
         <div><label>営業所</label><select id="sh-area" onchange="renderShift()"><option value="">すべて</option></select></div>
-        <div><label>コース検索</label><input type="text" id="sh-course" placeholder="コースで絞り込み..." oninput="renderShift()"></div>
-        <div><label>スタッフ検索</label><input type="text" id="sh-staff" placeholder="スタッフで絞り込み..." oninput="renderShift()"></div>
+        <div><label>コース検索</label><input type="text" id="sh-course" placeholder="コースで絞り込み..." oninput="dbInput('renderShift')"></div>
+        <div><label>スタッフ検索</label><input type="text" id="sh-staff" placeholder="スタッフで絞り込み..." oninput="dbInput('renderShift')"></div>
       </div>
       <div class="table-wrap" id="shift-wrap"></div>
     </div>
@@ -149,9 +149,9 @@ tbody tr:hover { background:var(--primary-light); }
     <div class="card"><h2>店舗検索</h2>
       <div class="filters">
         <div><label>日付</label><input type="date" id="tp-date" onchange="renderTenpo()"></div>
-        <div><label>店舗名</label><input type="search" id="tp-name" autocomplete="off" placeholder="店舗名で検索..." oninput="renderTenpo()"></div>
+        <div><label>店舗名</label><input type="search" id="tp-name" autocomplete="off" placeholder="店舗名で検索..." oninput="dbInput('renderTenpo')"></div>
         <div><label>営業所</label><select id="tp-area" onchange="renderTenpo()"><option value="">すべて</option></select></div>
-        <div><label>コース</label><input type="text" id="tp-course" placeholder="コース名で検索..." oninput="renderTenpo()"></div>
+        <div><label>コース</label><input type="text" id="tp-course" placeholder="コース名で検索..." oninput="dbInput('renderTenpo')"></div>
       </div>
       <div style="margin-bottom:8px;color:var(--text-sub);font-size:12px" id="tp-count"></div>
       <div class="table-wrap" id="tenpo-wrap"></div>
@@ -159,7 +159,7 @@ tbody tr:hover { background:var(--primary-light); }
   </div>
   <div id="view-search" class="hidden">
     <div class="card"><h2>横断検索</h2>
-      <div class="filters"><div><label>キーワード</label><input type="text" id="gs" placeholder="スタッフ名・コース名で検索..." oninput="gSearch()" style="width:300px;"></div></div>
+      <div class="filters"><div><label>キーワード</label><input type="text" id="gs" placeholder="スタッフ名・コース名で検索..." oninput="dbInput('gSearch')" style="width:300px;"></div></div>
       <div id="sr"><p style="color:var(--text-sub)">2文字以上入力してください</p></div>
     </div>
   </div>
@@ -175,7 +175,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div><label>月</label><select id="df-month" onchange="defectLoad()"></select></div>
         <div><label>営業所</label><select id="df-area" onchange="defectFilter()"><option value="">すべて</option><option>城北</option><option>川越</option><option>立川</option><option>川崎高津</option></select></div>
         <div><label>不具合項目</label><select id="df-category" onchange="defectFilter()"><option value="">すべて</option></select></div>
-        <div><label>検索</label><input type="search" id="df-search" autocomplete="off" placeholder="店舗名・ドライバー..." oninput="defectFilter()"></div>
+        <div><label>検索</label><input type="search" id="df-search" autocomplete="off" placeholder="店舗名・ドライバー..." oninput="dbInput('defectFilter')"></div>
       </div>
       <div id="df-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
       <div class="table-wrap" id="df-table"></div>
@@ -220,7 +220,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div class="filters">
         <div><label>営業所</label><select id="sm-area" onchange="smFilter()"><option value="">すべて</option></select></div>
         <div><label>ナビ判定</label><select id="sm-verify-filter" onchange="smFilter()"><option value="">すべて</option><option value="mismatch">✕ 不一致のみ</option><option value="partial">△ 部分一致のみ</option><option value="match">◎ 一致のみ</option><option value="empty">未検証のみ</option></select></div>
-        <div><label>検索</label><input type="search" id="sm-search" autocomplete="off" placeholder="店舗名・コード..." oninput="smFilter()" style="width:200px;"></div>
+        <div><label>検索</label><input type="search" id="sm-search" autocomplete="off" placeholder="店舗名・コード..." oninput="dbInput('smFilter')" style="width:200px;"></div>
       </div>
       <div id="sm-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
       <div class="table-wrap" id="sm-table"></div>
@@ -233,7 +233,7 @@ tbody tr:hover { background:var(--primary-light); }
         <h3 style="color:var(--danger);margin-bottom:16px;">🔒 閉店情報を追加</h3>
         <div style="margin-bottom:12px;">
           <label style="font-size:12px;color:var(--text-sub)">店舗を検索</label>
-          <input type="text" id="smc-search" placeholder="店舗名・コードで検索..." oninput="smCloseSearch()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" autocomplete="off">
+          <input type="text" id="smc-search" placeholder="店舗名・コードで検索..." oninput="dbInput('smCloseSearch')" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" autocomplete="off">
           <div id="smc-results" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:0 0 8px 8px;display:none;"></div>
         </div>
         <div id="smc-selected" style="display:none;background:#f1f5f9;border-radius:10px;padding:12px;margin-bottom:12px;">
@@ -590,7 +590,7 @@ tbody tr:hover { background:var(--primary-light); }
       <!-- スタッフ管理 -->
       <div id="adm-staff" class="adm-panel" style="display:none;">
         <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
-          <input type="search" id="adm-staff-search" name="adm-staff-search" autocomplete="off" oninput="adminFilterStaff()" placeholder="氏名で検索..." style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;flex:1;max-width:300px;">
+          <input type="search" id="adm-staff-search" name="adm-staff-search" autocomplete="off" oninput="dbInput('adminFilterStaff')" placeholder="氏名で検索..." style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;flex:1;max-width:300px;">
           <button onclick="admStaffAdd()" style="background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;white-space:nowrap;">＋ スタッフ追加</button>
           <button onclick="document.getElementById('adm-staff-guide').style.display=document.getElementById('adm-staff-guide').style.display==='none'?'':'none'" style="background:#94a3b8;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;white-space:nowrap;">❓ 計算方式ガイド</button>
         </div>
