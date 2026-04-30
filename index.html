@@ -209,9 +209,8 @@ tbody tr:hover { background:var(--primary-light); }
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <h2 style="margin-bottom:0">店舗マスタ</h2>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button onclick="smBatchGeocode()" id="sm-geocode-btn" style="background:#3b82f6;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 緯度経度を一括取得</button>
           <button onclick="smBatchAddrUnified()" id="sm-addr-btn" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📝 住所を一括取得</button>
-          <button onclick="smBatchLatLngFromAddr()" id="sm-ll-from-addr-btn" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 GPSを住所から取得</button>
+          <button onclick="smBatchLatLngFromAddr()" id="sm-gps-btn" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 GPSを一括取得</button>
           <button onclick="smVerifyNavLocation()" id="sm-verify-btn" style="background:#a855f7;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔍 ナビ位置検証</button>
           <button onclick="smBatchOfficialName()" id="sm-official-btn" style="background:#f97316;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 正式店舗名を一括生成</button>
           <button onclick="smMigrateIcons()" id="sm-migrate-icons-btn" style="background:#64748b;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔄 旧表記をアイコンに変換</button>
@@ -1899,123 +1898,6 @@ function expandShopName(name){
   return name;
 }
 
-// 一括緯度経度取得（店舗マスタ）
-async function smBatchGeocode(){
-  if(!smData||smData.length===0){alert('店舗データがまだ読み込まれていません');return;}
-  // 列マッピング
-  let nameIdx=-1,addrIdx=-1,areaIdx=-1,latIdx=-1,lngIdx=-1;
-  smHeaders.forEach((h,i)=>{
-    if(h==='店舗名')nameIdx=i;
-    if(h==='住所'||h.includes('住所'))addrIdx=i;
-    if(h==='営業所')areaIdx=i;
-    if(h==='緯度')latIdx=i;
-    if(h==='経度')lngIdx=i;
-  });
-  if(nameIdx<0||latIdx<0||lngIdx<0){alert('店舗名/緯度/経度の列が見つかりません');return;}
-
-  // 緯度経度が既に入っているかの厳密判定（数値として解釈できる値があるなら「設定済み」）
-  const hasValidLatLng=r=>{
-    const lat=(r[`col_${latIdx}`]||'').toString().trim();
-    const lng=(r[`col_${lngIdx}`]||'').toString().trim();
-    if(!lat||!lng)return false;
-    const ln=parseFloat(lat),gn=parseFloat(lng);
-    return !isNaN(ln)&&!isNaN(gn)&&ln!==0&&gn!==0;
-  };
-
-  // 納品中止・店舗名なしを除外した有効な店舗
-  const validShops=smData.filter(r=>{
-    const name=(r[`col_${nameIdx}`]||'').trim();
-    const area=areaIdx>=0?((r[`col_${areaIdx}`]||'')):'';
-    if(area.includes('納品中止'))return false;
-    return !!name;
-  });
-
-  const alreadyHas=validShops.filter(hasValidLatLng);
-  const targets=validShops.filter(r=>!hasValidLatLng(r));
-
-  if(targets.length===0){alert('すべての店舗の緯度経度が既に設定されています');return;}
-  const confirmMsg=`📊 店舗状況:\n ・取得済み: ${alreadyHas.length}件（スキップ）\n ・未取得: ${targets.length}件（これから検索）\n ・納品中止を除く\n\nGoogle Maps APIで ${targets.length}件を検索します。\n続行しますか？`;
-  if(!window.confirm(confirmMsg))return;
-
-  const prog=document.getElementById('sm-geocode-progress');
-  prog.style.display='block';
-  const btn=document.getElementById('sm-geocode-btn');
-  btn.disabled=true;btn.style.opacity='0.5';
-
-  const updates=[];
-  const failures=[];
-  let okCount=0;
-
-  // 営業所→地域ヒントのマッピング
-  const AREA_HINT={'立川':'東京都立川市','城北':'東京都','池袋':'東京都豊島区','川越':'埼玉県川越市','川崎高津':'神奈川県川崎市高津区'};
-
-  async function doGeocode(query){
-    const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
-    const res=await fetch(url);
-    return await res.json();
-  }
-
-  for(let i=0;i<targets.length;i++){
-    const r=targets[i];
-    const rawName=(r[`col_${nameIdx}`]||'').trim();
-    const name=smSearchName(r);
-    const addr=addrIdx>=0?((r[`col_${addrIdx}`]||'').trim()):'';
-    const area=areaIdx>=0?((r[`col_${areaIdx}`]||'').split(',')[0].trim()):'';
-    const areaHint=AREA_HINT[area]||'';
-    const q1=addr?(name+' '+addr):name;
-    prog.innerHTML=`🔍 <b>${i+1}/${targets.length}</b> 検索中: ${rawName}${rawName!==name?' → '+name:''}<br><div style="margin-top:4px;height:6px;background:#e5e7eb;border-radius:3px;"><div style="width:${(i/targets.length*100).toFixed(1)}%;height:100%;background:#3b82f6;border-radius:3px;"></div></div>`;
-    try{
-      // 1回目: 通常クエリ
-      let json=await doGeocode(q1);
-      // 2回目: ZERO_RESULTS なら営業所地域を付けてリトライ
-      if((json.status==='ZERO_RESULTS')&&areaHint){
-        await new Promise(r=>setTimeout(r,120));
-        json=await doGeocode(areaHint+' '+q1);
-      }
-      if(json.status==='OK'&&json.results[0]){
-        const loc=json.results[0].geometry.location;
-        updates.push({row_number:r.row_number,lat:loc.lat,lng:loc.lng});
-        okCount++;
-      }else{
-        failures.push({name:rawName,expanded:name,reason:json.status+(json.error_message?' - '+json.error_message:''),area});
-      }
-    }catch(e){
-      failures.push({name:rawName,expanded:name,reason:e.message,area});
-    }
-    // Rate limit: 10 req/sec
-    await new Promise(r=>setTimeout(r,120));
-  }
-
-  // スプレッドシート一括保存
-  prog.innerHTML=`💾 スプレッドシート保存中...（${updates.length}件）`;
-  if(updates.length>0){
-    try{
-      const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({action:'batch_update_latlng',updates})
-      });
-      const res=await resp.json();
-      if(res.error)throw new Error(res.error);
-    }catch(e){
-      prog.innerHTML=`<span style="color:#dc2626;">❌ 保存失敗: ${e.message}</span>`;
-      btn.disabled=false;btn.style.opacity='1';
-      return;
-    }
-  }
-
-  let summary=`<b style="color:#16a34a;">✅ 完了</b>: 成功 ${okCount}件 / 失敗 ${failures.length}件`;
-  if(failures.length>0){
-    summary+=`<details style="margin-top:6px;"><summary style="cursor:pointer;color:#dc2626;">失敗一覧を表示</summary><ul style="margin:4px 0;padding-left:20px;font-size:12px;">`;
-    failures.slice(0,50).forEach(f=>{summary+=`<li>${f.area?'['+f.area+'] ':''}${f.name}${f.expanded&&f.expanded!==f.name?'（→'+f.expanded+'）':''} — ${f.reason}</li>`;});
-    if(failures.length>50)summary+=`<li>他 ${failures.length-50}件</li>`;
-    summary+='</ul></details>';
-  }
-  prog.innerHTML=summary;
-  btn.disabled=false;btn.style.opacity='1';
-  // データリロード
-  await smLoad();
-}
-
 // 統合: Yahoo!ローカルサーチ優先 + Google Geocoding フォールバック
 async function smBatchAddrUnified(){
   if(!smData||smData.length===0){alert('店舗データがまだ読み込まれていません');return;}
@@ -2323,7 +2205,9 @@ async function smBatchAddrGeocode(){
   await smLoad();
 }
 
-// 住所から緯度経度を一括再取得（精度も保存）
+// GPS一括取得: 住所優先・店舗名フォールバック
+//   1) 住所列が埋まっている → 住所からgeocode（高精度）
+//   2) 住所が空 → 店舗名+営業所地域でフォールバック（略称展開あり）
 async function smBatchLatLngFromAddr(){
   if(!smData||smData.length===0){alert('店舗データがまだ読み込まれていません');return;}
   let nameIdx=-1,addrIdx=-1,areaIdx=-1,latIdx=-1,lngIdx=-1;
@@ -2335,19 +2219,22 @@ async function smBatchLatLngFromAddr(){
     if(h==='緯度')latIdx=i;
     if(h==='経度')lngIdx=i;
   });
-  if(addrIdx<0||latIdx<0||lngIdx<0){alert('住所/緯度/経度の列が見つかりません');return;}
+  if(nameIdx<0||latIdx<0||lngIdx<0){alert('店舗名/緯度/経度の列が見つかりません');return;}
 
-  const hasAddr=r=>((r[`col_${addrIdx}`]||'').toString().trim().length>0);
+  const hasAddr=r=>addrIdx>=0&&((r[`col_${addrIdx}`]||'').toString().trim().length>0);
 
-  // 納品中止 + 住所なし除外
+  // 納品中止・店舗名なしを除外
   const validShops=smData.filter(r=>{
+    const name=(r[`col_${nameIdx}`]||'').trim();
     const area=areaIdx>=0?((r[`col_${areaIdx}`]||'')):'';
     if(area.includes('納品中止'))return false;
-    return hasAddr(r);
+    return !!name;
   });
+  if(validShops.length===0){alert('対象店舗がありません');return;}
 
-  if(validShops.length===0){alert('住所が入力された店舗がありません。先に「📝 住所を一括取得」を実行してください');return;}
-  const choice=prompt(`住所が入力された店舗 ${validShops.length}件 が対象です。\n\n0: すべて再取得（既存の緯度経度を上書き）\n1: 緯度経度が空の店舗のみ取得\n空欄: キャンセル\n\n0 か 1 を入力:`);
+  const withAddr=validShops.filter(hasAddr).length;
+  const withoutAddr=validShops.length-withAddr;
+  const choice=prompt(`📊 対象店舗 ${validShops.length}件\n  ・住所あり: ${withAddr}件 → 住所からGPS取得（高精度）\n  ・住所なし: ${withoutAddr}件 → 店舗名+営業所でフォールバック\n\n0: すべて再取得（既存の緯度経度を上書き）\n1: 緯度経度が空の店舗のみ取得\n空欄: キャンセル\n\n0 か 1 を入力:`);
   if(choice!=='0'&&choice!=='1')return;
   const overwrite=choice==='0';
 
@@ -2358,42 +2245,70 @@ async function smBatchLatLngFromAddr(){
     const ln=parseFloat(lat),gn=parseFloat(lng);
     return isNaN(ln)||isNaN(gn)||ln===0||gn===0;
   });
-
   if(targets.length===0){alert('対象の店舗がありません');return;}
 
-  const btn=document.getElementById('sm-ll-from-addr-btn');
+  const btn=document.getElementById('sm-gps-btn');
   btn.disabled=true;btn.style.opacity='0.6';
   const prog=document.getElementById('sm-geocode-progress');
   prog.style.display='block';
   prog.innerHTML='開始中...';
 
-  let okCount=0;
+  const AREA_HINT={'立川':'東京都立川市','城北':'東京都','池袋':'東京都豊島区','川越':'埼玉県川越市','川崎高津':'神奈川県川崎市高津区'};
   const accStat={ROOFTOP:0,RANGE_INTERPOLATED:0,GEOMETRIC_CENTER:0,APPROXIMATE:0};
+  let okFromAddr=0,okFromName=0;
   const updates=[];
   const failures=[];
 
+  async function doGeocode(query){
+    const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
+    const res=await fetch(url);
+    return await res.json();
+  }
+
   for(let i=0;i<targets.length;i++){
     const r=targets[i];
-    const addr=(r[`col_${addrIdx}`]||'').trim();
-    const name=(r[`col_${nameIdx}`]||'').trim();
-    prog.innerHTML=`🔍 取得中 (${i+1}/${targets.length}): ${name}`;
+    const rawName=(r[`col_${nameIdx}`]||'').trim();
+    const expandedName=smSearchName(r);
+    const addr=addrIdx>=0?((r[`col_${addrIdx}`]||'').trim()):'';
+    const area=areaIdx>=0?((r[`col_${areaIdx}`]||'').split(',')[0].trim()):'';
+    const areaHint=AREA_HINT[area]||'';
+    const useAddr=!!addr;
+    const label=useAddr?'住所':'店舗名';
+    prog.innerHTML=`🔍 <b>${i+1}/${targets.length}</b> ${label}検索中: ${rawName}<br><div style="margin-top:4px;height:6px;background:#e5e7eb;border-radius:3px;"><div style="width:${(i/targets.length*100).toFixed(1)}%;height:100%;background:#0ea5e9;border-radius:3px;"></div></div>`;
     try{
-      const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addr)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
-      const resp=await fetch(url);
-      const json=await resp.json();
+      let json,viaAddr=false;
+      if(useAddr){
+        // 1) 住所で取得
+        json=await doGeocode(addr);
+        viaAddr=json.status==='OK'&&json.results&&json.results[0];
+        // 失敗 → 店舗名+地域でフォールバック
+        if(!viaAddr){
+          await new Promise(res=>setTimeout(res,120));
+          const q=areaHint?(areaHint+' '+expandedName):expandedName;
+          json=await doGeocode(q);
+        }
+      }else{
+        // 2) 店舗名+地域で取得
+        const q1=areaHint?(areaHint+' '+expandedName):expandedName;
+        json=await doGeocode(q1);
+        if(json.status==='ZERO_RESULTS'&&areaHint){
+          await new Promise(res=>setTimeout(res,120));
+          json=await doGeocode(expandedName);
+        }
+      }
       if(json.status==='OK'&&json.results&&json.results[0]){
         const loc=json.results[0].geometry.location;
         const accuracy=json.results[0].geometry.location_type||'';
         updates.push({row_number:r.row_number,lat:loc.lat,lng:loc.lng,accuracy:accuracyToIcon(accuracy)});
-        okCount++;
+        if(viaAddr)okFromAddr++;else okFromName++;
         if(accStat[accuracy]!=null)accStat[accuracy]++;
       }else{
-        failures.push({name,reason:json.status||'unknown'});
+        failures.push({name:rawName,reason:json.status+(json.error_message?' - '+json.error_message:''),via:label,area});
       }
     }catch(e){
-      failures.push({name,reason:e.message});
+      failures.push({name:rawName,reason:e.message,via:label,area});
     }
-    await new Promise(res=>setTimeout(res,80));
+    await new Promise(res=>setTimeout(res,120));
   }
 
   prog.innerHTML=`💾 スプレッドシート保存中...（${updates.length}件）`;
@@ -2412,11 +2327,11 @@ async function smBatchLatLngFromAddr(){
     }
   }
 
-  let summary=`<b style="color:#16a34a;">✅ 完了</b>: 成功 ${okCount}件 / 失敗 ${failures.length}件<br>`;
+  let summary=`<b style="color:#16a34a;">✅ 完了</b>: 住所から ${okFromAddr}件 / 店舗名から ${okFromName}件 / 失敗 ${failures.length}件<br>`;
   summary+=`<span style="font-size:12px;color:#475569;">精度: ◎ROOFTOP ${accStat.ROOFTOP}件 / ○RANGE_INTERPOLATED ${accStat.RANGE_INTERPOLATED}件 / △GEOMETRIC_CENTER ${accStat.GEOMETRIC_CENTER}件 / ✕APPROXIMATE ${accStat.APPROXIMATE}件</span>`;
   if(failures.length>0){
     summary+=`<details style="margin-top:6px;"><summary style="cursor:pointer;color:#dc2626;">失敗一覧を表示</summary><ul style="margin:4px 0;padding-left:20px;font-size:12px;">`;
-    failures.slice(0,50).forEach(f=>{summary+=`<li>${f.name} — ${f.reason}</li>`;});
+    failures.slice(0,50).forEach(f=>{summary+=`<li>[${f.via}]${f.area?' '+f.area:''} ${f.name} — ${f.reason}</li>`;});
     if(failures.length>50)summary+=`<li>他 ${failures.length-50}件</li>`;
     summary+='</ul></details>';
   }
