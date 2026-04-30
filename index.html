@@ -389,8 +389,9 @@ tbody tr:hover { background:var(--primary-light); }
             <p style="font-size:12px;color:#c2410c;margin:0;background:#fff7ed;padding:6px 8px;border-radius:4px;">⚠ <b>夕刊/競馬は自動適用されません。</b>通常タブの夕刊単価を必ず設定してください。</p>
           </div>
         </div>
-        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人</option><option value="社員">社員</option></select></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-salary-wrap').style.display=this.value==='社員'?'block':'none';" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人</option><option value="社員">社員</option></select></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-company-wrap"><label style="font-size:12px;color:var(--text-sub)">所属会社名</label><input type="text" id="inv-re-company" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="株式会社○○"></div>
+        <div style="margin-bottom:10px;display:none;" id="inv-re-salary-wrap"><label style="font-size:12px;color:var(--text-sub)">月給 (円)</label><input type="number" id="inv-re-salary" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 280000" min="0" step="1000"><div style="font-size:11px;color:var(--text-sub);margin-top:3px;">収支管理画面で「社員の給料」として集計されます</div></div>
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">ログイン情報</label></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">ログインID</label><input type="text" id="inv-re-loginid" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">パスワード</label><input type="text" id="inv-re-loginpw" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
@@ -3163,6 +3164,8 @@ function invAddRate(){
   document.getElementById('inv-re-biztype').value='';
   document.getElementById('inv-re-company').value='';
   document.getElementById('inv-re-company-wrap').style.display='none';
+  document.getElementById('inv-re-salary').value='';
+  document.getElementById('inv-re-salary-wrap').style.display='none';
   invUpdateNameSelect('',true);
   document.getElementById('inv-re-calc').value='固定';
   document.getElementById('inv-re-unit-wrap').style.display='none';
@@ -3204,6 +3207,8 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-biztype').value=r.biz_type||'';
   document.getElementById('inv-re-company').value=r.company||'';
   document.getElementById('inv-re-company-wrap').style.display=r.biz_type==='法人'?'block':'none';
+  document.getElementById('inv-re-salary').value=r.monthly_salary||'';
+  document.getElementById('inv-re-salary-wrap').style.display=r.biz_type==='社員'?'block':'none';
   // 川越タブ
   const kw=r.kw_am_daily||'';
   const kwDays=kw.split(',');
@@ -3258,7 +3263,7 @@ async function invSaveRate(){
   const perms=permArr.join(',');
   const kwAmDaily=['mon','tue','wed','thu','fri','sat','sun'].map(d=>document.getElementById('inv-re-kw-'+d).value).join(',');
   const kwPattern=document.getElementById('inv-re-kw-pattern').value;
-  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,am_sunday:document.getElementById('inv-re-am-sun').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,pm_sunday:document.getElementById('inv-re-pm-sun').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value,calc_type_pm:document.getElementById('inv-re-calc-pm').value,unit_price_pm:document.getElementById('inv-re-unit-pm').value,permissions:perms,kw_am_daily:kwAmDaily.replace(/^,+$/,''),kw_pattern:kwPattern};
+  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,am_sunday:document.getElementById('inv-re-am-sun').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,pm_sunday:document.getElementById('inv-re-pm-sun').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value,calc_type_pm:document.getElementById('inv-re-calc-pm').value,unit_price_pm:document.getElementById('inv-re-unit-pm').value,permissions:perms,kw_am_daily:kwAmDaily.replace(/^,+$/,''),kw_pattern:kwPattern,monthly_salary:document.getElementById('inv-re-salary').value||''};
   await invApi({action:'save_rate',record,row_number:rowNum?parseInt(rowNum):undefined});
   document.getElementById('inv-rate-edit').style.display='none';
   await invLoadAll();
@@ -4217,7 +4222,81 @@ async function admRevLoad(){
     s.marginRate=s.amount>0?(s.profit/s.amount*100):0;
   });
 
-  admRevData={sales,expenses,monthWork,expByCourse};
+  // ── 社員集計 (シフトデータからコース別の社員稼働日数を計算→売上を按分) ──
+  // 社員 = invRates の biz_type === '社員'
+  const socialStaff=invRates.filter(r=>r.biz_type==='社員');
+  const socialNames=new Set(socialStaff.map(r=>r.name));
+  const socialSalaryTotal=socialStaff.reduce((s,r)=>s+(Number(r.monthly_salary)||0),0);
+  const socialSalaryByName={};
+  socialStaff.forEach(r=>{socialSalaryByName[r.name]=Number(r.monthly_salary)||0;});
+
+  // 該当月のシフトデータを集める (DB.shiftsByCourse[monthLabel])
+  // monthVal は 'YYYY-MM' 形式、DEFS の label は '4月シフト2026' 形式
+  const [my,mm]=monthVal.split('-').map(Number);
+  const matchedShifts={};// course -> {amTotal, amSocial, pmTotal, pmSocial}
+  Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
+    Object.values(byArea).forEach(({entries,dates})=>{
+      // 期間が一致するかチェック
+      const inMonth=dates.filter(dt=>{
+        const [yy,mmm]=dt.d.split('-').map(Number);
+        return yy===my&&mmm===mm;
+      });
+      if(!inMonth.length)return;
+      const inMonthIdx=new Set(inMonth.map(dt=>dt.d));
+      entries.forEach(({course,a})=>{
+        if(!matchedShifts[course])matchedShifts[course]={amTotal:0,amSocial:0,pmTotal:0,pmSocial:0};
+        const stat=matchedShifts[course];
+        a.forEach(({d,am,pm})=>{
+          if(!inMonthIdx.has(d))return;
+          if(am&&am!=='0'&&am!=='希望休'){stat.amTotal++;if(socialNames.has(am))stat.amSocial++;}
+          if(pm&&pm!=='0'&&pm!=='希望休'){stat.pmTotal++;if(socialNames.has(pm))stat.pmSocial++;}
+        });
+      });
+    });
+  });
+
+  // sales 各行に社員按分売上を付与
+  let socialSalesTotal=0;
+  const socialSalesByStaff={};// name -> sales attributed
+  const socialDaysByStaff={};// name -> {amDays, pmDays}
+  sales.forEach(s=>{
+    const stat=matchedShifts[s.course]||{amTotal:0,amSocial:0,pmTotal:0,pmSocial:0};
+    const amRatio=stat.amTotal>0?(stat.amSocial/stat.amTotal):0;
+    const pmRatio=stat.pmTotal>0?(stat.pmSocial/stat.pmTotal):0;
+    const amSales=(s.amTotal||0)*amRatio;
+    const pmSales=(s.amount-(s.amTotal||0))*pmRatio;// 夕刊+競馬を pm_ratio で按分
+    s.socialSales=amSales+pmSales;
+    socialSalesTotal+=s.socialSales;
+  });
+  // 社員別の売上配分: コースの社員按分売上を、そのコースで稼働した社員人数で割る
+  Object.entries(matchedShifts).forEach(([course,stat])=>{
+    const courseSale=sales.find(s=>s.course===course);
+    if(!courseSale||!courseSale.socialSales)return;
+    // この course で稼働した社員ごとの (am+pm) 日数を集計
+    const perStaff={};
+    Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
+      Object.values(byArea).forEach(({entries,dates})=>{
+        entries.forEach(({course:c,a})=>{
+          if(c!==course)return;
+          a.forEach(({d,am,pm})=>{
+            const [yy,mmm]=d.split('-').map(Number);
+            if(yy!==my||mmm!==mm)return;
+            if(am&&socialNames.has(am)){perStaff[am]=(perStaff[am]||0)+1;}
+            if(pm&&socialNames.has(pm)){perStaff[pm]=(perStaff[pm]||0)+1;}
+          });
+        });
+      });
+    });
+    const totalDays=Object.values(perStaff).reduce((a,b)=>a+b,0);
+    if(totalDays===0)return;
+    Object.entries(perStaff).forEach(([name,days])=>{
+      socialSalesByStaff[name]=(socialSalesByStaff[name]||0)+courseSale.socialSales*(days/totalDays);
+      if(!socialDaysByStaff[name])socialDaysByStaff[name]={total:0};
+      socialDaysByStaff[name].total+=days;
+    });
+  });
+
+  admRevData={sales,expenses,monthWork,expByCourse,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff};
   admRevRender();
 }
 
@@ -4265,11 +4344,23 @@ function admRevRender(){
   const grossMarginRate=totalSales>0?(profit/totalSales*100):0;
   const expenseRate=totalSales>0?(totalExpenses/totalSales*100):0;
 
+  // 社員集計
+  const socialSalesTotal=admRevData.socialSalesTotal||0;
+  const socialSalaryTotal=admRevData.socialSalaryTotal||0;
+  const socialStaffCount=(admRevData.socialStaff||[]).length;
+  const filteredSocialSales=areaFilter
+    ? filteredSales.reduce((a,s)=>a+(s.socialSales||0),0)
+    : socialSalesTotal;
+  const socialRatio=totalSales>0?(filteredSocialSales/totalSales*100):0;
+  // 社員給料を含めた粗利
+  const profitWithSalary=profit-socialSalaryTotal;
+  const grossMarginRateWithSalary=totalSales>0?(profitWithSalary/totalSales*100):0;
+
   // サマリーカード
   let sh=`<div style="display:flex;gap:12px;flex-wrap:wrap;">`;
-  sh+=`<div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#166534;">売上</div><div style="font-size:24px;font-weight:bold;color:#166534;">¥${totalSales.toLocaleString()}</div><div style="font-size:10px;color:#166534;margin-top:2px;">確定 ${confirmedCnt}/${totalCnt}コース</div></div>`;
-  sh+=`<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#dc2626;">支払い</div><div style="font-size:24px;font-weight:bold;color:#dc2626;">¥${totalExpenses.toLocaleString()}</div><div style="font-size:10px;color:#dc2626;margin-top:2px;">原価率 ${expenseRate.toFixed(1)}%</div></div>`;
-  sh+=`<div style="background:${profit>=0?'#dbeafe':'#fef2f2'};border:1px solid ${profit>=0?'#93c5fd':'#fca5a5'};border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:${profit>=0?'#1d4ed8':'#dc2626'};">粗利</div><div style="font-size:24px;font-weight:bold;color:${profit>=0?'#1d4ed8':'#dc2626'};">¥${profit.toLocaleString()}</div><div style="font-size:10px;color:${profit>=0?'#1d4ed8':'#dc2626'};margin-top:2px;">粗利率 ${grossMarginRate.toFixed(1)}%</div></div>`;
+  sh+=`<div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#166534;">売上</div><div style="font-size:24px;font-weight:bold;color:#166534;">¥${totalSales.toLocaleString()}</div><div style="font-size:10px;color:#166534;margin-top:2px;">確定 ${confirmedCnt}/${totalCnt}コース</div>${socialStaffCount>0?`<div style="font-size:11px;color:#7c3aed;margin-top:4px;border-top:1px dashed #c4b5fd;padding-top:4px;">うち社員担当 ¥${Math.round(filteredSocialSales).toLocaleString()} (${socialRatio.toFixed(1)}%)</div>`:''}</div>`;
+  sh+=`<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#dc2626;">支払い</div><div style="font-size:24px;font-weight:bold;color:#dc2626;">¥${totalExpenses.toLocaleString()}</div><div style="font-size:10px;color:#dc2626;margin-top:2px;">原価率 ${expenseRate.toFixed(1)}%</div>${socialStaffCount>0?`<div style="font-size:11px;color:#7c3aed;margin-top:4px;border-top:1px dashed #c4b5fd;padding-top:4px;">+ 社員給料 ¥${socialSalaryTotal.toLocaleString()}</div>`:''}</div>`;
+  sh+=`<div style="background:${profit>=0?'#dbeafe':'#fef2f2'};border:1px solid ${profit>=0?'#93c5fd':'#fca5a5'};border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:${profit>=0?'#1d4ed8':'#dc2626'};">粗利</div><div style="font-size:24px;font-weight:bold;color:${profit>=0?'#1d4ed8':'#dc2626'};">¥${profit.toLocaleString()}</div><div style="font-size:10px;color:${profit>=0?'#1d4ed8':'#dc2626'};margin-top:2px;">粗利率 ${grossMarginRate.toFixed(1)}%</div>${socialStaffCount>0?`<div style="font-size:11px;color:${profitWithSalary>=0?'#1d4ed8':'#dc2626'};margin-top:4px;border-top:1px dashed #c4b5fd;padding-top:4px;">給料控除後 ¥${profitWithSalary.toLocaleString()} (${grossMarginRateWithSalary.toFixed(1)}%)</div>`:''}</div>`;
   sh+=`<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:10px 18px;flex:1;min-width:180px;"><div style="font-size:11px;color:var(--text-sub);margin-bottom:4px;">店舗数（延べ）</div><div style="display:flex;gap:10px;font-size:13px;"><span>📰朝刊 <b>${totalAmShops}</b></span><span>🌙夕刊 <b>${totalPmShops}</b></span><span>🏇競馬 <b>${totalKeibaShops}</b></span></div></div>`;
   sh+=`</div>`;
   if(totalCnt>confirmedCnt){
@@ -4298,8 +4389,34 @@ function admRevRender(){
       dh+=`<tr><td style="border:1px solid #ccc;padding:4px;font-weight:bold;">${area}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.am}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.pm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.keiba}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;">¥${d.amount.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">¥${d.exp.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;color:${aColor};">¥${aProfit.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${aColor};">${aMargin.toFixed(1)}%</td></tr>`;
     });
     dh+=`</tbody></table>`;
+    // 社員別: 売上配分 + 月給
+    if(socialStaffCount>0){
+      dh+=`<h4 style="margin-top:16px;color:#7c3aed;">社員別 売上配分 + 給料</h4>`;
+      dh+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#fdf4ff;"><th style="border:1px solid #ccc;padding:6px;">社員</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">担当売上 (按分)</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">月給</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">差額 (売上-給料)</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">稼働日数</th></tr></thead><tbody>`;
+      const socialSalesByStaff=admRevData.socialSalesByStaff||{};
+      const socialSalaryByName=admRevData.socialSalaryByName||{};
+      const socialDaysByStaff=admRevData.socialDaysByStaff||{};
+      // 社員一覧 (売上0でも表示)
+      const allSocialNames=new Set([...Object.keys(socialSalesByStaff),...Object.keys(socialSalaryByName)]);
+      let sumSales=0,sumSalary=0;
+      [...allSocialNames].sort().forEach(name=>{
+        const sales=socialSalesByStaff[name]||0;
+        const salary=socialSalaryByName[name]||0;
+        const diff=sales-salary;
+        const days=socialDaysByStaff[name]?socialDaysByStaff[name].total:0;
+        sumSales+=sales;sumSalary+=salary;
+        const diffColor=diff>=0?'#1d4ed8':'#dc2626';
+        dh+=`<tr><td style="border:1px solid #ccc;padding:4px;">${name}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${Math.round(sales).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:#7c3aed;">¥${salary.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;color:${diffColor};">¥${Math.round(diff).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:var(--text-sub);">${days}日</td></tr>`;
+      });
+      const totalDiff=sumSales-sumSalary;
+      const totalDiffColor=totalDiff>=0?'#1d4ed8':'#dc2626';
+      dh+=`<tr style="background:#f8fafc;font-weight:bold;"><td style="border:1px solid #ccc;padding:4px;">合計</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${Math.round(sumSales).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:#7c3aed;">¥${sumSalary.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${totalDiffColor};">¥${Math.round(totalDiff).toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;"></td></tr>`;
+      dh+=`</tbody></table>`;
+      dh+=`<div style="font-size:11px;color:var(--text-sub);margin-top:4px;">※ 担当売上は社員が稼働したコースの売上を稼働日数で按分した参考値です</div>`;
+    }
+
     // 支払い上位
-    dh+=`<h4 style="margin-top:16px;color:var(--danger);">支払い（スタッフ別）</h4>`;
+    dh+=`<h4 style="margin-top:16px;color:var(--danger);">支払い（スタッフ別 — 個建/個数制）</h4>`;
     dh+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:6px;">スタッフ</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">支払額</th></tr></thead><tbody>`;
     expenses.forEach(e=>{
       dh+=`<tr><td style="border:1px solid #ccc;padding:4px;">${e.staff}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${e.amount.toLocaleString()}</td></tr>`;
