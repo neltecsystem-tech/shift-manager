@@ -142,7 +142,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="setShEd('pm',this)">夕刊のみ</button>
       </div>
       <div class="filters">
-        <div><label>月</label><select id="sh-month" onchange="renderShift()"></select></div>
+        <div><label>月</label><select id="sh-month" onchange="shFreshAndRender()"></select></div>
         <div><label>営業所</label><select id="sh-area" onchange="renderShift()"><option value="">すべて</option></select></div>
         <div><label>コース検索</label><input type="text" id="sh-course" placeholder="コースで絞り込み..." oninput="dbInput('renderShift')"></div>
         <div><label>スタッフ検索</label><input type="text" id="sh-staff" placeholder="スタッフで絞り込み..." oninput="dbInput('renderShift')"></div>
@@ -1171,7 +1171,57 @@ function renderShiftView(){
     [...allAreas].forEach(a=>aSel.add(new Option(a,a)));
     shi=true;
   }
-  renderShift();
+  shFreshAndRender();
+}
+
+// シフトラベル ('4月シフト2026' or '11月シフト') を {year, month} に分解
+function parseMonthLabel(label){
+  if(!label)return null;
+  const m=String(label).match(/^(\d{1,2})月シフト(\d{4})$/);
+  if(m)return {year:parseInt(m[2]),month:parseInt(m[1])};
+  const m2=String(label).match(/^(\d{1,2})月シフト$/);
+  if(m2)return {year:2025,month:parseInt(m2[1])};
+  return null;
+}
+
+// 指定年月のシフトを Google Sheets から live で取得 (キャッシュバイパス)
+async function forceFreshShift(year,month){
+  const sheetName=`${month}月シフト${year}`;
+  try{
+    const resp=await fetch(SHIFT_API,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})
+    });
+    const json=await resp.json();
+    if(json.error||!Array.isArray(json.rows)||json.rows.length<10)return false;
+    const key='live_'+sheetName.replace(/\s+/g,'_');
+    DEFS[key]={label:sheetName,type:'shift',year};
+    DB.raw[key]=json.rows;
+    parseShift(key);
+    // localStorage にも保存 (オフライン時のフォールバック)
+    try{
+      const liveKeys=Object.keys(DEFS).filter(k=>k.startsWith('live_'));
+      const saveData={};
+      liveKeys.forEach(k=>{saveData[k]={def:DEFS[k],rows:DB.raw[k]};});
+      localStorage.setItem('liveShifts',JSON.stringify(saveData));
+    }catch(_){}
+    return true;
+  }catch(_){return false;}
+}
+
+// 月別シフト: 選択月の最新を取得して再描画 (常に Google Sheets から live)
+async function shFreshAndRender(){
+  const monthLabel=document.getElementById('sh-month').value;
+  const w=document.getElementById('shift-wrap');
+  const parsed=parseMonthLabel(monthLabel);
+  if(!parsed){renderShift();return;}
+  // 既存データがあれば即座に表示、無ければローディング表示
+  if(DB.shifts[monthLabel]){renderShift();}
+  else if(w){w.innerHTML='<p style="color:var(--text-sub)">最新シフトを取得中...</p>';}
+  // 裏で live 取得 → 取得後に再描画
+  const ok=await forceFreshShift(parsed.year,parsed.month);
+  if(ok)renderShift();
+  else if(!DB.shifts[monthLabel]&&w)w.innerHTML='<p style="color:var(--danger)">シフト取得に失敗しました</p>';
 }
 function renderShift(){
   const m=document.getElementById('sh-month').value,areaF=document.getElementById('sh-area').value,cs=document.getElementById('sh-course').value.trim(),ss=document.getElementById('sh-staff').value.trim(),w=document.getElementById('shift-wrap');
@@ -5820,30 +5870,18 @@ function admPayCalcKodateAm(courseName,day,dow,billCond){
 // 月のシフトをロード (キャッシュに無ければ fetch-shift で取得)
 async function admPayEnsureMonthLoaded(year,month){
   const sheetName=`${month}月シフト${year}`;
-  const key='live_'+sheetName.replace(/\s+/g,'_');
-  // 既に読み込み済みなら label でマッチする monthLabel を返す
+  // 必ず Google Sheets から live で取得 (キャッシュ越しのスタレを防ぐ)
+  const ok=await forceFreshShift(year,month);
+  if(ok)return sheetName;
+  // 取得失敗 → 既存キャッシュにフォールバック
   if(DB.shifts[sheetName])return sheetName;
-  if(DB.raw[key]){
-    if(!DB.shifts[sheetName])parseShift(key);
-    return sheetName;
-  }
-  // 静的 data.js 由来も確認 (e.g. shift_2026_03 等)
   for(const k of Object.keys(DEFS)){
     if(DEFS[k].label===sheetName&&DB.raw[k]){
       if(!DB.shifts[sheetName])parseShift(k);
       return sheetName;
     }
   }
-  // 取得を試みる
-  try{
-    const resp=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
-    const json=await resp.json();
-    if(json.error||!json.rows||json.rows.length<10)return null;
-    DEFS[key]={label:sheetName,type:'shift',year};
-    DB.raw[key]=json.rows;
-    parseShift(key);
-    return sheetName;
-  }catch(_){return null;}
+  return null;
 }
 
 // staffName のシフトを (月内の各日) 抽出
@@ -5906,9 +5944,8 @@ async function admPayInit(){
     const now=new Date();
     monthInput.value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   }
-  // サーバーキャッシュから最新シフトを取得 (古い localStorage がある場合に上書き)
-  // → スプレッドシート最新と画面表示を必ず一致させる
-  try{await loadServerShiftCache(true);}catch(_){}
+  // 他月もバックグラウンドでキャッシュロード (対象月は admPayEnsureMonthLoaded が live 取得)
+  loadServerShiftCache(true).catch(()=>{});
   if(!invRates.length){
     try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}
   }
