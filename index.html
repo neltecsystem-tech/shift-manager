@@ -4870,6 +4870,25 @@ function getConfirmedSale(monthVal,area,course){
   return confirmedSalesCache.find(r=>r.year_month===monthVal&&r.area===area&&r.course===course);
 }
 
+// 一括確定/解除の進捗オーバーレイ (中央モーダル)
+function admBillShowProgress(title){
+  document.getElementById('adm-bill-progress-overlay')?.remove();
+  const el=document.createElement('div');
+  el.id='adm-bill-progress-overlay';
+  el.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border:2px solid #16a34a;border-radius:12px;padding:24px;z-index:99999;font-size:14px;box-shadow:0 20px 60px rgba(0,0,0,0.3);min-width:360px;text-align:center;';
+  el.innerHTML=`<div style="font-weight:700;font-size:16px;margin-bottom:10px;">${title}</div><div style="height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;margin-bottom:10px;"><div id="adm-bill-prog-fill" style="height:100%;background:#16a34a;width:0%;transition:width 0.2s;"></div></div><div id="adm-bill-prog-text">準備中...</div>`;
+  document.body.appendChild(el);
+}
+function admBillUpdateProgress(done,total,detail){
+  const fill=document.getElementById('adm-bill-prog-fill');
+  const text=document.getElementById('adm-bill-prog-text');
+  if(fill)fill.style.width=Math.floor(done/total*100)+'%';
+  if(text)text.innerHTML=`${done}/${total}<br><small style="color:#64748b;">${detail||''}</small>`;
+}
+function admBillHideProgress(){
+  document.getElementById('adm-bill-progress-overlay')?.remove();
+}
+
 async function admBillAreaConfirmAll(area,monthVal){
   try{
     if(!admBillShopData)await admBillInit();
@@ -4896,15 +4915,22 @@ async function admBillAreaConfirmAll(area,monthVal){
     });
     const ok=window.confirm(`${area}営業所 ${monthVal} の全${courses.length}コースを確定します。\n総額 ¥${total.toLocaleString()}\n\n続行しますか？`);
     if(!ok)return;
-    // 順次保存
-    for(const res of results){
-      await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course:res.course,grand_total:res.grand,am_total:res.am,pm_total:res.pm}});
+    // 進捗表示
+    admBillShowProgress(`🔄 ${area}営業所 確定処理中...`);
+    try{
+      for(let i=0;i<results.length;i++){
+        admBillUpdateProgress(i,results.length,`${results[i].course} を確定中...`);
+        await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course:results[i].course,grand_total:results[i].grand,am_total:results[i].am,pm_total:results[i].pm}});
+      }
+      admBillUpdateProgress(results.length,results.length,'キャッシュ更新中...');
+      confirmedSalesCache=null;
+      await loadConfirmedSales();
+    }finally{
+      admBillHideProgress();
     }
-    confirmedSalesCache=null;
-    await loadConfirmedSales();
     alert(`✓ ${courses.length}コースを確定しました`);
     admBillAllCourses();
-  }catch(e){alert('確定失敗: '+e.message);console.error(e);}
+  }catch(e){admBillHideProgress();alert('確定失敗: '+e.message);console.error(e);}
 }
 
 async function admBillAreaUnconfirmAll(area,monthVal){
@@ -4922,14 +4948,21 @@ async function admBillAreaUnconfirmAll(area,monthVal){
     });
     const courses=[...allC].filter(c=>bulkAreas.some(a=>c.includes(a)));
     if(!window.confirm(`${area}営業所 ${monthVal} の全${courses.length}コースの確定を解除します。\n続行しますか？`))return;
-    for(const course of courses){
-      await invApi({action:'unconfirm_sale',year_month:monthVal,area,course});
+    admBillShowProgress(`🔄 ${area}営業所 解除処理中...`);
+    try{
+      for(let i=0;i<courses.length;i++){
+        admBillUpdateProgress(i,courses.length,`${courses[i]} を解除中...`);
+        await invApi({action:'unconfirm_sale',year_month:monthVal,area,course:courses[i]});
+      }
+      admBillUpdateProgress(courses.length,courses.length,'キャッシュ更新中...');
+      confirmedSalesCache=null;
+      await loadConfirmedSales();
+    }finally{
+      admBillHideProgress();
     }
-    confirmedSalesCache=null;
-    await loadConfirmedSales();
     alert(`確定を解除しました（${courses.length}コース）`);
     admBillAllCourses();
-  }catch(e){alert('解除失敗: '+e.message);console.error(e);}
+  }catch(e){admBillHideProgress();alert('解除失敗: '+e.message);console.error(e);}
 }
 
 async function admBillConfirm(area,course,monthVal,grandTotal,amTotal,pmTotal){
