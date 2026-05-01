@@ -890,15 +890,20 @@ function parseShift(key){
         if(nm===''&&isDateVal(colB))break;
         if(!nm)continue;
         if(areas2.some(x=>nm===x)&&isDateVal(colB))break;
-        const ad=areaData[curArea2];if(!ad||!ad[nm])continue;
+        // section 1 に未登場のスタッフ (引継研修中の新人/応援要員等) も拾うため
+        // areaData[curArea2][nm] が無くても特別値があれば lazy に作成する
         s2dates.forEach(({col,d})=>{
           const vAm=(r2[col]||'').trim();
           const vPm=(r2[col+1]||'').trim();
-          if(vAm&&specialPattern.test(vAm)&&ad[nm][d]){ad[nm][d].am=vAm;}
-          if(vPm&&specialPattern.test(vPm)&&ad[nm][d]){ad[nm][d].pm=vPm;}
-          // Also add special values for staff with no section 1 data on this date
-          if(vAm&&specialPattern.test(vAm)&&!ad[nm][d]){ad[nm][d]={am:vAm,pm:''};}
-          if(vPm&&specialPattern.test(vPm)){if(!ad[nm][d])ad[nm][d]={am:'',pm:vPm};else if(!ad[nm][d].pm)ad[nm][d].pm=vPm;}
+          const hasAm=vAm&&specialPattern.test(vAm);
+          const hasPm=vPm&&specialPattern.test(vPm);
+          if(!hasAm&&!hasPm)return;
+          if(!areaData[curArea2])areaData[curArea2]={};
+          if(!areaData[curArea2][nm])areaData[curArea2][nm]={};
+          const adn=areaData[curArea2][nm];
+          if(!adn[d])adn[d]={am:'',pm:''};
+          if(hasAm)adn[d].am=vAm;
+          if(hasPm)adn[d].pm=vPm;
         });
       }
     }
