@@ -884,9 +884,18 @@ function parseShift(key){
     const isSubHdr=a===''&&isDateVal(b)&&curArea2;
     if(isAreaHdr||isSubHdr){
       if(isAreaHdr)curArea2=a;
-      // Parse dates for this section 2 block
+      // Parse dates for this section 2 block (各列1日付の連続レイアウト、AM/PMペアではない)
       const s2dates=[];
       for(let c=1;c<R[i].length;c++){const v=(R[i][c]||'').trim();if(isDateVal(v)){const parts=v.split('/').map(Number);const m=parts[parts.length-2],d=parts[parts.length-1];s2dates.push({col:c,d:`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`});}}
+      // edition 行 (i+2) で各列が朝刊か夕刊かを判定 (section 2 は基本的に単一エディション)
+      // 空の場合は後続行 (i+3〜i+9) から朝刊/夕刊を含む行を探す (ex. row 446 が空で row 449 に夕刊)
+      let editionRow=R[i+2]||[];
+      const hasEd=(row)=>row&&row.some(v=>v&&(String(v).includes('朝刊')||String(v).includes('夕刊')||String(v).includes('競馬')));
+      if(!hasEd(editionRow)){
+        for(let er=i+3;er<Math.min(R.length,i+10);er++){
+          if(hasEd(R[er])){editionRow=R[er];break;}
+        }
+      }
       // Read staff rows until next section
       for(let j=i+3;j<R.length;j++){
         const r2=R[j],nm=(r2[0]||'').trim();
@@ -899,17 +908,16 @@ function parseShift(key){
         // section 1 に未登場のスタッフ (引継研修中の新人/応援要員等) も拾うため
         // areaData[curArea2][nm] が無くても特別値があれば lazy に作成する
         s2dates.forEach(({col,d})=>{
-          const vAm=(r2[col]||'').trim();
-          const vPm=(r2[col+1]||'').trim();
-          const hasAm=vAm&&specialPattern.test(vAm);
-          const hasPm=vPm&&specialPattern.test(vPm);
-          if(!hasAm&&!hasPm)return;
+          const v=(r2[col]||'').trim();
+          if(!v||!specialPattern.test(v))return;
+          // 各列は1日付。edition行で朝刊/夕刊を判定
+          const ed=String(editionRow[col]||'').trim();
+          const isPm=ed.includes('夕刊')||ed.includes('競馬');
           if(!areaData[curArea2])areaData[curArea2]={};
           if(!areaData[curArea2][nm])areaData[curArea2][nm]={};
           const adn=areaData[curArea2][nm];
           if(!adn[d])adn[d]={am:'',pm:''};
-          if(hasAm)adn[d].am=vAm;
-          if(hasPm)adn[d].pm=vPm;
+          if(isPm)adn[d].pm=v;else adn[d].am=v;
         });
       }
     }
