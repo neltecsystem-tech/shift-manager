@@ -5846,6 +5846,16 @@ async function admPayEnsureMonthLoaded(year,month){
 }
 
 // staffName のシフトを (月内の各日) 抽出
+// 支払い対象外の特殊シフト値 (parseShift の specialPattern と同じ)
+// ミーティング/希望休/研修/有給/欠勤 などは出勤しても支払いは発生しない
+const ADM_PAY_NONPAID_PATTERN=/ミーティング|希望休|引継|研修|有給|欠勤|出張|五反田|目黒|渋谷|休刊/;
+function admPayIsNonPaidShift(v){
+  if(v==null)return true;
+  const s=String(v).trim();
+  if(!s||s==='0')return true;
+  return ADM_PAY_NONPAID_PATTERN.test(s);
+}
+
 function admPayCollectStaffShifts(monthLabel,staffName){
   const dayMap={};// d -> {dow, am_course, pm_course}
   const months=DB.shifts[monthLabel];
@@ -5855,10 +5865,8 @@ function admPayCollectStaffShifts(monthLabel,staffName){
     if(!entry)return;
     entry.a.forEach(({d,dow,am,pm})=>{
       if(!dayMap[d])dayMap[d]={dow,am_course:'',pm_course:''};
-      const cleanAm=(am||'').trim();
-      const cleanPm=(pm||'').trim();
-      if(cleanAm&&cleanAm!=='0'&&cleanAm!=='希望休')dayMap[d].am_course=cleanAm;
-      if(cleanPm&&cleanPm!=='0'&&cleanPm!=='希望休')dayMap[d].pm_course=cleanPm;
+      if(!admPayIsNonPaidShift(am))dayMap[d].am_course=String(am).trim();
+      if(!admPayIsNonPaidShift(pm))dayMap[d].pm_course=String(pm).trim();
     });
   });
   return dayMap;
@@ -6050,10 +6058,9 @@ function admPayGetPrimaryArea(monthLabel,staffName){
     if(!entry)return;
     let days=0;
     entry.a.forEach(({am,pm})=>{
-      const cleanAm=(am||'').trim();
-      const cleanPm=(pm||'').trim();
-      if(cleanAm&&cleanAm!=='0'&&cleanAm!=='希望休')days++;
-      if(cleanPm&&cleanPm!=='0'&&cleanPm!=='希望休')days++;
+      // ミーティング等の特殊シフトは主稼働判定からも除外 (支払い計算と一貫させる)
+      if(!admPayIsNonPaidShift(am))days++;
+      if(!admPayIsNonPaidShift(pm))days++;
     });
     counts[area]=(counts[area]||0)+days;
   });
