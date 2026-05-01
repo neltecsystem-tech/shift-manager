@@ -5991,9 +5991,9 @@ async function admPayRender(){
    +`<td style="border:1px solid #94a3b8;padding:4px;text-align:right;">¥${grandTotal.toLocaleString()}</td>`
    +`</tr>`;
   h+='</tbody></table>';
-  h+=`<div style="margin-top:8px;font-size:11px;color:var(--text-sub);">※ 単価マスタの曜日別単価で計算 (朝刊: 月-金/土/日、夕刊: 月-木/金-土/日、庫内: 庫内朝刊/庫内夕刊単価を使用)`;
-  if(isAmKodate)h+=`<br>※ 朝刊は <b>個建制</b> (店舗マスタから自動算出 + 請求条件で休刊日/朝刊なし/同梱を反映、金額にカーソルで内訳表示)`;
-  h+=`</div>`;
+  if(isAmKodate){
+    h+=`<div style="margin-top:8px;font-size:11px;color:var(--text-sub);">※ 朝刊は <b>個建制</b> (店舗マスタから自動算出 + 請求条件で休刊日/朝刊なし/同梱を反映、金額にカーソルで内訳表示)</div>`;
+  }
   h+='</div>';
   cont.innerHTML=h;
 }
