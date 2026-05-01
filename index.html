@@ -534,6 +534,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="adm-billcond" class="adm-panel" style="display:none;">
         <div class="filters">
           <div><label>年月</label><input type="month" id="adm-bc-month" onchange="admBcLoad()"></div>
+          <div><button onclick="admBcAutoFillFromHolidays()" style="background:#0ea5e9;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;" title="月～木の祝日を「夕刊なし」に、その翌日を「同梱無し」に一括追加">🗾 祝日から自動設定</button></div>
           <div><button onclick="admBcSave()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">💾 保存</button></div>
         </div>
         <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:16px;" id="adm-bc-grid">
@@ -4637,6 +4638,72 @@ function admRevRender(){
 
 // --- 請求条件設定 ---
 let admBcData={};// key: "2026-04" → {holiday:[1,15],noam:[],nodokkon:[],yesdokkon:[],nopm:[],yeskeiba:[3]}
+
+// 日本の祝日 (2024-2028) — 振替休日含む
+const JP_HOLIDAYS=new Set([
+  // 2024
+  '2024-01-01','2024-01-08','2024-02-11','2024-02-12','2024-02-23','2024-03-20',
+  '2024-04-29','2024-05-03','2024-05-04','2024-05-05','2024-05-06',
+  '2024-07-15','2024-08-11','2024-08-12','2024-09-16','2024-09-22','2024-09-23',
+  '2024-10-14','2024-11-03','2024-11-04','2024-11-23',
+  // 2025
+  '2025-01-01','2025-01-13','2025-02-11','2025-02-23','2025-02-24','2025-03-20',
+  '2025-04-29','2025-05-03','2025-05-04','2025-05-05','2025-05-06',
+  '2025-07-21','2025-08-11','2025-09-15','2025-09-23',
+  '2025-10-13','2025-11-03','2025-11-23','2025-11-24',
+  // 2026
+  '2026-01-01','2026-01-12','2026-02-11','2026-02-23','2026-03-20',
+  '2026-04-29','2026-05-03','2026-05-04','2026-05-05','2026-05-06',
+  '2026-07-20','2026-08-11','2026-09-21','2026-09-23',
+  '2026-10-12','2026-11-03','2026-11-23',
+  // 2027
+  '2027-01-01','2027-01-11','2027-02-11','2027-02-23','2027-03-21','2027-03-22',
+  '2027-04-29','2027-05-03','2027-05-04','2027-05-05',
+  '2027-07-19','2027-08-11','2027-09-20','2027-09-23',
+  '2027-10-11','2027-11-03','2027-11-23',
+  // 2028
+  '2028-01-01','2028-01-10','2028-02-11','2028-02-23','2028-03-20',
+  '2028-04-29','2028-05-03','2028-05-04','2028-05-05',
+  '2028-07-17','2028-08-11','2028-09-18','2028-09-22',
+  '2028-10-09','2028-11-03','2028-11-23',
+]);
+
+// 月-木の祝日 → 夕刊なし に追加、祝日+1日 → 同梱無し に追加 (未保存)
+function admBcAutoFillFromHolidays(){
+  const month=document.getElementById('adm-bc-month').value;
+  if(!month){alert('年月を選択してください');return;}
+  const [y,m]=month.split('-').map(Number);
+  const daysInMonth=new Date(y,m,0).getDate();
+  if(!admBcData[month])admBcData[month]={holiday:[],noam:[],nodokkon:[],yesdokkon:[],nopm:[],yeskeiba:[]};
+  const cond=admBcData[month];
+  cond.nopm=cond.nopm||[];
+  cond.nodokkon=cond.nodokkon||[];
+
+  const addedNopm=[],addedNodokkon=[];
+  for(let d=1;d<=daysInMonth;d++){
+    const dt=new Date(y,m-1,d);
+    const dow=dt.getDay();// 0=Sun..6=Sat
+    if(dow<1||dow>4)continue;// 月-木 のみ
+    const key=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    if(!JP_HOLIDAYS.has(key))continue;
+    if(!cond.nopm.includes(d)){cond.nopm.push(d);addedNopm.push(d);}
+    // 翌日 → 同梱無し (月跨ぎは無視)
+    const next=d+1;
+    if(next<=daysInMonth&&!cond.nodokkon.includes(next)){
+      cond.nodokkon.push(next);addedNodokkon.push(next);
+    }
+  }
+  // 再描画
+  ['holiday','noam','nodokkon','yesdokkon','nopm','yeskeiba'].forEach(key=>{
+    admBcRenderDates(key,cond[key]||[],month);
+  });
+  if(addedNopm.length||addedNodokkon.length){
+    const msg=`月-木の祝日から自動追加しました:\n\n夕刊なし: ${addedNopm.length?addedNopm.sort((a,b)=>a-b).map(d=>m+'/'+d).join(', '):'なし'}\n同梱無し: ${addedNodokkon.length?addedNodokkon.sort((a,b)=>a-b).map(d=>m+'/'+d).join(', '):'なし'}\n\n💾 保存ボタンで確定してください。`;
+    alert(msg);
+  }else{
+    alert(`${m}月に該当する月-木の祝日はありません`);
+  }
+}
 
 function admBcInit(){
   const mInput=document.getElementById('adm-bc-month');
