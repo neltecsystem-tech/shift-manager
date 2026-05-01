@@ -7,6 +7,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="data.js"></script>
 <style>
 :root { --primary:#1a56db; --primary-light:#e8eefb; --bg:#f5f6fa; --card:#fff; --border:#dde1e8; --text:#1e293b; --text-sub:#64748b; --danger:#dc2626; }
@@ -709,8 +712,9 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>年月</label><input type="month" id="adm-pay-month" onchange="admPayRender()"></div>
           <div><label>ドライバー</label><select id="adm-pay-staff" onchange="admPayRender()"><option value="">選択してください</option></select></div>
           <div><label>営業所</label><select id="adm-pay-bulk-area"><option value="">選択</option><option value="立川">立川</option><option value="城北">城北</option><option value="川越">川越</option><option value="川崎高津">川崎高津</option></select></div>
-          <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;">
+          <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
             <button onclick="admPayBulk()" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📋 営業所一括作成</button>
+            <button onclick="admPayBulkPdfZip()" style="background:#7c3aed;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📦 個別PDFをZIP保存</button>
             <button onclick="admPayPrint()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🖨 印刷 / PDF</button>
           </div>
         </div>
@@ -5953,7 +5957,7 @@ function admPayBuildStatementHtml(rate,y,m,monthLabel,monthVal){
   const reiwa=y-2018;
   const era=reiwa>=1?`令和${reiwa===1?'元':reiwa}年`:`西暦${y}年`;
 
-  let h='<div class="adm-pay-statement" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:10px;max-width:760px;margin:0 auto;">';
+  let h=`<div class="adm-pay-statement" data-name="${staffName.replace(/"/g,'&quot;')}" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:10px;max-width:760px;margin:0 auto;">`;
   h+=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">`;
   h+=`<div><h3 style="margin:0;font-size:18px;">別紙明細書</h3><div style="margin-top:4px;font-size:14px;font-weight:600;">${era} ${m}月分</div></div>`;
   h+=`<div style="text-align:right;font-size:15px;"><b>${staffName}</b></div>`;
@@ -6060,6 +6064,64 @@ async function admPayBulk(){
   });
   cont.innerHTML=html;
   msg.textContent='';
+}
+
+// ドライバーごとに個別PDFを生成し、まとめて ZIP でダウンロード (アスクル方式)
+async function admPayBulkPdfZip(){
+  const cont=document.getElementById('adm-pay-content');
+  const wraps=cont?cont.querySelectorAll('.adm-pay-statement'):[];
+  if(!wraps||wraps.length===0){alert('先に営業所一括作成でドライバー一覧を生成してください');return;}
+  if(typeof JSZip==='undefined'||typeof html2canvas==='undefined'||!window.jspdf){
+    alert('PDFライブラリの読み込みに失敗しています。ページを再読み込みしてください。');return;
+  }
+  const monthVal=document.getElementById('adm-pay-month').value;
+  const area=document.getElementById('adm-pay-bulk-area').value;
+  const folderName=`支払明細_${area||''}_${monthVal||''}`.replace(/_+$/,'').replace(/[\\/:*?"<>|]/g,'_');
+  if(!window.confirm(`${wraps.length}名分の個別PDFを生成して ZIP でダウンロードします。\n生成に時間がかかります (1名あたり 1〜2秒)。\n\n続行?`))return;
+
+  admBillShowProgress(`📦 PDF生成中... (0/${wraps.length})`);
+  try{
+    const zip=new JSZip();
+    const folder=zip.folder(folderName);
+    const{jsPDF}=window.jspdf;
+    for(let i=0;i<wraps.length;i++){
+      const wrap=wraps[i];
+      const name=(wrap.getAttribute('data-name')||`driver-${i+1}`).replace(/[\\/:*?"<>|]/g,'_');
+      admBillUpdateProgress(i,wraps.length,name);
+      // 一時的に absolute 配置を解除して可視化 (display:none では html2canvas が動かない)
+      const canvas=await html2canvas(wrap,{scale:2,useCORS:true,backgroundColor:'#ffffff',logging:false});
+      const imgData=canvas.toDataURL('image/jpeg',0.92);
+      const pdf=new jsPDF({unit:'mm',format:'a4',orientation:'portrait'});
+      const pdfW=pdf.internal.pageSize.getWidth();
+      const pdfH=pdf.internal.pageSize.getHeight();
+      const imgW=pdfW-10;
+      const imgH=(canvas.height*imgW)/canvas.width;
+      if(imgH<=pdfH-10){
+        pdf.addImage(imgData,'JPEG',5,5,imgW,imgH);
+      }else{
+        const fitH=pdfH-10;
+        const fitW=(canvas.width*fitH)/canvas.height;
+        pdf.addImage(imgData,'JPEG',(pdfW-fitW)/2,5,fitW,fitH);
+      }
+      const blob=pdf.output('blob');
+      folder.file(`${name}.pdf`,blob);
+    }
+    admBillUpdateProgress(wraps.length,wraps.length,'ZIP生成中...');
+    const zipBlob=await zip.generateAsync({type:'blob'});
+    const url=URL.createObjectURL(zipBlob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=`${folderName}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }catch(e){
+    alert('PDF生成失敗: '+(e?.message||e));
+    console.error(e);
+  }finally{
+    admBillHideProgress();
+  }
 }
 
 function admPayPrint(){
