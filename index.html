@@ -884,9 +884,12 @@ function parseShift(key){
       // Read staff rows until next section
       for(let j=i+3;j<R.length;j++){
         const r2=R[j],nm=(r2[0]||'').trim();
+        const colB=(r2[1]||'').trim();
+        // 次のサブブロック境界 (col 0 空 + col 1 が日付) は最初に判定して break
+        // (この break は !nm の continue より前に評価する必要がある)
+        if(nm===''&&isDateVal(colB))break;
         if(!nm)continue;
-        if(areas2.some(x=>nm===x)&&isDateVal((r2[1]||'').trim()))break;
-        if(nm===''&&isDateVal((r2[1]||'').trim()))break;
+        if(areas2.some(x=>nm===x)&&isDateVal(colB))break;
         const ad=areaData[curArea2];if(!ad||!ad[nm])continue;
         s2dates.forEach(({col,d})=>{
           const vAm=(r2[col]||'').trim();
