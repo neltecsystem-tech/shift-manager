@@ -713,6 +713,7 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>ドライバー</label><select id="adm-pay-staff" onchange="admPayRender()"><option value="">選択してください</option></select></div>
           <div><label>営業所</label><select id="adm-pay-bulk-area"><option value="">選択</option><option value="立川">立川</option><option value="城北">城北</option><option value="川越">川越</option><option value="川崎高津">川崎高津</option></select></div>
           <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+            <button onclick="admPayRefreshShift()" style="background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="シフトキャッシュを強制更新">🔄 シフト最新化</button>
             <button onclick="admPayBulk()" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📋 営業所一括作成</button>
             <button onclick="admPayBulkPdfZip()" style="background:#7c3aed;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📦 個別PDFをZIP保存</button>
             <button onclick="admPayPrint()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🖨 印刷 / PDF</button>
@@ -5870,6 +5871,32 @@ function admPayCollectStaffShifts(monthLabel,staffName){
     });
   });
   return dayMap;
+}
+
+// シフトキャッシュを強制再取得 (サーバー側で Google Sheets から再取得)
+async function admPayRefreshShift(){
+  const monthVal=document.getElementById('adm-pay-month').value;
+  const msg=document.getElementById('adm-pay-msg');
+  if(!monthVal){alert('年月を選択してください');return;}
+  const [y,m]=monthVal.split('-').map(Number);
+  const sheetName=`${m}月シフト${y}`;
+  msg.textContent=`🔄 ${sheetName} をサーバーで再取得中...`;msg.style.color='#f59e0b';
+  try{
+    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/cron-refresh-shifts',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({sheets:[sheetName]})
+    });
+    const json=await resp.json();
+    if(json.error){throw new Error(json.error);}
+    // 取得後にクライアントキャッシュも更新
+    await loadServerShiftCache(true);
+    msg.textContent=`✓ ${sheetName} を最新化しました。明細を再生成します。`;msg.style.color='#16a34a';
+    // 現在表示中の明細を再描画
+    if(document.getElementById('adm-pay-staff').value)admPayRender();
+    setTimeout(()=>{msg.textContent='';},3000);
+  }catch(e){
+    msg.textContent=`❌ 再取得失敗: ${e.message}`;msg.style.color='var(--danger)';
+  }
 }
 
 // ドライバー dropdown を populate (invRates から)
