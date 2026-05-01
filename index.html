@@ -4206,6 +4206,45 @@ async function admRevLoad(){
     });
   });
 
+  // 営業所別の追加料金 (請求書(営業所合計)と一致させるため)
+  // - 立川: 庫内作業費(朝刊/競馬), 返品新聞作業料
+  // - 川崎高津: 優馬直送便, 返品新聞作業料
+  const billCondForRev=getBillConditions(monthVal);
+  const [revY,revM]=monthVal.split('-').map(Number);
+  const revDaysInMonth=new Date(revY,revM,0).getDate();
+  const revHoliday=billCondForRev.holiday||[];
+  const revNoam=billCondForRev.noam||[];
+  const revNopm=billCondForRev.nopm||[];
+  const revYeskeiba=billCondForRev.yeskeiba||[];
+  let revAmDays=0,revKeibaWorkDays=0;
+  for(let d=1;d<=revDaysInMonth;d++){
+    const dow=new Date(revY,revM-1,d).getDay();
+    if(revHoliday.includes(d))continue;
+    if(!revNoam.includes(d))revAmDays++;
+    const isFri=dow===5,isSat=dow===6;
+    const isKeibaDispatch=(isFri||isSat||revYeskeiba.includes(d))&&!revNopm.includes(d);
+    if(isKeibaDispatch)revKeibaWorkDays++;
+  }
+  const areaExtras={};// area -> {workFee,kuchiAmFee,kuchiKeibaFee,yumaFee,total,label[]}
+  allAreas.forEach(area=>{
+    const ex={workFee:0,kuchiAmFee:0,kuchiKeibaFee:0,yumaFee:0,total:0,labels:[]};
+    if(area==='立川'){
+      ex.workFee=Number(billCondForRev.work_tachikawa)||0;
+      ex.kuchiAmFee=revAmDays*6000;
+      ex.kuchiKeibaFee=revKeibaWorkDays*9000;
+      if(ex.workFee)ex.labels.push({label:'返品新聞作業料',amount:ex.workFee});
+      if(ex.kuchiAmFee)ex.labels.push({label:`庫内作業費(朝刊) ${revAmDays}日×6,000`,amount:ex.kuchiAmFee});
+      if(ex.kuchiKeibaFee)ex.labels.push({label:`庫内作業費(競馬) ${revKeibaWorkDays}日×9,000`,amount:ex.kuchiKeibaFee});
+    }else if(area==='川崎高津'){
+      ex.workFee=Number(billCondForRev.work_kawasaki)||0;
+      ex.yumaFee=revKeibaWorkDays*7000;
+      if(ex.workFee)ex.labels.push({label:'返品新聞作業料',amount:ex.workFee});
+      if(ex.yumaFee)ex.labels.push({label:`優馬直送便 ${revKeibaWorkDays}日×7,000`,amount:ex.yumaFee});
+    }
+    ex.total=ex.workFee+ex.kuchiAmFee+ex.kuchiKeibaFee+ex.yumaFee;
+    if(ex.total>0)areaExtras[area]=ex;
+  });
+
   // 支払い: 稼働記録から該当月の金額合計
   const workRes=await invApi({action:'list_work'});
   const allWork=workRes.records||[];
@@ -4312,7 +4351,7 @@ async function admRevLoad(){
     });
   });
 
-  admRevData={sales,expenses,monthWork,expByCourse,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff};
+  admRevData={sales,expenses,monthWork,expByCourse,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras};
   admRevRender();
 }
 
@@ -4342,7 +4381,21 @@ function admRevRender(){
     // 支払いはスタッフ→営業所の紐付けが難しいので全体のまま
   }
 
-  const totalSales=filteredSales.reduce((s,r)=>s+r.amount,0);
+  const courseSales=filteredSales.reduce((s,r)=>s+r.amount,0);
+  // 営業所別追加料金の合計 (areaFilter があればその営業所のみ)
+  const areaExtrasMap=admRevData.areaExtras||{};
+  let extraFeeTotal=0;
+  const extraFeeRows=[];
+  Object.entries(areaExtrasMap).forEach(([a,ex])=>{
+    if(areaFilter&&a!==areaFilter)return;
+    extraFeeTotal+=ex.total;
+    ex.labels.forEach(l=>extraFeeRows.push({area:a,...l}));
+  });
+  // 税抜売上 = コース合計 + 営業所追加料金
+  const totalSalesNet=courseSales+extraFeeTotal;
+  // 消費税 (10%) と税込
+  const tax=Math.round(totalSalesNet*0.10);
+  const totalSales=totalSalesNet+tax;// 税込売上 (請求書(営業所合計)と一致)
   const totalExpenses=filteredExpenses.reduce((s,r)=>s+r.amount,0);
   const profit=totalSales-totalExpenses;
 
@@ -4374,7 +4427,7 @@ function admRevRender(){
 
   // サマリーカード
   let sh=`<div style="display:flex;gap:12px;flex-wrap:wrap;">`;
-  sh+=`<div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#166534;">売上</div><div style="font-size:24px;font-weight:bold;color:#166534;">¥${totalSales.toLocaleString()}</div><div style="font-size:10px;color:#166534;margin-top:2px;">確定 ${confirmedCnt}/${totalCnt}コース</div>${socialStaffCount>0?`<div style="font-size:11px;color:#7c3aed;margin-top:4px;border-top:1px dashed #c4b5fd;padding-top:4px;">うち社員担当 ¥${Math.round(filteredSocialSales).toLocaleString()} (${socialRatio.toFixed(1)}%)</div>`:''}</div>`;
+  sh+=`<div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:16px 24px;flex:1;min-width:160px;text-align:center;"><div style="font-size:12px;color:#166534;">売上 (税込)</div><div style="font-size:24px;font-weight:bold;color:#166534;">¥${totalSales.toLocaleString()}</div><div style="font-size:10px;color:#166534;margin-top:2px;">確定 ${confirmedCnt}/${totalCnt}コース</div><div style="font-size:10px;color:#166534;margin-top:2px;">税抜 ¥${totalSalesNet.toLocaleString()} + 消費税 ¥${tax.toLocaleString()}${extraFeeTotal>0?`<br>（うち作業料等 ¥${extraFeeTotal.toLocaleString()}）`:''}</div>${socialStaffCount>0?`<div style="font-size:11px;color:#7c3aed;margin-top:4px;border-top:1px dashed #c4b5fd;padding-top:4px;">うち社員担当 ¥${Math.round(filteredSocialSales).toLocaleString()} (${socialRatio.toFixed(1)}%)</div>`:''}</div>`;
   sh+=`<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#dc2626;">支払い</div><div style="font-size:24px;font-weight:bold;color:#dc2626;">¥${totalExpenses.toLocaleString()}</div><div style="font-size:10px;color:#dc2626;margin-top:2px;">原価率 ${expenseRate.toFixed(1)}%</div>${socialStaffCount>0?`<div style="font-size:11px;color:#7c3aed;margin-top:4px;border-top:1px dashed #c4b5fd;padding-top:4px;">+ 社員給料 ¥${socialSalaryTotal.toLocaleString()}</div>`:''}</div>`;
   sh+=`<div style="background:${profit>=0?'#dbeafe':'#fef2f2'};border:1px solid ${profit>=0?'#93c5fd':'#fca5a5'};border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:${profit>=0?'#1d4ed8':'#dc2626'};">粗利</div><div style="font-size:24px;font-weight:bold;color:${profit>=0?'#1d4ed8':'#dc2626'};">¥${profit.toLocaleString()}</div><div style="font-size:10px;color:${profit>=0?'#1d4ed8':'#dc2626'};margin-top:2px;">粗利率 ${grossMarginRate.toFixed(1)}%</div>${socialStaffCount>0?`<div style="font-size:11px;color:${profitWithSalary>=0?'#1d4ed8':'#dc2626'};margin-top:4px;border-top:1px dashed #c4b5fd;padding-top:4px;">給料控除後 ¥${profitWithSalary.toLocaleString()} (${grossMarginRateWithSalary.toFixed(1)}%)</div>`:''}</div>`;
   sh+=`<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:10px 18px;flex:1;min-width:180px;"><div style="font-size:11px;color:var(--text-sub);margin-bottom:4px;">店舗数（延べ）</div><div style="display:flex;gap:10px;font-size:13px;"><span>📰朝刊 <b>${totalAmShops}</b></span><span>🌙夕刊 <b>${totalPmShops}</b></span><span>🏇競馬 <b>${totalKeibaShops}</b></span></div></div>`;
@@ -4390,21 +4443,45 @@ function admRevRender(){
     // 営業所別サマリー（店舗数 + 粗利含む）
     const byArea={};
     sales.forEach(s=>{
-      if(!byArea[s.area])byArea[s.area]={amount:0,am:0,pm:0,keiba:0,exp:0};
+      if(!byArea[s.area])byArea[s.area]={amount:0,am:0,pm:0,keiba:0,exp:0,extras:0};
       byArea[s.area].amount+=s.amount;
       byArea[s.area].am+=(s.amCount||0);
       byArea[s.area].pm+=(s.pmCount||0);
       byArea[s.area].keiba+=(s.keibaCount||0);
       byArea[s.area].exp+=(s.expense||0);
     });
-    dh+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:6px;">営業所</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">朝刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">夕刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">競馬店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">売上</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">支払い</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">粗利</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">粗利率</th></tr></thead><tbody>`;
+    // 営業所別追加料金 (作業料/庫内/優馬) を売上に加算
+    Object.entries(areaExtrasMap).forEach(([a,ex])=>{
+      if(!byArea[a])byArea[a]={amount:0,am:0,pm:0,keiba:0,exp:0,extras:0};
+      byArea[a].amount+=ex.total;
+      byArea[a].extras=ex.total;
+    });
+    dh+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:6px;">営業所</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">朝刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">夕刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">競馬店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">売上(税抜)</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">支払い</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">粗利</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">粗利率</th></tr></thead><tbody>`;
     Object.entries(byArea).sort((a,b)=>b[1].amount-a[1].amount).forEach(([area,d])=>{
       const aProfit=d.amount-d.exp;
       const aMargin=d.amount>0?(aProfit/d.amount*100):0;
       const aColor=aProfit>=0?'#1d4ed8':'#dc2626';
-      dh+=`<tr><td style="border:1px solid #ccc;padding:4px;font-weight:bold;">${area}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.am}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.pm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.keiba}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;">¥${d.amount.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">¥${d.exp.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;color:${aColor};">¥${aProfit.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${aColor};">${aMargin.toFixed(1)}%</td></tr>`;
+      const extraTip=d.extras>0?`<div style="font-size:10px;color:#92400e;font-weight:normal;">うち作業料等 ¥${d.extras.toLocaleString()}</div>`:'';
+      dh+=`<tr><td style="border:1px solid #ccc;padding:4px;font-weight:bold;">${area}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.am}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.pm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.keiba}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;">¥${d.amount.toLocaleString()}${extraTip}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">¥${d.exp.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;color:${aColor};">¥${aProfit.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${aColor};">${aMargin.toFixed(1)}%</td></tr>`;
     });
+    // 小計/消費税/税込合計
+    const allAreasSubtotal=Object.values(byArea).reduce((s,d)=>s+d.amount,0);
+    const allAreasExp=Object.values(byArea).reduce((s,d)=>s+d.exp,0);
+    const allAreasTax=Math.round(allAreasSubtotal*0.10);
+    const allAreasGrand=allAreasSubtotal+allAreasTax;
+    dh+=`<tr style="background:#f8fafc;font-weight:600;"><td colspan="4" style="border:1px solid #ccc;padding:4px;text-align:right;">小計 (税抜)</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${allAreasSubtotal.toLocaleString()}</td><td colspan="3" style="border:1px solid #ccc;padding:4px;"></td></tr>`;
+    dh+=`<tr style="background:#f8fafc;"><td colspan="4" style="border:1px solid #ccc;padding:4px;text-align:right;">消費税 (10%)</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${allAreasTax.toLocaleString()}</td><td colspan="3" style="border:1px solid #ccc;padding:4px;"></td></tr>`;
+    dh+=`<tr style="background:#fef3c7;font-weight:bold;"><td colspan="4" style="border:1px solid #ccc;padding:6px;text-align:right;">合計 (税込)</td><td style="border:1px solid #ccc;padding:6px;text-align:right;color:#92400e;">¥${allAreasGrand.toLocaleString()}</td><td style="border:1px solid #ccc;padding:6px;text-align:right;color:#dc2626;">¥${allAreasExp.toLocaleString()}</td><td colspan="2" style="border:1px solid #ccc;padding:6px;"></td></tr>`;
     dh+=`</tbody></table>`;
+    // 作業料/庫内/優馬の内訳
+    if(extraFeeRows.length>0){
+      dh+=`<h4 style="margin-top:16px;color:#92400e;">作業料・追加費用の内訳</h4>`;
+      dh+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#fef3c7;"><th style="border:1px solid #ccc;padding:6px;">営業所</th><th style="border:1px solid #ccc;padding:6px;">項目</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">金額</th></tr></thead><tbody>`;
+      extraFeeRows.forEach(r=>{
+        dh+=`<tr><td style="border:1px solid #ccc;padding:4px;">${r.area}</td><td style="border:1px solid #ccc;padding:4px;">${r.label}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${r.amount.toLocaleString()}</td></tr>`;
+      });
+      dh+=`</tbody></table>`;
+    }
     // 社員別: 売上配分 + 月給
     if(socialStaffCount>0){
       dh+=`<h4 style="margin-top:16px;color:#7c3aed;">社員別 売上配分 + 給料</h4>`;
@@ -5927,7 +6004,8 @@ function admPayPrint(){
   const staffName=document.getElementById('adm-pay-staff').value;
   const monthVal=document.getElementById('adm-pay-month').value;
   const title=`支払明細 ${staffName||''} ${monthVal||''}`;
-  const printCss=`body{font-family:'Meiryo',sans-serif;color:#1e293b;padding:0;margin:20px;}table{border-collapse:collapse;}h3{margin:0;}@media print{body{margin:8mm;}@page{size:A4 portrait;margin:8mm;}}`;
+  // print-color-adjust:exact で背景色を印刷時にも維持 (土曜の薄黄/日曜の薄赤など)
+  const printCss=`*{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;color-adjust:exact !important;}body{font-family:'Meiryo',sans-serif;color:#1e293b;padding:0;margin:20px;}table{border-collapse:collapse;}h3{margin:0;}@media print{body{margin:8mm;}@page{size:A4 portrait;margin:8mm;}}`;
   const win=window.open('','_blank');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${printCss}</style></head><body>${wrap.innerHTML}<script>document.title=${JSON.stringify(title)};setTimeout(()=>window.print(),500);<\/script></body></html>`);
   win.document.close();
