@@ -5899,15 +5899,20 @@ async function admPayEnsureMonthLoaded(year,month){
 }
 
 // staffName のシフトを (月内の各日) 抽出
-// 支払い対象外の特殊シフト値 (parseShift の specialPattern と同じ)
+// 支払い対象外の特殊シフト値
 // ミーティング/希望休/研修/有給/欠勤 などは出勤しても支払いは発生しない
-const ADM_PAY_NONPAID_PATTERN=/ミーティング|希望休|引継|研修|有給|欠勤|出張|五反田|目黒|渋谷|休刊/;
+// 引継は「通常コースの半額」として支払い対象 (請求書側の calcDay と同じルール)
+const ADM_PAY_NONPAID_PATTERN=/ミーティング|希望休|研修|有給|欠勤|出張|五反田|目黒|渋谷|休刊/;
+const ADM_PAY_HIKITSUGI_PATTERN=/引継/;
 function admPayIsNonPaidShift(v){
   if(v==null)return true;
   const s=String(v).trim();
   if(!s||s==='0')return true;
   return ADM_PAY_NONPAID_PATTERN.test(s);
 }
+function admPayIsHikitsugi(v){return v!=null&&ADM_PAY_HIKITSUGI_PATTERN.test(String(v));}
+// "引継 城北13" → "城北13" / "引継 12" → "12" (caller 側で必要なら primary area を prepend)
+function admPayStripHikitsugi(v){return String(v||'').replace(/引継/g,'').replace(/^[\s　]+|[\s　]+$/g,'');}
 
 function admPayCollectStaffShifts(monthLabel,staffName){
   const dayMap={};// d -> {dow, am_course, pm_course}
@@ -6035,15 +6040,24 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
     const sh=dayMap[ymd]||{am_course:'',pm_course:''};
     let amAmount=0,amDetail='';
     if(sh.am_course){
-      if(isAmKodate&&!sh.am_course.includes('庫内')){
-        const ko=admPayCalcKodateAm(sh.am_course,d,dowJp,billCond);
+      const isHi=admPayIsHikitsugi(sh.am_course);
+      const bare=isHi?admPayStripHikitsugi(sh.am_course):sh.am_course;
+      if(isAmKodate&&!bare.includes('庫内')){
+        const ko=admPayCalcKodateAm(bare,d,dowJp,billCond);
         if(ko){amAmount=ko.amount;amDetail=ko.detail;}
-        else amAmount=admPayLookupRate(rate,dowJp,true,sh.am_course);
+        else amAmount=admPayLookupRate(rate,dowJp,true,bare);
       }else{
-        amAmount=admPayLookupRate(rate,dowJp,true,sh.am_course);
+        amAmount=admPayLookupRate(rate,dowJp,true,bare);
       }
+      if(isHi){amAmount=Math.floor(amAmount/2);amDetail=(amDetail?amDetail+' / ':'')+'引継半額';}
     }
-    const pmAmount=sh.pm_course?admPayLookupRate(rate,dowJp,false,sh.pm_course):0;
+    let pmAmount=0;
+    if(sh.pm_course){
+      const isHi=admPayIsHikitsugi(sh.pm_course);
+      const bare=isHi?admPayStripHikitsugi(sh.pm_course):sh.pm_course;
+      pmAmount=admPayLookupRate(rate,dowJp,false,bare);
+      if(isHi)pmAmount=Math.floor(pmAmount/2);
+    }
     amSum+=amAmount;pmSum+=pmAmount;
     rows.push({d:`${String(m).padStart(2,'0')}月${String(d).padStart(2,'0')}日`,dow:dowJp,am_course:sh.am_course,am:amAmount,am_detail:amDetail,pm_course:sh.pm_course,pm:pmAmount,total:amAmount+pmAmount});
   }
