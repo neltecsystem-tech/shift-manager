@@ -6076,14 +6076,15 @@ async function admPayBulk(){
   if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
   if(!invShopMasterCache){msg.textContent='店舗マスタを読み込み中...';await invLoadShopMaster();}
 
-  // 主稼働が指定営業所のドライバーを抽出
+  // 主稼働が指定営業所のドライバーを抽出 (社員は月給制のため除外)
   const drivers=[];
   invRates.forEach(rate=>{
+    if(rate.biz_type==='社員')return;// 社員は支払い明細の対象外
     const primary=admPayGetPrimaryArea(monthLabel,rate.name);
     if(primary===area)drivers.push({rate,primary});
   });
   if(!drivers.length){
-    msg.textContent=`${area} を主稼働とするドライバーがいません`;
+    msg.textContent=`${area} を主稼働とするドライバー(社員以外)がいません`;
     msg.style.color='var(--danger)';
     cont.innerHTML='';
     return;
