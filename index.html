@@ -5922,6 +5922,27 @@ function admPayCalcKodatePm(courseName,day,dow,billCond){
   return {amount:ko.amount,detail:(isKeiba?'競馬: ':'夕刊: ')+(ko.detail||'')};
 }
 
+// 特別単価 (日当 / 日当+) を適用 (請求書側の invCalcAmount と同じルール)
+// 日当: 計算済み amount を置換 (複数あれば加算した値で置換)
+// 日当+: 計算済み amount に加算
+function admPayApplySpecial(amount,detail,date,staffName,isAm){
+  if(!invSpecial||!invSpecial.length)return {amount,detail};
+  const cat=isAm?'朝刊':'夕刊';
+  const specials=invFindSpecial(date,staffName).filter(s=>(s.category||'').includes(cat));
+  if(!specials.length)return {amount,detail};
+  let specialReplace=0,specialAdd=0;const labels=[];
+  specials.forEach(s=>{
+    const amt=Number((s.amount||'').toString().replace(/,/g,''))||0;
+    if(s.type==='日当'){specialReplace+=amt;labels.push(`特別単価¥${amt.toLocaleString()}(${s.reason||''})`);}
+    else if(s.type==='日当+'){specialAdd+=amt;labels.push(`+¥${amt.toLocaleString()}(${s.reason||''})`);}
+  });
+  let newAmount=amount;
+  if(specialReplace)newAmount=specialReplace;
+  newAmount+=specialAdd;
+  const newDetail=(detail?detail+' / ':'')+labels.join(' ');
+  return {amount:newAmount,detail:newDetail};
+}
+
 // 月のシフトをロード (キャッシュに無ければ fetch-shift で取得)
 async function admPayEnsureMonthLoaded(year,month){
   const sheetName=`${month}月シフト${year}`;
@@ -6013,6 +6034,10 @@ async function admPayInit(){
   if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){
     try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}
   }
+  // 特別単価 (日当/日当+) を支払い明細に反映 (admPayApplySpecial で必要)
+  if(!invSpecial.length){
+    try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}
+  }
   const sel=document.getElementById('adm-pay-staff');
   const cur=sel.value;
   // 全スタッフ表示。社員の場合は給料が別なので参考表示として残す
@@ -6098,6 +6123,8 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
       }
       if(isHi){amAmount=Math.floor(amAmount/2);amDetail=(amDetail?amDetail+' / ':'')+'引継半額';}
     }
+    // 特別単価 (日当/日当+) を適用 (シフトが無い日でも特別単価だけある場合があり得るので常に呼ぶ)
+    {const r=admPayApplySpecial(amAmount,amDetail,ymd,staffName,true);amAmount=r.amount;amDetail=r.detail;}
     let pmAmount=0,pmDetail='';
     if(sh.pm_course){
       const isHi=admPayIsHikitsugi(sh.pm_course);
@@ -6111,6 +6138,7 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
       }
       if(isHi){pmAmount=Math.floor(pmAmount/2);pmDetail=(pmDetail?pmDetail+' / ':'')+'引継半額';}
     }
+    {const r=admPayApplySpecial(pmAmount,pmDetail,ymd,staffName,false);pmAmount=r.amount;pmDetail=r.detail;}
     amSum+=amAmount;pmSum+=pmAmount;
     rows.push({d:`${String(m).padStart(2,'0')}月${String(d).padStart(2,'0')}日`,dow:dowJp,am_course:sh.am_course,am:amAmount,am_detail:amDetail,pm_course:sh.pm_course,pm:pmAmount,pm_detail:pmDetail,total:amAmount+pmAmount});
   }
@@ -6233,6 +6261,7 @@ async function admPayBulk(){
   if(!monthLabel){msg.textContent=`❌ ${m}月シフト${y} のデータが取得できませんでした`;msg.style.color='var(--danger)';return;}
   if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
   if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}}
+  if(!invSpecial.length){try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}}
   if(!invShopMasterCache){msg.textContent='店舗マスタを読み込み中...';await invLoadShopMaster();}
 
   // 主稼働が指定営業所のドライバーを抽出 (社員は月給制のため除外)
