@@ -4509,7 +4509,7 @@ function admRevRender(){
       let openDateCol=-1;
       admBillShopData.headers.forEach((h,i)=>{if(h.includes('開店日'))openDateCol=i;});
       const monthFirstDay=`${y}-${String(m).padStart(2,'0')}-01`;
-      function isOpen(shop){if(openDateCol<0)return true;const od=(shop[`col_${openDateCol}`]||'').replace(/\//g,'-');if(!od)return true;return od<=monthFirstDay;}
+      function isOpen(shop){if(openDateCol<0)return true;const od=normalizeDateYmd(shop[`col_${openDateCol}`]||'');if(!od)return true;return od<=monthFirstDay;}
 
       const oAm=amShops.filter(isOpen),oPm=pmShops.filter(isOpen),oK=keibaShops.filter(isOpen);
       const specialPriceShops=new Set(['622179','602271','622183','612322','622068','762049','602267','761537','761536','761538','601719']);
@@ -5203,7 +5203,7 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const monthFirstDay=`${y}-${String(m).padStart(2,'0')}-01`;
   function isOpenOn(shop){
     if(openDateCol<0)return true;
-    const od=(shop[`col_${openDateCol}`]||'').replace(/\//g,'-');
+    const od=normalizeDateYmd(shop[`col_${openDateCol}`]||'');
     if(!od)return true;
     return od<=monthFirstDay;// 月初以前に開店済み（1日開店はカウント、2日以降は翌月から）
   }

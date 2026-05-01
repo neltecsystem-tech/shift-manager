@@ -14,6 +14,19 @@ function b64utf8(b){const n=atob(b),a=new Uint8Array(n.length);for(let i=0;i<n.l
 
 function isDateVal(v){return v&&/^0?\d{1,2}\/\d{1,2}$/.test(v);}
 
+// 日付を YYYY-MM-DD のゼロ詰め形式に正規化する。
+// 入力例: "2026/1/31", "2026-1-31", "2026/01/31" → "2026-01-31"
+// 不正な入力はそのまま返す (副作用なし)。文字列比較で日付順序を保証したい場面で使う。
+function normalizeDateYmd(s){
+  if(!s)return '';
+  const cleaned=String(s).replace(/\//g,'-').trim();
+  const parts=cleaned.split('-');
+  if(parts.length!==3)return cleaned;
+  const[y,m,d]=parts;
+  if(!/^\d+$/.test(y)||!/^\d+$/.test(m)||!/^\d+$/.test(d))return cleaned;
+  return `${y}-${String(parseInt(m,10)).padStart(2,'0')}-${String(parseInt(d,10)).padStart(2,'0')}`;
+}
+
 // コース名から営業所を推定 (川崎は '川崎高津')
 function areaOfCourse(c){
   if(!c)return'';
