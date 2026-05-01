@@ -877,7 +877,13 @@ function parseShift(key){
   let curArea2='';
   for(let i=120;i<R.length-2;i++){
     const a=(R[i][0]||'').trim(),b=(R[i][1]||'').trim();
-    if(areas2.some(x=>a===x)&&isDateVal(b)){curArea2=a;
+    // section 2 は 1 営業所につき 4/1-10、4/11-20、4/21-30 の 3 サブブロックに折り返し
+    // 先頭サブブロック: col 0 = 営業所名 + col 1 = 日付
+    // 後続サブブロック: col 0 = 空 + col 1 = 日付 (curArea2 を引き継ぐ)
+    const isAreaHdr=areas2.some(x=>a===x)&&isDateVal(b);
+    const isSubHdr=a===''&&isDateVal(b)&&curArea2;
+    if(isAreaHdr||isSubHdr){
+      if(isAreaHdr)curArea2=a;
       // Parse dates for this section 2 block
       const s2dates=[];
       for(let c=1;c<R[i].length;c++){const v=(R[i][c]||'').trim();if(isDateVal(v)){const parts=v.split('/').map(Number);const m=parts[parts.length-2],d=parts[parts.length-1];s2dates.push({col:c,d:`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`});}}
