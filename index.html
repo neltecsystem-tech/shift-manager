@@ -5991,9 +5991,6 @@ async function admPayRender(){
    +`<td style="border:1px solid #94a3b8;padding:4px;text-align:right;">¥${grandTotal.toLocaleString()}</td>`
    +`</tr>`;
   h+='</tbody></table>';
-  if(isAmKodate){
-    h+=`<div style="margin-top:8px;font-size:11px;color:var(--text-sub);">※ 朝刊は <b>個建制</b> (店舗マスタから自動算出 + 請求条件で休刊日/朝刊なし/同梱を反映、金額にカーソルで内訳表示)</div>`;
-  }
   h+='</div>';
   cont.innerHTML=h;
 }
