@@ -471,6 +471,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('shopcount')" id="adm-tab-shopcount" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📊 店舗集計</button>
         <button onclick="adminTab('revenue')" id="adm-tab-revenue" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💰 収支管理</button>
         <button onclick="adminTab('billcond')" id="adm-tab-billcond" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 請求条件</button>
+        <button onclick="adminTab('paystatement')" id="adm-tab-paystatement" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💴 支払い明細</button>
         <button onclick="adminTab('measure')" id="adm-tab-measure" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⏱ 測定データ</button>
         <button onclick="adminTab('settings')" id="adm-tab-settings" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⚙ システム設定</button>
       </div>
@@ -701,6 +702,19 @@ tbody tr:hover { background:var(--primary-light); }
       </div>
 
       <!-- 測定データ -->
+      <!-- 支払い明細 -->
+      <div id="adm-paystatement" class="adm-panel" style="display:none;">
+        <div class="filters">
+          <div><label>年月</label><input type="month" id="adm-pay-month" onchange="admPayRender()"></div>
+          <div><label>ドライバー</label><select id="adm-pay-staff" onchange="admPayRender()"><option value="">選択してください</option></select></div>
+          <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;">
+            <button onclick="admPayPrint()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🖨 印刷 / PDF</button>
+          </div>
+        </div>
+        <div id="adm-pay-msg" style="margin-top:8px;font-size:13px;"></div>
+        <div id="adm-pay-content" style="margin-top:12px;"></div>
+      </div>
+
       <div id="adm-measure" class="adm-panel" style="display:none;">
         <div class="filters">
           <div><label>日付</label><input type="date" id="adm-msr-date" onchange="admMsrLoad()"></div>
@@ -3506,6 +3520,7 @@ function adminTab(t){
   if(t==='pricelist'){document.getElementById('adm-pricelist-content').innerHTML='<p style="text-align:center;padding:40px;color:var(--text-sub);">読み込み中...</p>';loadBillPrices().then(()=>admPriceListRender());}
   if(t==='check')adminInitCheck();
   if(t==='measure')admMsrInit();
+  if(t==='paystatement')admPayInit().catch(()=>{});
   if(t==='data')adminShowDataInfo();
   if(t==='settings')adminShowSysInfo();
 }
@@ -5539,6 +5554,203 @@ function admBillPrint(){
   const win=window.open('','_blank');
   const printCss=`body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 4px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:2mm;box-sizing:border-box;}.summary-page{page:summary;font-size:10px!important;padding:4mm!important;border:none!important;}.summary-page h2{font-size:16px!important;}.summary-page table{font-size:10px!important;}.summary-page table th,.summary-page table td{padding:3px 5px!important;}button{display:none!important;}@page{size:A4 landscape;margin:0;}@page summary{size:A4 portrait;margin:5mm;}@media print{div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}.summary-page{page-break-inside:avoid!important;}}`;
   win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>${printCss}</style></head><body>${preview.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
+  win.document.close();
+}
+
+// --- 支払い明細 (ドライバー単位月次) ---
+
+// 単価マスタの曜日別単価を取得
+// dow: '月'..'日'  isAm: true=朝刊, false=夕刊/競馬
+// courseName: コース名 (庫内系は warehouse_am/pm を使用)
+function admPayLookupRate(rate,dow,isAm,courseName){
+  if(!rate)return 0;
+  const wh=(courseName||'').includes('庫内');
+  if(wh){
+    return isAm?(Number(rate.warehouse_am)||0):(Number(rate.warehouse_pm)||0);
+  }
+  if(isAm){
+    if(dow==='日')return Number(rate.am_sunday)||Number(rate.am_weekend)||0;
+    if(dow==='土')return Number(rate.am_weekend)||0;
+    return Number(rate.am_weekday)||0;
+  }else{
+    if(dow==='日')return Number(rate.pm_sunday)||Number(rate.pm_weekend)||0;
+    if(dow==='金'||dow==='土')return Number(rate.pm_weekend)||0;
+    return Number(rate.pm_weekday)||0;
+  }
+}
+
+// 月のシフトをロード (キャッシュに無ければ fetch-shift で取得)
+async function admPayEnsureMonthLoaded(year,month){
+  const sheetName=`${month}月シフト${year}`;
+  const key='live_'+sheetName.replace(/\s+/g,'_');
+  // 既に読み込み済みなら label でマッチする monthLabel を返す
+  if(DB.shifts[sheetName])return sheetName;
+  if(DB.raw[key]){
+    if(!DB.shifts[sheetName])parseShift(key);
+    return sheetName;
+  }
+  // 静的 data.js 由来も確認 (e.g. shift_2026_03 等)
+  for(const k of Object.keys(DEFS)){
+    if(DEFS[k].label===sheetName&&DB.raw[k]){
+      if(!DB.shifts[sheetName])parseShift(k);
+      return sheetName;
+    }
+  }
+  // 取得を試みる
+  try{
+    const resp=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
+    const json=await resp.json();
+    if(json.error||!json.rows||json.rows.length<10)return null;
+    DEFS[key]={label:sheetName,type:'shift',year};
+    DB.raw[key]=json.rows;
+    parseShift(key);
+    return sheetName;
+  }catch(_){return null;}
+}
+
+// staffName のシフトを (月内の各日) 抽出
+function admPayCollectStaffShifts(monthLabel,staffName){
+  const dayMap={};// d -> {dow, am_course, pm_course}
+  const months=DB.shifts[monthLabel];
+  if(!months)return dayMap;
+  Object.values(months).forEach(({entries})=>{
+    const entry=entries.find(e=>e.course===staffName);
+    if(!entry)return;
+    entry.a.forEach(({d,dow,am,pm})=>{
+      if(!dayMap[d])dayMap[d]={dow,am_course:'',pm_course:''};
+      const cleanAm=(am||'').trim();
+      const cleanPm=(pm||'').trim();
+      if(cleanAm&&cleanAm!=='0'&&cleanAm!=='希望休')dayMap[d].am_course=cleanAm;
+      if(cleanPm&&cleanPm!=='0'&&cleanPm!=='希望休')dayMap[d].pm_course=cleanPm;
+    });
+  });
+  return dayMap;
+}
+
+// ドライバー dropdown を populate (invRates から)
+async function admPayInit(){
+  const monthInput=document.getElementById('adm-pay-month');
+  if(!monthInput.value){
+    const now=new Date();
+    monthInput.value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  }
+  if(!invRates.length){
+    try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}
+  }
+  const sel=document.getElementById('adm-pay-staff');
+  const cur=sel.value;
+  // 全スタッフ表示。社員の場合は給料が別なので参考表示として残す
+  const opts=invRates.map(r=>{
+    const tag=r.biz_type==='社員'?' [社員]':'';
+    return `<option value="${r.name.replace(/"/g,'&quot;')}">${r.name}${tag}</option>`;
+  }).join('');
+  sel.innerHTML='<option value="">選択してください</option>'+opts;
+  if(cur)sel.value=cur;
+  admPayRender();
+}
+
+async function admPayRender(){
+  const monthVal=document.getElementById('adm-pay-month').value;
+  const staffName=document.getElementById('adm-pay-staff').value;
+  const msg=document.getElementById('adm-pay-msg');
+  const cont=document.getElementById('adm-pay-content');
+  cont.innerHTML='';msg.textContent='';msg.style.color='';
+  if(!monthVal||!staffName){
+    msg.textContent='年月とドライバーを選択してください';
+    msg.style.color='var(--text-sub)';
+    return;
+  }
+  const [y,m]=monthVal.split('-').map(Number);
+  msg.textContent='シフトデータを読み込み中...';msg.style.color='#3b82f6';
+  const monthLabel=await admPayEnsureMonthLoaded(y,m);
+  if(!monthLabel){
+    msg.textContent=`❌ ${m}月シフト${y} のデータが取得できませんでした`;
+    msg.style.color='var(--danger)';
+    return;
+  }
+  msg.textContent='';
+
+  const rate=invRates.find(r=>r.name===staffName);
+  if(!rate){
+    msg.textContent='ドライバーの単価が見つかりません';
+    msg.style.color='var(--danger)';
+    return;
+  }
+  const dayMap=admPayCollectStaffShifts(monthLabel,staffName);
+
+  // 月の全日付を生成
+  const lastDay=new Date(y,m,0).getDate();
+  const rows=[];
+  let amSum=0,pmSum=0;
+  for(let d=1;d<=lastDay;d++){
+    const ymd=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const date=new Date(y,m-1,d);
+    const dowJp=['日','月','火','水','木','金','土'][date.getDay()];
+    const sh=dayMap[ymd]||{am_course:'',pm_course:''};
+    const amAmount=sh.am_course?admPayLookupRate(rate,dowJp,true,sh.am_course):0;
+    const pmAmount=sh.pm_course?admPayLookupRate(rate,dowJp,false,sh.pm_course):0;
+    amSum+=amAmount;pmSum+=pmAmount;
+    rows.push({d:`${String(m).padStart(2,'0')}月${String(d).padStart(2,'0')}日`,dow:dowJp,am_course:sh.am_course,am:amAmount,pm_course:sh.pm_course,pm:pmAmount,total:amAmount+pmAmount});
+  }
+  const grandTotal=amSum+pmSum;
+
+  // 元号
+  const reiwa=y-2018;// 2019=令和元年=R1
+  const era=reiwa>=1?`令和${reiwa===1?'元':reiwa}年`:`西暦${y}年`;
+
+  // 描画
+  let h='<div id="adm-pay-print-wrap" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:10px;max-width:760px;margin:0 auto;">';
+  h+=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">`;
+  h+=`<div><h3 style="margin:0;font-size:18px;">別紙明細書</h3><div style="margin-top:4px;font-size:14px;font-weight:600;">${era} ${m}月分</div></div>`;
+  h+=`<div style="text-align:right;font-size:15px;"><b>${staffName}</b></div>`;
+  h+=`</div>`;
+  h+='<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:10px;">';
+  h+='<thead><tr style="background:#f1f5f9;">'
+   +'<th style="border:1px solid #94a3b8;padding:4px;width:11%;">日付け</th>'
+   +'<th style="border:1px solid #94a3b8;padding:4px;width:6%;">曜日</th>'
+   +'<th style="border:1px solid #94a3b8;padding:4px;width:18%;">コース (朝刊)</th>'
+   +'<th style="border:1px solid #94a3b8;padding:4px;width:13%;">朝刊</th>'
+   +'<th style="border:1px solid #94a3b8;padding:4px;width:18%;">コース (夕刊)</th>'
+   +'<th style="border:1px solid #94a3b8;padding:4px;width:13%;">夕刊</th>'
+   +'<th style="border:1px solid #94a3b8;padding:4px;width:14%;">計</th>'
+   +'</tr></thead><tbody>';
+  rows.forEach(r=>{
+    const isSat=r.dow==='土';
+    const isSun=r.dow==='日';
+    const bg=isSun?'#fee2e2':(isSat?'#fef3c7':'');
+    const rowStyle=bg?` style="background:${bg};"`:'';
+    h+=`<tr${rowStyle}>`
+     +`<td style="border:1px solid #94a3b8;padding:3px 6px;">${r.d}</td>`
+     +`<td style="border:1px solid #94a3b8;padding:3px;text-align:center;">${r.dow}</td>`
+     +`<td style="border:1px solid #94a3b8;padding:3px 6px;">${r.am_course||''}</td>`
+     +`<td style="border:1px solid #94a3b8;padding:3px 6px;text-align:right;">${r.am?'¥'+r.am.toLocaleString():''}</td>`
+     +`<td style="border:1px solid #94a3b8;padding:3px 6px;">${r.pm_course||''}</td>`
+     +`<td style="border:1px solid #94a3b8;padding:3px 6px;text-align:right;">${r.pm?'¥'+r.pm.toLocaleString():''}</td>`
+     +`<td style="border:1px solid #94a3b8;padding:3px 6px;text-align:right;font-weight:bold;">¥${r.total.toLocaleString()}</td>`
+     +'</tr>';
+  });
+  h+=`<tr style="background:#f8fafc;font-weight:bold;">`
+   +`<td colspan="3" style="border:1px solid #94a3b8;padding:4px;text-align:center;">合計</td>`
+   +`<td style="border:1px solid #94a3b8;padding:4px;text-align:right;">¥${amSum.toLocaleString()}</td>`
+   +`<td style="border:1px solid #94a3b8;padding:4px;"></td>`
+   +`<td style="border:1px solid #94a3b8;padding:4px;text-align:right;">¥${pmSum.toLocaleString()}</td>`
+   +`<td style="border:1px solid #94a3b8;padding:4px;text-align:right;">¥${grandTotal.toLocaleString()}</td>`
+   +`</tr>`;
+  h+='</tbody></table>';
+  h+=`<div style="margin-top:8px;font-size:11px;color:var(--text-sub);">※ 単価マスタの曜日別単価で計算 (朝刊: 月-金/土/日、夕刊: 月-木/金-土/日、庫内: 庫内朝刊/庫内夕刊単価を使用)</div>`;
+  h+='</div>';
+  cont.innerHTML=h;
+}
+
+function admPayPrint(){
+  const wrap=document.getElementById('adm-pay-print-wrap');
+  if(!wrap){alert('先にドライバーと月を選択してください');return;}
+  const staffName=document.getElementById('adm-pay-staff').value;
+  const monthVal=document.getElementById('adm-pay-month').value;
+  const title=`支払明細 ${staffName||''} ${monthVal||''}`;
+  const printCss=`body{font-family:'Meiryo',sans-serif;color:#1e293b;padding:0;margin:20px;}table{border-collapse:collapse;}h3{margin:0;}@media print{body{margin:8mm;}@page{size:A4 portrait;margin:8mm;}}`;
+  const win=window.open('','_blank');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${printCss}</style></head><body>${wrap.innerHTML}<script>document.title=${JSON.stringify(title)};setTimeout(()=>window.print(),500);<\/script></body></html>`);
   win.document.close();
 }
 
