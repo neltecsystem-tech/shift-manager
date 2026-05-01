@@ -5925,7 +5925,12 @@ async function admPayRender(){
 }
 
 // 単一ドライバーの明細HTML生成 (admPayRender / admPayBulk から共有)
+// 戻り値: HTML 文字列 (後方互換用)
 function admPayBuildStatementHtml(rate,y,m,monthLabel,monthVal){
+  return admPayBuildStatement(rate,y,m,monthLabel,monthVal).html;
+}
+// 詳細版: HTML + 集計値を返す (サマリーページや会社別グルーピング用)
+function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
   const staffName=rate.name;
   const dayMap=admPayCollectStaffShifts(monthLabel,staffName);
   const isAmKodate=(rate.calc_type||'')==='個建';
@@ -5999,6 +6004,38 @@ function admPayBuildStatementHtml(rate,y,m,monthLabel,monthVal){
    +`</tr>`;
   h+='</tbody></table>';
   h+='</div>';
+  return {html:h,amSum,pmSum,grandTotal};
+}
+
+// 法人 (同一会社) の支払いサマリーページ
+function admPayBuildSummaryHtml(companyName,monthVal,drivers){
+  // drivers: [{name, amSum, pmSum, grandTotal}]
+  const totalAm=drivers.reduce((s,d)=>s+d.amSum,0);
+  const totalPm=drivers.reduce((s,d)=>s+d.pmSum,0);
+  const totalGrand=drivers.reduce((s,d)=>s+d.grandTotal,0);
+  const [y,m]=monthVal.split('-').map(Number);
+  const reiwa=y-2018;
+  const era=reiwa>=1?`令和${reiwa===1?'元':reiwa}年`:`西暦${y}年`;
+  const safeCompany=companyName.replace(/"/g,'&quot;');
+  const groupKey=`company:${safeCompany}`;
+
+  let h=`<div class="adm-pay-statement adm-pay-summary" data-kind="summary" data-group="${groupKey}" data-name="サマリー" data-company="${safeCompany}" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:10px;max-width:760px;margin:0 auto;">`;
+  h+=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;border-bottom:2px solid var(--primary);padding-bottom:10px;">`;
+  h+=`<div><h3 style="margin:0;font-size:18px;color:var(--primary);">支払明細書 (会社合計)</h3><div style="margin-top:4px;font-size:14px;font-weight:600;">${era} ${m}月分</div></div>`;
+  h+=`<div style="text-align:right;font-size:15px;"><b>${companyName}</b><div style="font-size:11px;color:var(--text-sub);margin-top:2px;">対象ドライバー ${drivers.length}名</div></div>`;
+  h+=`</div>`;
+  h+=`<div style="display:flex;gap:10px;margin-bottom:14px;">`;
+  h+=`<div style="flex:1;background:#dbeafe;border-radius:8px;padding:12px;text-align:center;"><div style="font-size:11px;color:#1d4ed8;">朝刊合計</div><div style="font-size:18px;font-weight:bold;color:#1d4ed8;">¥${totalAm.toLocaleString()}</div></div>`;
+  h+=`<div style="flex:1;background:#fae8ff;border-radius:8px;padding:12px;text-align:center;"><div style="font-size:11px;color:#9333ea;">夕刊合計</div><div style="font-size:18px;font-weight:bold;color:#9333ea;">¥${totalPm.toLocaleString()}</div></div>`;
+  h+=`<div style="flex:1;background:#fef3c7;border:2px solid #f59e0b;border-radius:8px;padding:12px;text-align:center;"><div style="font-size:11px;color:#92400e;">総支払額</div><div style="font-size:20px;font-weight:bold;color:#92400e;">¥${totalGrand.toLocaleString()}</div></div>`;
+  h+=`</div>`;
+  h+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #94a3b8;padding:6px;">ドライバー</th><th style="border:1px solid #94a3b8;padding:6px;text-align:right;">朝刊小計</th><th style="border:1px solid #94a3b8;padding:6px;text-align:right;">夕刊小計</th><th style="border:1px solid #94a3b8;padding:6px;text-align:right;">月合計</th></tr></thead><tbody>`;
+  drivers.forEach(d=>{
+    h+=`<tr><td style="border:1px solid #94a3b8;padding:5px;">${d.name}</td><td style="border:1px solid #94a3b8;padding:5px;text-align:right;">¥${d.amSum.toLocaleString()}</td><td style="border:1px solid #94a3b8;padding:5px;text-align:right;">¥${d.pmSum.toLocaleString()}</td><td style="border:1px solid #94a3b8;padding:5px;text-align:right;font-weight:bold;">¥${d.grandTotal.toLocaleString()}</td></tr>`;
+  });
+  h+=`<tr style="background:#fef3c7;font-weight:bold;"><td style="border:1px solid #94a3b8;padding:6px;">合計</td><td style="border:1px solid #94a3b8;padding:6px;text-align:right;">¥${totalAm.toLocaleString()}</td><td style="border:1px solid #94a3b8;padding:6px;text-align:right;">¥${totalPm.toLocaleString()}</td><td style="border:1px solid #94a3b8;padding:6px;text-align:right;font-size:15px;color:#92400e;">¥${totalGrand.toLocaleString()}</td></tr>`;
+  h+=`</tbody></table>`;
+  h+='</div>';
   return h;
 }
 
@@ -6057,19 +6094,73 @@ async function admPayBulk(){
   if(!window.confirm(`${area}営業所 ${monthVal}\nドライバー ${drivers.length}名の明細を一括作成します。\n\n${drivers.map(d=>'・'+d.rate.name).slice(0,15).join('\n')}${drivers.length>15?`\n他 ${drivers.length-15}名`:''}\n\n続行?`))return;
 
   msg.textContent=`📋 ${drivers.length}名分を作成中...`;msg.style.color='#3b82f6';
-  let html=`<div id="adm-pay-bulk-header" style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#166534;font-weight:600;">📋 ${area}営業所 ${monthVal} 一括明細書 — ${drivers.length}名分</div>`;
-  drivers.forEach(({rate},i)=>{
-    if(i>0)html+='<div style="page-break-before:always;height:24px;"></div>';
-    html+=admPayBuildStatementHtml(rate,y,m,monthLabel,monthVal);
+
+  // 法人グループ分け: biz_type=法人 かつ company が同一の人を1グループに
+  const companyGroups=new Map();// companyName -> [rate]
+  const individuals=[];
+  drivers.forEach(({rate})=>{
+    const company=rate.biz_type==='法人'&&(rate.company||'').trim()?(rate.company||'').trim():'';
+    if(company){
+      if(!companyGroups.has(company))companyGroups.set(company,[]);
+      companyGroups.get(company).push(rate);
+    }else{
+      individuals.push(rate);
+    }
   });
+  // 各グループ内を名前順
+  companyGroups.forEach(arr=>arr.sort((a,b)=>a.name.localeCompare(b.name,'ja')));
+  individuals.sort((a,b)=>a.name.localeCompare(b.name,'ja'));
+
+  // 各ドライバーの集計を事前計算 (サマリー用)
+  const stmtCache=new Map();// rate.name -> {html,amSum,pmSum,grandTotal}
+  drivers.forEach(({rate})=>{
+    stmtCache.set(rate.name,admPayBuildStatement(rate,y,m,monthLabel,monthVal));
+  });
+
+  const escAttr=s=>String(s||'').replace(/"/g,'&quot;');
+  const tagWrap=(html,groupKey)=>html.replace('class="adm-pay-statement"',`class="adm-pay-statement" data-group="${escAttr(groupKey)}"`);
+
+  let html=`<div id="adm-pay-bulk-header" style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#166534;font-weight:600;">📋 ${area}営業所 ${monthVal} 一括明細書 — ${drivers.length}名分${companyGroups.size>0?` (法人 ${companyGroups.size}社含む)`:''}</div>`;
+  let blockCount=0;
+  const addPageBreak=()=>{if(blockCount>0)html+='<div style="page-break-before:always;height:24px;"></div>';blockCount++;};
+
+  // 法人グループ (会社名 ABC順) → サマリー + ドライバー
+  [...companyGroups.entries()].sort(([a],[b])=>a.localeCompare(b,'ja')).forEach(([company,rates])=>{
+    const driverData=rates.map(rate=>{
+      const c=stmtCache.get(rate.name);
+      return {name:rate.name,amSum:c.amSum,pmSum:c.pmSum,grandTotal:c.grandTotal,rate};
+    });
+    if(rates.length>1){
+      // サマリーページ
+      addPageBreak();
+      html+=admPayBuildSummaryHtml(company,monthVal,driverData);
+      // 各ドライバー (同一 group key)
+      driverData.forEach(({rate})=>{
+        addPageBreak();
+        html+=tagWrap(stmtCache.get(rate.name).html,`company:${company}`);
+      });
+    }else{
+      // 法人だが1名のみ → 個別 PDF として扱う
+      addPageBreak();
+      html+=tagWrap(stmtCache.get(rates[0].name).html,`single:${rates[0].name}`);
+    }
+  });
+
+  // 個人 (法人以外 or 会社未設定)
+  individuals.forEach(rate=>{
+    addPageBreak();
+    html+=tagWrap(stmtCache.get(rate.name).html,`single:${rate.name}`);
+  });
+
   cont.innerHTML=html;
   msg.textContent='';
 }
 
-// ドライバーごとに個別PDFを生成し、まとめて ZIP でダウンロード (アスクル方式)
+// 個別/会社別PDFを生成し、まとめて ZIP でダウンロード
+// 法人(同一会社)は1PDFにサマリー+ドライバー別ページ、それ以外は1人1PDF
 async function admPayBulkPdfZip(){
   const cont=document.getElementById('adm-pay-content');
-  const wraps=cont?cont.querySelectorAll('.adm-pay-statement'):[];
+  const wraps=cont?[...cont.querySelectorAll('.adm-pay-statement')]:[];
   if(!wraps||wraps.length===0){alert('先に営業所一括作成でドライバー一覧を生成してください');return;}
   if(typeof JSZip==='undefined'||typeof html2canvas==='undefined'||!window.jspdf){
     alert('PDFライブラリの読み込みに失敗しています。ページを再読み込みしてください。');return;
@@ -6077,36 +6168,59 @@ async function admPayBulkPdfZip(){
   const monthVal=document.getElementById('adm-pay-month').value;
   const area=document.getElementById('adm-pay-bulk-area').value;
   const folderName=`支払明細_${area||''}_${monthVal||''}`.replace(/_+$/,'').replace(/[\\/:*?"<>|]/g,'_');
-  if(!window.confirm(`${wraps.length}名分の個別PDFを生成して ZIP でダウンロードします。\n生成に時間がかかります (1名あたり 1〜2秒)。\n\n続行?`))return;
 
-  admBillShowProgress(`📦 PDF生成中... (0/${wraps.length})`);
+  // wraps を data-group でグループ化
+  const groups=new Map();// key -> [wrap]
+  wraps.forEach(w=>{
+    const key=w.getAttribute('data-group')||`single:${w.getAttribute('data-name')||'unknown'}`;
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(w);
+  });
+  // 各グループ内: サマリーが先頭、その後ドライバー名順
+  groups.forEach(list=>list.sort((a,b)=>{
+    const aSum=a.classList.contains('adm-pay-summary')?0:1;
+    const bSum=b.classList.contains('adm-pay-summary')?0:1;
+    if(aSum!==bSum)return aSum-bSum;
+    return (a.getAttribute('data-name')||'').localeCompare(b.getAttribute('data-name')||'','ja');
+  }));
+
+  const totalPages=wraps.length;
+  if(!window.confirm(`PDF ${groups.size}ファイル (計${totalPages}ページ) を生成して ZIP でダウンロードします。\n生成に時間がかかります (1ページあたり 1〜2秒)。\n\n続行?`))return;
+
+  admBillShowProgress(`📦 PDF生成中... (0/${totalPages})`);
   try{
     const zip=new JSZip();
     const folder=zip.folder(folderName);
     const{jsPDF}=window.jspdf;
-    for(let i=0;i<wraps.length;i++){
-      const wrap=wraps[i];
-      const name=(wrap.getAttribute('data-name')||`driver-${i+1}`).replace(/[\\/:*?"<>|]/g,'_');
-      admBillUpdateProgress(i,wraps.length,name);
-      // 一時的に absolute 配置を解除して可視化 (display:none では html2canvas が動かない)
-      const canvas=await html2canvas(wrap,{scale:2,useCORS:true,backgroundColor:'#ffffff',logging:false});
-      const imgData=canvas.toDataURL('image/jpeg',0.92);
+    let done=0;
+    for(const[key,list]of groups){
+      const isCompany=key.startsWith('company:');
+      const groupName=key.replace(/^(company|single):/,'').replace(/[\\/:*?"<>|]/g,'_')||'unknown';
       const pdf=new jsPDF({unit:'mm',format:'a4',orientation:'portrait'});
-      const pdfW=pdf.internal.pageSize.getWidth();
-      const pdfH=pdf.internal.pageSize.getHeight();
-      const imgW=pdfW-10;
-      const imgH=(canvas.height*imgW)/canvas.width;
-      if(imgH<=pdfH-10){
-        pdf.addImage(imgData,'JPEG',5,5,imgW,imgH);
-      }else{
-        const fitH=pdfH-10;
-        const fitW=(canvas.width*fitH)/canvas.height;
-        pdf.addImage(imgData,'JPEG',(pdfW-fitW)/2,5,fitW,fitH);
+      for(let i=0;i<list.length;i++){
+        const wrap=list[i];
+        const label=wrap.getAttribute('data-name')||groupName;
+        admBillUpdateProgress(done,totalPages,`${groupName} - ${label}`);
+        const canvas=await html2canvas(wrap,{scale:2,useCORS:true,backgroundColor:'#ffffff',logging:false});
+        const imgData=canvas.toDataURL('image/jpeg',0.92);
+        if(i>0)pdf.addPage();
+        const pdfW=pdf.internal.pageSize.getWidth();
+        const pdfH=pdf.internal.pageSize.getHeight();
+        const imgW=pdfW-10;
+        const imgH=(canvas.height*imgW)/canvas.width;
+        if(imgH<=pdfH-10){
+          pdf.addImage(imgData,'JPEG',5,5,imgW,imgH);
+        }else{
+          const fitH=pdfH-10;
+          const fitW=(canvas.width*fitH)/canvas.height;
+          pdf.addImage(imgData,'JPEG',(pdfW-fitW)/2,5,fitW,fitH);
+        }
+        done++;
       }
-      const blob=pdf.output('blob');
-      folder.file(`${name}.pdf`,blob);
+      const fileName=isCompany?`【法人】${groupName}.pdf`:`${groupName}.pdf`;
+      folder.file(fileName,pdf.output('blob'));
     }
-    admBillUpdateProgress(wraps.length,wraps.length,'ZIP生成中...');
+    admBillUpdateProgress(totalPages,totalPages,'ZIP生成中...');
     const zipBlob=await zip.generateAsync({type:'blob'});
     const url=URL.createObjectURL(zipBlob);
     const a=document.createElement('a');
