@@ -5900,6 +5900,28 @@ function admPayCalcKodateAm(courseName,day,dow,billCond){
   return {amount,detail:parts.join('+')};
 }
 
+// 個建制の夕刊/競馬計算 (請求条件を考慮)
+// 休刊日/夕刊なし/日曜(yeskeiba除く) は ¥0、月-木は夕刊コース、金土+yeskeibaは競馬コース
+// 計算式は invCalcKodate と同じ (店舗数×265 + 特殊×20 + 距離増×13 + 雑誌×80)
+function admPayCalcKodatePm(courseName,day,dow,billCond){
+  if(!courseName)return {amount:0,detail:''};
+  if(courseName.includes('庫内'))return null;// caller がフォールバック処理する
+  const isHoliday=(billCond.holiday||[]).includes(day);
+  const isNoPm=(billCond.nopm||[]).includes(day);
+  const isYesKeiba=(billCond.yeskeiba||[]).includes(day);
+  if(isHoliday)return {amount:0,detail:'休刊日'};
+  if(isNoPm)return {amount:0,detail:'夕刊なし'};
+  const dowNum=['日','月','火','水','木','金','土'].indexOf(dow);
+  const isFri=dowNum===5,isSat=dowNum===6,isSun=dowNum===0;
+  // 日曜は yeskeiba 設定がない限り夕刊なし (admBillTachikawa の calcDay と同じ)
+  if(isSun&&!isYesKeiba)return {amount:0,detail:'夕刊なし(日)'};
+  const isKeiba=isFri||isSat||isYesKeiba;
+  const category=isKeiba?'競馬':'夕刊/競馬';
+  const ko=invCalcKodate(courseName,category);
+  if(!ko.shopCount)return {amount:0,detail:'該当店舗なし'};
+  return {amount:ko.amount,detail:(isKeiba?'競馬: ':'夕刊: ')+(ko.detail||'')};
+}
+
 // 月のシフトをロード (キャッシュに無ければ fetch-shift で取得)
 async function admPayEnsureMonthLoaded(year,month){
   const sheetName=`${month}月シフト${year}`;
@@ -6031,9 +6053,10 @@ async function admPayRender(){
     return;
   }
 
-  // 個建制の朝刊計算には店舗マスタが必要
+  // 個建制の計算には店舗マスタが必要 (朝刊・夕刊/競馬どちらでも)
   const isAmKodate=(rate.calc_type||'')==='個建';
-  if(isAmKodate&&!invShopMasterCache){
+  const isPmKodate=((rate.calc_type_pm||rate.calc_type)||'')==='個建';
+  if((isAmKodate||isPmKodate)&&!invShopMasterCache){
     msg.textContent='店舗マスタを読み込み中...';msg.style.color='#3b82f6';
     await invLoadShopMaster();
     msg.textContent='';
@@ -6051,6 +6074,7 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
   const staffName=rate.name;
   const dayMap=admPayCollectStaffShifts(monthLabel,staffName);
   const isAmKodate=(rate.calc_type||'')==='個建';
+  const isPmKodate=((rate.calc_type_pm||rate.calc_type)||'')==='個建';
   const billCond=getBillConditions(monthVal);
 
   const lastDay=new Date(y,m,0).getDate();
@@ -6074,15 +6098,21 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
       }
       if(isHi){amAmount=Math.floor(amAmount/2);amDetail=(amDetail?amDetail+' / ':'')+'引継半額';}
     }
-    let pmAmount=0;
+    let pmAmount=0,pmDetail='';
     if(sh.pm_course){
       const isHi=admPayIsHikitsugi(sh.pm_course);
       const bare=isHi?admPayStripHikitsugi(sh.pm_course):sh.pm_course;
-      pmAmount=admPayLookupRate(rate,dowJp,false,bare);
-      if(isHi)pmAmount=Math.floor(pmAmount/2);
+      if(isPmKodate&&!bare.includes('庫内')){
+        const ko=admPayCalcKodatePm(bare,d,dowJp,billCond);
+        if(ko){pmAmount=ko.amount;pmDetail=ko.detail;}
+        else pmAmount=admPayLookupRate(rate,dowJp,false,bare);
+      }else{
+        pmAmount=admPayLookupRate(rate,dowJp,false,bare);
+      }
+      if(isHi){pmAmount=Math.floor(pmAmount/2);pmDetail=(pmDetail?pmDetail+' / ':'')+'引継半額';}
     }
     amSum+=amAmount;pmSum+=pmAmount;
-    rows.push({d:`${String(m).padStart(2,'0')}月${String(d).padStart(2,'0')}日`,dow:dowJp,am_course:sh.am_course,am:amAmount,am_detail:amDetail,pm_course:sh.pm_course,pm:pmAmount,total:amAmount+pmAmount});
+    rows.push({d:`${String(m).padStart(2,'0')}月${String(d).padStart(2,'0')}日`,dow:dowJp,am_course:sh.am_course,am:amAmount,am_detail:amDetail,pm_course:sh.pm_course,pm:pmAmount,pm_detail:pmDetail,total:amAmount+pmAmount});
   }
   const grandTotal=amSum+pmSum;
   const reiwa=y-2018;
@@ -6111,13 +6141,16 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
     const amCell=r.am_detail
       ?`<span title="${r.am_detail.replace(/"/g,'&quot;')}" style="text-decoration:underline dotted #94a3b8;cursor:help;">¥${r.am.toLocaleString()}</span>`
       :(r.am?'¥'+r.am.toLocaleString():'');
+    const pmCell=r.pm_detail
+      ?`<span title="${r.pm_detail.replace(/"/g,'&quot;')}" style="text-decoration:underline dotted #94a3b8;cursor:help;">¥${r.pm.toLocaleString()}</span>`
+      :(r.pm?'¥'+r.pm.toLocaleString():'');
     h+=`<tr${rowStyle}>`
      +`<td style="border:1px solid #94a3b8;padding:3px 6px;">${r.d}</td>`
      +`<td style="border:1px solid #94a3b8;padding:3px;text-align:center;">${r.dow}</td>`
      +`<td style="border:1px solid #94a3b8;padding:3px 6px;">${r.am_course||''}</td>`
      +`<td style="border:1px solid #94a3b8;padding:3px 6px;text-align:right;">${amCell}</td>`
      +`<td style="border:1px solid #94a3b8;padding:3px 6px;">${r.pm_course||''}</td>`
-     +`<td style="border:1px solid #94a3b8;padding:3px 6px;text-align:right;">${r.pm?'¥'+r.pm.toLocaleString():''}</td>`
+     +`<td style="border:1px solid #94a3b8;padding:3px 6px;text-align:right;">${pmCell}</td>`
      +`<td style="border:1px solid #94a3b8;padding:3px 6px;text-align:right;font-weight:bold;">¥${r.total.toLocaleString()}</td>`
      +'</tr>';
   });
