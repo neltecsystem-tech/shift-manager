@@ -708,7 +708,9 @@ tbody tr:hover { background:var(--primary-light); }
         <div class="filters">
           <div><label>年月</label><input type="month" id="adm-pay-month" onchange="admPayRender()"></div>
           <div><label>ドライバー</label><select id="adm-pay-staff" onchange="admPayRender()"><option value="">選択してください</option></select></div>
+          <div><label>営業所</label><select id="adm-pay-bulk-area"><option value="">選択</option><option value="立川">立川</option><option value="城北">城北</option><option value="川越">川越</option><option value="川崎高津">川崎高津</option></select></div>
           <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;">
+            <button onclick="admPayBulk()" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📋 営業所一括作成</button>
             <button onclick="admPayPrint()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🖨 印刷 / PDF</button>
           </div>
         </div>
@@ -5907,7 +5909,6 @@ async function admPayRender(){
     msg.style.color='var(--danger)';
     return;
   }
-  const dayMap=admPayCollectStaffShifts(monthLabel,staffName);
 
   // 個建制の朝刊計算には店舗マスタが必要
   const isAmKodate=(rate.calc_type||'')==='個建';
@@ -5916,10 +5917,16 @@ async function admPayRender(){
     await invLoadShopMaster();
     msg.textContent='';
   }
-  // 請求条件 (休刊日/朝刊なし/同梱有無等) — 個建制で参照
+  cont.innerHTML=admPayBuildStatementHtml(rate,y,m,monthLabel,monthVal);
+}
+
+// 単一ドライバーの明細HTML生成 (admPayRender / admPayBulk から共有)
+function admPayBuildStatementHtml(rate,y,m,monthLabel,monthVal){
+  const staffName=rate.name;
+  const dayMap=admPayCollectStaffShifts(monthLabel,staffName);
+  const isAmKodate=(rate.calc_type||'')==='個建';
   const billCond=getBillConditions(monthVal);
 
-  // 月の全日付を生成
   const lastDay=new Date(y,m,0).getDate();
   const rows=[];
   let amSum=0,pmSum=0;
@@ -5930,7 +5937,6 @@ async function admPayRender(){
     const sh=dayMap[ymd]||{am_course:'',pm_course:''};
     let amAmount=0,amDetail='';
     if(sh.am_course){
-      // 個建制 (朝刊) かつ庫内コースでない場合は請求条件を考慮した個建計算
       if(isAmKodate&&!sh.am_course.includes('庫内')){
         const ko=admPayCalcKodateAm(sh.am_course,d,dowJp,billCond);
         if(ko){amAmount=ko.amount;amDetail=ko.detail;}
@@ -5944,13 +5950,10 @@ async function admPayRender(){
     rows.push({d:`${String(m).padStart(2,'0')}月${String(d).padStart(2,'0')}日`,dow:dowJp,am_course:sh.am_course,am:amAmount,am_detail:amDetail,pm_course:sh.pm_course,pm:pmAmount,total:amAmount+pmAmount});
   }
   const grandTotal=amSum+pmSum;
-
-  // 元号
-  const reiwa=y-2018;// 2019=令和元年=R1
+  const reiwa=y-2018;
   const era=reiwa>=1?`令和${reiwa===1?'元':reiwa}年`:`西暦${y}年`;
 
-  // 描画
-  let h='<div id="adm-pay-print-wrap" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:10px;max-width:760px;margin:0 auto;">';
+  let h='<div class="adm-pay-statement" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:10px;max-width:760px;margin:0 auto;">';
   h+=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">`;
   h+=`<div><h3 style="margin:0;font-size:18px;">別紙明細書</h3><div style="margin-top:4px;font-size:14px;font-weight:600;">${era} ${m}月分</div></div>`;
   h+=`<div style="text-align:right;font-size:15px;"><b>${staffName}</b></div>`;
@@ -5992,19 +5995,91 @@ async function admPayRender(){
    +`</tr>`;
   h+='</tbody></table>';
   h+='</div>';
-  cont.innerHTML=h;
+  return h;
+}
+
+// ドライバーの月内の主稼働営業所を判定 (出勤日数が最大の営業所)
+function admPayGetPrimaryArea(monthLabel,staffName){
+  const months=DB.shifts[monthLabel];
+  if(!months)return '';
+  const counts={};
+  Object.entries(months).forEach(([area,obj])=>{
+    if(!obj||!obj.entries)return;
+    const entry=obj.entries.find(e=>e.course===staffName);
+    if(!entry)return;
+    let days=0;
+    entry.a.forEach(({am,pm})=>{
+      const cleanAm=(am||'').trim();
+      const cleanPm=(pm||'').trim();
+      if(cleanAm&&cleanAm!=='0'&&cleanAm!=='希望休')days++;
+      if(cleanPm&&cleanPm!=='0'&&cleanPm!=='希望休')days++;
+    });
+    counts[area]=(counts[area]||0)+days;
+  });
+  let maxArea='',maxDays=0;
+  Object.entries(counts).forEach(([a,d])=>{if(d>maxDays){maxDays=d;maxArea=a;}});
+  return maxArea;
+}
+
+// 営業所一括作成: 主稼働が指定営業所のドライバー全員の明細を生成
+async function admPayBulk(){
+  const monthVal=document.getElementById('adm-pay-month').value;
+  const area=document.getElementById('adm-pay-bulk-area').value;
+  const msg=document.getElementById('adm-pay-msg');
+  const cont=document.getElementById('adm-pay-content');
+  if(!monthVal||!area){alert('年月と営業所を選択してください');return;}
+  msg.textContent='シフトデータを読み込み中...';msg.style.color='#3b82f6';
+  const [y,m]=monthVal.split('-').map(Number);
+  const monthLabel=await admPayEnsureMonthLoaded(y,m);
+  if(!monthLabel){msg.textContent=`❌ ${m}月シフト${y} のデータが取得できませんでした`;msg.style.color='var(--danger)';return;}
+  if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
+  if(!invShopMasterCache){msg.textContent='店舗マスタを読み込み中...';await invLoadShopMaster();}
+
+  // 主稼働が指定営業所のドライバーを抽出
+  const drivers=[];
+  invRates.forEach(rate=>{
+    const primary=admPayGetPrimaryArea(monthLabel,rate.name);
+    if(primary===area)drivers.push({rate,primary});
+  });
+  if(!drivers.length){
+    msg.textContent=`${area} を主稼働とするドライバーがいません`;
+    msg.style.color='var(--danger)';
+    cont.innerHTML='';
+    return;
+  }
+  // 名前順にソート
+  drivers.sort((a,b)=>a.rate.name.localeCompare(b.rate.name,'ja'));
+
+  if(!window.confirm(`${area}営業所 ${monthVal}\nドライバー ${drivers.length}名の明細を一括作成します。\n\n${drivers.map(d=>'・'+d.rate.name).slice(0,15).join('\n')}${drivers.length>15?`\n他 ${drivers.length-15}名`:''}\n\n続行?`))return;
+
+  msg.textContent=`📋 ${drivers.length}名分を作成中...`;msg.style.color='#3b82f6';
+  let html=`<div id="adm-pay-bulk-header" style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#166534;font-weight:600;">📋 ${area}営業所 ${monthVal} 一括明細書 — ${drivers.length}名分</div>`;
+  drivers.forEach(({rate},i)=>{
+    if(i>0)html+='<div style="page-break-before:always;height:24px;"></div>';
+    html+=admPayBuildStatementHtml(rate,y,m,monthLabel,monthVal);
+  });
+  cont.innerHTML=html;
+  msg.textContent='';
 }
 
 function admPayPrint(){
-  const wrap=document.getElementById('adm-pay-print-wrap');
-  if(!wrap){alert('先にドライバーと月を選択してください');return;}
+  const cont=document.getElementById('adm-pay-content');
+  const wraps=cont?cont.querySelectorAll('.adm-pay-statement'):null;
+  if(!wraps||wraps.length===0){alert('先にドライバー(または営業所一括)で明細を作成してください');return;}
   const staffName=document.getElementById('adm-pay-staff').value;
   const monthVal=document.getElementById('adm-pay-month').value;
-  const title=`支払明細 ${staffName||''} ${monthVal||''}`;
+  const area=document.getElementById('adm-pay-bulk-area').value;
+  const title=wraps.length>1?`支払明細 ${area||''} ${monthVal||''} (${wraps.length}名)`:`支払明細 ${staffName||''} ${monthVal||''}`;
   // print-color-adjust:exact で背景色を印刷時にも維持 (土曜の薄黄/日曜の薄赤など)
-  const printCss=`*{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;color-adjust:exact !important;}body{font-family:'Meiryo',sans-serif;color:#1e293b;padding:0;margin:20px;}table{border-collapse:collapse;}h3{margin:0;}@media print{body{margin:8mm;}@page{size:A4 portrait;margin:8mm;}}`;
+  const printCss=`*{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;color-adjust:exact !important;}body{font-family:'Meiryo',sans-serif;color:#1e293b;padding:0;margin:20px;}table{border-collapse:collapse;}h3{margin:0;}.page-break{page-break-before:always;}@media print{body{margin:8mm;}@page{size:A4 portrait;margin:8mm;}}`;
+  // 各明細をページごとに区切る
+  let body='';
+  wraps.forEach((w,i)=>{
+    if(i>0)body+='<div class="page-break"></div>';
+    body+=w.outerHTML;
+  });
   const win=window.open('','_blank');
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${printCss}</style></head><body>${wrap.innerHTML}<script>document.title=${JSON.stringify(title)};setTimeout(()=>window.print(),500);<\/script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${printCss}</style></head><body>${body}<script>document.title=${JSON.stringify(title)};setTimeout(()=>window.print(),500);<\/script></body></html>`);
   win.document.close();
 }
 
