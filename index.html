@@ -5836,11 +5836,30 @@ function admBillPrint(){
 // courseName: コース名 (庫内系は warehouse_am/pm を使用)
 function admPayLookupRate(rate,dow,isAm,courseName){
   if(!rate)return 0;
-  const wh=(courseName||'').includes('庫内');
-  if(wh){
+  const course=courseName||'';
+  if(course.includes('庫内')){
     return isAm?(Number(rate.warehouse_am)||0):(Number(rate.warehouse_pm)||0);
   }
+  // dow文字列 → 数値 (0=日,1=月,...,6=土)
+  const dowNum=['日','月','火','水','木','金','土'].indexOf(dow);
   if(isAm){
+    // 川越パターン (旧/新): コース別×曜日別マスタから取得 (admBillTachikawa の calcDay と同じ)
+    const kwPattern=rate.kw_pattern||'';
+    if(kwPattern&&course.startsWith('川越')){
+      const masterList=kwPattern==='旧'?(kwCoursePrices.old||[]):(kwCoursePrices.new||[]);
+      const found=masterList.find(m=>m.course===course);
+      if(found){
+        const DOW_KEYS=['sun','mon','tue','wed','thu','fri','sat'];
+        const v=Number(found[DOW_KEYS[dowNum]])||0;
+        if(v)return v;
+      }
+    }
+    // 川越曜日別 (kw_am_daily): カンマ区切り [月,火,水,木,金,土,日]
+    const kwDays=(rate.kw_am_daily||'').split(',');
+    const kwDowMap=[6,0,1,2,3,4,5];
+    const kwPrice=kwDays[kwDowMap[dowNum]];
+    if(kwPrice)return Number(kwPrice)||0;
+    // フォールバック (通常曜日別)
     if(dow==='日')return Number(rate.am_sunday)||Number(rate.am_weekend)||0;
     if(dow==='土')return Number(rate.am_weekend)||0;
     return Number(rate.am_weekday)||0;
@@ -5967,6 +5986,10 @@ async function admPayInit(){
   loadServerShiftCache(true).catch(()=>{});
   if(!invRates.length){
     try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}
+  }
+  // 川越コース別単価マスタ (admPayLookupRate で必要)
+  if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){
+    try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}
   }
   const sel=document.getElementById('adm-pay-staff');
   const cur=sel.value;
@@ -6176,6 +6199,7 @@ async function admPayBulk(){
   const monthLabel=await admPayEnsureMonthLoaded(y,m);
   if(!monthLabel){msg.textContent=`❌ ${m}月シフト${y} のデータが取得できませんでした`;msg.style.color='var(--danger)';return;}
   if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
+  if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}}
   if(!invShopMasterCache){msg.textContent='店舗マスタを読み込み中...';await invLoadShopMaster();}
 
   // 主稼働が指定営業所のドライバーを抽出 (社員は月給制のため除外)
