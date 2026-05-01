@@ -5457,7 +5457,7 @@ function buildAreaTotalPage(area,monthVal,courses){
   const noam=cond.noam||[];
   const nopm=cond.nopm||[];
   const yeskeiba=cond.yeskeiba||[];
-  let amDays=0,keibaDays=0;
+  let amDays=0,keibaDays=0,keibaWorkDays=0;
   for(let d=1;d<=daysInMonth;d++){
     const dow=new Date(y,m-1,d).getDay();
     const isHoliday=holiday.includes(d);
@@ -5465,20 +5465,26 @@ function buildAreaTotalPage(area,monthVal,courses){
     const isNoPm=nopm.includes(d);
     const isFri=dow===5,isSat=dow===6,isSun=dow===0;
     if(!isHoliday&&!isNoAm)amDays++;
+    // 夕刊/競馬の billing 判定用 (金〜日 + yeskeiba) — calcDay 内で実際は日曜は yeskeiba 必須
     const isKeiba=(isFri||isSat||isSun||yeskeiba.includes(d))&&!isNoPm;
     if(!isHoliday&&isKeiba)keibaDays++;
+    // 競馬配送日 — 庫内作業費(競馬)/優馬直送便で使用
+    // デフォルト: 金・土。日曜や平日に競馬配送がある場合は請求条件の yeskeiba で日付追加。
+    // 月〜木は夕刊で競馬配送なし。
+    const isKeibaDispatch=(isFri||isSat||yeskeiba.includes(d))&&!isNoPm;
+    if(!isHoliday&&isKeibaDispatch)keibaWorkDays++;
   }
   // 立川のみ: 庫内作業費（朝刊/競馬）
   let kuchiAmFee=0,kuchiKeibaFee=0;
   if(area==='立川'){
     kuchiAmFee=amDays*6000;
-    kuchiKeibaFee=keibaDays*9000;
+    kuchiKeibaFee=keibaWorkDays*9000;
     tot.grand+=kuchiAmFee+kuchiKeibaFee;
   }
   // 川崎高津のみ: 優馬直送便
   let yumaFee=0;
   if(area==='川崎高津'){
-    yumaFee=keibaDays*7000;
+    yumaFee=keibaWorkDays*7000;
     tot.grand+=yumaFee;
   }
 
@@ -5539,8 +5545,8 @@ function buildAreaTotalPage(area,monthVal,courses){
   };
   if(workFee>0)h+=extraRow(workLabel,workFee);
   if(kuchiAmFee>0)h+=extraRow(`庫内作業費（朝刊） ${amDays}日 × ¥6,000`,kuchiAmFee);
-  if(kuchiKeibaFee>0)h+=extraRow(`庫内作業費（競馬） ${keibaDays}日 × ¥9,000`,kuchiKeibaFee);
-  if(yumaFee>0)h+=extraRow(`優馬直送便 ${keibaDays}日 × ¥7,000`,yumaFee);
+  if(kuchiKeibaFee>0)h+=extraRow(`庫内作業費（競馬） ${keibaWorkDays}日 × ¥9,000`,kuchiKeibaFee);
+  if(yumaFee>0)h+=extraRow(`優馬直送便 ${keibaWorkDays}日 × ¥7,000`,yumaFee);
   // 小計（税抜）
   h+=`<tr style="background:#f8fafc;font-weight:600;">`;
   h+=`<td style="border:1px solid #ccc;padding:8px;">小計（税抜）</td>`;
