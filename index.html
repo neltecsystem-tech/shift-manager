@@ -5579,6 +5579,36 @@ function admPayLookupRate(rate,dow,isAm,courseName){
   }
 }
 
+// 個建制の朝刊計算 (請求条件を考慮)
+// 休刊日/朝刊なしの日は ¥0、それ以外は店舗マスタから店舗数×265 + 同梱×50 + 距離増×13 + 特殊×20 + 雑誌×80
+// 同梱は通常 月曜なし、yesdokkon で強制あり、nodokkon で強制なし (admBillTachikawa の calcDay と同じルール)
+function admPayCalcKodateAm(courseName,day,dow,billCond){
+  if(!courseName)return {amount:0,detail:''};
+  // 庫内は別計算 (warehouse_am)
+  if(courseName.includes('庫内'))return null;// caller がフォールバック処理する
+  const isHoliday=(billCond.holiday||[]).includes(day);
+  const isNoAm=(billCond.noam||[]).includes(day);
+  if(isHoliday)return {amount:0,detail:'休刊日'};
+  if(isNoAm)return {amount:0,detail:'朝刊なし'};
+
+  const ko=invCalcKodate(courseName,'朝刊');
+  if(!ko.shopCount)return {amount:0,detail:'該当店舗なし'};
+
+  const isMon=dow==='月';
+  const isNoDokkon=(billCond.nodokkon||[]).includes(day);
+  const isYesDokkon=(billCond.yesdokkon||[]).includes(day);
+  const hasDokkon=isYesDokkon||(!isMon&&!isNoDokkon);
+  const yuukan=hasDokkon?(ko.yuukan||0):0;
+
+  const amount=(ko.shopCount||0)*265+yuukan*50+(ko.kyori||0)*13+(ko.tokushu||0)*20+(ko.zasshi||0)*80;
+  const parts=[`${ko.shopCount}店×265`];
+  if(yuukan)parts.push(`同梱${yuukan}×50`);
+  if(ko.kyori)parts.push(`距離${ko.kyori}×13`);
+  if(ko.tokushu)parts.push(`特殊${ko.tokushu}×20`);
+  if(ko.zasshi)parts.push(`雑誌${ko.zasshi}×80`);
+  return {amount,detail:parts.join('+')};
+}
+
 // 月のシフトをロード (キャッシュに無ければ fetch-shift で取得)
 async function admPayEnsureMonthLoaded(year,month){
   const sheetName=`${month}月シフト${year}`;
@@ -5678,6 +5708,16 @@ async function admPayRender(){
   }
   const dayMap=admPayCollectStaffShifts(monthLabel,staffName);
 
+  // 個建制の朝刊計算には店舗マスタが必要
+  const isAmKodate=(rate.calc_type||'')==='個建';
+  if(isAmKodate&&!invShopMasterCache){
+    msg.textContent='店舗マスタを読み込み中...';msg.style.color='#3b82f6';
+    await invLoadShopMaster();
+    msg.textContent='';
+  }
+  // 請求条件 (休刊日/朝刊なし/同梱有無等) — 個建制で参照
+  const billCond=getBillConditions(monthVal);
+
   // 月の全日付を生成
   const lastDay=new Date(y,m,0).getDate();
   const rows=[];
@@ -5687,10 +5727,20 @@ async function admPayRender(){
     const date=new Date(y,m-1,d);
     const dowJp=['日','月','火','水','木','金','土'][date.getDay()];
     const sh=dayMap[ymd]||{am_course:'',pm_course:''};
-    const amAmount=sh.am_course?admPayLookupRate(rate,dowJp,true,sh.am_course):0;
+    let amAmount=0,amDetail='';
+    if(sh.am_course){
+      // 個建制 (朝刊) かつ庫内コースでない場合は請求条件を考慮した個建計算
+      if(isAmKodate&&!sh.am_course.includes('庫内')){
+        const ko=admPayCalcKodateAm(sh.am_course,d,dowJp,billCond);
+        if(ko){amAmount=ko.amount;amDetail=ko.detail;}
+        else amAmount=admPayLookupRate(rate,dowJp,true,sh.am_course);
+      }else{
+        amAmount=admPayLookupRate(rate,dowJp,true,sh.am_course);
+      }
+    }
     const pmAmount=sh.pm_course?admPayLookupRate(rate,dowJp,false,sh.pm_course):0;
     amSum+=amAmount;pmSum+=pmAmount;
-    rows.push({d:`${String(m).padStart(2,'0')}月${String(d).padStart(2,'0')}日`,dow:dowJp,am_course:sh.am_course,am:amAmount,pm_course:sh.pm_course,pm:pmAmount,total:amAmount+pmAmount});
+    rows.push({d:`${String(m).padStart(2,'0')}月${String(d).padStart(2,'0')}日`,dow:dowJp,am_course:sh.am_course,am:amAmount,am_detail:amDetail,pm_course:sh.pm_course,pm:pmAmount,total:amAmount+pmAmount});
   }
   const grandTotal=amSum+pmSum;
 
@@ -5719,11 +5769,14 @@ async function admPayRender(){
     const isSun=r.dow==='日';
     const bg=isSun?'#fee2e2':(isSat?'#fef3c7':'');
     const rowStyle=bg?` style="background:${bg};"`:'';
+    const amCell=r.am_detail
+      ?`<span title="${r.am_detail.replace(/"/g,'&quot;')}" style="text-decoration:underline dotted #94a3b8;cursor:help;">¥${r.am.toLocaleString()}</span>`
+      :(r.am?'¥'+r.am.toLocaleString():'');
     h+=`<tr${rowStyle}>`
      +`<td style="border:1px solid #94a3b8;padding:3px 6px;">${r.d}</td>`
      +`<td style="border:1px solid #94a3b8;padding:3px;text-align:center;">${r.dow}</td>`
      +`<td style="border:1px solid #94a3b8;padding:3px 6px;">${r.am_course||''}</td>`
-     +`<td style="border:1px solid #94a3b8;padding:3px 6px;text-align:right;">${r.am?'¥'+r.am.toLocaleString():''}</td>`
+     +`<td style="border:1px solid #94a3b8;padding:3px 6px;text-align:right;">${amCell}</td>`
      +`<td style="border:1px solid #94a3b8;padding:3px 6px;">${r.pm_course||''}</td>`
      +`<td style="border:1px solid #94a3b8;padding:3px 6px;text-align:right;">${r.pm?'¥'+r.pm.toLocaleString():''}</td>`
      +`<td style="border:1px solid #94a3b8;padding:3px 6px;text-align:right;font-weight:bold;">¥${r.total.toLocaleString()}</td>`
@@ -5737,7 +5790,9 @@ async function admPayRender(){
    +`<td style="border:1px solid #94a3b8;padding:4px;text-align:right;">¥${grandTotal.toLocaleString()}</td>`
    +`</tr>`;
   h+='</tbody></table>';
-  h+=`<div style="margin-top:8px;font-size:11px;color:var(--text-sub);">※ 単価マスタの曜日別単価で計算 (朝刊: 月-金/土/日、夕刊: 月-木/金-土/日、庫内: 庫内朝刊/庫内夕刊単価を使用)</div>`;
+  h+=`<div style="margin-top:8px;font-size:11px;color:var(--text-sub);">※ 単価マスタの曜日別単価で計算 (朝刊: 月-金/土/日、夕刊: 月-木/金-土/日、庫内: 庫内朝刊/庫内夕刊単価を使用)`;
+  if(isAmKodate)h+=`<br>※ 朝刊は <b>個建制</b> (店舗マスタから自動算出 + 請求条件で休刊日/朝刊なし/同梱を反映、金額にカーソルで内訳表示)`;
+  h+=`</div>`;
   h+='</div>';
   cont.innerHTML=h;
 }
