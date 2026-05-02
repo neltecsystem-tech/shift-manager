@@ -715,6 +715,7 @@ tbody tr:hover { background:var(--primary-light); }
           <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
             <button onclick="admPayRefreshShift()" style="background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="シフトキャッシュを強制更新">🔄 シフト最新化</button>
             <button onclick="admPayBulk()" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📋 営業所一括作成</button>
+            <button onclick="admPayDiagnose()" style="background:#dc2626;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="シフトに入っているのに明細が作れないスタッフを表示">⚠️ 未作成スタッフ確認</button>
             <button onclick="admPayBulkPdfZip()" style="background:#7c3aed;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📦 個別PDFをZIP保存</button>
             <button onclick="admPayPrint()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🖨 印刷 / PDF</button>
           </div>
@@ -6304,6 +6305,90 @@ function admPayGetPrimaryArea(monthLabel,staffName){
   return maxArea;
 }
 
+// シフトに入っているが明細が作れないスタッフを診断
+// 戻り値: {missingRate: [], employees: [], wrongArea: []}
+//   - missingRate: シフトに有給日があるのに 単価マスタに登録なし
+//   - employees: 単価マスタにいるが biz_type=社員 で除外
+//   - wrongArea: 主稼働が targetArea と異なる (= 別営業所の一括作成対象)
+function admPayDiagnoseStaff(monthLabel,targetArea){
+  const result={missingRate:[],employees:[],wrongArea:[]};
+  const months=DB.shifts[monthLabel];
+  if(!months)return result;
+  // 全スタッフを集める (シフトに登場した名前すべて)
+  const allStaff=new Map();// normName -> {name, paidDays}
+  Object.values(months).forEach(({entries})=>{
+    if(!entries)return;
+    entries.forEach(entry=>{
+      const name=entry.course;
+      const norm=invNormName(name);
+      let paid=0;
+      entry.a.forEach(({am,pm})=>{
+        if(!admPayIsNonPaidShift(am))paid++;
+        if(!admPayIsNonPaidShift(pm))paid++;
+      });
+      if(paid===0)return;
+      const cur=allStaff.get(norm);
+      if(!cur||paid>cur.paidDays)allStaff.set(norm,{name,paidDays:paid});
+    });
+  });
+  // 各スタッフを判定
+  allStaff.forEach(({name,paidDays})=>{
+    const norm=invNormName(name);
+    const primary=admPayGetPrimaryArea(monthLabel,name);
+    const rate=invRates.find(r=>invNormName(r.name)===norm);
+    if(!rate){
+      result.missingRate.push({name,primaryArea:primary,paidDays});
+    }else if(rate.biz_type==='社員'){
+      // 社員は除外仕様なので、targetArea 主稼働の社員のみ表示
+      if(primary===targetArea)result.employees.push({name,primaryArea:primary,paidDays,rateName:rate.name});
+    }else if(targetArea&&primary!==targetArea){
+      result.wrongArea.push({name,primaryArea:primary,paidDays});
+    }
+  });
+  // 名前順にソート
+  result.missingRate.sort((a,b)=>a.name.localeCompare(b.name,'ja'));
+  result.employees.sort((a,b)=>a.name.localeCompare(b.name,'ja'));
+  result.wrongArea.sort((a,b)=>a.name.localeCompare(b.name,'ja'));
+  return result;
+}
+
+// 「未作成スタッフ確認」ボタンのハンドラ
+async function admPayDiagnose(){
+  const monthVal=document.getElementById('adm-pay-month').value;
+  const area=document.getElementById('adm-pay-bulk-area').value;
+  const msg=document.getElementById('adm-pay-msg');
+  const cont=document.getElementById('adm-pay-content');
+  if(!monthVal){alert('年月を選択してください');return;}
+  msg.textContent='シフトデータを読み込み中...';msg.style.color='#3b82f6';
+  const [y,m]=monthVal.split('-').map(Number);
+  const monthLabel=await admPayEnsureMonthLoaded(y,m);
+  if(!monthLabel){msg.textContent=`❌ ${m}月シフト${y} のデータが取得できませんでした`;msg.style.color='var(--danger)';return;}
+  if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
+  msg.textContent='';
+  const r=admPayDiagnoseStaff(monthLabel,area);
+  let h=`<div style="background:#fff;padding:20px;border:1px solid var(--border);border-radius:10px;max-width:760px;margin:0 auto;">`;
+  h+=`<h3 style="margin:0 0 12px 0;font-size:16px;">⚠️ 未作成スタッフ確認 — ${monthVal}${area?` / ${area}営業所基準`:''}</h3>`;
+  const renderList=(title,bg,border,arr,extraCol,note)=>{
+    h+=`<div style="margin-bottom:14px;border:1px solid ${border};border-radius:8px;overflow:hidden;">`;
+    h+=`<div style="background:${bg};padding:8px 12px;font-weight:600;font-size:13px;">${title} (${arr.length}名)</div>`;
+    if(note)h+=`<div style="padding:6px 12px;font-size:11px;color:var(--text-sub);background:#fafafa;">${note}</div>`;
+    if(arr.length===0){h+=`<div style="padding:10px 12px;color:var(--text-sub);font-size:12px;">該当なし</div>`;}
+    else{
+      h+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f8fafc;"><th style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:left;">スタッフ名</th><th style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:left;">${extraCol}</th><th style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;">有給日数</th></tr></thead><tbody>`;
+      arr.forEach(x=>{
+        h+=`<tr><td style="padding:5px 10px;border-bottom:1px solid #f1f5f9;">${x.name}</td><td style="padding:5px 10px;border-bottom:1px solid #f1f5f9;">${x.primaryArea||'(不明)'}</td><td style="padding:5px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${x.paidDays}</td></tr>`;
+      });
+      h+=`</tbody></table>`;
+    }
+    h+=`</div>`;
+  };
+  renderList('🚫 単価マスタ未登録','#fee2e2','#fca5a5',r.missingRate,'主稼働営業所','単価マスタに登録がないため明細が作成できません。スタッフ管理から追加してください。');
+  renderList('👤 社員 (月給制で除外)','#e0e7ff','#a5b4fc',r.employees,'主稼働営業所','区分=社員のため支払い明細の対象外です (月給制)。');
+  if(area)renderList(`📍 別営業所が主稼働 (${area} 一括対象外)`,'#fef3c7','#fbbf24',r.wrongArea,'主稼働営業所',`${area} 以外を主稼働とするドライバーは別営業所の一括作成で表示されます。`);
+  h+=`</div>`;
+  cont.innerHTML=h;
+}
+
 // 営業所一括作成: 主稼働が指定営業所のドライバー全員の明細を生成
 async function admPayBulk(){
   const monthVal=document.getElementById('adm-pay-month').value;
@@ -6336,7 +6421,16 @@ async function admPayBulk(){
   // 名前順にソート
   drivers.sort((a,b)=>a.rate.name.localeCompare(b.rate.name,'ja'));
 
-  if(!window.confirm(`${area}営業所 ${monthVal}\nドライバー ${drivers.length}名の明細を一括作成します。\n\n${drivers.map(d=>'・'+d.rate.name).slice(0,15).join('\n')}${drivers.length>15?`\n他 ${drivers.length-15}名`:''}\n\n続行?`))return;
+  // シフトに入っているのに単価マスタ未登録のスタッフを警告
+  const diag=admPayDiagnoseStaff(monthLabel,area);
+  // 主稼働が targetArea の missingRate のみ警告対象 (他営業所は別実行で警告される)
+  const missingHere=diag.missingRate.filter(x=>x.primaryArea===area);
+  let warnMsg='';
+  if(missingHere.length){
+    warnMsg=`\n\n⚠️ ${area}主稼働で単価マスタ未登録のスタッフ ${missingHere.length}名 (作成されません):\n${missingHere.map(x=>'・'+x.name+` (${x.paidDays}日)`).slice(0,10).join('\n')}${missingHere.length>10?`\n他 ${missingHere.length-10}名`:''}`;
+  }
+
+  if(!window.confirm(`${area}営業所 ${monthVal}\nドライバー ${drivers.length}名の明細を一括作成します。\n\n${drivers.map(d=>'・'+d.rate.name).slice(0,15).join('\n')}${drivers.length>15?`\n他 ${drivers.length-15}名`:''}${warnMsg}\n\n続行?`))return;
 
   msg.textContent=`📋 ${drivers.length}名分を作成中...`;msg.style.color='#3b82f6';
 
