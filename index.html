@@ -4401,8 +4401,14 @@ async function admRevLoad(){
 
   // ── 社員集計 (シフトデータからコース別の社員稼働日数を計算→売上を按分) ──
   // 社員 = invRates の biz_type === '社員'
+  // 名前は表記揺れ (全角/半角空白の混在) があるため、invNormName で正規化マッチ
   const socialStaff=invRates.filter(r=>r.biz_type==='社員');
   const socialNames=new Set(socialStaff.map(r=>r.name));
+  const _normToName={};socialStaff.forEach(r=>{_normToName[invNormName(r.name)]=r.name;});
+  const findSocial=(cellName)=>{
+    if(!cellName||cellName==='0'||cellName==='希望休')return null;
+    return _normToName[invNormName(cellName)]||null;
+  };
   const socialSalaryTotal=socialStaff.reduce((s,r)=>s+(Number(r.monthly_salary)||0),0);
   const socialSalaryByName={};
   socialStaff.forEach(r=>{socialSalaryByName[r.name]=Number(r.monthly_salary)||0;});
@@ -4425,8 +4431,8 @@ async function admRevLoad(){
         const stat=matchedShifts[course];
         a.forEach(({d,am,pm})=>{
           if(!inMonthIdx.has(d))return;
-          if(am&&am!=='0'&&am!=='希望休'){stat.amTotal++;if(socialNames.has(am))stat.amSocial++;}
-          if(pm&&pm!=='0'&&pm!=='希望休'){stat.pmTotal++;if(socialNames.has(pm))stat.pmSocial++;}
+          if(am&&am!=='0'&&am!=='希望休'){stat.amTotal++;if(findSocial(am))stat.amSocial++;}
+          if(pm&&pm!=='0'&&pm!=='希望休'){stat.pmTotal++;if(findSocial(pm))stat.pmSocial++;}
         });
       });
     });
@@ -4458,8 +4464,8 @@ async function admRevLoad(){
           a.forEach(({d,am,pm})=>{
             const [yy,mmm]=d.split('-').map(Number);
             if(yy!==my||mmm!==mm)return;
-            if(am&&socialNames.has(am)){perStaff[am]=(perStaff[am]||0)+1;}
-            if(pm&&socialNames.has(pm)){perStaff[pm]=(perStaff[pm]||0)+1;}
+            const _amR=findSocial(am);if(_amR)perStaff[_amR]=(perStaff[_amR]||0)+1;
+            const _pmR=findSocial(pm);if(_pmR)perStaff[_pmR]=(perStaff[_pmR]||0)+1;
           });
         });
       });
@@ -4507,9 +4513,19 @@ async function admEmpLoad(){
     cont.innerHTML='<p style="color:var(--text-sub);text-align:center;padding:40px;">社員 (区分=社員) のドライバーがいません</p>';
     return;
   }
-  const socialNames=new Set(socialStaff.map(r=>r.name));
+  // 名前の表記揺れ (全角/半角空白の混在) に対応するため正規化マップを使う
+  // shiftCellValue → rate.name のルックアップ用
+  const normToName={};
+  socialStaff.forEach(r=>{normToName[invNormName(r.name)]=r.name;});
+  const socialNames=new Set(socialStaff.map(r=>r.name));// 既存ロジック互換
+  // 正規化マッチで rate.name を取得 (見つからなければ null)
+  const findSocial=(cellName)=>{
+    if(!cellName||cellName==='0'||cellName==='希望休')return null;
+    const n=normToName[invNormName(cellName)];
+    return n||null;
+  };
 
-  // コース別シフト集計 (DB.shiftsByCourse)
+  // コース別シフト集計 (DB.shiftsByCourse) — 社員判定は正規化マッチで吸収
   const matchedShifts={};
   Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
     Object.values(byArea).forEach(({entries,dates})=>{
@@ -4521,8 +4537,8 @@ async function admEmpLoad(){
         const stat=matchedShifts[course];
         a.forEach(({d,am,pm})=>{
           if(!inMonthSet.has(d))return;
-          if(am&&am!=='0'&&am!=='希望休'){stat.amTotal++;if(socialNames.has(am))stat.amSocial++;}
-          if(pm&&pm!=='0'&&pm!=='希望休'){stat.pmTotal++;if(socialNames.has(pm))stat.pmSocial++;}
+          if(am&&am!=='0'&&am!=='希望休'){stat.amTotal++;if(findSocial(am))stat.amSocial++;}
+          if(pm&&pm!=='0'&&pm!=='希望休'){stat.pmTotal++;if(findSocial(pm))stat.pmSocial++;}
         });
       });
     });
@@ -4560,15 +4576,17 @@ async function admEmpLoad(){
     empData[r.name]={name:r.name,amDays:0,pmDays:0,sales:0,salary:Number(r.monthly_salary)||0};
   });
 
-  // 朝刊/夕刊勤務日数
+  // 朝刊/夕刊勤務日数 (正規化マッチで rate.name にマップしてから集計)
   Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
     Object.values(byArea).forEach(({entries})=>{
       entries.forEach(({a})=>{
         a.forEach(({d,am,pm})=>{
           const [yy,mmm]=d.split('-').map(Number);
           if(yy!==my||mmm!==mm)return;
-          if(am&&am!=='0'&&am!=='希望休'&&socialNames.has(am)&&empData[am])empData[am].amDays++;
-          if(pm&&pm!=='0'&&pm!=='希望休'&&socialNames.has(pm)&&empData[pm])empData[pm].pmDays++;
+          const amReal=findSocial(am);
+          if(amReal&&empData[amReal])empData[amReal].amDays++;
+          const pmReal=findSocial(pm);
+          if(pmReal&&empData[pmReal])empData[pmReal].pmDays++;
         });
       });
     });
@@ -4584,7 +4602,7 @@ async function admEmpLoad(){
     const pmSales=(cs.grandTotal-(cs.amTotal||0))*pmRatio;
     const courseSocialSales=amSales+pmSales;
     if(courseSocialSales<=0)return;
-    // このコースで稼働した社員ごとの (am+pm) 日数で按分
+    // このコースで稼働した社員ごとの (am+pm) 日数で按分 (正規化マッチ)
     const perStaff={};
     Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
       Object.values(byArea).forEach(({entries})=>{
@@ -4593,8 +4611,10 @@ async function admEmpLoad(){
           a.forEach(({d,am,pm})=>{
             const [yy,mmm]=d.split('-').map(Number);
             if(yy!==my||mmm!==mm)return;
-            if(am&&socialNames.has(am))perStaff[am]=(perStaff[am]||0)+1;
-            if(pm&&socialNames.has(pm))perStaff[pm]=(perStaff[pm]||0)+1;
+            const amReal=findSocial(am);
+            if(amReal)perStaff[amReal]=(perStaff[amReal]||0)+1;
+            const pmReal=findSocial(pm);
+            if(pmReal)perStaff[pmReal]=(perStaff[pmReal]||0)+1;
           });
         });
       });
