@@ -5930,6 +5930,37 @@ function admPayCalcKodatePm(courseName,day,dow,billCond){
   return {amount:ko.amount,detail:(isKeiba?'競馬: ':'夕刊: ')+(ko.detail||'')};
 }
 
+// 個数制 (calc_type='個数'): 店舗マスタの該当コース店舗数を qty として
+// unit_price × shopCount で算出。庫内コースは null を返して caller が
+// warehouse_am/pm にフォールバック。請求条件は適用しない (基本シフトに入らない前提)。
+// 朝刊個数: 店舗マスタの朝刊コース店舗数 × unit_price
+function admPayCalcQtyAm(courseName,rate){
+  if(!courseName||courseName.includes('庫内'))return null;
+  const unitPrice=Number(rate.unit_price)||0;
+  if(!unitPrice)return {amount:0,detail:'単価未設定'};
+  const ko=invCalcKodate(courseName,'朝刊');
+  const shopCount=ko.shopCount||0;
+  if(!shopCount)return {amount:0,detail:'該当店舗なし'};
+  return {amount:unitPrice*shopCount,detail:`${shopCount}店×¥${unitPrice.toLocaleString()}`};
+}
+
+// 夕刊/競馬個数: 月-木は夕刊コース、金土+yeskeibaは競馬コース、日曜は ¥0
+function admPayCalcQtyPm(courseName,dow,billCond,day,rate){
+  if(!courseName||courseName.includes('庫内'))return null;
+  const unitPrice=Number(rate.unit_price_pm)||Number(rate.unit_price)||0;
+  if(!unitPrice)return {amount:0,detail:'単価未設定'};
+  const isYesKeiba=(billCond.yeskeiba||[]).includes(day);
+  const dowNum=['日','月','火','水','木','金','土'].indexOf(dow);
+  const isFri=dowNum===5,isSat=dowNum===6,isSun=dowNum===0;
+  if(isSun&&!isYesKeiba)return {amount:0,detail:'夕刊なし(日)'};
+  const isKeiba=isFri||isSat||isYesKeiba;
+  const category=isKeiba?'競馬':'夕刊/競馬';
+  const ko=invCalcKodate(courseName,category);
+  const shopCount=ko.shopCount||0;
+  if(!shopCount)return {amount:0,detail:'該当店舗なし'};
+  return {amount:unitPrice*shopCount,detail:`${isKeiba?'競馬':'夕刊'}: ${shopCount}店×¥${unitPrice.toLocaleString()}`};
+}
+
 // 特別単価 (日当 / 日当+) を適用 (請求書側の invCalcAmount と同じルール)
 // 日当: 計算済み amount を置換 (複数あれば加算した値で置換)
 // 日当+: 計算済み amount に加算
@@ -6086,10 +6117,12 @@ async function admPayRender(){
     return;
   }
 
-  // 個建制の計算には店舗マスタが必要 (朝刊・夕刊/競馬どちらでも)
+  // 個建/個数制の計算には店舗マスタが必要 (朝刊・夕刊/競馬どちらでも)
   const isAmKodate=(rate.calc_type||'')==='個建';
   const isPmKodate=((rate.calc_type_pm||rate.calc_type)||'')==='個建';
-  if((isAmKodate||isPmKodate)&&!invShopMasterCache){
+  const isAmQty=(rate.calc_type||'')==='個数';
+  const isPmQty=((rate.calc_type_pm||rate.calc_type)||'')==='個数';
+  if((isAmKodate||isPmKodate||isAmQty||isPmQty)&&!invShopMasterCache){
     msg.textContent='店舗マスタを読み込み中...';msg.style.color='#3b82f6';
     await invLoadShopMaster();
     msg.textContent='';
@@ -6108,6 +6141,8 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
   const dayMap=admPayCollectStaffShifts(monthLabel,staffName);
   const isAmKodate=(rate.calc_type||'')==='個建';
   const isPmKodate=((rate.calc_type_pm||rate.calc_type)||'')==='個建';
+  const isAmQty=(rate.calc_type||'')==='個数';
+  const isPmQty=((rate.calc_type_pm||rate.calc_type)||'')==='個数';
   const billCond=getBillConditions(monthVal);
 
   const lastDay=new Date(y,m,0).getDate();
@@ -6126,6 +6161,10 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
         const ko=admPayCalcKodateAm(bare,d,dowJp,billCond);
         if(ko){amAmount=ko.amount;amDetail=ko.detail;}
         else amAmount=admPayLookupRate(rate,dowJp,true,bare);
+      }else if(isAmQty&&!bare.includes('庫内')){
+        const qt=admPayCalcQtyAm(bare,rate);
+        if(qt){amAmount=qt.amount;amDetail=qt.detail;}
+        else amAmount=admPayLookupRate(rate,dowJp,true,bare);
       }else{
         amAmount=admPayLookupRate(rate,dowJp,true,bare);
       }
@@ -6140,6 +6179,10 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
       if(isPmKodate&&!bare.includes('庫内')){
         const ko=admPayCalcKodatePm(bare,d,dowJp,billCond);
         if(ko){pmAmount=ko.amount;pmDetail=ko.detail;}
+        else pmAmount=admPayLookupRate(rate,dowJp,false,bare);
+      }else if(isPmQty&&!bare.includes('庫内')){
+        const qt=admPayCalcQtyPm(bare,dowJp,billCond,d,rate);
+        if(qt){pmAmount=qt.amount;pmDetail=qt.detail;}
         else pmAmount=admPayLookupRate(rate,dowJp,false,bare);
       }else{
         pmAmount=admPayLookupRate(rate,dowJp,false,bare);
