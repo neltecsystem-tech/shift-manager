@@ -710,7 +710,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="adm-paystatement" class="adm-panel" style="display:none;">
         <div class="filters">
           <div><label>年月</label><input type="month" id="adm-pay-month" onchange="admPayRender()"></div>
-          <div><label>ドライバー</label><select id="adm-pay-staff" onchange="admPayRender()"><option value="">選択してください</option></select></div>
+          <div><label>ドライバー</label><input id="adm-pay-staff" list="adm-pay-staff-dl" autocomplete="off" placeholder="名前で検索 / クリックで一覧" onchange="admPayRender()" style="width:200px;"><datalist id="adm-pay-staff-dl"></datalist></div>
           <div><label>営業所</label><select id="adm-pay-bulk-area"><option value="">選択</option><option value="立川">立川</option><option value="城北">城北</option><option value="川越">川越</option><option value="川崎高津">川崎高津</option></select></div>
           <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
             <button onclick="admPayRefreshShift()" style="background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="シフトキャッシュを強制更新">🔄 シフト最新化</button>
@@ -6082,14 +6082,14 @@ async function admPayInit(){
     try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}
   }
   const sel=document.getElementById('adm-pay-staff');
-  const cur=sel.value;
-  // 全スタッフ表示。社員の場合は給料が別なので参考表示として残す
+  const dl=document.getElementById('adm-pay-staff-dl');
+  // 全スタッフ表示。社員は [社員] タグ付き (参考表示)
+  // datalist は value で検索される。社員タグを表示するため label 形式で options を生成
   const opts=invRates.map(r=>{
     const tag=r.biz_type==='社員'?' [社員]':'';
-    return `<option value="${r.name.replace(/"/g,'&quot;')}">${r.name}${tag}</option>`;
+    return `<option value="${r.name.replace(/"/g,'&quot;')}">${tag.trim()}</option>`;
   }).join('');
-  sel.innerHTML='<option value="">選択してください</option>'+opts;
-  if(cur)sel.value=cur;
+  if(dl)dl.innerHTML=opts;
   admPayRender();
 }
 
@@ -6114,7 +6114,9 @@ async function admPayRender(){
   }
   msg.textContent='';
 
-  const rate=invRates.find(r=>r.name===staffName);
+  // 名前の表記揺れ (スペース数違い等) に対応するため正規化比較
+  const targetNorm=invNormName(staffName);
+  const rate=invRates.find(r=>r.name===staffName)||invRates.find(r=>invNormName(r.name)===targetNorm);
   if(!rate){
     msg.textContent='ドライバーの単価が見つかりません';
     msg.style.color='var(--danger)';
