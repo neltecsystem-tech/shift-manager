@@ -475,6 +475,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('revenue')" id="adm-tab-revenue" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💰 収支管理</button>
         <button onclick="adminTab('billcond')" id="adm-tab-billcond" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 請求条件</button>
         <button onclick="adminTab('paystatement')" id="adm-tab-paystatement" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💴 支払い明細</button>
+        <button onclick="adminTab('employee')" id="adm-tab-employee" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">👤 社員管理</button>
         <button onclick="adminTab('measure')" id="adm-tab-measure" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⏱ 測定データ</button>
         <button onclick="adminTab('settings')" id="adm-tab-settings" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⚙ システム設定</button>
       </div>
@@ -723,6 +724,17 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="adm-pay-msg" style="margin-top:8px;font-size:13px;"></div>
         <div id="adm-pay-content" style="margin-top:12px;"></div>
+      </div>
+
+      <!-- 社員管理 -->
+      <div id="adm-employee" class="adm-panel" style="display:none;">
+        <div class="filters">
+          <div><label>年月</label><input type="month" id="adm-emp-month" onchange="admEmpLoad()"></div>
+          <div style="margin-left:auto;display:flex;align-items:flex-end;">
+            <button onclick="admEmpLoad()" style="background:var(--primary);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🔄 再計算</button>
+          </div>
+        </div>
+        <div id="adm-emp-content" style="margin-top:12px;"></div>
       </div>
 
       <div id="adm-measure" class="adm-panel" style="display:none;">
@@ -3603,6 +3615,7 @@ function adminTab(t){
   if(t==='check')adminInitCheck();
   if(t==='measure')admMsrInit();
   if(t==='paystatement')admPayInit().catch(()=>{});
+  if(t==='employee')admEmpInit().catch(()=>{});
   if(t==='data')adminShowDataInfo();
   if(t==='settings')adminShowSysInfo();
 }
@@ -4462,6 +4475,189 @@ async function admRevLoad(){
 
   admRevData={sales,expenses,monthWork,expByCourse,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras};
   admRevRender();
+}
+
+// --- 社員管理 ---
+async function admEmpInit(){
+  if(!admBillShopData)await admBillInit().catch(()=>{});
+  const mInput=document.getElementById('adm-emp-month');
+  if(!mInput.value){
+    const now=new Date();
+    mInput.value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  }
+  admEmpLoad();
+}
+
+async function admEmpLoad(){
+  const monthVal=document.getElementById('adm-emp-month').value;
+  if(!monthVal)return;
+  const cont=document.getElementById('adm-emp-content');
+  cont.innerHTML='<p style="color:var(--text-sub);text-align:center;padding:40px;">計算中...</p>';
+
+  // 依存データ load
+  if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
+  if(!admBillShopData)await admBillInit().catch(()=>{});
+  await loadConfirmedSales();
+  const [my,mm]=monthVal.split('-').map(Number);
+  await admPayEnsureMonthLoaded(my,mm);
+
+  // 社員抽出
+  const socialStaff=invRates.filter(r=>r.biz_type==='社員');
+  if(!socialStaff.length){
+    cont.innerHTML='<p style="color:var(--text-sub);text-align:center;padding:40px;">社員 (区分=社員) のドライバーがいません</p>';
+    return;
+  }
+  const socialNames=new Set(socialStaff.map(r=>r.name));
+
+  // コース別シフト集計 (DB.shiftsByCourse)
+  const matchedShifts={};
+  Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
+    Object.values(byArea).forEach(({entries,dates})=>{
+      const inMonth=dates.filter(dt=>{const [yy,mmm]=dt.d.split('-').map(Number);return yy===my&&mmm===mm;});
+      if(!inMonth.length)return;
+      const inMonthSet=new Set(inMonth.map(dt=>dt.d));
+      entries.forEach(({course,a})=>{
+        if(!matchedShifts[course])matchedShifts[course]={amTotal:0,amSocial:0,pmTotal:0,pmSocial:0};
+        const stat=matchedShifts[course];
+        a.forEach(({d,am,pm})=>{
+          if(!inMonthSet.has(d))return;
+          if(am&&am!=='0'&&am!=='希望休'){stat.amTotal++;if(socialNames.has(am))stat.amSocial++;}
+          if(pm&&pm!=='0'&&pm!=='希望休'){stat.pmTotal++;if(socialNames.has(pm))stat.pmSocial++;}
+        });
+      });
+    });
+  });
+
+  // コース別売上を計算 (確定済み or admBillRenderWithTotals)
+  const courseSales={};
+  const records=admBillShopData?.records||[];
+  const cols=admBillCols();
+  const allAreas=['立川','城北','川越','川崎高津'];
+  allAreas.forEach(area=>{
+    const matchAreas=area==='城北'?['城北','池袋']:[area];
+    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&matchAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+    const allC=new Set();
+    filtered.forEach(r=>{
+      if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
+      if(r[`col_${cols.pmCourse}`])allC.add(r[`col_${cols.pmCourse}`]);
+      if(cols.keibaCourse!==undefined&&r[`col_${cols.keibaCourse}`])allC.add(r[`col_${cols.keibaCourse}`]);
+    });
+    const courses=[...allC].filter(c=>matchAreas.some(a=>c.includes(a)));
+    courses.forEach(course=>{
+      const confirmed=getConfirmedSale(monthVal,area,course);
+      if(confirmed){
+        courseSales[course]={grandTotal:confirmed.grand_total,amTotal:confirmed.am_total,pmTotal:confirmed.pm_total};
+      }else{
+        const result=admBillRenderWithTotals(area,course,monthVal);
+        courseSales[course]={grandTotal:result.grandTotal,amTotal:result.totalAmSum,pmTotal:result.totalPmSum};
+      }
+    });
+  });
+
+  // 社員ごとの集計
+  const empData={};
+  socialStaff.forEach(r=>{
+    empData[r.name]={name:r.name,amDays:0,pmDays:0,sales:0,salary:Number(r.monthly_salary)||0};
+  });
+
+  // 朝刊/夕刊勤務日数
+  Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
+    Object.values(byArea).forEach(({entries})=>{
+      entries.forEach(({a})=>{
+        a.forEach(({d,am,pm})=>{
+          const [yy,mmm]=d.split('-').map(Number);
+          if(yy!==my||mmm!==mm)return;
+          if(am&&am!=='0'&&am!=='希望休'&&socialNames.has(am)&&empData[am])empData[am].amDays++;
+          if(pm&&pm!=='0'&&pm!=='希望休'&&socialNames.has(pm)&&empData[pm])empData[pm].pmDays++;
+        });
+      });
+    });
+  });
+
+  // 売上の按分 (収支管理と同じロジック)
+  Object.entries(matchedShifts).forEach(([course,stat])=>{
+    const cs=courseSales[course];
+    if(!cs)return;
+    const amRatio=stat.amTotal>0?(stat.amSocial/stat.amTotal):0;
+    const pmRatio=stat.pmTotal>0?(stat.pmSocial/stat.pmTotal):0;
+    const amSales=(cs.amTotal||0)*amRatio;
+    const pmSales=(cs.grandTotal-(cs.amTotal||0))*pmRatio;
+    const courseSocialSales=amSales+pmSales;
+    if(courseSocialSales<=0)return;
+    // このコースで稼働した社員ごとの (am+pm) 日数で按分
+    const perStaff={};
+    Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
+      Object.values(byArea).forEach(({entries})=>{
+        entries.forEach(({course:c,a})=>{
+          if(c!==course)return;
+          a.forEach(({d,am,pm})=>{
+            const [yy,mmm]=d.split('-').map(Number);
+            if(yy!==my||mmm!==mm)return;
+            if(am&&socialNames.has(am))perStaff[am]=(perStaff[am]||0)+1;
+            if(pm&&socialNames.has(pm))perStaff[pm]=(perStaff[pm]||0)+1;
+          });
+        });
+      });
+    });
+    const totalDays=Object.values(perStaff).reduce((a,b)=>a+b,0);
+    if(totalDays===0)return;
+    Object.entries(perStaff).forEach(([name,days])=>{
+      if(empData[name])empData[name].sales+=courseSocialSales*(days/totalDays);
+    });
+  });
+
+  // 粗利
+  Object.values(empData).forEach(e=>{e.sales=Math.round(e.sales);e.profit=e.sales-e.salary;});
+
+  // テーブル描画
+  const arr=Object.values(empData).sort((a,b)=>b.sales-a.sales);
+  const totalAm=arr.reduce((s,e)=>s+e.amDays,0);
+  const totalPm=arr.reduce((s,e)=>s+e.pmDays,0);
+  const totalSales=arr.reduce((s,e)=>s+e.sales,0);
+  const totalSalary=arr.reduce((s,e)=>s+e.salary,0);
+  const totalProfit=totalSales-totalSalary;
+  let h='';
+  // サマリーカード
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px;">`;
+  h+=`<div style="background:#dbeafe;border-radius:8px;padding:14px;text-align:center;"><div style="font-size:11px;color:#1d4ed8;">朝刊勤務 合計</div><div style="font-size:22px;font-weight:bold;color:#1d4ed8;">${totalAm}日</div></div>`;
+  h+=`<div style="background:#fae8ff;border-radius:8px;padding:14px;text-align:center;"><div style="font-size:11px;color:#9333ea;">夕刊/競馬勤務 合計</div><div style="font-size:22px;font-weight:bold;color:#9333ea;">${totalPm}日</div></div>`;
+  h+=`<div style="background:#ecfccb;border-radius:8px;padding:14px;text-align:center;"><div style="font-size:11px;color:#16a34a;">社員担当売上</div><div style="font-size:22px;font-weight:bold;color:#16a34a;">¥${totalSales.toLocaleString()}</div></div>`;
+  h+=`<div style="background:#fef3c7;border-radius:8px;padding:14px;text-align:center;"><div style="font-size:11px;color:#92400e;">社員給料</div><div style="font-size:22px;font-weight:bold;color:#92400e;">¥${totalSalary.toLocaleString()}</div></div>`;
+  const profitColor=totalProfit>=0?'#16a34a':'#dc2626';
+  h+=`<div style="background:#fff;border:2px solid ${profitColor};border-radius:8px;padding:14px;text-align:center;"><div style="font-size:11px;color:${profitColor};">粗利 (売上-給料)</div><div style="font-size:22px;font-weight:bold;color:${profitColor};">¥${totalProfit.toLocaleString()}</div></div>`;
+  h+=`</div>`;
+  // テーブル
+  h+=`<div style="background:#fff;border:1px solid var(--border);border-radius:8px;overflow:hidden;">`;
+  h+='<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+  h+='<thead><tr style="background:#f1f5f9;">';
+  h+='<th style="border-bottom:1px solid #cbd5e1;padding:10px;text-align:left;">社員名</th>';
+  h+='<th style="border-bottom:1px solid #cbd5e1;padding:10px;text-align:right;">朝刊勤務</th>';
+  h+='<th style="border-bottom:1px solid #cbd5e1;padding:10px;text-align:right;">夕刊/競馬勤務</th>';
+  h+='<th style="border-bottom:1px solid #cbd5e1;padding:10px;text-align:right;">売上 (按分)</th>';
+  h+='<th style="border-bottom:1px solid #cbd5e1;padding:10px;text-align:right;">給料</th>';
+  h+='<th style="border-bottom:1px solid #cbd5e1;padding:10px;text-align:right;">粗利</th>';
+  h+='</tr></thead><tbody>';
+  arr.forEach(e=>{
+    const pc=e.profit>=0?'#16a34a':'#dc2626';
+    h+='<tr>';
+    h+=`<td style="border-bottom:1px solid #f1f5f9;padding:8px 10px;">${e.name}</td>`;
+    h+=`<td style="border-bottom:1px solid #f1f5f9;padding:8px 10px;text-align:right;">${e.amDays}日</td>`;
+    h+=`<td style="border-bottom:1px solid #f1f5f9;padding:8px 10px;text-align:right;">${e.pmDays}日</td>`;
+    h+=`<td style="border-bottom:1px solid #f1f5f9;padding:8px 10px;text-align:right;">¥${e.sales.toLocaleString()}</td>`;
+    h+=`<td style="border-bottom:1px solid #f1f5f9;padding:8px 10px;text-align:right;">¥${e.salary.toLocaleString()}</td>`;
+    h+=`<td style="border-bottom:1px solid #f1f5f9;padding:8px 10px;text-align:right;color:${pc};font-weight:bold;">¥${e.profit.toLocaleString()}</td>`;
+    h+='</tr>';
+  });
+  h+=`<tr style="background:#f8fafc;font-weight:bold;">`;
+  h+=`<td style="padding:10px;">合計</td>`;
+  h+=`<td style="padding:10px;text-align:right;">${totalAm}日</td>`;
+  h+=`<td style="padding:10px;text-align:right;">${totalPm}日</td>`;
+  h+=`<td style="padding:10px;text-align:right;">¥${totalSales.toLocaleString()}</td>`;
+  h+=`<td style="padding:10px;text-align:right;">¥${totalSalary.toLocaleString()}</td>`;
+  h+=`<td style="padding:10px;text-align:right;color:${profitColor};">¥${totalProfit.toLocaleString()}</td>`;
+  h+=`</tr>`;
+  h+='</tbody></table></div>';
+  cont.innerHTML=h;
 }
 
 function admRevRender(){
