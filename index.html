@@ -520,6 +520,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="adm-revenue" class="adm-panel" style="display:none;">
         <div class="filters">
           <div><label>年月</label><input type="month" id="adm-rev-month" onchange="admRevLoad()"></div>
+          <div><label>支払い元</label><select id="adm-rev-expsrc" onchange="admRevLoad()"><option value="shift">シフト自動</option><option value="work">稼働記録</option></select></div>
           <div><label>表示</label><select id="adm-rev-view" onchange="admRevRender()"><option value="all">全営業所合計</option><option value="area">営業所別</option><option value="course">コース別</option><option value="daily">コース別日次</option></select></div>
           <div><label>営業所</label><select id="adm-rev-area" onchange="admRevRender()"><option value="">全て</option></select></div>
           <div id="adm-rev-course-wrap" style="display:none;"><label>コース</label><select id="adm-rev-course" onchange="admRevRender()"><option value="">選択</option></select></div>
@@ -4325,31 +4326,59 @@ async function admRevLoad(){
     if(ex.total>0)areaExtras[area]=ex;
   });
 
-  // 支払い: 稼働記録から該当月の金額合計
-  const workRes=await invApi({action:'list_work'});
-  const allWork=workRes.records||[];
+  // 支払いソース選択: 'shift' = シフト自動計算 (admPayBuildStatement と同ロジック)、
+  //                    'work'  = 稼働記録 (手入力)
+  const expSrc=(document.getElementById('adm-rev-expsrc')||{}).value||'shift';
   const [y,m]=monthVal.split('-').map(Number);
-  const monthPrefix=`${y}/${String(m).padStart(2,'0')}`;
-  const monthPrefix2=`${y}/${m}/`;
-  const monthWork=allWork.filter(w=>{
-    const d=(w.date||'').replace(/-/g,'/');
-    return d.startsWith(monthPrefix)||d.startsWith(monthPrefix2);
-  });
-  // スタッフ別集計
-  const expByStaff={};
-  monthWork.forEach(w=>{
-    const staff=w.staff||'不明';
-    expByStaff[staff]=(expByStaff[staff]||0)+Number(w.amount||0);
-  });
+  let expByStaff={},expByCourse={},monthWork=[];
+  if(expSrc==='shift'){
+    // シフト自動計算: invRates の各非社員ドライバーに admPayBuildStatement を実行し、
+    // grandTotal を expByStaff に、rows の per-day amount をコース別に集計
+    if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
+    if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}}
+    if(!invSpecial.length){try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}}
+    if(!invShopMasterCache)await invLoadShopMaster();
+    const monthLabelExp=await admPayEnsureMonthLoaded(y,m);
+    if(monthLabelExp){
+      invRates.forEach(rate=>{
+        if(rate.biz_type==='社員')return;// 社員は別 (給料)
+        const stmt=admPayBuildStatement(rate,y,m,monthLabelExp,monthVal);
+        if(!stmt)return;
+        if(stmt.grandTotal>0)expByStaff[rate.name]=stmt.grandTotal;
+        // コース別集計 (引継は bare コース名で集計)
+        (stmt.rows||[]).forEach(r=>{
+          if(r.am&&r.am_course){
+            const cKey=admPayStripHikitsugi(r.am_course)||r.am_course;
+            expByCourse[cKey]=(expByCourse[cKey]||0)+r.am;
+          }
+          if(r.pm&&r.pm_course){
+            const cKey=admPayStripHikitsugi(r.pm_course)||r.pm_course;
+            expByCourse[cKey]=(expByCourse[cKey]||0)+r.pm;
+          }
+        });
+      });
+    }
+  }else{
+    // 稼働記録ベース (旧来動作)
+    const workRes=await invApi({action:'list_work'});
+    const allWork=workRes.records||[];
+    const monthPrefix=`${y}/${String(m).padStart(2,'0')}`;
+    const monthPrefix2=`${y}/${m}/`;
+    monthWork=allWork.filter(w=>{
+      const d=(w.date||'').replace(/-/g,'/');
+      return d.startsWith(monthPrefix)||d.startsWith(monthPrefix2);
+    });
+    monthWork.forEach(w=>{
+      const staff=w.staff||'不明';
+      expByStaff[staff]=(expByStaff[staff]||0)+Number(w.amount||0);
+    });
+    monthWork.forEach(w=>{
+      const c=(w.course||'').trim();
+      if(!c)return;
+      expByCourse[c]=(expByCourse[c]||0)+Number(w.amount||0);
+    });
+  }
   const expenses=Object.entries(expByStaff).map(([staff,amount])=>({staff,amount})).sort((a,b)=>b.amount-a.amount);
-
-  // コース別支払い集計
-  const expByCourse={};
-  monthWork.forEach(w=>{
-    const c=(w.course||'').trim();
-    if(!c)return;
-    expByCourse[c]=(expByCourse[c]||0)+Number(w.amount||0);
-  });
   // sales各行に支払い・粗利を付与
   sales.forEach(s=>{
     s.expense=expByCourse[s.course]||0;
@@ -6248,7 +6277,7 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
    +`</tr>`;
   h+='</tbody></table>';
   h+='</div>';
-  return {html:h,amSum,pmSum,grandTotal};
+  return {html:h,amSum,pmSum,grandTotal,rows};
 }
 
 // 法人 (同一会社) の支払いサマリーページ
