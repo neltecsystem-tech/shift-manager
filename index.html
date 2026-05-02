@@ -4544,8 +4544,9 @@ async function admEmpLoad(){
     });
   });
 
-  // コース別売上を計算 (確定済み or admBillRenderWithTotals)
-  const courseSales={};
+  // コース別売上を計算 — 日次明細 (perDay) も取得して正確な按分に使う
+  // 確定済み売上があれば総額を確定値に scale (per-day 比率は計算値ベース)
+  const courseSales={};// course -> {grandTotal, amTotal, pmTotal, perDay, area}
   const records=admBillShopData?.records||[];
   const cols=admBillCols();
   const allAreas=['立川','城北','川越','川崎高津'];
@@ -4560,13 +4561,21 @@ async function admEmpLoad(){
     });
     const courses=[...allC].filter(c=>matchAreas.some(a=>c.includes(a)));
     courses.forEach(course=>{
+      const result=admBillRenderWithTotals(area,course,monthVal);
+      const computedTotal=result.grandTotal||0;
       const confirmed=getConfirmedSale(monthVal,area,course);
-      if(confirmed){
-        courseSales[course]={grandTotal:confirmed.grand_total,amTotal:confirmed.am_total,pmTotal:confirmed.pm_total};
-      }else{
-        const result=admBillRenderWithTotals(area,course,monthVal);
-        courseSales[course]={grandTotal:result.grandTotal,amTotal:result.totalAmSum,pmTotal:result.totalPmSum};
+      let perDay=result.perDay||[];
+      // 確定済みなら計算値の per-day 比率を保ったまま、合計を確定値にスケール
+      if(confirmed&&computedTotal>0){
+        const ratio=(confirmed.grand_total||0)/computedTotal;
+        perDay=perDay.map(p=>({...p,dayAm:Math.round(p.dayAm*ratio),dayPm:Math.round(p.dayPm*ratio)}));
       }
+      courseSales[course]={
+        grandTotal:confirmed?confirmed.grand_total:result.grandTotal,
+        amTotal:confirmed?confirmed.am_total:result.totalAmSum,
+        pmTotal:confirmed?confirmed.pm_total:result.totalPmSum,
+        perDay,area,
+      };
     });
   });
 
@@ -4592,37 +4601,37 @@ async function admEmpLoad(){
     });
   });
 
-  // 売上の按分 (収支管理と同じロジック)
-  Object.entries(matchedShifts).forEach(([course,stat])=>{
-    const cs=courseSales[course];
-    if(!cs)return;
-    const amRatio=stat.amTotal>0?(stat.amSocial/stat.amTotal):0;
-    const pmRatio=stat.pmTotal>0?(stat.pmSocial/stat.pmTotal):0;
-    const amSales=(cs.amTotal||0)*amRatio;
-    const pmSales=(cs.grandTotal-(cs.amTotal||0))*pmRatio;
-    const courseSocialSales=amSales+pmSales;
-    if(courseSocialSales<=0)return;
-    // このコースで稼働した社員ごとの (am+pm) 日数で按分 (正規化マッチ)
-    const perStaff={};
-    Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
-      Object.values(byArea).forEach(({entries})=>{
-        entries.forEach(({course:c,a})=>{
-          if(c!==course)return;
-          a.forEach(({d,am,pm})=>{
-            const [yy,mmm]=d.split('-').map(Number);
-            if(yy!==my||mmm!==mm)return;
-            const amReal=findSocial(am);
-            if(amReal)perStaff[amReal]=(perStaff[amReal]||0)+1;
-            const pmReal=findSocial(pm);
-            if(pmReal)perStaff[pmReal]=(perStaff[pmReal]||0)+1;
-          });
+  // 売上を「日次のシフト担当」に基づいて正確に分配
+  // 各 (コース, 日) について:
+  //   AM 担当 = その日の社員 → その社員に dayAm を加算
+  //   PM 担当 = その日の社員 → その社員に dayPm を加算
+  // 同日同区分に複数社員はあり得ない (1コース1スタッフ前提)
+  // courseShiftMap[course] = {ymd → {am, pm}} のマップを構築
+  const courseShiftMap={};
+  Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
+    Object.values(byArea).forEach(({entries})=>{
+      entries.forEach(({course,a})=>{
+        if(!courseShiftMap[course])courseShiftMap[course]={};
+        a.forEach(({d,am,pm})=>{
+          const [yy,mmm]=d.split('-').map(Number);
+          if(yy!==my||mmm!==mm)return;
+          courseShiftMap[course][d]={am:am||'',pm:pm||''};
         });
       });
     });
-    const totalDays=Object.values(perStaff).reduce((a,b)=>a+b,0);
-    if(totalDays===0)return;
-    Object.entries(perStaff).forEach(([name,days])=>{
-      if(empData[name])empData[name].sales+=courseSocialSales*(days/totalDays);
+  });
+
+  // 各コースの perDay を巡回し、その日のシフト担当社員に sales を加算
+  Object.entries(courseSales).forEach(([course,cs])=>{
+    if(!cs.perDay||!cs.perDay.length)return;
+    const shiftDays=courseShiftMap[course]||{};
+    cs.perDay.forEach(({ymd,dayAm,dayPm})=>{
+      const sh=shiftDays[ymd];
+      if(!sh)return;
+      const amReal=findSocial(sh.am);
+      if(amReal&&empData[amReal]&&dayAm>0)empData[amReal].sales+=dayAm;
+      const pmReal=findSocial(sh.pm);
+      if(pmReal&&empData[pmReal]&&dayPm>0)empData[pmReal].sales+=dayPm;
     });
   });
 
@@ -5800,6 +5809,7 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   h+=`</tr></thead><tbody>`;
 
   let grandTotal=0,totalAmSum=0,totalPmSum=0;
+  const perDay=[];// {d, dow, dayAm, dayPm} 日次明細 (社員管理の正確な売上集計用)
   for(let d=1;d<=daysInMonth;d++){
     const dt=new Date(y,m-1,d);
     const dow=dt.getDay();
@@ -5809,6 +5819,8 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
     const cd=calcDay(dow,d);
     const dayTotal=cd.dayAm+cd.dayPm;
     grandTotal+=dayTotal;totalAmSum+=cd.dayAm;totalPmSum+=cd.dayPm;
+    const ymd=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    perDay.push({d,ymd,dow,dayAm:cd.dayAm,dayPm:cd.dayPm});
 
     const rowBg=cd.isHoliday?'background:#fef2f2;':cd.isNoAm?'background:#fefce8;':isSun?'background:#fff1f2;':isSat?'background:#f0f9ff;':'';
     const dowColor=isSun?'#dc2626':isSat?'#2563eb':'#333';
@@ -5863,7 +5875,7 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   h+=`</div>`;
   h+=`</div>`;
 
-  if(returnTotals)return {html:h,course,grandTotal,totalAmSum,totalPmSum,amCount,amDokkon,amTokushu,amZasshi,amKyori,pmCount,pmTokushu,keibaCount,keibaTokushu};
+  if(returnTotals)return {html:h,course,grandTotal,totalAmSum,totalPmSum,amCount,amDokkon,amTokushu,amZasshi,amKyori,pmCount,pmTokushu,keibaCount,keibaTokushu,perDay};
   return h;
 }
 
