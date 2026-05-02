@@ -6019,8 +6019,11 @@ function admPayCollectStaffShifts(monthLabel,staffName){
   const dayMap={};// d -> {dow, am_course, pm_course}
   const months=DB.shifts[monthLabel];
   if(!months)return dayMap;
+  // 上田 雪枝など、単価マスタとシフトでスペース数が違うケースに対応するため
+  // invNormName で正規化して比較
+  const target=invNormName(staffName);
   Object.values(months).forEach(({entries})=>{
-    const entry=entries.find(e=>e.course===staffName);
+    const entry=entries.find(e=>invNormName(e.course)===target);
     if(!entry)return;
     entry.a.forEach(({d,dow,am,pm})=>{
       if(!dayMap[d])dayMap[d]={dow,am_course:'',pm_course:''};
@@ -6282,9 +6285,11 @@ function admPayGetPrimaryArea(monthLabel,staffName){
   const months=DB.shifts[monthLabel];
   if(!months)return '';
   const counts={};
+  // 名前の正規化 (スペース数違い対応)
+  const target=invNormName(staffName);
   Object.entries(months).forEach(([area,obj])=>{
     if(!obj||!obj.entries)return;
-    const entry=obj.entries.find(e=>e.course===staffName);
+    const entry=obj.entries.find(e=>invNormName(e.course)===target);
     if(!entry)return;
     let days=0;
     entry.a.forEach(({am,pm})=>{
