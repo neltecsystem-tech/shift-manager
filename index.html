@@ -4630,7 +4630,14 @@ async function admEmpLoad(){
   Object.values(empData).forEach(e=>{e.sales=Math.round(e.sales);e.profit=e.sales-e.salary;});
 
   // テーブル描画
-  const arr=Object.values(empData).sort((a,b)=>b.sales-a.sales);
+  // 勤務日数のあるスタッフを上、無いスタッフ (吉田/小林等) を最下段に固定
+  // 同じグループ内では売上降順
+  const arr=Object.values(empData).sort((a,b)=>{
+    const aHas=(a.amDays+a.pmDays)>0?1:0;
+    const bHas=(b.amDays+b.pmDays)>0?1:0;
+    if(aHas!==bHas)return bHas-aHas;// 勤務ありを先
+    return b.sales-a.sales;
+  });
   const totalAm=arr.reduce((s,e)=>s+e.amDays,0);
   const totalPm=arr.reduce((s,e)=>s+e.pmDays,0);
   const totalSales=arr.reduce((s,e)=>s+e.sales,0);
