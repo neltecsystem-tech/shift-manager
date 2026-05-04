@@ -4479,7 +4479,38 @@ async function admRevLoad(){
     });
   });
 
-  admRevData={sales,expenses,monthWork,expByCourse,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras};
+  // 営業所別社員データ
+  // socialSalesByArea: 営業所 → 社員担当売上 (sales[i].socialSales を area で合計)
+  // empAreaDays: 社員 → {area: 日数}
+  // socialSalaryByArea: 営業所 → 社員給料 (各社員の月給を area ごとの日数比率で按分)
+  const socialSalesByArea={};
+  sales.forEach(s=>{socialSalesByArea[s.area]=(socialSalesByArea[s.area]||0)+(s.socialSales||0);});
+  const empAreaDays={};
+  Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
+    Object.entries(byArea).forEach(([area,{entries}])=>{
+      entries.forEach(({a})=>{
+        a.forEach(({d,am,pm})=>{
+          const [yy,mmm]=d.split('-').map(Number);
+          if(yy!==my||mmm!==mm)return;
+          const _am=findSocial(am);
+          if(_am){if(!empAreaDays[_am])empAreaDays[_am]={};empAreaDays[_am][area]=(empAreaDays[_am][area]||0)+1;}
+          const _pm=findSocial(pm);
+          if(_pm){if(!empAreaDays[_pm])empAreaDays[_pm]={};empAreaDays[_pm][area]=(empAreaDays[_pm][area]||0)+1;}
+        });
+      });
+    });
+  });
+  const socialSalaryByArea={};
+  Object.entries(empAreaDays).forEach(([name,areaDays])=>{
+    const salary=Number(socialSalaryByName[name])||0;
+    const total=Object.values(areaDays).reduce((a,b)=>a+b,0);
+    if(total===0)return;
+    Object.entries(areaDays).forEach(([area,days])=>{
+      socialSalaryByArea[area]=(socialSalaryByArea[area]||0)+salary*(days/total);
+    });
+  });
+
+  admRevData={sales,expenses,monthWork,expByCourse,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays};
   admRevRender();
 }
 
@@ -4807,22 +4838,40 @@ function admRevRender(){
       byArea[a].amount+=ex.total;
       byArea[a].extras=ex.total;
     });
-    dh+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:6px;">営業所</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">朝刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">夕刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">競馬店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">売上(税抜)</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">支払い</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">粗利</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">粗利率</th></tr></thead><tbody>`;
+    const socialSalesByAreaMap=admRevData.socialSalesByArea||{};
+    const socialSalaryByAreaMap=admRevData.socialSalaryByArea||{};
+    const hasSocial=socialStaffCount>0;
+    let thead=`<tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:6px;">営業所</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">朝刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">夕刊店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">競馬店舗</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">売上(税抜)</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">支払い</th>`;
+    if(hasSocial)thead+=`<th style="border:1px solid #ccc;padding:6px;text-align:right;background:#fdf4ff;">社員担当売上</th><th style="border:1px solid #ccc;padding:6px;text-align:right;background:#fef3c7;">社員給料</th>`;
+    thead+=`<th style="border:1px solid #ccc;padding:6px;text-align:right;">粗利${hasSocial?' (給料控除後)':''}</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">粗利率</th></tr>`;
+    dh+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead>${thead}</thead><tbody>`;
     Object.entries(byArea).sort((a,b)=>b[1].amount-a[1].amount).forEach(([area,d])=>{
-      const aProfit=d.amount-d.exp;
+      const aSocialSales=Math.round(socialSalesByAreaMap[area]||0);
+      const aSocialSalary=Math.round(socialSalaryByAreaMap[area]||0);
+      const aProfit=d.amount-d.exp-aSocialSalary;
       const aMargin=d.amount>0?(aProfit/d.amount*100):0;
       const aColor=aProfit>=0?'#1d4ed8':'#dc2626';
       const extraTip=d.extras>0?`<div style="font-size:10px;color:#92400e;font-weight:normal;">うち作業料等 ¥${d.extras.toLocaleString()}</div>`:'';
-      dh+=`<tr><td style="border:1px solid #ccc;padding:4px;font-weight:bold;">${area}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.am}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.pm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.keiba}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;">¥${d.amount.toLocaleString()}${extraTip}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">¥${d.exp.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;color:${aColor};">¥${aProfit.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${aColor};">${aMargin.toFixed(1)}%</td></tr>`;
+      dh+=`<tr><td style="border:1px solid #ccc;padding:4px;font-weight:bold;">${area}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.am}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.pm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${d.keiba}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;">¥${d.amount.toLocaleString()}${extraTip}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">¥${d.exp.toLocaleString()}</td>`;
+      if(hasSocial)dh+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;background:#fdf4ff;color:#7c3aed;">¥${aSocialSales.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;background:#fef3c7;color:#92400e;">¥${aSocialSalary.toLocaleString()}</td>`;
+      dh+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;color:${aColor};">¥${aProfit.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${aColor};">${aMargin.toFixed(1)}%</td></tr>`;
     });
     // 小計/消費税/税込合計
     const allAreasSubtotal=Object.values(byArea).reduce((s,d)=>s+d.amount,0);
     const allAreasExp=Object.values(byArea).reduce((s,d)=>s+d.exp,0);
     const allAreasTax=Math.round(allAreasSubtotal*0.10);
     const allAreasGrand=allAreasSubtotal+allAreasTax;
-    dh+=`<tr style="background:#f8fafc;font-weight:600;"><td colspan="4" style="border:1px solid #ccc;padding:4px;text-align:right;">小計 (税抜)</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${allAreasSubtotal.toLocaleString()}</td><td colspan="3" style="border:1px solid #ccc;padding:4px;"></td></tr>`;
-    dh+=`<tr style="background:#f8fafc;"><td colspan="4" style="border:1px solid #ccc;padding:4px;text-align:right;">消費税 (10%)</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${allAreasTax.toLocaleString()}</td><td colspan="3" style="border:1px solid #ccc;padding:4px;"></td></tr>`;
-    dh+=`<tr style="background:#fef3c7;font-weight:bold;"><td colspan="4" style="border:1px solid #ccc;padding:6px;text-align:right;">合計 (税込)</td><td style="border:1px solid #ccc;padding:6px;text-align:right;color:#92400e;">¥${allAreasGrand.toLocaleString()}</td><td style="border:1px solid #ccc;padding:6px;text-align:right;color:#dc2626;">¥${allAreasExp.toLocaleString()}</td><td colspan="2" style="border:1px solid #ccc;padding:6px;"></td></tr>`;
+    const summaryColspan=hasSocial?6:4;// 「合計」列までの幅
+    dh+=`<tr style="background:#f8fafc;font-weight:600;"><td colspan="4" style="border:1px solid #ccc;padding:4px;text-align:right;">小計 (税抜)</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${allAreasSubtotal.toLocaleString()}</td><td colspan="${hasSocial?5:3}" style="border:1px solid #ccc;padding:4px;"></td></tr>`;
+    dh+=`<tr style="background:#f8fafc;"><td colspan="4" style="border:1px solid #ccc;padding:4px;text-align:right;">消費税 (10%)</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${allAreasTax.toLocaleString()}</td><td colspan="${hasSocial?5:3}" style="border:1px solid #ccc;padding:4px;"></td></tr>`;
+    let totalRow=`<tr style="background:#fef3c7;font-weight:bold;"><td colspan="4" style="border:1px solid #ccc;padding:6px;text-align:right;">合計 (税込)</td><td style="border:1px solid #ccc;padding:6px;text-align:right;color:#92400e;">¥${allAreasGrand.toLocaleString()}</td><td style="border:1px solid #ccc;padding:6px;text-align:right;color:#dc2626;">¥${allAreasExp.toLocaleString()}</td>`;
+    if(hasSocial){
+      const totalSocialSales=Math.round(Object.values(socialSalesByAreaMap).reduce((a,b)=>a+b,0));
+      const totalSocialSalary=Math.round(Object.values(socialSalaryByAreaMap).reduce((a,b)=>a+b,0));
+      totalRow+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;background:#fdf4ff;color:#7c3aed;">¥${totalSocialSales.toLocaleString()}</td><td style="border:1px solid #ccc;padding:6px;text-align:right;background:#fef3c7;color:#92400e;">¥${totalSocialSalary.toLocaleString()}</td>`;
+    }
+    totalRow+=`<td colspan="2" style="border:1px solid #ccc;padding:6px;"></td></tr>`;
+    dh+=totalRow;
     dh+=`</tbody></table>`;
     // 作業料/庫内/優馬の内訳
     if(extraFeeRows.length>0){
