@@ -4343,7 +4343,7 @@ async function admRevLoad(){
   //                    'work'  = 稼働記録 (手入力)
   const expSrc=(document.getElementById('adm-rev-expsrc')||{}).value||'shift';
   const [y,m]=monthVal.split('-').map(Number);
-  let expByStaff={},expByCourse={},expByArea={},monthWork=[];
+  let expByStaff={},expByCourse={},expByArea={},expByCourseDate={},monthWork=[];
   if(expSrc==='shift'){
     // シフト自動計算: invRates の各非社員ドライバーに admPayBuildStatement を実行し、
     // grandTotal を expByStaff に、rows の per-day amount をコース別/エリア別に集計
@@ -4368,12 +4368,22 @@ async function admRevLoad(){
             expByCourse[cKey]=(expByCourse[cKey]||0)+r.am;
             const a=areaOfCourse(cKey);
             if(a)expByArea[a]=(expByArea[a]||0)+r.am;
+            if(r.ymd){
+              if(!expByCourseDate[cKey])expByCourseDate[cKey]={};
+              if(!expByCourseDate[cKey][r.ymd])expByCourseDate[cKey][r.ymd]={am:0,pm:0};
+              expByCourseDate[cKey][r.ymd].am+=r.am;
+            }
           }
           if(r.pm&&r.pm_course){
             const cKey=admPayStripHikitsugi(r.pm_course)||r.pm_course;
             expByCourse[cKey]=(expByCourse[cKey]||0)+r.pm;
             const a=areaOfCourse(cKey);
             if(a)expByArea[a]=(expByArea[a]||0)+r.pm;
+            if(r.ymd){
+              if(!expByCourseDate[cKey])expByCourseDate[cKey]={};
+              if(!expByCourseDate[cKey][r.ymd])expByCourseDate[cKey][r.ymd]={am:0,pm:0};
+              expByCourseDate[cKey][r.ymd].pm+=r.pm;
+            }
           }
         });
       });
@@ -4398,6 +4408,18 @@ async function admRevLoad(){
       expByCourse[c]=(expByCourse[c]||0)+Number(w.amount||0);
       const a=areaOfCourse(c);
       if(a)expByArea[a]=(expByArea[a]||0)+Number(w.amount||0);
+      // 日次マップ (コース別日次 view 用)
+      const dRaw=(w.date||'').replace(/\//g,'-');
+      const md=dRaw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+      if(md){
+        const ymd=`${md[1]}-${String(+md[2]).padStart(2,'0')}-${String(+md[3]).padStart(2,'0')}`;
+        const cat=(w.category||'');
+        const isAm=cat.includes('朝');
+        if(!expByCourseDate[c])expByCourseDate[c]={};
+        if(!expByCourseDate[c][ymd])expByCourseDate[c][ymd]={am:0,pm:0};
+        if(isAm)expByCourseDate[c][ymd].am+=Number(w.amount||0);
+        else expByCourseDate[c][ymd].pm+=Number(w.amount||0);
+      }
     });
   }
   const expenses=Object.entries(expByStaff).map(([staff,amount])=>({staff,amount})).sort((a,b)=>b.amount-a.amount);
@@ -4519,7 +4541,7 @@ async function admRevLoad(){
     });
   });
 
-  admRevData={sales,expenses,monthWork,expByCourse,expByArea,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays};
+  admRevData={sales,expenses,monthWork,expByCourse,expByArea,expByCourseDate,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays};
   admRevRender();
 }
 
@@ -5038,13 +5060,8 @@ function admRevRender(){
       const allPmCodes=new Set(records.filter(r=>notCancelled(r)&&r[`col_${colsB.pmCourse}`]).map(s=>s[`col_${colsB.code}`]));
       const cond=getBillConditions(monthVal);
 
-      // 支払い: 日ごと・コースごと
-      const {monthWork}=admRevData;
-      const workByDate={};
-      monthWork.filter(w=>w.course===courseVal).forEach(w=>{
-        const d=(w.date||'').replace(/-/g,'/');
-        workByDate[d]=(workByDate[d]||0)+Number(w.amount||0);
-      });
+      // 支払い: 日ごと・コースごと (expByCourseDate を優先 = シフト/稼働記録 共通)
+      const courseDateMap=(admRevData.expByCourseDate||{})[courseVal]||{};
 
       dh+=`<h4>${saleArea}営業所 ${courseVal} コース 日次収支</h4>`;
       dh+=`<table style="width:100%;border-collapse:collapse;font-size:11px;"><thead>`;
@@ -5057,14 +5074,9 @@ function admRevRender(){
       dh+=`<th style="border:1px solid #ccc;padding:3px;text-align:right;">粗利率</th>`;
       dh+=`</tr></thead><tbody>`;
 
-      // 支払いを朝刊/夕刊に分けて日別集計
-      const workAmByDate={},workPmByDate={};
-      monthWork.filter(w=>w.course===courseVal).forEach(w=>{
-        const d=(w.date||'').replace(/-/g,'/');
-        const cat=(w.category||'');
-        if(cat.includes('朝'))workAmByDate[d]=(workAmByDate[d]||0)+Number(w.amount||0);
-        else workPmByDate[d]=(workPmByDate[d]||0)+Number(w.amount||0);
-      });
+      // 支払い: ymd 形式キーで AM/PM を取得するヘルパー
+      const expAmAt=(d)=>{const ymd=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;return (courseDateMap[ymd]||{}).am||0;};
+      const expPmAt=(d)=>{const ymd=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;return (courseDateMap[ymd]||{}).pm||0;};
 
       let tSalesAm=0,tSalesPm=0,tExpAm=0,tExpPm=0;
       for(let d=1;d<=daysInMonth;d++){
@@ -5107,11 +5119,9 @@ function admRevRender(){
         }
         const sTotal=sAm+sPm;
 
-        // 支払い 朝刊/夕刊
-        const dateKey=`${y}/${m}/${d}`;
-        const dateKey2=`${y}/${String(m).padStart(2,'0')}/${String(d).padStart(2,'0')}`;
-        const eAm=(workAmByDate[dateKey]||0)+(workAmByDate[dateKey2]||0);
-        const ePm=(workPmByDate[dateKey]||0)+(workPmByDate[dateKey2]||0);
+        // 支払い 朝刊/夕刊 (シフト/稼働記録 共通の expByCourseDate を参照)
+        const eAm=expAmAt(d);
+        const ePm=expPmAt(d);
         const eTotal=eAm+ePm;
 
         // 収支
@@ -6565,7 +6575,7 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
     }
     {const r=admPayApplySpecial(pmAmount,pmDetail,ymd,staffName,false);pmAmount=r.amount;pmDetail=r.detail;}
     amSum+=amAmount;pmSum+=pmAmount;
-    rows.push({d:`${String(m).padStart(2,'0')}月${String(d).padStart(2,'0')}日`,dow:dowJp,am_course:sh.am_course,am:amAmount,am_detail:amDetail,pm_course:sh.pm_course,pm:pmAmount,pm_detail:pmDetail,total:amAmount+pmAmount});
+    rows.push({d:`${String(m).padStart(2,'0')}月${String(d).padStart(2,'0')}日`,ymd,dow:dowJp,am_course:sh.am_course,am:amAmount,am_detail:amDetail,pm_course:sh.pm_course,pm:pmAmount,pm_detail:pmDetail,total:amAmount+pmAmount});
   }
   const grandTotal=amSum+pmSum;
   const reiwa=y-2018;
