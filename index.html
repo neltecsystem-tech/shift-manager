@@ -4343,10 +4343,10 @@ async function admRevLoad(){
   //                    'work'  = 稼働記録 (手入力)
   const expSrc=(document.getElementById('adm-rev-expsrc')||{}).value||'shift';
   const [y,m]=monthVal.split('-').map(Number);
-  let expByStaff={},expByCourse={},monthWork=[];
+  let expByStaff={},expByCourse={},expByArea={},monthWork=[];
   if(expSrc==='shift'){
     // シフト自動計算: invRates の各非社員ドライバーに admPayBuildStatement を実行し、
-    // grandTotal を expByStaff に、rows の per-day amount をコース別に集計
+    // grandTotal を expByStaff に、rows の per-day amount をコース別/エリア別に集計
     if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
     if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}}
     if(!invSpecial.length){try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}}
@@ -4358,15 +4358,22 @@ async function admRevLoad(){
         const stmt=admPayBuildStatement(rate,y,m,monthLabelExp,monthVal);
         if(!stmt)return;
         if(stmt.grandTotal>0)expByStaff[rate.name]=stmt.grandTotal;
-        // コース別集計 (引継は bare コース名で集計)
+        // コース別 + エリア別集計 (引継は bare コース名で集計)
+        // ※ コース別は店舗マスタとシフトでコース名が一致しないと per-course でロスする
+        //   (例: 川崎は店舗マスタ PM=川崎高津X、シフト PM=川崎夕刊X で不一致)
+        //   per-area 表示には expByArea を使うことで取りこぼしを防ぐ
         (stmt.rows||[]).forEach(r=>{
           if(r.am&&r.am_course){
             const cKey=admPayStripHikitsugi(r.am_course)||r.am_course;
             expByCourse[cKey]=(expByCourse[cKey]||0)+r.am;
+            const a=areaOfCourse(cKey);
+            if(a)expByArea[a]=(expByArea[a]||0)+r.am;
           }
           if(r.pm&&r.pm_course){
             const cKey=admPayStripHikitsugi(r.pm_course)||r.pm_course;
             expByCourse[cKey]=(expByCourse[cKey]||0)+r.pm;
+            const a=areaOfCourse(cKey);
+            if(a)expByArea[a]=(expByArea[a]||0)+r.pm;
           }
         });
       });
@@ -4389,6 +4396,8 @@ async function admRevLoad(){
       const c=(w.course||'').trim();
       if(!c)return;
       expByCourse[c]=(expByCourse[c]||0)+Number(w.amount||0);
+      const a=areaOfCourse(c);
+      if(a)expByArea[a]=(expByArea[a]||0)+Number(w.amount||0);
     });
   }
   const expenses=Object.entries(expByStaff).map(([staff,amount])=>({staff,amount})).sort((a,b)=>b.amount-a.amount);
@@ -4510,7 +4519,7 @@ async function admRevLoad(){
     });
   });
 
-  admRevData={sales,expenses,monthWork,expByCourse,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays};
+  admRevData={sales,expenses,monthWork,expByCourse,expByArea,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays};
   admRevRender();
 }
 
@@ -4823,6 +4832,9 @@ function admRevRender(){
   let dh='';
   if(view==='all'){
     // 営業所別サマリー（店舗数 + 粗利含む）
+    // 支払いはコース名のミスマッチ (川崎夕刊X vs 店舗マスタ川崎高津X 等) で per-course
+    // attribution が取りこぼすことがあるため、エリア単位で直接集計した expByArea を優先利用
+    const expByAreaMap=admRevData.expByArea||{};
     const byArea={};
     sales.forEach(s=>{
       if(!byArea[s.area])byArea[s.area]={amount:0,am:0,pm:0,keiba:0,exp:0,extras:0};
@@ -4830,8 +4842,9 @@ function admRevRender(){
       byArea[s.area].am+=(s.amCount||0);
       byArea[s.area].pm+=(s.pmCount||0);
       byArea[s.area].keiba+=(s.keibaCount||0);
-      byArea[s.area].exp+=(s.expense||0);
     });
+    // exp はエリア集計値で上書き (per-area 表示用)
+    Object.keys(byArea).forEach(a=>{byArea[a].exp=expByAreaMap[a]||0;});
     // 営業所別追加料金 (作業料/庫内/優馬) を売上に加算
     Object.entries(areaExtrasMap).forEach(([a,ex])=>{
       if(!byArea[a])byArea[a]={amount:0,am:0,pm:0,keiba:0,exp:0,extras:0};
