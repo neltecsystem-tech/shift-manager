@@ -4293,9 +4293,9 @@ async function admRevLoad(){
       // 店舗数は常に計算結果から取得（確定時も表示する）
       const result=admBillRenderWithTotals(area,course,monthVal);
       if(confirmed){
-        sales.push({area,course,amount:confirmed.grand_total,amTotal:confirmed.am_total,pmTotal:confirmed.pm_total,confirmed:true,confirmed_at:confirmed.confirmed_at,amCount:result.amCount,pmCount:result.pmCount,keibaCount:result.keibaCount});
+        sales.push({area,course,amount:confirmed.grand_total,amTotal:confirmed.am_total,pmTotal:confirmed.pm_total,confirmed:true,confirmed_at:confirmed.confirmed_at,amCount:result.amCount,pmCount:result.pmCount,keibaCount:result.keibaCount,kanriTotal:result.kanriTotal||0});
       }else{
-        sales.push({area,course,amount:result.grandTotal,amTotal:result.totalAmSum,pmTotal:result.totalPmSum,confirmed:false,amCount:result.amCount,pmCount:result.pmCount,keibaCount:result.keibaCount});
+        sales.push({area,course,amount:result.grandTotal,amTotal:result.totalAmSum,pmTotal:result.totalPmSum,confirmed:false,amCount:result.amCount,pmCount:result.pmCount,keibaCount:result.keibaCount,kanriTotal:result.kanriTotal||0});
       }
     });
   });
@@ -5007,19 +5007,27 @@ function admRevRender(){
     });
 
   }else if(view==='course'){
-    dh+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:4px;">営業所</th><th style="border:1px solid #ccc;padding:4px;">コース</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">競馬店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">売上</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">支払い</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">粗利</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">粗利率</th></tr></thead><tbody>`;
+    // 粗利は「売上 − 管理費 − 支払い」(管理費は売上に含めない)
+    dh+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:4px;">営業所</th><th style="border:1px solid #ccc;padding:4px;">コース</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">朝刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">夕刊店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">競馬店</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">売上</th><th style="border:1px solid #ccc;padding:4px;text-align:right;background:#fef9c3;">管理費</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">売上(管理費除く)</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">支払い</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">粗利</th><th style="border:1px solid #ccc;padding:4px;text-align:right;">粗利率</th></tr></thead><tbody>`;
     filteredSales.sort((a,b)=>a.course.localeCompare(b.course,undefined,{numeric:true})).forEach(s=>{
-      const profitColor=s.profit>=0?'#1d4ed8':'#dc2626';
-      dh+=`<tr><td style="border:1px solid #ccc;padding:3px;">${s.area}</td><td style="border:1px solid #ccc;padding:3px;">${s.course}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.amCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.pmCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.keibaCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${s.amount.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:#dc2626;">¥${(s.expense||0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;color:${profitColor};">¥${(s.profit||0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:${profitColor};">${(s.marginRate||0).toFixed(1)}%</td></tr>`;
+      const kanri=s.kanriTotal||0;
+      const salesNoKanri=s.amount-kanri;
+      const profit=salesNoKanri-(s.expense||0);
+      const marginRate=salesNoKanri>0?(profit/salesNoKanri*100):0;
+      const profitColor=profit>=0?'#1d4ed8':'#dc2626';
+      dh+=`<tr><td style="border:1px solid #ccc;padding:3px;">${s.area}</td><td style="border:1px solid #ccc;padding:3px;">${s.course}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.amCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.pmCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:var(--text-sub);">${s.keibaCount||''}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;">¥${s.amount.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:#92400e;background:#fef9c3;">¥${kanri.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:600;">¥${salesNoKanri.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:#dc2626;">¥${(s.expense||0).toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;font-weight:bold;color:${profitColor};">¥${profit.toLocaleString()}</td><td style="border:1px solid #ccc;padding:3px;text-align:right;color:${profitColor};">${marginRate.toFixed(1)}%</td></tr>`;
     });
     const sumAm=filteredSales.reduce((s,r)=>s+(r.amCount||0),0);
     const sumPm=filteredSales.reduce((s,r)=>s+(r.pmCount||0),0);
     const sumKb=filteredSales.reduce((s,r)=>s+(r.keibaCount||0),0);
     const sumExp=filteredSales.reduce((s,r)=>s+(r.expense||0),0);
-    const sumProfit=totalSales-sumExp;
-    const sumMargin=totalSales>0?(sumProfit/totalSales*100):0;
-    dh+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="2" style="border:1px solid #ccc;padding:4px;">合計</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumAm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumPm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumKb}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${totalSales.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">¥${sumExp.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${sumProfit>=0?'#1d4ed8':'#dc2626'};">¥${sumProfit.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${sumProfit>=0?'#1d4ed8':'#dc2626'};">${sumMargin.toFixed(1)}%</td></tr>`;
+    const sumKanri=filteredSales.reduce((s,r)=>s+(r.kanriTotal||0),0);
+    const sumNoKanri=totalSales-sumKanri;
+    const sumProfit=sumNoKanri-sumExp;
+    const sumMargin=sumNoKanri>0?(sumProfit/sumNoKanri*100):0;
+    dh+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="2" style="border:1px solid #ccc;padding:4px;">合計</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumAm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumPm}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">${sumKb}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${totalSales.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:#92400e;background:#fef9c3;">¥${sumKanri.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${sumNoKanri.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">¥${sumExp.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${sumProfit>=0?'#1d4ed8':'#dc2626'};">¥${sumProfit.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${sumProfit>=0?'#1d4ed8':'#dc2626'};">${sumMargin.toFixed(1)}%</td></tr>`;
     dh+=`</tbody></table>`;
+    dh+=`<div style="font-size:11px;color:var(--text-sub);margin-top:4px;">※ 粗利 = 売上 − 管理費 − 支払い (管理費は売上に含めず別計上)</div>`;
 
   }else if(view==='daily'){
     const courseVal=document.getElementById('adm-rev-course').value;
@@ -5922,8 +5930,8 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   h+=`<th style="border:1px solid #999;padding:1px 2px;text-align:right;">管理費</th>`;
   h+=`</tr></thead><tbody>`;
 
-  let grandTotal=0,totalAmSum=0,totalPmSum=0;
-  const perDay=[];// {d, dow, dayAm, dayPm} 日次明細 (社員管理の正確な売上集計用)
+  let grandTotal=0,totalAmSum=0,totalPmSum=0,totalKanriAm=0,totalKanriPm=0;
+  const perDay=[];// {d, dow, dayAm, dayPm, kanriAm, kanriPm} 日次明細
   for(let d=1;d<=daysInMonth;d++){
     const dt=new Date(y,m-1,d);
     const dow=dt.getDay();
@@ -5933,8 +5941,10 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
     const cd=calcDay(dow,d);
     const dayTotal=cd.dayAm+cd.dayPm;
     grandTotal+=dayTotal;totalAmSum+=cd.dayAm;totalPmSum+=cd.dayPm;
+    totalKanriAm+=cd.amKF||0;
+    totalKanriPm+=cd.dKanFee||0;
     const ymd=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    perDay.push({d,ymd,dow,dayAm:cd.dayAm,dayPm:cd.dayPm});
+    perDay.push({d,ymd,dow,dayAm:cd.dayAm,dayPm:cd.dayPm,kanriAm:cd.amKF||0,kanriPm:cd.dKanFee||0});
 
     const rowBg=cd.isHoliday?'background:#fef2f2;':cd.isNoAm?'background:#fefce8;':isSun?'background:#fff1f2;':isSat?'background:#f0f9ff;':'';
     const dowColor=isSun?'#dc2626':isSat?'#2563eb':'#333';
@@ -5989,7 +5999,7 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   h+=`</div>`;
   h+=`</div>`;
 
-  if(returnTotals)return {html:h,course,grandTotal,totalAmSum,totalPmSum,amCount,amDokkon,amTokushu,amZasshi,amKyori,pmCount,pmTokushu,keibaCount,keibaTokushu,perDay};
+  if(returnTotals)return {html:h,course,grandTotal,totalAmSum,totalPmSum,totalKanriAm,totalKanriPm,kanriTotal:totalKanriAm+totalKanriPm,amCount,amDokkon,amTokushu,amZasshi,amKyori,pmCount,pmTokushu,keibaCount,keibaTokushu,perDay};
   return h;
 }
 
