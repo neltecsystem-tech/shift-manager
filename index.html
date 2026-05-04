@@ -4812,8 +4812,7 @@ function admRevRender(){
   const totalPmShops=filteredSales.reduce((s,r)=>s+(r.pmCount||0),0);
   const totalKeibaShops=filteredSales.reduce((s,r)=>s+(r.keibaCount||0),0);
 
-  // 粗利率
-  const grossMarginRate=totalSales>0?(profit/totalSales*100):0;
+  // 原価率 (粗利率は管理費控除後で別途計算)
   const expenseRate=totalSales>0?(totalExpenses/totalSales*100):0;
 
   // 管理費合計 (sales[i].kanriTotal を集計)
