@@ -4816,6 +4816,9 @@ function admRevRender(){
   const grossMarginRate=totalSales>0?(profit/totalSales*100):0;
   const expenseRate=totalSales>0?(totalExpenses/totalSales*100):0;
 
+  // 管理費合計 (sales[i].kanriTotal を集計)
+  const totalKanri=filteredSales.reduce((s,r)=>s+(r.kanriTotal||0),0);
+
   // 社員集計
   const socialSalesTotal=admRevData.socialSalesTotal||0;
   const socialSalaryTotal=admRevData.socialSalaryTotal||0;
@@ -4824,11 +4827,14 @@ function admRevRender(){
     ? filteredSales.reduce((a,s)=>a+(s.socialSales||0),0)
     : socialSalesTotal;
   const socialRatio=totalSales>0?(filteredSocialSales/totalSales*100):0;
-  // 社員給料を含めた粗利
-  const profitWithSalary=profit-socialSalaryTotal;
+  // 粗利 = 売上(税込) - 管理費 - 支払い - 社員給料
+  // ※ 旧 profit (粗利前) = 売上 - 支払い だったが、今回管理費も控除する
+  const profitNoKanri=totalSales-totalKanri-totalExpenses;
+  const profitWithSalary=profitNoKanri-socialSalaryTotal;
+  const grossMarginRate=totalSales>0?(profitNoKanri/totalSales*100):0;
   const grossMarginRateWithSalary=totalSales>0?(profitWithSalary/totalSales*100):0;
 
-  // 粗利は 売上(税込) - 支払い - 社員給料 を主表示にする (社員いない時は給料0)
+  // 粗利は 売上 - 管理費 - 支払い - 社員給料 を主表示
   const finalProfit=profitWithSalary;
   const finalMargin=grossMarginRateWithSalary;
   const profitColor=finalProfit>=0?'#1d4ed8':'#dc2626';
@@ -4837,12 +4843,15 @@ function admRevRender(){
 
   // サマリーカード
   let sh=`<div style="display:flex;gap:12px;flex-wrap:wrap;">`;
-  sh+=`<div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:16px 24px;flex:1;min-width:160px;text-align:center;"><div style="font-size:12px;color:#166534;">売上 (税込)</div><div style="font-size:24px;font-weight:bold;color:#166534;">¥${totalSales.toLocaleString()}</div><div style="font-size:10px;color:#166534;margin-top:2px;">確定 ${confirmedCnt}/${totalCnt}コース</div><div style="font-size:10px;color:#166534;margin-top:2px;">税抜 ¥${totalSalesNet.toLocaleString()} + 消費税 ¥${tax.toLocaleString()}${extraFeeTotal>0?`<br>（うち作業料等 ¥${extraFeeTotal.toLocaleString()}）`:''}</div>${socialStaffCount>0?`<div style="font-size:11px;color:#7c3aed;margin-top:4px;border-top:1px dashed #c4b5fd;padding-top:4px;">うち社員担当 ¥${Math.round(filteredSocialSales).toLocaleString()} (${socialRatio.toFixed(1)}%)</div>`:''}</div>`;
+  sh+=`<div style="background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:16px 24px;flex:1;min-width:160px;text-align:center;"><div style="font-size:12px;color:#166534;">売上 (税込)</div><div style="font-size:24px;font-weight:bold;color:#166534;">¥${totalSales.toLocaleString()}</div><div style="font-size:10px;color:#166534;margin-top:2px;">確定 ${confirmedCnt}/${totalCnt}コース</div><div style="font-size:10px;color:#166534;margin-top:2px;">税抜 ¥${totalSalesNet.toLocaleString()} + 消費税 ¥${tax.toLocaleString()}${extraFeeTotal>0?`<br>（うち作業料等 ¥${extraFeeTotal.toLocaleString()}）`:''}</div>${totalKanri>0?`<div style="font-size:10px;color:#92400e;margin-top:4px;border-top:1px dashed #fbbf24;padding-top:4px;">うち管理費 ¥${totalKanri.toLocaleString()}</div>`:''}${socialStaffCount>0?`<div style="font-size:11px;color:#7c3aed;margin-top:4px;border-top:1px dashed #c4b5fd;padding-top:4px;">うち社員担当 ¥${Math.round(filteredSocialSales).toLocaleString()} (${socialRatio.toFixed(1)}%)</div>`:''}</div>`;
+  if(totalKanri>0){
+    sh+=`<div style="background:#fef9c3;border:1px solid #fbbf24;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#92400e;">管理費</div><div style="font-size:24px;font-weight:bold;color:#92400e;">¥${totalKanri.toLocaleString()}</div><div style="font-size:10px;color:#92400e;margin-top:2px;">売上から控除</div></div>`;
+  }
   sh+=`<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#dc2626;">支払い (外注)</div><div style="font-size:24px;font-weight:bold;color:#dc2626;">¥${totalExpenses.toLocaleString()}</div><div style="font-size:10px;color:#dc2626;margin-top:2px;">原価率 ${expenseRate.toFixed(1)}%</div></div>`;
   if(socialStaffCount>0){
     sh+=`<div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:#92400e;">社員給料</div><div style="font-size:24px;font-weight:bold;color:#92400e;">¥${socialSalaryTotal.toLocaleString()}</div><div style="font-size:10px;color:#92400e;margin-top:2px;">${socialStaffCount}名</div></div>`;
   }
-  sh+=`<div style="background:${profitBg};border:1px solid ${profitBorder};border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:${profitColor};">粗利 ${socialStaffCount>0?'(給料控除後)':''}</div><div style="font-size:24px;font-weight:bold;color:${profitColor};">¥${finalProfit.toLocaleString()}</div><div style="font-size:10px;color:${profitColor};margin-top:2px;">粗利率 ${finalMargin.toFixed(1)}%</div>${socialStaffCount>0?`<div style="font-size:10px;color:var(--text-sub);margin-top:4px;border-top:1px dashed #cbd5e1;padding-top:4px;">給料前 ¥${profit.toLocaleString()} (${grossMarginRate.toFixed(1)}%)</div>`:''}</div>`;
+  sh+=`<div style="background:${profitBg};border:1px solid ${profitBorder};border-radius:10px;padding:16px 24px;flex:1;min-width:140px;text-align:center;"><div style="font-size:12px;color:${profitColor};">粗利 ${socialStaffCount>0?'(管理費・給料控除後)':'(管理費控除後)'}</div><div style="font-size:24px;font-weight:bold;color:${profitColor};">¥${finalProfit.toLocaleString()}</div><div style="font-size:10px;color:${profitColor};margin-top:2px;">粗利率 ${finalMargin.toFixed(1)}%</div>${socialStaffCount>0?`<div style="font-size:10px;color:var(--text-sub);margin-top:4px;border-top:1px dashed #cbd5e1;padding-top:4px;">給料前 ¥${profitNoKanri.toLocaleString()} (${grossMarginRate.toFixed(1)}%)</div>`:''}</div>`;
   sh+=`<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:10px 18px;flex:1;min-width:180px;"><div style="font-size:11px;color:var(--text-sub);margin-bottom:4px;">店舗数（延べ）</div><div style="display:flex;gap:10px;font-size:13px;"><span>📰朝刊 <b>${totalAmShops}</b></span><span>🌙夕刊 <b>${totalPmShops}</b></span><span>🏇競馬 <b>${totalKeibaShops}</b></span></div></div>`;
   sh+=`</div>`;
   if(totalCnt>confirmedCnt){
