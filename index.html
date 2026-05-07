@@ -759,9 +759,15 @@ tbody tr:hover { background:var(--primary-light); }
             </div>
             <!-- Tab A: 希望者から -->
             <div id="adm-se-vac-form-driver" style="display:flex;flex-direction:column;gap:12px;">
-              <div>
-                <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">日付</label>
-                <select id="adm-se-vac-date" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="">選択してください</option></select>
+              <div style="display:flex;gap:8px;">
+                <div style="flex:1;">
+                  <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">開始日</label>
+                  <select id="adm-se-vac-date" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="">選択してください</option></select>
+                </div>
+                <div style="flex:1;">
+                  <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">終了日 (空欄=単日)</label>
+                  <select id="adm-se-vac-date-end" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="">単日</option></select>
+                </div>
               </div>
               <div>
                 <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">時間帯</label>
@@ -787,9 +793,15 @@ tbody tr:hover { background:var(--primary-light); }
                 <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">コース</label>
                 <select id="adm-se-vac-course" onchange="admSeVacUpdateCurrentDriver()" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="">選択してください</option></select>
               </div>
-              <div>
-                <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">日付</label>
-                <select id="adm-se-vac-date2" onchange="admSeVacUpdateCurrentDriver()" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="">選択してください</option></select>
+              <div style="display:flex;gap:8px;">
+                <div style="flex:1;">
+                  <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">開始日</label>
+                  <select id="adm-se-vac-date2" onchange="admSeVacUpdateCurrentDriver()" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="">選択してください</option></select>
+                </div>
+                <div style="flex:1;">
+                  <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">終了日 (空欄=単日)</label>
+                  <select id="adm-se-vac-date2-end" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="">単日</option></select>
+                </div>
               </div>
               <div>
                 <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">時間帯</label>
@@ -5274,16 +5286,21 @@ function admSeOpenVacation(){
   const dateRow=admSeState.rows[0]||[];
   const dowRow=admSeState.rows[3]||[];
   const opts=['<option value="">選択してください</option>'];
+  const optsEnd=['<option value="">単日</option>'];
   for(let c=1;c<dateRow.length;c++){
     const v=String(dateRow[c]||'').trim();
     if(/^\d{1,2}\/\d{1,2}$/.test(v)){
       const dow=String(dowRow[c]||'').trim();
-      opts.push(`<option value="${c}">${v}${dow?' ('+dow+')':''}</option>`);
+      const label=`${v}${dow?' ('+dow+')':''}`;
+      opts.push(`<option value="${c}">${label}</option>`);
+      optsEnd.push(`<option value="${c}">${label}</option>`);
     }
   }
   // 両タブの日付ドロップダウンに反映
   document.getElementById('adm-se-vac-date').innerHTML=opts.join('');
+  document.getElementById('adm-se-vac-date-end').innerHTML=optsEnd.join('');
   document.getElementById('adm-se-vac-date2').innerHTML=opts.join('');
+  document.getElementById('adm-se-vac-date2-end').innerHTML=optsEnd.join('');
   // コース ドロップダウン (コースから タブ用)
   const rows=admSeState.rows;
   const courses=[];const seen=new Set();
@@ -5349,36 +5366,43 @@ function admSeVacUpdateCurrentDriver(){
   cur.textContent=`現在の担当: ${course} ${parts.join(' / ')}`;
 }
 
-// コース×日付×時間帯 で対象セルを返す
-function admSeVacationFindCellsByCourseDate(course,dateCol,edition){
+// コース×日付範囲×時間帯 で対象セルを返す
+function admSeVacationFindCellsByCourseDate(course,startCol,endCol,edition){
   const matches=[];
-  if(!course||!dateCol)return matches;
+  if(!course||!startCol)return matches;
+  const dateCols=admSeVacationDateColRange(startCol,endCol);
+  if(!dateCols.length)return matches;
   const rows=admSeState.rows;
+  const dateRow=rows[0]||[];
   let rowIdx=-1;
   for(let i=6;i<Math.min(116,rows.length);i++){
     if(String((rows[i]||[])[0]||'').trim()===course){rowIdx=i;break;}
   }
   if(rowIdx<0)return matches;
-  if(edition==='am'||edition==='both'){
-    const v=String(admSeCellValue(rowIdx,dateCol)||'').trim();
-    matches.push({row:rowIdx,col:Number(dateCol),course,edition:'AM',oldValue:v});
-  }
-  if(edition==='pm'||edition==='both'){
-    const v=String(admSeCellValue(rowIdx,Number(dateCol)+1)||'').trim();
-    matches.push({row:rowIdx,col:Number(dateCol)+1,course,edition:'PM',oldValue:v});
-  }
+  dateCols.forEach(dc=>{
+    const dl=String(dateRow[dc]||'').trim();
+    if(edition==='am'||edition==='both'){
+      const v=String(admSeCellValue(rowIdx,dc)||'').trim();
+      matches.push({row:rowIdx,col:dc,course,edition:'AM',oldValue:v,dateLabel:dl});
+    }
+    if(edition==='pm'||edition==='both'){
+      const v=String(admSeCellValue(rowIdx,dc+1)||'').trim();
+      matches.push({row:rowIdx,col:dc+1,course,edition:'PM',oldValue:v,dateLabel:dl});
+    }
+  });
   return matches;
 }
 
 function admSeVacationPreviewByCourse(){
   const course=document.getElementById('adm-se-vac-course').value;
-  const dateCol=document.getElementById('adm-se-vac-date2').value;
+  const startCol=document.getElementById('adm-se-vac-date2').value;
+  const endCol=document.getElementById('adm-se-vac-date2-end').value;
   const edition=document.getElementById('adm-se-vac-edition2').value;
   const newDriver=document.getElementById('adm-se-vac-newdriver').value.trim();
   const prev=document.getElementById('adm-se-vac-preview2');
   if(!course){alert('コースを選択してください');return;}
-  if(!dateCol){alert('日付を選択してください');return;}
-  const matches=admSeVacationFindCellsByCourseDate(course,dateCol,edition);
+  if(!startCol){alert('開始日を選択してください');return;}
+  const matches=admSeVacationFindCellsByCourseDate(course,startCol,endCol,edition);
   if(!matches.length){
     prev.style.display='block';prev.style.background='#fef2f2';prev.style.borderColor='#fecaca';prev.style.color='#991b1b';
     prev.innerHTML='⚠️ 対象セルが見つかりません';
@@ -5386,22 +5410,25 @@ function admSeVacationPreviewByCourse(){
   }
   prev.style.display='block';prev.style.background='#f0fdf4';prev.style.borderColor='#bbf7d0';prev.style.color='#166534';
   const newVal=newDriver||'(空)';
-  const lines=matches.map(m=>`• ${m.course} ${m.edition}: ${m.oldValue||'(空)'} → ${newVal}`);
-  prev.innerHTML=`✓ ${matches.length}件のセルを変更します:<br>${lines.join('<br>')}`;
+  const lines=matches.slice(0,20).map(m=>`• ${m.dateLabel} ${m.course} ${m.edition}: ${m.oldValue||'(空)'} → ${newVal}`);
+  const more=matches.length>20?`<br>... 他 ${matches.length-20}件`:'';
+  prev.innerHTML=`✓ ${matches.length}件のセルを変更します:<br>${lines.join('<br>')}${more}`;
 }
 
 async function admSeVacationApplyByCourse(){
   const course=document.getElementById('adm-se-vac-course').value;
-  const dateCol=document.getElementById('adm-se-vac-date2').value;
+  const startCol=document.getElementById('adm-se-vac-date2').value;
+  const endCol=document.getElementById('adm-se-vac-date2-end').value;
   const edition=document.getElementById('adm-se-vac-edition2').value;
   const newDriver=document.getElementById('adm-se-vac-newdriver').value.trim();
   if(!course){alert('コースを選択してください');return;}
-  if(!dateCol){alert('日付を選択してください');return;}
-  const matches=admSeVacationFindCellsByCourseDate(course,dateCol,edition);
+  if(!startCol){alert('開始日を選択してください');return;}
+  const matches=admSeVacationFindCellsByCourseDate(course,startCol,endCol,edition);
   if(!matches.length){alert('対象セルが見つかりません');return;}
   const newVal=newDriver||'';
-  const summary=matches.map(m=>`${m.course} ${m.edition}: ${m.oldValue||'(空)'} → ${newVal||'(空)'}`).join('\n');
-  if(!window.confirm(`以下 ${matches.length} 件を変更します (まだ保存されません):\n\n${summary}\n\n適用しますか?`))return;
+  const summaryLines=matches.slice(0,15).map(m=>`${m.dateLabel} ${m.course} ${m.edition}: ${m.oldValue||'(空)'} → ${newVal||'(空)'}`);
+  const more=matches.length>15?`\n... 他 ${matches.length-15}件`:'';
+  if(!window.confirm(`以下 ${matches.length} 件を変更します (まだ保存されません):\n\n${summaryLines.join('\n')}${more}\n\n適用しますか?`))return;
   // dirty 登録
   const oldDriversForLog=[];
   matches.forEach(m=>{
@@ -5420,10 +5447,12 @@ async function admSeVacationApplyByCourse(){
   try{
     const dateRow=admSeState.rows[0]||[];
     const dowRow=admSeState.rows[3]||[];
-    const dateStr=String(dateRow[Number(dateCol)]||'').trim();
-    const dowStr=String(dowRow[Number(dateCol)]||'').trim();
+    const startLabel=String(dateRow[Number(startCol)]||'').trim();
+    const endLabel=endCol?String(dateRow[Number(endCol)]||'').trim():'';
+    const dateStr=endLabel&&endLabel!==startLabel?`${startLabel}〜${endLabel}`:startLabel;
+    const dowStr=String(dowRow[Number(startCol)]||'').trim();
     const editLabel={am:'朝刊',pm:'夕刊',both:'両方'}[edition]||edition;
-    const detail=matches.map(m=>`${m.course}${m.edition}:${m.oldValue||'(空)'}→${newVal||'(空)'}`).join(' / ');
+    const detail=matches.map(m=>`${m.dateLabel}${m.course}${m.edition}:${m.oldValue||'(空)'}→${newVal||'(空)'}`).join(' / ');
     await admSeLogVacation({
       timestamp:new Date().toISOString(),
       sheetName:admSeState.sheetName,
@@ -5440,69 +5469,96 @@ function admSeCloseVacation(){
   document.getElementById('adm-se-vacation-modal').style.display='none';
 }
 
-// 希望者を Section 1 の指定日付列で検索 → 該当セル一覧を返す
-// 戻り値: [{row, col, course, edition:'AM'|'PM', oldValue}]
-function admSeVacationFindCells(dateCol,edition,requester){
+// 開始日列 ~ 終了日列 (両端含む) のうち日付列のみを抽出
+// 終了日が空欄 or 開始日と同じなら単日扱い
+function admSeVacationDateColRange(startCol,endCol){
+  const rows=admSeState.rows;
+  if(!rows.length)return [];
+  const dateRow=rows[0]||[];
+  const cols=[];
+  const s=Number(startCol);
+  const e=endCol?Number(endCol):s;
+  const lo=Math.min(s,e),hi=Math.max(s,e);
+  for(let c=1;c<dateRow.length;c++){
+    if(c<lo||c>hi)continue;
+    if(/^\d{1,2}\/\d{1,2}$/.test(String(dateRow[c]||'').trim()))cols.push(c);
+  }
+  return cols;
+}
+
+// 希望者を Section 1 の指定日付列(複数可)で検索 → 該当セル一覧を返す
+// 戻り値: [{row, col, course, edition:'AM'|'PM', oldValue, dateLabel}]
+function admSeVacationFindCells(startCol,endCol,edition,requester){
   const matches=[];
-  if(!dateCol||!requester)return matches;
+  if(!startCol||!requester)return matches;
+  const dateCols=admSeVacationDateColRange(startCol,endCol);
+  if(!dateCols.length)return matches;
   const norm=invNormName(requester);
   const rows=admSeState.rows;
+  const dateRow=rows[0]||[];
   for(let i=6;i<Math.min(116,rows.length);i++){
     const r=rows[i]||[];
     const course=String(r[0]||'').trim();
     if(!course||course==='重複')continue;
-    if(edition==='am'||edition==='both'){
-      const v=admSeCellValue(i,dateCol);
-      if(v&&invNormName(String(v).trim())===norm){
-        matches.push({row:i,col:Number(dateCol),course,edition:'AM',oldValue:String(v).trim()});
+    dateCols.forEach(dc=>{
+      const dl=String(dateRow[dc]||'').trim();
+      if(edition==='am'||edition==='both'){
+        const v=admSeCellValue(i,dc);
+        if(v&&invNormName(String(v).trim())===norm){
+          matches.push({row:i,col:dc,course,edition:'AM',oldValue:String(v).trim(),dateLabel:dl});
+        }
       }
-    }
-    if(edition==='pm'||edition==='both'){
-      const v=admSeCellValue(i,Number(dateCol)+1);
-      if(v&&invNormName(String(v).trim())===norm){
-        matches.push({row:i,col:Number(dateCol)+1,course,edition:'PM',oldValue:String(v).trim()});
+      if(edition==='pm'||edition==='both'){
+        const v=admSeCellValue(i,dc+1);
+        if(v&&invNormName(String(v).trim())===norm){
+          matches.push({row:i,col:dc+1,course,edition:'PM',oldValue:String(v).trim(),dateLabel:dl});
+        }
       }
-    }
+    });
   }
   return matches;
 }
 
 function admSeVacationPreview(){
-  const dateCol=document.getElementById('adm-se-vac-date').value;
+  const startCol=document.getElementById('adm-se-vac-date').value;
+  const endCol=document.getElementById('adm-se-vac-date-end').value;
   const edition=document.getElementById('adm-se-vac-edition').value;
   const requester=document.getElementById('adm-se-vac-requester').value.trim();
   const replacement=document.getElementById('adm-se-vac-replacement').value.trim();
   const prev=document.getElementById('adm-se-vac-preview');
-  if(!dateCol){alert('日付を選択してください');return;}
+  if(!startCol){alert('開始日を選択してください');return;}
   if(!requester){alert('希望者を入力してください');return;}
-  const matches=admSeVacationFindCells(dateCol,edition,requester);
+  const matches=admSeVacationFindCells(startCol,endCol,edition,requester);
   if(!matches.length){
     prev.style.display='block';
     prev.style.background='#fef2f2';prev.style.borderColor='#fecaca';prev.style.color='#991b1b';
-    prev.innerHTML=`⚠️ 該当日付・編集帯に「${requester}」のシフトが見つかりません`;
+    prev.innerHTML=`⚠️ 該当日付範囲・編集帯に「${requester}」のシフトが見つかりません`;
     return;
   }
   prev.style.display='block';
   prev.style.background='#f0fdf4';prev.style.borderColor='#bbf7d0';prev.style.color='#166534';
-  const lines=matches.map(m=>{
+  const lines=matches.slice(0,20).map(m=>{
     const newVal=replacement||'(空)';
-    return `• ${m.course} ${m.edition}: ${m.oldValue} → ${newVal}`;
+    return `• ${m.dateLabel} ${m.course} ${m.edition}: ${m.oldValue} → ${newVal}`;
   });
-  prev.innerHTML=`✓ ${matches.length}件のセルを変更します:<br>${lines.join('<br>')}`;
+  const more=matches.length>20?`<br>... 他 ${matches.length-20}件`:'';
+  prev.innerHTML=`✓ ${matches.length}件のセルを変更します:<br>${lines.join('<br>')}${more}`;
 }
 
 async function admSeVacationApply(){
-  const dateCol=document.getElementById('adm-se-vac-date').value;
+  const startCol=document.getElementById('adm-se-vac-date').value;
+  const endCol=document.getElementById('adm-se-vac-date-end').value;
   const edition=document.getElementById('adm-se-vac-edition').value;
   const requester=document.getElementById('adm-se-vac-requester').value.trim();
   const replacement=document.getElementById('adm-se-vac-replacement').value.trim();
-  if(!dateCol){alert('日付を選択してください');return;}
+  if(!startCol){alert('開始日を選択してください');return;}
   if(!requester){alert('希望者を入力してください');return;}
-  const matches=admSeVacationFindCells(dateCol,edition,requester);
-  if(!matches.length){alert(`該当日付・編集帯に「${requester}」のシフトが見つかりません`);return;}
+  const matches=admSeVacationFindCells(startCol,endCol,edition,requester);
+  if(!matches.length){alert(`該当日付範囲・編集帯に「${requester}」のシフトが見つかりません`);return;}
   const newVal=replacement||'';
-  const summary=matches.map(m=>`${m.course} ${m.edition}: ${m.oldValue} → ${newVal||'(空)'}`).join('\n');
-  if(!window.confirm(`以下 ${matches.length} 件を変更します (まだ保存されません):\n\n${summary}\n\n適用しますか?`))return;
+  const summaryLines=matches.slice(0,15).map(m=>`${m.dateLabel} ${m.course} ${m.edition}: ${m.oldValue} → ${newVal||'(空)'}`);
+  const more=matches.length>15?`\n... 他 ${matches.length-15}件`:'';
+  if(!window.confirm(`以下 ${matches.length} 件を変更します (まだ保存されません):\n\n${summaryLines.join('\n')}${more}\n\n適用しますか?`))return;
   // dirty に登録
   matches.forEach(m=>{
     const k=`${m.row},${m.col}`;
@@ -5522,10 +5578,12 @@ async function admSeVacationApply(){
   try{
     const dateRow=admSeState.rows[0]||[];
     const dowRow=admSeState.rows[3]||[];
-    const dateStr=String(dateRow[Number(dateCol)]||'').trim();
-    const dowStr=String(dowRow[Number(dateCol)]||'').trim();
+    const startLabel=String(dateRow[Number(startCol)]||'').trim();
+    const endLabel=endCol?String(dateRow[Number(endCol)]||'').trim():'';
+    const dateStr=endLabel&&endLabel!==startLabel?`${startLabel}〜${endLabel}`:startLabel;
+    const dowStr=String(dowRow[Number(startCol)]||'').trim();
     const editLabel={am:'朝刊',pm:'夕刊',both:'両方'}[edition]||edition;
-    const detail=matches.map(m=>`${m.course}${m.edition}:${m.oldValue}→${newVal||'(空)'}`).join(' / ');
+    const detail=matches.map(m=>`${m.dateLabel}${m.course}${m.edition}:${m.oldValue}→${newVal||'(空)'}`).join(' / ');
     await admSeLogVacation({
       timestamp:new Date().toISOString(),
       sheetName:admSeState.sheetName,
