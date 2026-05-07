@@ -747,12 +747,18 @@ tbody tr:hover { background:var(--primary-light); }
 
         <!-- 🏖️ 休暇登録モーダル -->
         <div id="adm-se-vacation-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;">
-          <div style="background:#fff;padding:24px;border-radius:12px;max-width:480px;width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.2);">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-              <h3 style="margin:0;font-size:18px;color:#1e293b;">🏖️ 休暇登録</h3>
+          <div style="background:#fff;padding:24px;border-radius:12px;max-width:520px;width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.2);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+              <h3 style="margin:0;font-size:18px;color:#1e293b;">🏖️ 休暇登録 / シフト変更</h3>
               <button onclick="admSeCloseVacation()" style="background:transparent;border:none;font-size:20px;cursor:pointer;color:#64748b;">×</button>
             </div>
-            <div style="display:flex;flex-direction:column;gap:12px;">
+            <!-- タブ切り替え -->
+            <div style="display:flex;gap:4px;border-bottom:1px solid #e2e8f0;margin-bottom:14px;">
+              <button id="adm-se-vac-tab-driver" onclick="admSeVacSwitchTab('driver')" style="background:#8b5cf6;color:#fff;border:none;padding:8px 14px;border-radius:6px 6px 0 0;cursor:pointer;font-weight:600;font-size:13px;">👤 希望者から</button>
+              <button id="adm-se-vac-tab-course" onclick="admSeVacSwitchTab('course')" style="background:#f1f5f9;color:#475569;border:none;padding:8px 14px;border-radius:6px 6px 0 0;cursor:pointer;font-weight:600;font-size:13px;">🚚 コースから (逆引き)</button>
+            </div>
+            <!-- Tab A: 希望者から -->
+            <div id="adm-se-vac-form-driver" style="display:flex;flex-direction:column;gap:12px;">
               <div>
                 <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">日付</label>
                 <select id="adm-se-vac-date" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="">選択してください</option></select>
@@ -766,14 +772,39 @@ tbody tr:hover { background:var(--primary-light); }
                 <input type="text" id="adm-se-vac-requester" list="adm-se-staff-list" placeholder="名前を入力" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;">
               </div>
               <div>
-                <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">代わりのドライバー (空欄なら「希望休」のままセル空に)</label>
+                <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">代わりのドライバー (空欄なら該当セル空に)</label>
                 <input type="text" id="adm-se-vac-replacement" list="adm-se-staff-list" placeholder="名前を入力 (任意)" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;">
               </div>
               <div id="adm-se-vac-preview" style="margin-top:8px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#334155;display:none;"></div>
+              <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end;">
+                <button onclick="admSeVacationPreview()" style="background:#f1f5f9;color:#1e293b;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🔍 プレビュー</button>
+                <button onclick="admSeVacationApply()" style="background:#8b5cf6;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">✓ 適用</button>
+              </div>
             </div>
-            <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;">
-              <button onclick="admSeVacationPreview()" style="background:#f1f5f9;color:#1e293b;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🔍 プレビュー</button>
-              <button onclick="admSeVacationApply()" style="background:#8b5cf6;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">✓ 適用</button>
+            <!-- Tab B: コースから (逆引き) -->
+            <div id="adm-se-vac-form-course" style="display:none;flex-direction:column;gap:12px;">
+              <div>
+                <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">コース</label>
+                <select id="adm-se-vac-course" onchange="admSeVacUpdateCurrentDriver()" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="">選択してください</option></select>
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">日付</label>
+                <select id="adm-se-vac-date2" onchange="admSeVacUpdateCurrentDriver()" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="">選択してください</option></select>
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">時間帯</label>
+                <select id="adm-se-vac-edition2" onchange="admSeVacUpdateCurrentDriver()" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="both">両方 (朝刊+夕刊)</option><option value="am">朝刊のみ</option><option value="pm">夕刊のみ</option></select>
+              </div>
+              <div id="adm-se-vac-current" style="padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:13px;color:#1e3a8a;">現在の担当: ―</div>
+              <div>
+                <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">新しいドライバー (空欄なら該当セル空に)</label>
+                <input type="text" id="adm-se-vac-newdriver" list="adm-se-staff-list" placeholder="名前を入力 (任意)" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;">
+              </div>
+              <div id="adm-se-vac-preview2" style="margin-top:8px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#334155;display:none;"></div>
+              <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end;">
+                <button onclick="admSeVacationPreviewByCourse()" style="background:#f1f5f9;color:#1e293b;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🔍 プレビュー</button>
+                <button onclick="admSeVacationApplyByCourse()" style="background:#8b5cf6;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">✓ 適用</button>
+              </div>
             </div>
           </div>
         </div>
@@ -5242,7 +5273,6 @@ function admSeOpenVacation(){
   if(!admSeState.rows.length){alert('シフト月を選択してください');return;}
   const dateRow=admSeState.rows[0]||[];
   const dowRow=admSeState.rows[3]||[];
-  const dateSel=document.getElementById('adm-se-vac-date');
   const opts=['<option value="">選択してください</option>'];
   for(let c=1;c<dateRow.length;c++){
     const v=String(dateRow[c]||'').trim();
@@ -5251,12 +5281,159 @@ function admSeOpenVacation(){
       opts.push(`<option value="${c}">${v}${dow?' ('+dow+')':''}</option>`);
     }
   }
-  dateSel.innerHTML=opts.join('');
+  // 両タブの日付ドロップダウンに反映
+  document.getElementById('adm-se-vac-date').innerHTML=opts.join('');
+  document.getElementById('adm-se-vac-date2').innerHTML=opts.join('');
+  // コース ドロップダウン (コースから タブ用)
+  const rows=admSeState.rows;
+  const courses=[];const seen=new Set();
+  for(let i=6;i<Math.min(116,rows.length);i++){
+    const c=String((rows[i]||[])[0]||'').trim();
+    if(!c||c==='重複'||seen.has(c))continue;
+    seen.add(c);courses.push(c);
+  }
+  const areaIdx=c=>['城北','川越','立川','川崎高津'].indexOf(areaOfCourse(c));
+  courses.sort((a,b)=>areaIdx(a)-areaIdx(b));
+  const courseSel=document.getElementById('adm-se-vac-course');
+  courseSel.innerHTML='<option value="">選択してください</option>'+courses.map(c=>{const a=areaOfCourse(c);return `<option value="${c}">${a?'['+a+'] ':''}${c}</option>`;}).join('');
+  // フォームクリア
   document.getElementById('adm-se-vac-edition').value='both';
   document.getElementById('adm-se-vac-requester').value='';
   document.getElementById('adm-se-vac-replacement').value='';
   document.getElementById('adm-se-vac-preview').style.display='none';
+  document.getElementById('adm-se-vac-edition2').value='both';
+  document.getElementById('adm-se-vac-newdriver').value='';
+  document.getElementById('adm-se-vac-preview2').style.display='none';
+  document.getElementById('adm-se-vac-current').textContent='現在の担当: ―';
+  // タブ初期化 (driver タブをデフォルト)
+  admSeVacSwitchTab('driver');
   document.getElementById('adm-se-vacation-modal').style.display='flex';
+}
+
+// タブ切替
+function admSeVacSwitchTab(tab){
+  const td=document.getElementById('adm-se-vac-tab-driver');
+  const tc=document.getElementById('adm-se-vac-tab-course');
+  const fd=document.getElementById('adm-se-vac-form-driver');
+  const fc=document.getElementById('adm-se-vac-form-course');
+  if(tab==='driver'){
+    td.style.background='#8b5cf6';td.style.color='#fff';
+    tc.style.background='#f1f5f9';tc.style.color='#475569';
+    fd.style.display='flex';fc.style.display='none';
+  }else{
+    td.style.background='#f1f5f9';td.style.color='#475569';
+    tc.style.background='#8b5cf6';tc.style.color='#fff';
+    fd.style.display='none';fc.style.display='flex';
+  }
+}
+
+// コース×日付×時間帯 から現在の担当者を表示
+function admSeVacUpdateCurrentDriver(){
+  const course=document.getElementById('adm-se-vac-course').value;
+  const dateCol=Number(document.getElementById('adm-se-vac-date2').value);
+  const edition=document.getElementById('adm-se-vac-edition2').value;
+  const cur=document.getElementById('adm-se-vac-current');
+  if(!course||!dateCol){cur.textContent='現在の担当: ―';return;}
+  // コース行を検索
+  const rows=admSeState.rows;
+  let rowIdx=-1;
+  for(let i=6;i<Math.min(116,rows.length);i++){
+    if(String((rows[i]||[])[0]||'').trim()===course){rowIdx=i;break;}
+  }
+  if(rowIdx<0){cur.textContent=`現在の担当: (コース「${course}」が見つかりません)`;return;}
+  const am=String(admSeCellValue(rowIdx,dateCol)||'').trim();
+  const pm=String(admSeCellValue(rowIdx,dateCol+1)||'').trim();
+  const parts=[];
+  if(edition==='am'||edition==='both')parts.push(`AM=${am||'(空)'}`);
+  if(edition==='pm'||edition==='both')parts.push(`PM=${pm||'(空)'}`);
+  cur.textContent=`現在の担当: ${course} ${parts.join(' / ')}`;
+}
+
+// コース×日付×時間帯 で対象セルを返す
+function admSeVacationFindCellsByCourseDate(course,dateCol,edition){
+  const matches=[];
+  if(!course||!dateCol)return matches;
+  const rows=admSeState.rows;
+  let rowIdx=-1;
+  for(let i=6;i<Math.min(116,rows.length);i++){
+    if(String((rows[i]||[])[0]||'').trim()===course){rowIdx=i;break;}
+  }
+  if(rowIdx<0)return matches;
+  if(edition==='am'||edition==='both'){
+    const v=String(admSeCellValue(rowIdx,dateCol)||'').trim();
+    matches.push({row:rowIdx,col:Number(dateCol),course,edition:'AM',oldValue:v});
+  }
+  if(edition==='pm'||edition==='both'){
+    const v=String(admSeCellValue(rowIdx,Number(dateCol)+1)||'').trim();
+    matches.push({row:rowIdx,col:Number(dateCol)+1,course,edition:'PM',oldValue:v});
+  }
+  return matches;
+}
+
+function admSeVacationPreviewByCourse(){
+  const course=document.getElementById('adm-se-vac-course').value;
+  const dateCol=document.getElementById('adm-se-vac-date2').value;
+  const edition=document.getElementById('adm-se-vac-edition2').value;
+  const newDriver=document.getElementById('adm-se-vac-newdriver').value.trim();
+  const prev=document.getElementById('adm-se-vac-preview2');
+  if(!course){alert('コースを選択してください');return;}
+  if(!dateCol){alert('日付を選択してください');return;}
+  const matches=admSeVacationFindCellsByCourseDate(course,dateCol,edition);
+  if(!matches.length){
+    prev.style.display='block';prev.style.background='#fef2f2';prev.style.borderColor='#fecaca';prev.style.color='#991b1b';
+    prev.innerHTML='⚠️ 対象セルが見つかりません';
+    return;
+  }
+  prev.style.display='block';prev.style.background='#f0fdf4';prev.style.borderColor='#bbf7d0';prev.style.color='#166534';
+  const newVal=newDriver||'(空)';
+  const lines=matches.map(m=>`• ${m.course} ${m.edition}: ${m.oldValue||'(空)'} → ${newVal}`);
+  prev.innerHTML=`✓ ${matches.length}件のセルを変更します:<br>${lines.join('<br>')}`;
+}
+
+async function admSeVacationApplyByCourse(){
+  const course=document.getElementById('adm-se-vac-course').value;
+  const dateCol=document.getElementById('adm-se-vac-date2').value;
+  const edition=document.getElementById('adm-se-vac-edition2').value;
+  const newDriver=document.getElementById('adm-se-vac-newdriver').value.trim();
+  if(!course){alert('コースを選択してください');return;}
+  if(!dateCol){alert('日付を選択してください');return;}
+  const matches=admSeVacationFindCellsByCourseDate(course,dateCol,edition);
+  if(!matches.length){alert('対象セルが見つかりません');return;}
+  const newVal=newDriver||'';
+  const summary=matches.map(m=>`${m.course} ${m.edition}: ${m.oldValue||'(空)'} → ${newVal||'(空)'}`).join('\n');
+  if(!window.confirm(`以下 ${matches.length} 件を変更します (まだ保存されません):\n\n${summary}\n\n適用しますか?`))return;
+  // dirty 登録
+  const oldDriversForLog=[];
+  matches.forEach(m=>{
+    const k=`${m.row},${m.col}`;
+    const orig=String((admSeState.rows[m.row]||[])[m.col]||'');
+    if(newVal===orig)admSeState.dirty.delete(k);
+    else admSeState.dirty.set(k,newVal);
+    if(m.oldValue&&!oldDriversForLog.includes(m.oldValue))oldDriversForLog.push(m.oldValue);
+  });
+  admSeUpdateDirtyBadge();
+  admSeRender();
+  admSeCloseVacation();
+  const msg=document.getElementById('adm-se-msg');
+  msg.textContent=`✓ コース別変更: ${matches.length}件のセルを変更 (💾 保存ボタンで反映)`;msg.style.color='#16a34a';
+  // 履歴記録
+  try{
+    const dateRow=admSeState.rows[0]||[];
+    const dowRow=admSeState.rows[3]||[];
+    const dateStr=String(dateRow[Number(dateCol)]||'').trim();
+    const dowStr=String(dowRow[Number(dateCol)]||'').trim();
+    const editLabel={am:'朝刊',pm:'夕刊',both:'両方'}[edition]||edition;
+    const detail=matches.map(m=>`${m.course}${m.edition}:${m.oldValue||'(空)'}→${newVal||'(空)'}`).join(' / ');
+    await admSeLogVacation({
+      timestamp:new Date().toISOString(),
+      sheetName:admSeState.sheetName,
+      dateStr,dowStr,editLabel,
+      requester:`(コース別) ${oldDriversForLog.join(', ')||'(空)'}`,
+      replacement:newDriver||'(空)',
+      changeCount:matches.length,detail,
+    });
+  }catch(e){console.warn('休暇履歴記録失敗:',e);}
+  setTimeout(()=>{msg.textContent='';},4000);
 }
 
 function admSeCloseVacation(){
