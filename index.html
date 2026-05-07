@@ -5198,7 +5198,33 @@ async function admSeNewMonth(){
     const uj=await ur.json();
     if(uj.error)throw new Error(uj.error);
 
-    msg.textContent=`✓ ${sheetName} を作成しました (コース${orderedCourses.length}件 / ${lastDay}日 / 担当${filledCells}セル自動入力)`;msg.style.color='#16a34a';
+    // 5. マスタ R:U の必要フラグを基に「稼働がない」セルに黒塗り背景を適用
+    // AM: !req.am → 黒塗り
+    // PM: 日曜は常に休刊 → 黒塗り / 月-木は !req.pm / 金土は !req.keiba
+    msg.textContent='マスタ取得 + 黒塗り適用中...';
+    const reqs=await admSeLoadMaster();
+    const blackCells=[];
+    orderedCourses.forEach((c,ci)=>{
+      const req=reqs[c];
+      if(!req)return;// マスタ未登録のコースは黒塗り対象外
+      const rowIdx=7+ci;
+      dates.forEach((d,i)=>{
+        const amCol=1+i*2,pmCol=2+i*2;
+        if(!req.am)blackCells.push({row:rowIdx,col:amCol});
+        let pmActive=false;
+        if(d.js===0)pmActive=false;// Sun = 休刊
+        else if(d.js===5||d.js===6)pmActive=!!req.keiba;// Fri/Sat = 競馬日
+        else pmActive=!!req.pm;// Mon-Thu = 通常夕刊
+        if(!pmActive)blackCells.push({row:rowIdx,col:pmCol});
+      });
+    });
+    if(blackCells.length){
+      const fr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:sheetName,cells:blackCells,bg:{red:0,green:0,blue:0}})});
+      const fj=await fr.json();
+      if(fj.error)console.warn('format_cells failed:',fj.error);
+    }
+
+    msg.textContent=`✓ ${sheetName} を作成しました (コース${orderedCourses.length}件 / ${lastDay}日 / 担当${filledCells}セル自動入力 / 黒塗り${blackCells.length}セル)`;msg.style.color='#16a34a';
     setTimeout(()=>{const m2=document.getElementById('adm-se-msg');if(m2&&m2.textContent.includes(sheetName))m2.textContent='';},5000);
 
     // シート一覧を再ロード
