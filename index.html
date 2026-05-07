@@ -5260,9 +5260,6 @@ function admJinRender(){
   const toggleBg=admJinDedupeMode?'#0ea5e9':'#cbd5e1';
   h+=`<div style="display:flex;gap:6px;align-items:center;">`;
   h+=`<button onclick="admJinToggleDedupe()" style="background:${toggleBg};color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;" title="同姓同名を表示上で1行に統合 (シート上のデータは保持)">🔍 統合表示: ${admJinDedupeMode?'ON':'OFF'}</button>`;
-  if(nameDups.size){
-    h+=`<button onclick="admJinMergeDupNames()" style="background:#fff;color:#dc2626;border:1px solid #dc2626;padding:6px 10px;border-radius:6px;cursor:pointer;font-weight:600;font-size:11px;" title="シート上の重複行も完全に統合する (永続変更)">🔧 シートも統合</button>`;
-  }
   h+=`</div>`;
   h+=`</div>`;
   h+=`<div id="adm-jin-dup-banner" style="margin-bottom:8px;padding:8px 12px;background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:6px;font-size:12px;font-weight:600;display:none;"></div>`;
