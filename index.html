@@ -5282,7 +5282,7 @@ function admSeVacationPreview(){
   prev.innerHTML=`✓ ${matches.length}件のセルを変更します:<br>${lines.join('<br>')}`;
 }
 
-function admSeVacationApply(){
+async function admSeVacationApply(){
   const dateCol=document.getElementById('adm-se-vac-date').value;
   const edition=document.getElementById('adm-se-vac-edition').value;
   const requester=document.getElementById('adm-se-vac-requester').value.trim();
@@ -5309,7 +5309,43 @@ function admSeVacationApply(){
   admSeCloseVacation();
   const msg=document.getElementById('adm-se-msg');
   msg.textContent=`✓ 休暇登録: ${matches.length}件のセルを変更 (💾 保存ボタンで反映)`;msg.style.color='#16a34a';
+  // 休暇履歴シートに記録 (失敗してもサイレント)
+  try{
+    const dateRow=admSeState.rows[0]||[];
+    const dowRow=admSeState.rows[3]||[];
+    const dateStr=String(dateRow[Number(dateCol)]||'').trim();
+    const dowStr=String(dowRow[Number(dateCol)]||'').trim();
+    const editLabel={am:'朝刊',pm:'夕刊',both:'両方'}[edition]||edition;
+    const detail=matches.map(m=>`${m.course}${m.edition}:${m.oldValue}→${newVal||'(空)'}`).join(' / ');
+    await admSeLogVacation({
+      timestamp:new Date().toISOString(),
+      sheetName:admSeState.sheetName,
+      dateStr,dowStr,editLabel,
+      requester,replacement:replacement||'(空)',
+      changeCount:matches.length,detail,
+    });
+  }catch(e){console.warn('休暇履歴記録失敗:',e);}
   setTimeout(()=>{msg.textContent='';},4000);
+}
+
+// 「休暇履歴」シートに append (なければヘッダ付きで自動作成)
+async function admSeLogVacation(rec){
+  // シート存在確認
+  const lr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list_sheets'})});
+  const lj=await lr.json();
+  const exists=(lj.all_sheets||[]).includes('休暇履歴');
+  if(!exists){
+    const cr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create_sheet',sheet_name:'休暇履歴'})});
+    const cj=await cr.json();
+    if(cj.error&&!/already exists/i.test(cj.error))throw new Error(cj.error);
+    // ヘッダ書き込み
+    const headers=['タイムスタンプ','シート名','日付','曜日','時間帯','希望者','代わりのドライバー','変更件数','変更詳細'];
+    await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:'休暇履歴',range:'A1:I1',values:[headers]})});
+  }
+  const values=[rec.timestamp,rec.sheetName,rec.dateStr,rec.dowStr,rec.editLabel,rec.requester,rec.replacement,rec.changeCount,rec.detail];
+  const ar=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:'休暇履歴',values})});
+  const aj=await ar.json();
+  if(aj.error)throw new Error(aj.error);
 }
 
 // === 人員名簿モード ===
