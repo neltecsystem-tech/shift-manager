@@ -732,6 +732,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div class="filters">
           <div><label>シフト月</label><select id="adm-se-sheet" onchange="admSeLoad()"><option value="">選択してください</option></select></div>
           <div><label>営業所フィルタ</label><select id="adm-se-area" onchange="admSeRender()"><option value="">すべて</option><option value="立川">立川</option><option value="城北">城北</option><option value="川越">川越</option><option value="川崎高津">川崎高津</option></select></div>
+          <div><label>コース</label><select id="adm-se-course" onchange="admSeRender()" title="コース名を直接選択 (逆引き編集用)"><option value="">すべて</option></select></div>
           <div><label>スタッフ検索</label><input type="text" id="adm-se-search" placeholder="名前で絞り込み" oninput="dbInput('admSeRender',200)"></div>
           <div style="margin-left:auto;display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;">
             <button onclick="admSeNewMonth()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">➕ 新規月作成</button>
@@ -4669,6 +4670,7 @@ async function admSeLoad(){
     msg.textContent=`✓ ${sheetName} 読み込み完了 (${admSeState.rows.length}行)`;msg.style.color='#16a34a';
     setTimeout(()=>{msg.textContent='';},2000);
     admSeUpdateDirtyBadge();
+    admSePopulateCourseFilter();
     admSeRender();
     // マスタ R:U 取得は黒塗り判定に使う。初回のみフェッチして再描画
     if(!admSeMasterReqs){
@@ -4689,6 +4691,30 @@ function admSeReload(){
   if(!sn){alert('シートを選択してください');return;}
   admSeState.dirty.clear();
   admSeLoad();
+}
+
+// コースフィルタ ドロップダウンを現在のシートの Section 1 から populate
+function admSePopulateCourseFilter(){
+  const sel=document.getElementById('adm-se-course');
+  if(!sel)return;
+  const prev=sel.value;
+  const rows=admSeState.rows;
+  const courses=[];
+  const seen=new Set();
+  for(let i=6;i<Math.min(116,rows.length);i++){
+    const c=String((rows[i]||[])[0]||'').trim();
+    if(!c||c==='重複'||seen.has(c))continue;
+    seen.add(c);
+    courses.push(c);
+  }
+  // エリア順 (城北 → 川越 → 立川 → 川崎高津) → エリア内は元の出現順
+  const areaIdx=c=>{const a=areaOfCourse(c);return ['城北','川越','立川','川崎高津'].indexOf(a);};
+  courses.sort((a,b)=>areaIdx(a)-areaIdx(b));
+  sel.innerHTML='<option value="">すべて</option>'+courses.map(c=>{
+    const a=areaOfCourse(c);
+    return `<option value="${c}">${a?'['+a+'] ':''}${c}</option>`;
+  }).join('');
+  if(prev&&courses.includes(prev))sel.value=prev;
 }
 
 // セル変更を記録
@@ -5042,12 +5068,17 @@ function admSeRenderPretty(){
   }
 
   const areaF=(document.getElementById('adm-se-area')||{}).value||'';
+  const courseF=(document.getElementById('adm-se-course')||{}).value||'';
   const search=((document.getElementById('adm-se-search')||{}).value||'').trim();
   const areaPrefixes={'城北':['城北','池袋'],'川越':['川越'],'立川':['立川'],'川崎高津':['川崎']};
   function matchArea(course){
     if(!areaF)return true;
     const ps=areaPrefixes[areaF]||[areaF];
     return ps.some(p=>course.startsWith(p));
+  }
+  function matchCourse(course){
+    if(!courseF)return true;
+    return course===courseF;
   }
   function matchSearch(rowIdx){
     if(!search)return true;
@@ -5071,6 +5102,7 @@ function admSeRenderPretty(){
     const courseName=String(r[0]||'').trim();
     if(!courseName||courseName==='重複')continue;
     if(!matchArea(courseName))continue;
+    if(!matchCourse(courseName))continue;
     if(!matchSearch(i))continue;
     courseRows.push({rowIdx:i,course:courseName});
   }
