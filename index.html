@@ -4640,6 +4640,10 @@ async function admSeLoad(){
     if(!admSeMasterReqs){
       admSeLoadMaster().then(()=>admSeRender()).catch(()=>{});
     }
+    // 人員名簿も非同期ロード (スタッフ名 predictive 補完で使う) — 失敗してもサイレント
+    if(!admJinState.loaded){
+      admJinLoad().catch(()=>{});
+    }
   }catch(e){
     msg.innerHTML='<span style="color:var(--danger);">読み込み失敗: '+e.message+'</span>';
     cont.innerHTML='';
@@ -4655,18 +4659,28 @@ function admSeReload(){
 
 // セル変更を記録
 function admSeOnCellInput(ev){
-  const td=ev.target.closest('td[data-r]');
-  if(!td)return;
-  const r=Number(td.dataset.r),c=Number(td.dataset.c);
-  const newVal=td.innerText;
+  const t=ev.target;
+  let r,c,newVal,host;
+  if(t.tagName==='INPUT'&&t.dataset.r!=null){
+    // datalist 補完付き input セル (スタッフ名予測変換)
+    r=Number(t.dataset.r);c=Number(t.dataset.c);
+    newVal=t.value;
+    host=t.closest('td')||t;
+  }else{
+    const td=t.closest('td[data-r]');
+    if(!td)return;
+    r=Number(td.dataset.r);c=Number(td.dataset.c);
+    newVal=td.innerText;
+    host=td;
+  }
   const origVal=admSeState.rows[r]?.[c]||'';
   const k=`${r},${c}`;
   if(newVal===origVal){
     admSeState.dirty.delete(k);
-    td.style.background='';
+    host.style.background='';
   }else{
     admSeState.dirty.set(k,newVal);
-    td.style.background='#fef3c7';// 変更中ハイライト
+    host.style.background='#fef3c7';// 変更中ハイライト
   }
   admSeUpdateDirtyBadge();
 }
@@ -4697,6 +4711,35 @@ function admSeCellHtml(r,c,val,dirty,color,minWidth,blackout){
   return `<td contenteditable="true" data-r="${r}" data-c="${c}" style="border:1px solid #e2e8f0;padding:2px 4px;${mw}font-size:11px;${bg}${colorStyle}">${safe}</td>`;
 }
 
+// スタッフ名 datalist セル (Section 1 のドライバー割当用)
+function admSeStaffCellHtml(r,c,val,dirty,minWidth,blackout){
+  const safe=String(val).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+  let bg='';
+  if(blackout)bg='background:#000;';
+  else if(dirty)bg='background:#fef3c7;';
+  const mw=minWidth?`min-width:${minWidth}px;`:'min-width:55px;';
+  const inputColor=blackout?'color:#000;caret-color:#fff;':'';
+  return `<td style="border:1px solid #e2e8f0;padding:0;${mw}font-size:11px;${bg}">`+
+    `<input type="text" list="adm-se-staff-list" data-r="${r}" data-c="${c}" value="${safe}" `+
+    `style="border:none;padding:2px 4px;font-size:11px;width:100%;background:transparent;outline:none;${inputColor}"/>`+
+  `</td>`;
+}
+
+// 単価マスタ + 人員名簿 からスタッフ名一覧を構築 (Section 1 のドライバー予測変換用)
+function admSeBuildStaffList(){
+  const set=new Set();
+  if(typeof invRates!=='undefined'&&Array.isArray(invRates)){
+    invRates.forEach(r=>{if(r&&r.name)set.add(String(r.name).trim());});
+  }
+  if(admJinState&&admJinState.loaded&&Array.isArray(admJinState.rows)){
+    for(let i=2;i<admJinState.rows.length;i++){
+      const name=String(admJinCellValue(i,2)||'').trim();
+      if(name)set.add(name);
+    }
+  }
+  return [...set].filter(n=>n).sort();
+}
+
 // マスタ R:U フラグからセル黒塗り判定 (admSeMasterReqs キャッシュ前提)
 // 朝刊✔がない → AM 黒 / 夕刊✔がない → 月-木 PM 黒 / 金土✔がない → 金土 PM 黒 / 日PM は常に黒
 function admSeIsBlackout(course,jsDay,isPm){
@@ -4725,6 +4768,11 @@ function admSeRender(){
   // モードトグル
   const tabBtn=(m,label)=>`<button onclick="admSeSetMode('${m}')" style="background:${mode===m?'var(--primary)':'#f1f5f9'};color:${mode===m?'#fff':'var(--text-sub)'};border:none;padding:6px 14px;border-radius:6px 6px 0 0;cursor:pointer;font-weight:600;font-size:12px;margin-right:4px;">${label}</button>`;
   h+=`<div style="background:#fff;padding:8px 10px 0 10px;border-bottom:1px solid var(--border);">${tabBtn('pretty','📋 見やすい表')}${tabBtn('raw','🔢 Raw グリッド')}${tabBtn('jin','👥 人員名簿')}</div>`;
+  // スタッフ名 datalist (Section 1 のドライバー予測変換用 — 全モードで共有)
+  if(mode!=='jin'){
+    const staffList=admSeBuildStaffList();
+    h+='<datalist id="adm-se-staff-list">'+staffList.map(n=>`<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('')+'</datalist>';
+  }
   if(mode==='jin'){
     h+=admJinRender();
   }else if(!admSeState.rows.length){
@@ -4741,13 +4789,13 @@ function admSeRender(){
     el.addEventListener('blur',handler);
     el.addEventListener('input',handler);
   });
-  // 人員名簿のコース選択 input (datalist 補完付) もハンドル
+  // datalist 補完付き input セルもハンドル (Section 1 スタッフ名 / 人員名簿コース)
+  cont.querySelectorAll('input[data-r]').forEach(el=>{
+    el.addEventListener('blur',handler);
+    el.addEventListener('input',handler);
+    el.addEventListener('change',handler);
+  });
   if(mode==='jin'){
-    cont.querySelectorAll('input[data-r]').forEach(el=>{
-      el.addEventListener('blur',handler);
-      el.addEventListener('input',handler);
-      el.addEventListener('change',handler);
-    });
     // 初回レンダリング時にコース重複ハイライト + バナー
     admJinHighlightDups();
   }
@@ -4866,8 +4914,8 @@ function admSeRenderPretty(){
         const pmDirty=admSeState.dirty.has(`${rowIdx},${d.col+1}`);
         const amBlack=admSeIsBlackout(course,d.dow,false);
         const pmBlack=admSeIsBlackout(course,d.dow,true);
-        h+=admSeCellHtml(rowIdx,d.col,am,amDirty,null,55,amBlack);
-        h+=admSeCellHtml(rowIdx,d.col+1,pm,pmDirty,null,55,pmBlack);
+        h+=admSeStaffCellHtml(rowIdx,d.col,am,amDirty,55,amBlack);
+        h+=admSeStaffCellHtml(rowIdx,d.col+1,pm,pmDirty,55,pmBlack);
       });
       h+='</tr>';
     });
