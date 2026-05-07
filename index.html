@@ -5185,13 +5185,53 @@ async function admJinMergeDupNames(){
 }
 
 // コース選択セル (datalist 補完付き input を内包する td)
-function admJinCourseCellHtml(r,c,val,dirty,listId){
+// fromDup=true のときは「重複行から拾った値」としてイタリック+淡い青で表示
+function admJinCourseCellHtml(r,c,val,dirty,listId,fromDup){
   const safe=String(val).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-  const bg=dirty?'background:#fef3c7;':'';
+  const bg=dirty?'background:#fef3c7;':(fromDup&&val?'background:#eff6ff;':'');
+  const inputStyle=fromDup&&val&&!dirty?'font-style:italic;color:#475569;':'';
   return `<td style="border:1px solid #e2e8f0;padding:0;${bg}min-width:62px;">`+
     `<input type="text" list="${listId}" data-r="${r}" data-c="${c}" value="${safe}" `+
-    `style="border:none;padding:2px 4px;font-size:11px;width:100%;background:transparent;outline:none;"/>`+
+    `style="border:none;padding:2px 4px;font-size:11px;width:100%;background:transparent;outline:none;${inputStyle}"/>`+
   `</td>`;
+}
+
+// 同姓同名統合表示 ON/OFF (localStorage で永続化、デフォルト ON)
+let admJinDedupeMode=(typeof localStorage!=='undefined'&&localStorage.getItem('admJinDedupeMode')==='false')?false:true;
+function admJinToggleDedupe(){
+  admJinDedupeMode=!admJinDedupeMode;
+  try{localStorage.setItem('admJinDedupeMode',admJinDedupeMode?'true':'false');}catch(_){}
+  admSeRender();
+}
+
+// 同姓同名グループを構築 (表示用): {primary:rowIdx, dups:[rowIdx,...], merged:{col:val}, sources:{col:rowIdx}}
+// 各 col は「プライマリの値 → 無ければ重複行から最初の非空」を採用
+function admJinBuildMergedView(){
+  const groups=new Map();
+  const order=[];
+  for(let i=2;i<admJinState.rows.length;i++){
+    const name=String(admJinCellValue(i,2)||'').trim();
+    if(!name)continue;
+    const norm=invNormName(name);
+    if(!norm)continue;
+    if(!groups.has(norm)){groups.set(norm,[]);order.push(norm);}
+    groups.get(norm).push(i);
+  }
+  const view=[];
+  order.forEach(norm=>{
+    const rows=groups.get(norm);
+    const primary=rows[0];
+    const merged={};
+    const sources={};
+    for(let c=0;c<=17;c++){
+      for(const r of rows){
+        const v=String(admJinCellValue(r,c)||'').trim();
+        if(v){merged[c]=v;sources[c]=r;break;}
+      }
+    }
+    view.push({primary,dups:rows.slice(1),merged,sources});
+  });
+  return view;
 }
 
 function admJinRender(){
@@ -5215,10 +5255,15 @@ function admJinRender(){
   const hint=Object.keys(reqs).length?`コース候補は朝刊 ${amCourses.length}件 / 夕刊 ${pmCourses.length}件 (マスタ R:U より)`:'マスタ取得失敗 — コース候補なし';
   // 同姓同名スキャン (バナー & ボタン)
   const nameDups=admJinScanDupNames();
-  h+=`<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;"><div style="color:var(--text-sub);font-size:11px;">📌 人員名簿シート — ${hint}</div>`;
+  h+=`<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;"><div style="color:var(--text-sub);font-size:11px;">📌 人員名簿シート — ${hint}${nameDups.size?` / 同姓同名 ${nameDups.size}名`:''}</div>`;
+  // トグル: 表示上の同姓同名統合 (シートは触らない)
+  const toggleBg=admJinDedupeMode?'#0ea5e9':'#cbd5e1';
+  h+=`<div style="display:flex;gap:6px;align-items:center;">`;
+  h+=`<button onclick="admJinToggleDedupe()" style="background:${toggleBg};color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;" title="同姓同名を表示上で1行に統合 (シート上のデータは保持)">🔍 統合表示: ${admJinDedupeMode?'ON':'OFF'}</button>`;
   if(nameDups.size){
-    h+=`<button onclick="admJinMergeDupNames()" style="background:#dc2626;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">🔧 同姓同名 ${nameDups.size}名を統合</button>`;
+    h+=`<button onclick="admJinMergeDupNames()" style="background:#fff;color:#dc2626;border:1px solid #dc2626;padding:6px 10px;border-radius:6px;cursor:pointer;font-weight:600;font-size:11px;" title="シート上の重複行も完全に統合する (永続変更)">🔧 シートも統合</button>`;
   }
+  h+=`</div>`;
   h+=`</div>`;
   h+=`<div id="adm-jin-dup-banner" style="margin-bottom:8px;padding:8px 12px;background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:6px;font-size:12px;font-weight:600;display:none;"></div>`;
   h+='<div style="overflow:auto;max-height:70vh;">';
@@ -5243,32 +5288,75 @@ function admJinRender(){
   });
   h+='</tr></thead><tbody>';
   let shown=0;
-  for(let i=2;i<rows.length;i++){
-    const r=rows[i]||[];
-    const area=String(r[0]||'').trim();
-    const range=String(r[1]||'').trim();
-    const name=String(r[2]||'').trim();
-    if(!area&&!name&&!range)continue;
-    if(areaF&&area!==areaF)continue;
-    if(search&&!name.includes(search)&&!area.includes(search)&&!range.includes(search))continue;
-    h+='<tr>';
-    h+=admSeCellHtml(i,0,admJinCellValue(i,0),admJinState.dirty.has(`${i},0`),null,80);
-    h+=admSeCellHtml(i,1,admJinCellValue(i,1),admJinState.dirty.has(`${i},1`),null,130);
-    h+=admSeCellHtml(i,2,admJinCellValue(i,2),admJinState.dirty.has(`${i},2`),null,110);
-    h+=admSeCellHtml(i,3,admJinCellValue(i,3),admJinState.dirty.has(`${i},3`),null,120);
-    // 朝刊月-日 (col 4-10): AM コース候補
-    for(let c=4;c<=10;c++){
-      h+=admJinCourseCellHtml(i,c,admJinCellValue(i,c),admJinState.dirty.has(`${i},${c}`),'adm-jin-am-list');
+  let hiddenDupRows=0;
+  if(admJinDedupeMode){
+    // 同姓同名統合表示: 1名1行 (プライマリ) でレンダリング
+    const view=admJinBuildMergedView();
+    view.forEach(item=>{
+      const i=item.primary;
+      const m=item.merged,sources=item.sources;
+      const area=m[0]||'',range=m[1]||'',name=m[2]||'';
+      if(!area&&!name&&!range)return;
+      if(areaF&&area!==areaF)return;
+      if(search&&!name.includes(search)&&!area.includes(search)&&!range.includes(search))return;
+      h+='<tr>';
+      const cellMerged=(c,minW)=>{
+        const v=m[c]||'';
+        const dirty=admJinState.dirty.has(`${i},${c}`);
+        const fromDup=v&&!dirty&&sources[c]!==undefined&&sources[c]!==i;
+        const safe=String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const bg=dirty?'background:#fef3c7;':(fromDup?'background:#eff6ff;':'');
+        const itStyle=fromDup?'font-style:italic;color:#475569;':'';
+        return `<td contenteditable="true" data-r="${i}" data-c="${c}" style="border:1px solid #e2e8f0;padding:2px 4px;min-width:${minW}px;font-size:11px;${bg}${itStyle}">${safe}</td>`;
+      };
+      h+=cellMerged(0,80);
+      h+=cellMerged(1,130);
+      h+=cellMerged(2,110);
+      h+=cellMerged(3,120);
+      for(let c=4;c<=10;c++){
+        const v=m[c]||'';
+        const dirty=admJinState.dirty.has(`${i},${c}`);
+        const fromDup=v&&!dirty&&sources[c]!==undefined&&sources[c]!==i;
+        h+=admJinCourseCellHtml(i,c,v,dirty,'adm-jin-am-list',fromDup);
+      }
+      for(let c=11;c<=17;c++){
+        const v=m[c]||'';
+        const dirty=admJinState.dirty.has(`${i},${c}`);
+        const fromDup=v&&!dirty&&sources[c]!==undefined&&sources[c]!==i;
+        h+=admJinCourseCellHtml(i,c,v,dirty,'adm-jin-pm-list',fromDup);
+      }
+      h+='</tr>';
+      shown++;
+      hiddenDupRows+=item.dups.length;
+    });
+  }else{
+    // Raw 表示: 全行
+    for(let i=2;i<rows.length;i++){
+      const r=rows[i]||[];
+      const area=String(r[0]||'').trim();
+      const range=String(r[1]||'').trim();
+      const name=String(r[2]||'').trim();
+      if(!area&&!name&&!range)continue;
+      if(areaF&&area!==areaF)continue;
+      if(search&&!name.includes(search)&&!area.includes(search)&&!range.includes(search))continue;
+      h+='<tr>';
+      h+=admSeCellHtml(i,0,admJinCellValue(i,0),admJinState.dirty.has(`${i},0`),null,80);
+      h+=admSeCellHtml(i,1,admJinCellValue(i,1),admJinState.dirty.has(`${i},1`),null,130);
+      h+=admSeCellHtml(i,2,admJinCellValue(i,2),admJinState.dirty.has(`${i},2`),null,110);
+      h+=admSeCellHtml(i,3,admJinCellValue(i,3),admJinState.dirty.has(`${i},3`),null,120);
+      for(let c=4;c<=10;c++){
+        h+=admJinCourseCellHtml(i,c,admJinCellValue(i,c),admJinState.dirty.has(`${i},${c}`),'adm-jin-am-list');
+      }
+      for(let c=11;c<=17;c++){
+        h+=admJinCourseCellHtml(i,c,admJinCellValue(i,c),admJinState.dirty.has(`${i},${c}`),'adm-jin-pm-list');
+      }
+      h+='</tr>';
+      shown++;
     }
-    // 夕刊月-日 (col 11-17): PM コース候補
-    for(let c=11;c<=17;c++){
-      h+=admJinCourseCellHtml(i,c,admJinCellValue(i,c),admJinState.dirty.has(`${i},${c}`),'adm-jin-pm-list');
-    }
-    h+='</tr>';
-    shown++;
   }
   h+='</tbody></table>';
-  h+=`<div style="padding:6px 4px;color:var(--text-sub);font-size:11px;">表示: ${shown}名</div>`;
+  const note=admJinDedupeMode&&hiddenDupRows?`(同姓同名 ${hiddenDupRows}行は非表示 / 淡青セルは重複行から拾った値、編集するとプライマリ行に保存)`:'';
+  h+=`<div style="padding:6px 4px;color:var(--text-sub);font-size:11px;">表示: ${shown}名 ${note}</div>`;
   h+='</div></div>';
   return h;
 }
