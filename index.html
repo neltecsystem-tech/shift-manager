@@ -5054,6 +5054,7 @@ async function admSeCheckGaps(){
 // 「曜日別コース人員早見表」を取得し AM/PM コース別×曜日別の担当者マップを返す
 // 戻り値: {orderedCourses:[], amMap:{course:{jsDay:staff}}, pmMap:{course:{jsDay:staff}}}
 // 早見表レイアウト: col0=AMコース, col1-7=月火水木金土日 / col9=PMコース, col10-16=月火水木金土日
+// orderedCourses はエリア別 (城北→川越→立川→川崎高津) + AM コース → PM 専用コース順にソート済
 async function admSeFetchDowRef(){
   const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'曜日別コース人員早見表'})});
   const j=await r.json();
@@ -5063,30 +5064,52 @@ async function admSeFetchDowRef(){
   // 早見表は月始まり: col 1/10=月, 2/11=火, 3/12=水, 4/13=木, 5/14=金, 6/15=土, 7/16=日
   const amDowToCol={1:1,2:2,3:3,4:4,5:5,6:6,0:7};
   const pmDowToCol={1:10,2:11,3:12,4:13,5:14,6:15,0:16};
-  const orderedCourses=[];
-  const seen=new Set();
   const amMap={},pmMap={};
+  const amOrder=new Map(); // course → 早見表で AM として最初に出現したインデックス
+  const pmOrder=new Map(); // course → 早見表で PM として最初に出現したインデックス
+  let idx=0;
   for(let i=1;i<rows.length;i++){
     const row=rows[i]||[];
     const amCourse=(row[0]||'').trim();
     const pmCourse=(row[9]||'').trim();
     if(amCourse){
-      if(!seen.has(amCourse)){orderedCourses.push(amCourse);seen.add(amCourse);}
       if(!amMap[amCourse])amMap[amCourse]={};
       Object.entries(amDowToCol).forEach(([js,col])=>{
         const v=(row[col]||'').trim();
         if(v)amMap[amCourse][js]=v;
       });
+      if(!amOrder.has(amCourse))amOrder.set(amCourse,idx++);
     }
     if(pmCourse){
-      if(!seen.has(pmCourse)){orderedCourses.push(pmCourse);seen.add(pmCourse);}
       if(!pmMap[pmCourse])pmMap[pmCourse]={};
       Object.entries(pmDowToCol).forEach(([js,col])=>{
         const v=(row[col]||'').trim();
         if(v)pmMap[pmCourse][js]=v;
       });
+      if(!pmOrder.has(pmCourse))pmOrder.set(pmCourse,idx++);
     }
   }
+  // エリア別 + AM コース→ PM 専用コース順にソート
+  // 同コースが AM/PM 両方に出る場合 (城北11、立川庫内 等) は AM バケット側に配置
+  const areas=['城北','川越','立川','川崎高津',''];
+  const buckets={};
+  areas.forEach(a=>{buckets[a]={am:[],pm:[]};});
+  const allCourses=new Set([...amOrder.keys(),...pmOrder.keys()]);
+  allCourses.forEach(c=>{
+    const a=areaOfCourse(c)||'';
+    const b=buckets[a]||buckets[''];
+    if(amOrder.has(c))b.am.push(c);
+    else b.pm.push(c);
+  });
+  areas.forEach(a=>{
+    buckets[a].am.sort((x,y)=>amOrder.get(x)-amOrder.get(y));
+    buckets[a].pm.sort((x,y)=>pmOrder.get(x)-pmOrder.get(y));
+  });
+  const orderedCourses=[];
+  areas.forEach(a=>{
+    buckets[a].am.forEach(c=>orderedCourses.push(c));
+    buckets[a].pm.forEach(c=>orderedCourses.push(c));
+  });
   return {orderedCourses,amMap,pmMap};
 }
 
