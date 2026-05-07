@@ -4693,7 +4693,20 @@ function admSeUpdateDirtyBadge(){
   const span=document.getElementById('adm-se-dirty');
   if(span)span.textContent=n;
   const btn=document.getElementById('adm-se-save');
-  if(btn)btn.disabled=n===0;
+  if(!btn)return;
+  // 見やすい表でドライバー重複がある場合は保存不可
+  let blockedByDup=false;
+  if(mode==='pretty'&&admSeState.rows.length){
+    blockedByDup=admSeFindStaffDups().size>0;
+  }
+  btn.disabled=(n===0)||blockedByDup;
+  if(blockedByDup){
+    btn.title='⚠️ ドライバー重複があるため保存できません';
+    btn.style.cursor='not-allowed';
+  }else{
+    btn.title='';
+    btn.style.cursor='';
+  }
 }
 
 // セル値取得 (dirty があれば dirty の値、なければ rows の値)
@@ -4854,7 +4867,7 @@ function admSeRefreshOverlays(){
 let _admSeOverlayTimer;
 function admSeScheduleOverlayRefresh(){
   clearTimeout(_admSeOverlayTimer);
-  _admSeOverlayTimer=setTimeout(admSeRefreshOverlays,300);
+  _admSeOverlayTimer=setTimeout(()=>{admSeRefreshOverlays();admSeUpdateDirtyBadge();},300);
 }
 
 // 単価マスタ + 人員名簿 からスタッフ名一覧を構築 (Section 1 のドライバー予測変換用)
@@ -5593,6 +5606,14 @@ async function admSeSave(){
   if((admSeState.mode||'pretty')==='jin')return admJinSave();
   if(!admSeState.dirty.size){alert('変更がありません');return;}
   if(!admSeState.sheetName)return;
+  // 見やすい表モードでドライバー重複がある場合は保存不可
+  if((admSeState.mode||'pretty')==='pretty'){
+    const dups=admSeFindStaffDups();
+    if(dups.size>0){
+      alert(`⚠️ ドライバー重複が ${dups.size} セルあります。\n重複を解消してから保存してください。`);
+      return;
+    }
+  }
   const msg=document.getElementById('adm-se-msg');
   const updates=[];
   admSeState.dirty.forEach((value,k)=>{
