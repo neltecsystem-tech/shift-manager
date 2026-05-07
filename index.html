@@ -476,6 +476,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('billcond')" id="adm-tab-billcond" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 請求条件</button>
         <button onclick="adminTab('paystatement')" id="adm-tab-paystatement" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💴 支払い明細</button>
         <button onclick="adminTab('employee')" id="adm-tab-employee" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">👤 社員管理</button>
+        <button onclick="adminTab('shiftedit')" id="adm-tab-shiftedit" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📝 シフト編集</button>
         <button onclick="adminTab('measure')" id="adm-tab-measure" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⏱ 測定データ</button>
         <button onclick="adminTab('settings')" id="adm-tab-settings" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⚙ システム設定</button>
       </div>
@@ -724,6 +725,22 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="adm-pay-msg" style="margin-top:8px;font-size:13px;"></div>
         <div id="adm-pay-content" style="margin-top:12px;"></div>
+      </div>
+
+      <!-- シフト編集 -->
+      <div id="adm-shiftedit" class="adm-panel" style="display:none;">
+        <div class="filters">
+          <div><label>シフト月</label><select id="adm-se-sheet" onchange="admSeLoad()"><option value="">選択してください</option></select></div>
+          <div><label>営業所フィルタ</label><select id="adm-se-area" onchange="admSeRender()"><option value="">すべて</option><option value="立川">立川</option><option value="城北">城北</option><option value="川越">川越</option><option value="川崎高津">川崎高津</option></select></div>
+          <div><label>スタッフ検索</label><input type="text" id="adm-se-search" placeholder="名前で絞り込み" oninput="dbInput('admSeRender',200)"></div>
+          <div style="margin-left:auto;display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;">
+            <button onclick="admSeNewMonth()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">➕ 新規月作成</button>
+            <button onclick="admSeReload()" style="background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="Google Sheets から再取得">🔄 再読込</button>
+            <button onclick="admSeSave()" id="adm-se-save" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" disabled>💾 保存 (<span id="adm-se-dirty">0</span>件)</button>
+          </div>
+        </div>
+        <div id="adm-se-msg" style="margin-top:8px;font-size:13px;color:var(--text-sub);"></div>
+        <div id="adm-se-content" style="margin-top:12px;overflow:auto;max-height:75vh;border:1px solid var(--border);border-radius:8px;background:#fff;"></div>
       </div>
 
       <!-- 社員管理 -->
@@ -3622,6 +3639,7 @@ function adminTab(t){
   if(t==='measure')admMsrInit();
   if(t==='paystatement')admPayInit().catch(()=>{});
   if(t==='employee')admEmpInit().catch(()=>{});
+  if(t==='shiftedit')admSeInit().catch(()=>{});
   if(t==='data')adminShowDataInfo();
   if(t==='settings')adminShowSysInfo();
 }
@@ -4549,6 +4567,210 @@ async function admRevLoad(){
 
   admRevData={sales,expenses,monthWork,expByCourse,expByArea,expByCourseDate,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays};
   admRevRender();
+}
+
+// --- シフト編集 (Spreadsheet エディタ) ---
+// 状態: 現在編集中のシート名 / 元データ / 編集後データ / 変更セル
+let admSeState={sheetName:'',rows:[],dirty:new Map()};
+async function admSeInit(){
+  // シート一覧をロード
+  const sel=document.getElementById('adm-se-sheet');
+  if(sel.options.length<=1){
+    try{
+      const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list_sheets'})});
+      const j=await r.json();
+      const sheets=(j.shift_sheets||[]).filter(s=>/^\d{1,2}月シフト\d{4}$/.test(s)||/^\d{1,2}月シフト$/.test(s));
+      // 新しい順
+      sheets.sort((a,b)=>{
+        const pa=parseMonthLabel(a),pb=parseMonthLabel(b);
+        if(!pa||!pb)return b.localeCompare(a);
+        return (pb.year-pa.year)||(pb.month-pa.month);
+      });
+      sel.innerHTML='<option value="">選択してください</option>'+sheets.map(s=>`<option value="${s}">${s}</option>`).join('');
+    }catch(e){
+      document.getElementById('adm-se-msg').innerHTML='<span style="color:var(--danger);">シート一覧の取得失敗: '+e.message+'</span>';
+    }
+  }
+}
+
+async function admSeLoad(){
+  const sheetName=document.getElementById('adm-se-sheet').value;
+  const msg=document.getElementById('adm-se-msg');
+  const cont=document.getElementById('adm-se-content');
+  if(!sheetName){cont.innerHTML='';return;}
+  if(admSeState.dirty.size&&!window.confirm('未保存の変更があります。破棄して読み込みますか?'))return;
+  msg.textContent='読み込み中...';msg.style.color='#3b82f6';
+  try{
+    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    admSeState={sheetName,rows:(j.rows||[]).map(r=>r.slice()),dirty:new Map()};
+    msg.textContent=`✓ ${sheetName} 読み込み完了 (${admSeState.rows.length}行)`;msg.style.color='#16a34a';
+    setTimeout(()=>{msg.textContent='';},2000);
+    admSeUpdateDirtyBadge();
+    admSeRender();
+  }catch(e){
+    msg.innerHTML='<span style="color:var(--danger);">読み込み失敗: '+e.message+'</span>';
+    cont.innerHTML='';
+  }
+}
+
+function admSeReload(){
+  const sn=document.getElementById('adm-se-sheet').value;
+  if(!sn){alert('シートを選択してください');return;}
+  admSeState.dirty.clear();
+  admSeLoad();
+}
+
+// セル変更を記録
+function admSeOnCellInput(ev){
+  const td=ev.target.closest('td[data-r]');
+  if(!td)return;
+  const r=Number(td.dataset.r),c=Number(td.dataset.c);
+  const newVal=td.innerText;
+  const origVal=admSeState.rows[r]?.[c]||'';
+  const k=`${r},${c}`;
+  if(newVal===origVal){
+    admSeState.dirty.delete(k);
+    td.style.background='';
+  }else{
+    admSeState.dirty.set(k,newVal);
+    td.style.background='#fef3c7';// 変更中ハイライト
+  }
+  admSeUpdateDirtyBadge();
+}
+
+function admSeUpdateDirtyBadge(){
+  const n=admSeState.dirty.size;
+  const span=document.getElementById('adm-se-dirty');
+  if(span)span.textContent=n;
+  const btn=document.getElementById('adm-se-save');
+  if(btn)btn.disabled=n===0;
+}
+
+// 描画 (フィルタ適用)
+function admSeRender(){
+  const cont=document.getElementById('adm-se-content');
+  if(!admSeState.rows.length){cont.innerHTML='<p style="padding:20px;color:var(--text-sub);text-align:center;">シートを選択してください</p>';return;}
+  const areaF=(document.getElementById('adm-se-area')||{}).value||'';
+  const search=((document.getElementById('adm-se-search')||{}).value||'').trim();
+  const rows=admSeState.rows;
+  // 全行を表示するが、フィルタにヒットする行をハイライト or 該当のみ表示
+  const rowMatches=new Array(rows.length).fill(true);
+  if(areaF||search){
+    // セクション/ブロック/コース判定: row 0 は空, row 7-115 はコース行 (col 0)
+    // section 2 のサブブロックヘッダ (col 0=営業所名 or 空+col 1=日付) も考慮
+    // シンプルに: 行内に検索/エリアを含むかでフィルタ
+    rows.forEach((r,i)=>{
+      const txt=(r||[]).join(' ');
+      let m=true;
+      if(areaF&&!txt.includes(areaF))m=false;
+      if(search&&!txt.includes(search))m=false;
+      rowMatches[i]=m;
+    });
+  }
+  // 列数の最大値
+  const maxCol=Math.max(...rows.map(r=>(r||[]).length),1);
+  // ビュー: filter 有効時はマッチ行のみ表示
+  const visibleRows=(areaF||search)?rows.map((_,i)=>i).filter(i=>rowMatches[i]):rows.map((_,i)=>i);
+  let h=`<table style="border-collapse:collapse;font-size:11px;font-family:'Yu Gothic UI',sans-serif;white-space:nowrap;">`;
+  // 列ヘッダ (A B C ...)
+  h+='<thead><tr style="background:#f1f5f9;position:sticky;top:0;z-index:2;"><th style="border:1px solid #cbd5e1;padding:2px 6px;background:#e2e8f0;position:sticky;left:0;z-index:3;">行＼列</th>';
+  for(let c=0;c<maxCol;c++){
+    h+=`<th style="border:1px solid #cbd5e1;padding:2px 6px;min-width:60px;color:var(--text-sub);font-size:10px;">${admSeColLabel(c)}</th>`;
+  }
+  h+='</tr></thead><tbody>';
+  visibleRows.forEach(ri=>{
+    const r=rows[ri]||[];
+    h+=`<tr><td style="border:1px solid #cbd5e1;padding:2px 6px;background:#f8fafc;color:var(--text-sub);font-size:10px;position:sticky;left:0;z-index:1;">${ri+1}</td>`;
+    for(let c=0;c<maxCol;c++){
+      const v=r[c]||'';
+      const k=`${ri},${c}`;
+      const dirty=admSeState.dirty.has(k);
+      const cur=dirty?admSeState.dirty.get(k):v;
+      const safe=String(cur).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const bg=dirty?'background:#fef3c7;':'';
+      h+=`<td contenteditable="true" data-r="${ri}" data-c="${c}" style="border:1px solid #e2e8f0;padding:2px 6px;min-width:60px;${bg}">${safe}</td>`;
+    }
+    h+='</tr>';
+  });
+  h+='</tbody></table>';
+  cont.innerHTML=h;
+  // 変更時イベント
+  cont.querySelectorAll('td[data-r]').forEach(td=>{
+    td.addEventListener('blur',admSeOnCellInput);
+    td.addEventListener('input',admSeOnCellInput);
+  });
+}
+
+function admSeColLabel(c){
+  let s='';let n=c;
+  while(n>=0){s=String.fromCharCode(65+(n%26))+s;n=Math.floor(n/26)-1;}
+  return s;
+}
+
+async function admSeSave(){
+  if(!admSeState.dirty.size){alert('変更がありません');return;}
+  if(!admSeState.sheetName)return;
+  const msg=document.getElementById('adm-se-msg');
+  const updates=[];
+  admSeState.dirty.forEach((value,k)=>{
+    const [r,c]=k.split(',').map(Number);
+    updates.push({row:r,col:c,value});
+  });
+  if(!window.confirm(`${admSeState.sheetName} に ${updates.length} 件の変更を保存します。続行?`))return;
+  msg.textContent=`保存中... (${updates.length}件)`;msg.style.color='#3b82f6';
+  try{
+    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:admSeState.sheetName,updates})});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    // 元データに反映
+    updates.forEach(u=>{
+      if(!admSeState.rows[u.row])admSeState.rows[u.row]=[];
+      admSeState.rows[u.row][u.col]=u.value;
+    });
+    admSeState.dirty.clear();
+    admSeUpdateDirtyBadge();
+    msg.textContent=`✓ 保存完了 (${j.updated}セル更新)`;msg.style.color='#16a34a';
+    setTimeout(()=>{msg.textContent='';},3000);
+    admSeRender();
+    // 既存キャッシュも更新するため fresh fetch
+    const parsed=parseMonthLabel(admSeState.sheetName);
+    if(parsed)forceFreshShift(parsed.year,parsed.month).catch(()=>{});
+  }catch(e){
+    msg.innerHTML='<span style="color:var(--danger);">保存失敗: '+e.message+'</span>';
+  }
+}
+
+async function admSeNewMonth(){
+  const ym=window.prompt('新規作成する年月を入力してください (例: 2026-06)','');
+  if(!ym)return;
+  const m=ym.match(/^(\d{4})-(\d{1,2})$/);
+  if(!m){alert('YYYY-MM 形式で入力してください');return;}
+  const year=Number(m[1]),month=Number(m[2]);
+  const sheetName=`${month}月シフト${year}`;
+  // 前月をテンプレートにするか確認
+  const prevDate=new Date(year,month-2,1);// month-1-1 → month-2 は前月の月
+  const prevSheet=`${prevDate.getMonth()+1}月シフト${prevDate.getFullYear()}`;
+  const useTpl=window.confirm(`「${sheetName}」を作成します。\n\n前月のシフト「${prevSheet}」をテンプレートとしてコピーしますか?\n[OK] = 前月をコピー / [キャンセル] = 空で作成`);
+  const msg=document.getElementById('adm-se-msg');
+  msg.textContent=`新規シート作成中: ${sheetName}...`;msg.style.color='#3b82f6';
+  try{
+    const body={action:'create_sheet',sheet_name:sheetName};
+    if(useTpl)body.template_sheet_name=prevSheet;
+    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    msg.textContent=`✓ ${sheetName} を作成しました${useTpl?` (${prevSheet} からコピー)`:''}`;msg.style.color='#16a34a';
+    // シート一覧を再ロード
+    const sel=document.getElementById('adm-se-sheet');
+    sel.innerHTML='<option value="">選択してください</option>';
+    await admSeInit();
+    sel.value=sheetName;
+    admSeLoad();
+  }catch(e){
+    msg.innerHTML='<span style="color:var(--danger);">作成失敗: '+e.message+'</span>';
+  }
 }
 
 // --- 社員管理 ---
