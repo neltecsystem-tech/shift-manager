@@ -3396,7 +3396,18 @@ async function invSaveRate(){
   const kwAmDaily=['mon','tue','wed','thu','fri','sat','sun'].map(d=>document.getElementById('inv-re-kw-'+d).value).join(',');
   const kwPattern=document.getElementById('inv-re-kw-pattern').value;
   const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,am_sunday:document.getElementById('inv-re-am-sun').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,pm_sunday:document.getElementById('inv-re-pm-sun').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value,calc_type_pm:document.getElementById('inv-re-calc-pm').value,unit_price_pm:document.getElementById('inv-re-unit-pm').value,permissions:perms,kw_am_daily:kwAmDaily.replace(/^,+$/,''),kw_pattern:kwPattern,monthly_salary:document.getElementById('inv-re-salary').value||''};
+  const isNewStaff=!rowNum;
   await invApi({action:'save_rate',record,row_number:rowNum?parseInt(rowNum):undefined});
+  // 新規スタッフ時は人員名簿シートにも氏名のみで自動追加 (拠点/契約範囲/電話/曜日別はあとで人員名簿モードで補完)
+  if(isNewStaff){
+    try{
+      const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:'人員名簿',values:['','',name]})});
+      const j=await r.json();
+      if(j.error)console.warn('人員名簿への自動追加失敗:',j.error);
+      // 人員名簿キャッシュをクリア (次回モード切替時に再取得)
+      if(typeof admJinState!=='undefined')admJinState.loaded=false;
+    }catch(e){console.warn('人員名簿への自動追加失敗:',e);}
+  }
   document.getElementById('inv-rate-edit').style.display='none';
   await invLoadAll();
   if(adminAuthed){adminLoadStaff();}
