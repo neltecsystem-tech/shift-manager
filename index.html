@@ -4683,6 +4683,8 @@ function admSeOnCellInput(ev){
     host.style.background='#fef3c7';// 変更中ハイライト
   }
   admSeUpdateDirtyBadge();
+  // ドライバー重複 & 抜け数バナーをデバウンス再計算
+  admSeScheduleOverlayRefresh();
 }
 
 function admSeUpdateDirtyBadge(){
@@ -4712,17 +4714,122 @@ function admSeCellHtml(r,c,val,dirty,color,minWidth,blackout){
 }
 
 // スタッフ名 datalist セル (Section 1 のドライバー割当用)
-function admSeStaffCellHtml(r,c,val,dirty,minWidth,blackout){
+function admSeStaffCellHtml(r,c,val,dirty,minWidth,blackout,isDup){
   const safe=String(val).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
   let bg='';
   if(blackout)bg='background:#000;';
+  else if(isDup)bg='background:#fee2e2;';
   else if(dirty)bg='background:#fef3c7;';
   const mw=minWidth?`min-width:${minWidth}px;`:'min-width:55px;';
-  const inputColor=blackout?'color:#000;caret-color:#fff;':'';
+  let inputColor='';
+  if(blackout)inputColor='color:#000;caret-color:#fff;';
+  else if(isDup)inputColor='color:#991b1b;font-weight:600;';
+  const title=isDup?'title="⚠️ 同日同編で重複"':'';
   return `<td style="border:1px solid #e2e8f0;padding:0;${mw}font-size:11px;${bg}">`+
-    `<input type="text" list="adm-se-staff-list" data-r="${r}" data-c="${c}" value="${safe}" `+
+    `<input type="text" list="adm-se-staff-list" data-r="${r}" data-c="${c}" value="${safe}" ${title} `+
     `style="border:none;padding:2px 4px;font-size:11px;width:100%;background:transparent;outline:none;${inputColor}"/>`+
   `</td>`;
+}
+
+// Section 1 ドライバー重複スキャン: 同一日付列 (col / col+1) で同じ名前が複数行にあれば重複
+// 戻り値: Set<"r,c"> 重複セルのキー
+function admSeFindStaffDups(){
+  const dupCells=new Set();
+  const rows=admSeState.rows;
+  if(!rows.length)return dupCells;
+  const dateRow=rows[0]||[];
+  const cols=[];
+  for(let c=1;c<dateRow.length;c++){
+    if(/^\d{1,2}\/\d{1,2}$/.test(String(dateRow[c]||'').trim()))cols.push(c);
+  }
+  const SPECIAL=/ミーティング|希望休|引継|研修|有給|欠勤|出張|五反田|目黒|渋谷|休刊/;
+  cols.forEach(c=>{
+    [c,c+1].forEach(col=>{
+      const map=new Map();
+      for(let i=6;i<Math.min(116,rows.length);i++){
+        const v=String(admSeCellValue(i,col)||'').trim();
+        if(!v||v==='0')continue;
+        if(SPECIAL.test(v))continue;
+        if(!map.has(v))map.set(v,[]);
+        map.get(v).push(i);
+      }
+      map.forEach((rs,name)=>{
+        if(rs.length>1)rs.forEach(r=>dupCells.add(`${r},${col}`));
+      });
+    });
+  });
+  return dupCells;
+}
+
+// シフト抜け数をエリア別に集計 (admSeFindGaps の結果を areaOfCourse でグループ化)
+function admSeGapsByArea(){
+  if(!admSeMasterReqs)return {};
+  const gaps=admSeFindGaps(admSeMasterReqs);
+  const counts={};
+  gaps.forEach(g=>{
+    const a=areaOfCourse(g.course);
+    if(!a)return;
+    counts[a]=(counts[a]||0)+1;
+  });
+  return counts;
+}
+
+// 重複セル & 抜け数バナーをライブ更新 (再描画なしで DOM 更新)
+function admSeRefreshOverlays(){
+  const cont=document.getElementById('adm-se-content');
+  if(!cont)return;
+  const mode=admSeState.mode||'pretty';
+  if(mode!=='pretty')return;
+  // 重複ハイライト
+  const dups=admSeFindStaffDups();
+  cont.querySelectorAll('input[data-r][data-c][list="adm-se-staff-list"]').forEach(el=>{
+    const r=el.dataset.r,c=el.dataset.c;
+    const k=`${r},${c}`;
+    const td=el.closest('td');
+    if(!td)return;
+    const isDup=dups.has(k);
+    const isDirty=admSeState.dirty.has(k);
+    const isBlack=td.style.background==='rgb(0, 0, 0)'||/background:[^;]*#000/i.test(td.getAttribute('style')||'');
+    if(isDup){
+      td.style.background='#fee2e2';
+      el.style.color='#991b1b';
+      el.style.fontWeight='600';
+      el.title='⚠️ 同日同編で重複';
+    }else if(!isBlack){
+      td.style.background=isDirty?'#fef3c7':'';
+      el.style.color='';
+      el.style.fontWeight='';
+      el.title='';
+    }
+  });
+  // 抜け数バナー更新
+  const banner=document.getElementById('adm-se-gap-banner');
+  if(banner&&admSeMasterReqs){
+    const counts=admSeGapsByArea();
+    const areas=['城北','川越','立川','川崎高津'];
+    const total=areas.reduce((s,a)=>s+(counts[a]||0),0);
+    if(total>0){
+      const parts=areas.filter(a=>counts[a]).map(a=>`${a} ${counts[a]}箇所`).join('　');
+      banner.innerHTML=`⚠️ シフト抜け: ${parts} (合計 ${total}箇所)`;
+      banner.style.display='block';
+      banner.style.background='#fef3c7';
+      banner.style.color='#92400e';
+      banner.style.borderColor='#fde68a';
+    }else{
+      banner.innerHTML='✓ シフト抜けなし';
+      banner.style.display='block';
+      banner.style.background='#dcfce7';
+      banner.style.color='#166534';
+      banner.style.borderColor='#bbf7d0';
+    }
+  }
+}
+
+// 入力デバウンス用タイマー
+let _admSeOverlayTimer;
+function admSeScheduleOverlayRefresh(){
+  clearTimeout(_admSeOverlayTimer);
+  _admSeOverlayTimer=setTimeout(admSeRefreshOverlays,300);
 }
 
 // 単価マスタ + 人員名簿 からスタッフ名一覧を構築 (Section 1 のドライバー予測変換用)
@@ -4798,6 +4905,9 @@ function admSeRender(){
   if(mode==='jin'){
     // 初回レンダリング時にコース重複ハイライト + バナー
     admJinHighlightDups();
+  }else if(mode==='pretty'&&admSeState.rows.length){
+    // 見やすい表: 抜け数バナー + 重複セル更新
+    admSeRefreshOverlays();
   }
 }
 
@@ -4875,6 +4985,11 @@ function admSeRenderPretty(){
   }
 
   let h=`<div style="padding:10px;">`;
+  // 抜け数バナー (admSeRefreshOverlays でライブ更新)
+  h+=`<div id="adm-se-gap-banner" style="margin-bottom:8px;padding:8px 12px;background:#fef3c7;color:#92400e;border:1px solid #fde68a;border-radius:6px;font-size:12px;font-weight:600;display:none;"></div>`;
+
+  // 重複ハイライトのために事前計算
+  const dupCells=admSeFindStaffDups();
 
   // === Section 1 ===
   // section 1 の編集列 (row 5 から朝刊/夕刊): col 1=朝刊, col 2=夕刊, col 3=朝刊, ...
@@ -4914,8 +5029,10 @@ function admSeRenderPretty(){
         const pmDirty=admSeState.dirty.has(`${rowIdx},${d.col+1}`);
         const amBlack=admSeIsBlackout(course,d.dow,false);
         const pmBlack=admSeIsBlackout(course,d.dow,true);
-        h+=admSeStaffCellHtml(rowIdx,d.col,am,amDirty,55,amBlack);
-        h+=admSeStaffCellHtml(rowIdx,d.col+1,pm,pmDirty,55,pmBlack);
+        const amDup=dupCells.has(`${rowIdx},${d.col}`);
+        const pmDup=dupCells.has(`${rowIdx},${d.col+1}`);
+        h+=admSeStaffCellHtml(rowIdx,d.col,am,amDirty,55,amBlack,amDup);
+        h+=admSeStaffCellHtml(rowIdx,d.col+1,pm,pmDirty,55,pmBlack,pmDup);
       });
       h+='</tr>';
     });
