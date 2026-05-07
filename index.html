@@ -4780,8 +4780,16 @@ function admSeRefreshOverlays(){
   if(!cont)return;
   const mode=admSeState.mode||'pretty';
   if(mode!=='pretty')return;
-  // 重複ハイライト
+  // 重複ハイライト + エリア別カウント
   const dups=admSeFindStaffDups();
+  const dupByArea={};
+  dups.forEach(k=>{
+    const [r]=k.split(',').map(Number);
+    const course=String((admSeState.rows[r]||[])[0]||'').trim();
+    const a=areaOfCourse(course);
+    if(!a)return;
+    dupByArea[a]=(dupByArea[a]||0)+1;
+  });
   cont.querySelectorAll('input[data-r][data-c][list="adm-se-staff-list"]').forEach(el=>{
     const r=el.dataset.r,c=el.dataset.c;
     const k=`${r},${c}`;
@@ -4802,25 +4810,42 @@ function admSeRefreshOverlays(){
       el.title='';
     }
   });
-  // 抜け数バナー更新
+  // バナー更新 (重複 + 抜け数 を併記)
   const banner=document.getElementById('adm-se-gap-banner');
-  if(banner&&admSeMasterReqs){
-    const counts=admSeGapsByArea();
+  if(banner){
     const areas=['城北','川越','立川','川崎高津'];
-    const total=areas.reduce((s,a)=>s+(counts[a]||0),0);
-    if(total>0){
-      const parts=areas.filter(a=>counts[a]).map(a=>`${a} ${counts[a]}箇所`).join('　');
-      banner.innerHTML=`⚠️ シフト抜け: ${parts} (合計 ${total}箇所)`;
+    const dupTotal=areas.reduce((s,a)=>s+(dupByArea[a]||0),0);
+    const lines=[];
+    if(dupTotal>0){
+      const parts=areas.filter(a=>dupByArea[a]).map(a=>`${a} ${dupByArea[a]}箇所`).join('　');
+      lines.push(`<div style="color:#991b1b;">⚠️ ドライバー重複: ${parts} (合計 ${dupTotal}箇所)</div>`);
+    }
+    if(admSeMasterReqs){
+      const counts=admSeGapsByArea();
+      const gapTotal=areas.reduce((s,a)=>s+(counts[a]||0),0);
+      if(gapTotal>0){
+        const parts=areas.filter(a=>counts[a]).map(a=>`${a} ${counts[a]}箇所`).join('　');
+        lines.push(`<div style="color:#92400e;">⚠️ シフト抜け: ${parts} (合計 ${gapTotal}箇所)</div>`);
+      }else if(!dupTotal){
+        lines.push(`<div style="color:#166534;">✓ シフト抜け・重複なし</div>`);
+      }
+    }
+    if(lines.length){
+      banner.innerHTML=lines.join('');
       banner.style.display='block';
-      banner.style.background='#fef3c7';
-      banner.style.color='#92400e';
-      banner.style.borderColor='#fde68a';
+      // 背景色は最も重要度の高いものに合わせる
+      if(dupTotal>0){
+        banner.style.background='#fef2f2';
+        banner.style.borderColor='#fecaca';
+      }else if(admSeMasterReqs&&areas.reduce((s,a)=>s+(admSeGapsByArea()[a]||0),0)>0){
+        banner.style.background='#fef3c7';
+        banner.style.borderColor='#fde68a';
+      }else{
+        banner.style.background='#dcfce7';
+        banner.style.borderColor='#bbf7d0';
+      }
     }else{
-      banner.innerHTML='✓ シフト抜けなし';
-      banner.style.display='block';
-      banner.style.background='#dcfce7';
-      banner.style.color='#166534';
-      banner.style.borderColor='#bbf7d0';
+      banner.style.display='none';
     }
   }
 }
