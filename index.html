@@ -5051,6 +5051,45 @@ async function admSeCheckGaps(){
   }
 }
 
+// 「曜日別コース人員早見表」を取得し AM/PM コース別×曜日別の担当者マップを返す
+// 戻り値: {orderedCourses:[], amMap:{course:{jsDay:staff}}, pmMap:{course:{jsDay:staff}}}
+// 早見表レイアウト: col0=AMコース, col1-7=月火水木金土日 / col9=PMコース, col10-16=月火水木金土日
+async function admSeFetchDowRef(){
+  const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'曜日別コース人員早見表'})});
+  const j=await r.json();
+  if(j.error)throw new Error('曜日別コース人員早見表 取得失敗: '+j.error);
+  const rows=j.rows||[];
+  // js getDay(): 0=Sun, 1=Mon, ..., 6=Sat
+  // 早見表は月始まり: col 1/10=月, 2/11=火, 3/12=水, 4/13=木, 5/14=金, 6/15=土, 7/16=日
+  const amDowToCol={1:1,2:2,3:3,4:4,5:5,6:6,0:7};
+  const pmDowToCol={1:10,2:11,3:12,4:13,5:14,6:15,0:16};
+  const orderedCourses=[];
+  const seen=new Set();
+  const amMap={},pmMap={};
+  for(let i=1;i<rows.length;i++){
+    const row=rows[i]||[];
+    const amCourse=(row[0]||'').trim();
+    const pmCourse=(row[9]||'').trim();
+    if(amCourse){
+      if(!seen.has(amCourse)){orderedCourses.push(amCourse);seen.add(amCourse);}
+      if(!amMap[amCourse])amMap[amCourse]={};
+      Object.entries(amDowToCol).forEach(([js,col])=>{
+        const v=(row[col]||'').trim();
+        if(v)amMap[amCourse][js]=v;
+      });
+    }
+    if(pmCourse){
+      if(!seen.has(pmCourse)){orderedCourses.push(pmCourse);seen.add(pmCourse);}
+      if(!pmMap[pmCourse])pmMap[pmCourse]={};
+      Object.entries(pmDowToCol).forEach(([js,col])=>{
+        const v=(row[col]||'').trim();
+        if(v)pmMap[pmCourse][js]=v;
+      });
+    }
+  }
+  return {orderedCourses,amMap,pmMap};
+}
+
 async function admSeNewMonth(){
   const ym=window.prompt('新規作成する年月を入力 (例: 2026-06)','');
   if(!ym)return;
@@ -5060,28 +5099,27 @@ async function admSeNewMonth(){
   const sheetName=`${month}月シフト${year}`;
   const dows=['日','月','火','水','木','金','土'];
   const lastDay=new Date(year,month,0).getDate();
-  if(!window.confirm(`「${sheetName}」を作成します。\n\nマスタ R 列のコース一覧から自動生成:\n• 日付 (${month}/1〜${month}/${lastDay})\n• 曜日\n• 朝刊/夕刊 ヘッダ\n• 全コース行 (空セル)\n\n続行?`))return;
+  if(!window.confirm(`「${sheetName}」を作成します。\n\n「曜日別コース人員早見表」を基に各曜日の担当者を自動入力:\n• 日付 (${month}/1〜${month}/${lastDay})\n• 曜日\n• 朝刊/夕刊 ヘッダ\n• コース行 (曜日別担当者を自動展開)\n\n続行?`))return;
 
   const msg=document.getElementById('adm-se-msg');
-  msg.textContent='マスタ取得中...';msg.style.color='#3b82f6';
+  msg.textContent='曜日別コース人員早見表 取得中...';msg.style.color='#3b82f6';
   try{
-    // 1. マスタからコース一覧取得
-    const reqs=await admSeLoadMaster();
-    const courses=Object.keys(reqs);
-    if(!courses.length)throw new Error('マスタにコースが見つかりません');
+    // 1. 早見表から AM/PM コース別×曜日別マップを構築
+    const {orderedCourses,amMap,pmMap}=await admSeFetchDowRef();
+    if(!orderedCourses.length)throw new Error('早見表にコースが見つかりません');
 
     // 2. 日付リスト
     const dates=[];
     for(let d=1;d<=lastDay;d++){
       const dt=new Date(year,month-1,d);
-      dates.push({day:d,dow:dows[dt.getDay()]});
+      dates.push({day:d,dow:dows[dt.getDay()],js:dt.getDay()});
     }
 
     // 3. シート用 2D 配列を構築
     // Row 0: 日付 (col 1=date1, col 3=date2, ...)
     // Row 3: 曜日 (col 1=dow1, col 3=dow2, ...)
     // Row 5: 朝刊/夕刊 (col 1=朝刊, col 2=夕刊, ...)
-    // Row 7+: コース (col 0=course)
+    // Row 7+: コース (col 0=course, col 1+i*2=AM staff, col 2+i*2=PM staff)
     const numCols=1+dates.length*2;
     const mkRow=()=>new Array(numCols).fill('');
     const sheetRows=[];
@@ -5092,7 +5130,22 @@ async function admSeNewMonth(){
     sheetRows.push(mkRow());// Row 4
     const r5=mkRow();dates.forEach((d,i)=>{r5[1+i*2]='朝刊';r5[2+i*2]='夕刊';});sheetRows.push(r5);
     sheetRows.push(mkRow());// Row 6
-    courses.forEach(c=>{const cr=mkRow();cr[0]=c;sheetRows.push(cr);});
+    let filledCells=0;
+    orderedCourses.forEach(c=>{
+      const cr=mkRow();
+      cr[0]=c;
+      const amDow=amMap[c]||{};
+      const pmDow=pmMap[c]||{};
+      dates.forEach((d,i)=>{
+        const am=amDow[d.js]||'';
+        const pm=pmDow[d.js]||'';
+        cr[1+i*2]=am;
+        cr[2+i*2]=pm;
+        if(am)filledCells++;
+        if(pm)filledCells++;
+      });
+      sheetRows.push(cr);
+    });
 
     // 4. 空シート作成 → update_range で全部書き込み
     msg.textContent=`シート作成: ${sheetName}...`;
@@ -5100,14 +5153,14 @@ async function admSeNewMonth(){
     const cj=await cr.json();
     if(cj.error)throw new Error(cj.error);
 
-    msg.textContent=`日付 ${dates.length}日 + コース ${courses.length}件 を書き込み中...`;
+    msg.textContent=`日付 ${dates.length}日 + コース ${orderedCourses.length}件 + 担当者 ${filledCells}セル を書き込み中...`;
     const colEnd=admSeColLabel(numCols-1);
     const range=`A1:${colEnd}${sheetRows.length}`;
     const ur=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:sheetName,range,values:sheetRows})});
     const uj=await ur.json();
     if(uj.error)throw new Error(uj.error);
 
-    msg.textContent=`✓ ${sheetName} を作成しました (コース${courses.length}件 / ${lastDay}日)`;msg.style.color='#16a34a';
+    msg.textContent=`✓ ${sheetName} を作成しました (コース${orderedCourses.length}件 / ${lastDay}日 / 担当${filledCells}セル自動入力)`;msg.style.color='#16a34a';
     setTimeout(()=>{const m2=document.getElementById('adm-se-msg');if(m2&&m2.textContent.includes(sheetName))m2.textContent='';},5000);
 
     // シート一覧を再ロード
