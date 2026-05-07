@@ -4740,6 +4740,8 @@ function admSeRender(){
       el.addEventListener('input',handler);
       el.addEventListener('change',handler);
     });
+    // 初回レンダリング時にコース重複ハイライト + バナー
+    admJinHighlightDups();
   }
 }
 
@@ -5012,12 +5014,85 @@ function admJinOnCellInput(ev){
   const k=`${r},${c}`;
   if(newVal===origVal){
     admJinState.dirty.delete(k);
-    host.style.background='';
   }else{
     admJinState.dirty.set(k,newVal);
-    host.style.background='#fef3c7';
   }
   admSeUpdateDirtyBadge();
+  // コース列 (4-17) の場合は重複再判定
+  if(c>=4&&c<=17)admJinHighlightDups();
+}
+
+// コース重複スキャン: cols 4-17 で同じ値が複数行に出ていたら検出
+// 戻り値: [{col, course, rows:[rowIdx,...]}]
+function admJinScanAllDups(){
+  const dups=[];
+  for(let c=4;c<=17;c++){
+    const map=new Map();
+    for(let i=2;i<admJinState.rows.length;i++){
+      const v=String(admJinCellValue(i,c)||'').trim();
+      if(!v)continue;
+      if(!map.has(v))map.set(v,[]);
+      map.get(v).push(i);
+    }
+    map.forEach((rows,course)=>{
+      if(rows.length>1)dups.push({col:c,course,rows});
+    });
+  }
+  return dups;
+}
+
+// 重複セルの背景を赤、それ以外は dirty なら黄、なければクリア
+function admJinHighlightDups(){
+  const cont=document.getElementById('adm-se-content');
+  if(!cont)return;
+  for(let c=4;c<=17;c++){
+    const counts=new Map();// course → [el,...]
+    cont.querySelectorAll(`input[data-c="${c}"][data-r]`).forEach(el=>{
+      const v=String(el.value||'').trim();
+      if(!v){
+        el.style.background='';el.title='';
+        return;
+      }
+      if(!counts.has(v))counts.set(v,[]);
+      counts.get(v).push(el);
+    });
+    counts.forEach((els,course)=>{
+      const isDup=els.length>1;
+      els.forEach(el=>{
+        const r=Number(el.dataset.r);
+        const k=`${r},${c}`;
+        if(isDup){
+          el.style.background='#fee2e2';
+          el.title=`重複: ${course} (${els.length}人)`;
+        }else if(admJinState.dirty.has(k)){
+          el.style.background='#fef3c7';
+          el.title='';
+        }else{
+          el.style.background='';
+          el.title='';
+        }
+      });
+    });
+  }
+  admJinUpdateDupBanner();
+}
+
+function admJinUpdateDupBanner(){
+  const banner=document.getElementById('adm-jin-dup-banner');
+  if(!banner)return;
+  const dups=admJinScanAllDups();
+  if(!dups.length){
+    banner.style.display='none';
+    return;
+  }
+  const dows=['月','火','水','木','金','土','日'];
+  const lines=dups.slice(0,12).map(d=>{
+    const isPm=d.col>=11;
+    const di=isPm?d.col-11:d.col-4;
+    return `${isPm?'夕':'朝'}${dows[di]} ${d.course}(${d.rows.length}人)`;
+  });
+  banner.style.display='block';
+  banner.innerHTML=`⚠️ コース重複 ${dups.length}件: ${lines.join(' / ')}${dups.length>12?' …':''}`;
 }
 
 // コース選択セル (datalist 補完付き input を内包する td)
@@ -5050,6 +5125,7 @@ function admJinRender(){
   h+='<datalist id="adm-jin-pm-list">'+pmCourses.map(c=>`<option value="${c}"></option>`).join('')+'</datalist>';
   const hint=Object.keys(reqs).length?`コース候補は朝刊 ${amCourses.length}件 / 夕刊 ${pmCourses.length}件 (マスタ R:U より)`:'マスタ取得失敗 — コース候補なし';
   h+=`<div style="margin-bottom:8px;color:var(--text-sub);font-size:11px;">📌 人員名簿シート — ${hint}</div>`;
+  h+=`<div id="adm-jin-dup-banner" style="margin-bottom:8px;padding:8px 12px;background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:6px;font-size:12px;font-weight:600;display:none;"></div>`;
   h+='<div style="overflow:auto;max-height:70vh;">';
   h+='<table style="border-collapse:collapse;font-size:11px;white-space:nowrap;">';
   h+='<thead style="position:sticky;top:0;z-index:2;">';
@@ -5110,6 +5186,18 @@ async function admJinSave(){
     const [r,c]=k.split(',').map(Number);
     updates.push({row:r,col:c,value});
   });
+  // 保存前にコース重複チェック
+  const dups=admJinScanAllDups();
+  if(dups.length){
+    const dows=['月','火','水','木','金','土','日'];
+    const lines=dups.map(d=>{
+      const isPm=d.col>=11;
+      const di=isPm?d.col-11:d.col-4;
+      const names=d.rows.map(r=>String(admJinCellValue(r,2)||'?').trim()).join(', ');
+      return `${isPm?'夕刊':'朝刊'}${dows[di]} ${d.course}: ${names}`;
+    });
+    if(!window.confirm(`⚠️ コース重複が ${dups.length} 件あります:\n\n${lines.slice(0,15).join('\n')}${lines.length>15?'\n...':''}\n\nこのまま保存しますか?`))return;
+  }
   if(!window.confirm(`人員名簿に ${updates.length} 件の変更を保存します。続行?`))return;
   msg.textContent=`人員名簿 保存中... (${updates.length}件)`;msg.style.color='#3b82f6';
   try{
