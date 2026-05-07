@@ -4729,10 +4729,18 @@ function admSeRender(){
   cont.innerHTML=h;
   // 変更時イベント (モードに応じてハンドラを切替)
   const handler=mode==='jin'?admJinOnCellInput:admSeOnCellInput;
-  cont.querySelectorAll('td[data-r]').forEach(td=>{
-    td.addEventListener('blur',handler);
-    td.addEventListener('input',handler);
+  cont.querySelectorAll('td[data-r]').forEach(el=>{
+    el.addEventListener('blur',handler);
+    el.addEventListener('input',handler);
   });
+  // 人員名簿のコース選択 input (datalist 補完付) もハンドル
+  if(mode==='jin'){
+    cont.querySelectorAll('input[data-r]').forEach(el=>{
+      el.addEventListener('blur',handler);
+      el.addEventListener('input',handler);
+      el.addEventListener('change',handler);
+    });
+  }
 }
 
 // Raw グリッド (旧モード)
@@ -4960,7 +4968,11 @@ async function admJinLoad(){
   const msg=document.getElementById('adm-se-msg');
   msg.textContent='人員名簿 読み込み中...';msg.style.color='#3b82f6';
   try{
-    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'人員名簿'})});
+    const [r,_]=await Promise.all([
+      fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'人員名簿'})}),
+      // マスタも先にロード (コース ドロップダウンの候補に使う)
+      admSeLoadMaster().catch(()=>{}),
+    ]);
     const j=await r.json();
     if(j.error)throw new Error(j.error);
     admJinState.rows=(j.rows||[]).map(r=>r.slice());
@@ -4982,20 +4994,40 @@ function admJinCellValue(r,c){
 }
 
 function admJinOnCellInput(ev){
-  const td=ev.target.closest('td[data-r]');
-  if(!td)return;
-  const r=Number(td.dataset.r),c=Number(td.dataset.c);
-  const newVal=td.innerText;
+  const t=ev.target;
+  let r,c,newVal,host;
+  if(t.tagName==='INPUT'&&t.dataset.r!=null){
+    // コース選択 input (datalist 補完付)
+    r=Number(t.dataset.r);c=Number(t.dataset.c);
+    newVal=t.value;
+    host=t.closest('td')||t;
+  }else{
+    const td=t.closest('td[data-r]');
+    if(!td)return;
+    r=Number(td.dataset.r);c=Number(td.dataset.c);
+    newVal=td.innerText;
+    host=td;
+  }
   const origVal=(admJinState.rows[r]||[])[c]||'';
   const k=`${r},${c}`;
   if(newVal===origVal){
     admJinState.dirty.delete(k);
-    td.style.background='';
+    host.style.background='';
   }else{
     admJinState.dirty.set(k,newVal);
-    td.style.background='#fef3c7';
+    host.style.background='#fef3c7';
   }
   admSeUpdateDirtyBadge();
+}
+
+// コース選択セル (datalist 補完付き input を内包する td)
+function admJinCourseCellHtml(r,c,val,dirty,listId){
+  const safe=String(val).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+  const bg=dirty?'background:#fef3c7;':'';
+  return `<td style="border:1px solid #e2e8f0;padding:0;${bg}min-width:62px;">`+
+    `<input type="text" list="${listId}" data-r="${r}" data-c="${c}" value="${safe}" `+
+    `style="border:none;padding:2px 4px;font-size:11px;width:100%;background:transparent;outline:none;"/>`+
+  `</td>`;
 }
 
 function admJinRender(){
@@ -5007,8 +5039,17 @@ function admJinRender(){
   const dows=['月','火','水','木','金','土','日'];
   const search=((document.getElementById('adm-se-search')||{}).value||'').trim();
   const areaF=(document.getElementById('adm-se-area')||{}).value||'';
+  // マスタからコース候補を構築 (admSeMasterReqs キャッシュ前提)
+  // 朝刊用: req.am=true のコース / 夕刊用: req.pm or req.keiba=true のコース
+  const reqs=admSeMasterReqs||{};
+  const amCourses=Object.keys(reqs).filter(c=>reqs[c]&&reqs[c].am).sort();
+  const pmCourses=Object.keys(reqs).filter(c=>reqs[c]&&(reqs[c].pm||reqs[c].keiba)).sort();
   let h='<div style="padding:10px;">';
-  h+=`<div style="margin-bottom:8px;color:var(--text-sub);font-size:11px;">📌 人員名簿シート (拠点 / 契約範囲 / 氏名 / 電話番号 / 朝刊月-日 / 夕刊月-日)</div>`;
+  // datalist (コース ドロップダウン候補)
+  h+='<datalist id="adm-jin-am-list">'+amCourses.map(c=>`<option value="${c}"></option>`).join('')+'</datalist>';
+  h+='<datalist id="adm-jin-pm-list">'+pmCourses.map(c=>`<option value="${c}"></option>`).join('')+'</datalist>';
+  const hint=Object.keys(reqs).length?`コース候補は朝刊 ${amCourses.length}件 / 夕刊 ${pmCourses.length}件 (マスタ R:U より)`:'マスタ取得失敗 — コース候補なし';
+  h+=`<div style="margin-bottom:8px;color:var(--text-sub);font-size:11px;">📌 人員名簿シート — ${hint}</div>`;
   h+='<div style="overflow:auto;max-height:70vh;">';
   h+='<table style="border-collapse:collapse;font-size:11px;white-space:nowrap;">';
   h+='<thead style="position:sticky;top:0;z-index:2;">';
@@ -5044,8 +5085,13 @@ function admJinRender(){
     h+=admSeCellHtml(i,1,admJinCellValue(i,1),admJinState.dirty.has(`${i},1`),null,130);
     h+=admSeCellHtml(i,2,admJinCellValue(i,2),admJinState.dirty.has(`${i},2`),null,110);
     h+=admSeCellHtml(i,3,admJinCellValue(i,3),admJinState.dirty.has(`${i},3`),null,120);
-    for(let c=4;c<=17;c++){
-      h+=admSeCellHtml(i,c,admJinCellValue(i,c),admJinState.dirty.has(`${i},${c}`),null,62);
+    // 朝刊月-日 (col 4-10): AM コース候補
+    for(let c=4;c<=10;c++){
+      h+=admJinCourseCellHtml(i,c,admJinCellValue(i,c),admJinState.dirty.has(`${i},${c}`),'adm-jin-am-list');
+    }
+    // 夕刊月-日 (col 11-17): PM コース候補
+    for(let c=11;c<=17;c++){
+      h+=admJinCourseCellHtml(i,c,admJinCellValue(i,c),admJinState.dirty.has(`${i},${c}`),'adm-jin-pm-list');
     }
     h+='</tr>';
     shown++;
