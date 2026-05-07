@@ -145,7 +145,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div><label>月</label><select id="sh-month" onchange="shFreshAndRender()"></select></div>
         <div><label>営業所</label><select id="sh-area" onchange="renderShift()"><option value="">すべて</option></select></div>
         <div><label>コース検索</label><input type="text" id="sh-course" placeholder="コースで絞り込み..." oninput="dbInput('renderShift')"></div>
-        <div><label>スタッフ検索</label><input type="text" id="sh-staff" placeholder="スタッフで絞り込み..." oninput="dbInput('renderShift')"></div>
+        <div><label>スタッフ検索</label><input type="text" id="sh-staff" placeholder="複数可: 山田,越智 (カンマか空白区切り)" oninput="dbInput('renderShift')"></div>
       </div>
       <div class="table-wrap" id="shift-wrap"></div>
     </div>
@@ -1292,7 +1292,11 @@ function renderShift(){
     if(shEd==='pm')return pm&&pm!=='0'&&pm!=='希望休';
     return(am&&am!=='0'&&am!=='希望休')||(pm&&pm!=='0'&&pm!=='希望休');}));
   if(cs)f=f.filter(e=>e.course.includes(cs));
-  if(ss)f=f.filter(e=>e.course.includes(ss)||e.a.some(x=>((shEd!=='pm'?x.am:'')+' '+(shEd!=='am'?x.pm:'')).includes(ss)));
+  // スタッフ検索: カンマ/空白/読点 区切りで複数指定可、いずれかにヒットすれば表示 (OR)
+  const ssTerms=ss?ss.split(/[,、\s　]+/).filter(Boolean):[];
+  if(ssTerms.length){
+    f=f.filter(e=>ssTerms.some(t=>e.course.includes(t)||e.a.some(x=>((shEd!=='pm'?x.am:'')+' '+(shEd!=='am'?x.pm:'')).includes(t))));
+  }
   const rowLabel=isCourseMode?'コース':'スタッフ';
   const isBoth=shEd==='both',isAm=shEd==='am',isPm=shEd==='pm';
   let h='<table class="shift-table"><thead><tr>';
@@ -1309,12 +1313,14 @@ function renderShift(){
       h+=`<th class="${c}" style="border-left:2px solid #94a3b8">${d.dn} <small>${d.dow}</small></th>`;});
   }
   h+='</tr></thead><tbody>';
+  // 複数語のいずれかにヒットすればハイライト
+  const ssMatch=(v)=>v&&ssTerms.some(t=>v.includes(t));
   f.forEach(e=>{h+=`<tr><td class="cn">${e.course}</td>`;
     e.a.forEach((a,i)=>{const d=sh.dates[i];
       let am=a.am||'',pm=a.pm||'';
       if(am==='0'||am==='希望休')am='';if(pm==='0'||pm==='希望休')pm='';
-      if(ss&&am&&am.includes(ss))am=`<span class="highlight">${am}</span>`;
-      if(ss&&pm&&pm.includes(ss))pm=`<span class="highlight">${pm}</span>`;
+      if(ssMatch(am))am=`<span class="highlight">${am}</span>`;
+      if(ssMatch(pm))pm=`<span class="highlight">${pm}</span>`;
       if(isBoth) h+=`<td class="am">${am}</td><td class="pm">${pm}</td>`;
       else if(isAm) h+=`<td class="am">${am}</td>`;
       else h+=`<td class="pm">${pm}</td>`;
