@@ -4588,6 +4588,12 @@ async function admSeInit(){
         return (pb.year-pa.year)||(pb.month-pa.month);
       });
       sel.innerHTML='<option value="">選択してください</option>'+sheets.map(s=>`<option value="${s}">${s}</option>`).join('');
+      // 前回の選択を復元 (localStorage)
+      const saved=localStorage.getItem('admSeSheetName');
+      if(saved&&sheets.includes(saved)){
+        sel.value=saved;
+        admSeLoad();
+      }
     }catch(e){
       document.getElementById('adm-se-msg').innerHTML='<span style="color:var(--danger);">シート一覧の取得失敗: '+e.message+'</span>';
     }
@@ -4600,6 +4606,7 @@ async function admSeLoad(){
   const cont=document.getElementById('adm-se-content');
   if(!sheetName){cont.innerHTML='';return;}
   if(admSeState.dirty.size&&!window.confirm('未保存の変更があります。破棄して読み込みますか?'))return;
+  try{localStorage.setItem('admSeSheetName',sheetName);}catch(_){}
   msg.textContent='読み込み中...';msg.style.color='#3b82f6';
   try{
     const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
