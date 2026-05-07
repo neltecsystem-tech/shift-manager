@@ -4649,19 +4649,56 @@ function admSeUpdateDirtyBadge(){
   if(btn)btn.disabled=n===0;
 }
 
-// 描画 (フィルタ適用)
+// セル値取得 (dirty があれば dirty の値、なければ rows の値)
+function admSeCellValue(r,c){
+  const k=`${r},${c}`;
+  if(admSeState.dirty.has(k))return admSeState.dirty.get(k);
+  return (admSeState.rows[r]||[])[c]||'';
+}
+// セル HTML 生成
+function admSeCellHtml(r,c,val,dirty,color,minWidth){
+  const safe=String(val).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const bg=dirty?'background:#fef3c7;':'';
+  const mw=minWidth?`min-width:${minWidth}px;`:'min-width:55px;';
+  const colorStyle=color&&val?`color:${color};`:'';
+  return `<td contenteditable="true" data-r="${r}" data-c="${c}" style="border:1px solid #e2e8f0;padding:2px 4px;${mw}font-size:11px;${bg}${colorStyle}">${safe}</td>`;
+}
+
+// 描画モード切替 (デフォルト: pretty)
+function admSeSetMode(mode){
+  admSeState.mode=mode;
+  admSeRender();
+}
+
+// 描画
 function admSeRender(){
   const cont=document.getElementById('adm-se-content');
   if(!admSeState.rows.length){cont.innerHTML='<p style="padding:20px;color:var(--text-sub);text-align:center;">シートを選択してください</p>';return;}
+  const mode=admSeState.mode||'pretty';
+  let h='';
+  // モードトグル
+  const tabBtn=(m,label)=>`<button onclick="admSeSetMode('${m}')" style="background:${mode===m?'var(--primary)':'#f1f5f9'};color:${mode===m?'#fff':'var(--text-sub)'};border:none;padding:6px 14px;border-radius:6px 6px 0 0;cursor:pointer;font-weight:600;font-size:12px;margin-right:4px;">${label}</button>`;
+  h+=`<div style="background:#fff;padding:8px 10px 0 10px;border-bottom:1px solid var(--border);">${tabBtn('pretty','📋 見やすい表')}${tabBtn('raw','🔢 Raw グリッド')}</div>`;
+  if(mode==='raw'){
+    h+=admSeRenderRaw();
+  }else{
+    h+=admSeRenderPretty();
+  }
+  cont.innerHTML=h;
+  // 変更時イベント
+  cont.querySelectorAll('td[data-r]').forEach(td=>{
+    td.addEventListener('blur',admSeOnCellInput);
+    td.addEventListener('input',admSeOnCellInput);
+  });
+}
+
+// Raw グリッド (旧モード)
+function admSeRenderRaw(){
+  const rows=admSeState.rows;
   const areaF=(document.getElementById('adm-se-area')||{}).value||'';
   const search=((document.getElementById('adm-se-search')||{}).value||'').trim();
-  const rows=admSeState.rows;
-  // 全行を表示するが、フィルタにヒットする行をハイライト or 該当のみ表示
   const rowMatches=new Array(rows.length).fill(true);
   if(areaF||search){
-    // セクション/ブロック/コース判定: row 0 は空, row 7-115 はコース行 (col 0)
-    // section 2 のサブブロックヘッダ (col 0=営業所名 or 空+col 1=日付) も考慮
-    // シンプルに: 行内に検索/エリアを含むかでフィルタ
     rows.forEach((r,i)=>{
       const txt=(r||[]).join(' ');
       let m=true;
@@ -4670,12 +4707,9 @@ function admSeRender(){
       rowMatches[i]=m;
     });
   }
-  // 列数の最大値
   const maxCol=Math.max(...rows.map(r=>(r||[]).length),1);
-  // ビュー: filter 有効時はマッチ行のみ表示
   const visibleRows=(areaF||search)?rows.map((_,i)=>i).filter(i=>rowMatches[i]):rows.map((_,i)=>i);
-  let h=`<table style="border-collapse:collapse;font-size:11px;font-family:'Yu Gothic UI',sans-serif;white-space:nowrap;">`;
-  // 列ヘッダ (A B C ...)
+  let h=`<div style="padding:0;"><table style="border-collapse:collapse;font-size:11px;font-family:'Yu Gothic UI',sans-serif;white-space:nowrap;">`;
   h+='<thead><tr style="background:#f1f5f9;position:sticky;top:0;z-index:2;"><th style="border:1px solid #cbd5e1;padding:2px 6px;background:#e2e8f0;position:sticky;left:0;z-index:3;">行＼列</th>';
   for(let c=0;c<maxCol;c++){
     h+=`<th style="border:1px solid #cbd5e1;padding:2px 6px;min-width:60px;color:var(--text-sub);font-size:10px;">${admSeColLabel(c)}</th>`;
@@ -4689,19 +4723,179 @@ function admSeRender(){
       const k=`${ri},${c}`;
       const dirty=admSeState.dirty.has(k);
       const cur=dirty?admSeState.dirty.get(k):v;
-      const safe=String(cur).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const bg=dirty?'background:#fef3c7;':'';
-      h+=`<td contenteditable="true" data-r="${ri}" data-c="${c}" style="border:1px solid #e2e8f0;padding:2px 6px;min-width:60px;${bg}">${safe}</td>`;
+      h+=admSeCellHtml(ri,c,cur,dirty,null,60);
     }
     h+='</tr>';
   });
-  h+='</tbody></table>';
-  cont.innerHTML=h;
-  // 変更時イベント
-  cont.querySelectorAll('td[data-r]').forEach(td=>{
-    td.addEventListener('blur',admSeOnCellInput);
-    td.addEventListener('input',admSeOnCellInput);
-  });
+  h+='</tbody></table></div>';
+  return h;
+}
+
+// 見やすい表モード
+function admSeRenderPretty(){
+  const rows=admSeState.rows;
+  const dows=['日','月','火','水','木','金','土'];
+  const parsed=parseMonthLabel(admSeState.sheetName);
+  const year=parsed?parsed.year:new Date().getFullYear();
+  // section 1 の日付 (row 0 から、奇数列)
+  const dateRow=rows[0]||[];
+  const s1Dates=[];
+  for(let c=1;c<dateRow.length;c++){
+    const v=String(dateRow[c]||'').trim();
+    const m=v.match(/^(\d{1,2})\/(\d{1,2})$/);
+    if(m){
+      const mm=Number(m[1]),dd=Number(m[2]);
+      const d=new Date(year,mm-1,dd);
+      s1Dates.push({col:c,month:mm,day:dd,dow:d.getDay()});
+    }
+  }
+
+  const areaF=(document.getElementById('adm-se-area')||{}).value||'';
+  const search=((document.getElementById('adm-se-search')||{}).value||'').trim();
+  const areaPrefixes={'城北':['城北','池袋'],'川越':['川越'],'立川':['立川'],'川崎高津':['川崎']};
+  function matchArea(course){
+    if(!areaF)return true;
+    const ps=areaPrefixes[areaF]||[areaF];
+    return ps.some(p=>course.startsWith(p));
+  }
+  function matchSearch(rowIdx){
+    if(!search)return true;
+    const r=rows[rowIdx]||[];
+    if(String(r[0]||'').includes(search))return true;
+    return r.some(v=>String(v||'').includes(search));
+  }
+
+  let h=`<div style="padding:10px;">`;
+
+  // === Section 1 ===
+  // section 1 の編集列 (row 5 から朝刊/夕刊): col 1=朝刊, col 2=夕刊, col 3=朝刊, ...
+  const courseRows=[];
+  for(let i=6;i<Math.min(116,rows.length);i++){
+    const r=rows[i]||[];
+    const courseName=String(r[0]||'').trim();
+    if(!courseName||courseName==='重複')continue;
+    if(!matchArea(courseName))continue;
+    if(!matchSearch(i))continue;
+    courseRows.push({rowIdx:i,course:courseName});
+  }
+  h+=`<details open style="margin-bottom:14px;border:1px solid var(--border);border-radius:6px;background:#fff;">`;
+  h+=`<summary style="cursor:pointer;padding:8px 12px;background:#f1f5f9;font-weight:600;border-radius:6px 6px 0 0;">📋 Section 1: コース × 日付 (朝刊/夕刊) — ${courseRows.length}コース × ${s1Dates.length}日</summary>`;
+  h+=`<div style="overflow:auto;max-height:60vh;">`;
+  if(s1Dates.length&&courseRows.length){
+    h+='<table style="border-collapse:collapse;font-size:11px;white-space:nowrap;">';
+    h+='<thead style="position:sticky;top:0;z-index:2;">';
+    h+='<tr style="background:#f1f5f9;"><th rowspan="2" style="border:1px solid #cbd5e1;padding:4px 8px;background:#e2e8f0;position:sticky;left:0;z-index:3;min-width:90px;">コース</th>';
+    s1Dates.forEach(d=>{
+      const bg=d.dow===0?'#fee2e2':d.dow===6?'#dbeafe':'#f1f5f9';
+      const dowColor=d.dow===0?'#dc2626':d.dow===6?'#2563eb':'#475569';
+      h+=`<th colspan="2" style="border:1px solid #cbd5e1;padding:2px 4px;background:${bg};min-width:110px;"><div>${d.month}/${d.day}</div><div style="font-size:10px;color:${dowColor};font-weight:bold;">${dows[d.dow]}</div></th>`;
+    });
+    h+='</tr><tr>';
+    s1Dates.forEach(()=>{
+      h+='<th style="border:1px solid #cbd5e1;padding:2px 4px;font-size:10px;color:#0369a1;background:#e0f2fe;">朝</th>';
+      h+='<th style="border:1px solid #cbd5e1;padding:2px 4px;font-size:10px;color:#9333ea;background:#fdf4ff;">夕</th>';
+    });
+    h+='</tr></thead><tbody>';
+    courseRows.forEach(({rowIdx,course})=>{
+      h+=`<tr><td style="border:1px solid #cbd5e1;padding:4px 8px;font-weight:600;background:#f8fafc;position:sticky;left:0;z-index:1;">${course}</td>`;
+      s1Dates.forEach(d=>{
+        const am=admSeCellValue(rowIdx,d.col);
+        const pm=admSeCellValue(rowIdx,d.col+1);
+        const amDirty=admSeState.dirty.has(`${rowIdx},${d.col}`);
+        const pmDirty=admSeState.dirty.has(`${rowIdx},${d.col+1}`);
+        h+=admSeCellHtml(rowIdx,d.col,am,amDirty,null,55);
+        h+=admSeCellHtml(rowIdx,d.col+1,pm,pmDirty,null,55);
+      });
+      h+='</tr>';
+    });
+    h+='</tbody></table>';
+  }else{
+    h+='<p style="padding:14px;color:var(--text-sub);">該当データなし</p>';
+  }
+  h+=`</div></details>`;
+
+  // === Section 2 (各サブブロック) ===
+  // パース: 営業所ヘッダ (col 0=営業所名 + col 1=日付) または 後続 (col 0=空 + col 1=日付)
+  // 各サブブロックの日付配列、edition、staff行を抽出
+  const areas2=['城北','川越','立川','川崎高津'];
+  const subBlocks=[];// {area, dateInfos, editionRow, staffRows:[{rowIdx, name}]}
+  let curArea='';
+  for(let i=120;i<rows.length-2;i++){
+    const r=rows[i]||[];
+    const a=String(r[0]||'').trim();
+    const b=String(r[1]||'').trim();
+    const isAreaHdr=areas2.includes(a)&&/^\d{1,2}\/\d{1,2}$/.test(b);
+    const isSubHdr=a===''&&/^\d{1,2}\/\d{1,2}$/.test(b)&&curArea;
+    if(isAreaHdr||isSubHdr){
+      if(isAreaHdr)curArea=a;
+      const dateInfos=[];
+      for(let c=1;c<r.length;c++){
+        const v=String(r[c]||'').trim();
+        const m=v.match(/^(?:\d{4}\/)?(\d{1,2})\/(\d{1,2})$/);
+        if(m){
+          const mm=Number(m[1]),dd=Number(m[2]);
+          const d=new Date(year,mm-1,dd);
+          dateInfos.push({col:c,month:mm,day:dd,dow:d.getDay()});
+        }
+      }
+      let editionRow=rows[i+2]||[];
+      const hasEd=row=>row&&row.some(v=>v&&(String(v).includes('朝刊')||String(v).includes('夕刊')||String(v).includes('競馬')));
+      if(!hasEd(editionRow)){
+        for(let er=i+3;er<Math.min(rows.length,i+10);er++){
+          if(hasEd(rows[er])){editionRow=rows[er];break;}
+        }
+      }
+      // スタッフ行
+      const staffRows=[];
+      for(let j=i+3;j<rows.length;j++){
+        const r2=rows[j]||[];
+        const nm=String(r2[0]||'').trim();
+        const colB=String(r2[1]||'').trim();
+        if(nm===''&&/^\d{1,2}\/\d{1,2}$/.test(colB))break;// 次のサブブロック
+        if(!nm)continue;
+        if(areas2.includes(nm)&&/^\d{1,2}\/\d{1,2}$/.test(colB))break;
+        if(!matchSearch(j))continue;
+        staffRows.push({rowIdx:j,name:nm});
+      }
+      // edition から朝/夕の判定
+      const editionLabel=hasEd(editionRow)?(editionRow.some(v=>String(v||'').includes('朝刊'))?'朝刊':editionRow.some(v=>String(v||'').includes('競馬'))?'競馬':'夕刊'):'';
+      subBlocks.push({area:curArea,dateInfos,editionLabel,headerRow:i,staffRows});
+    }
+  }
+  const filteredBlocks=areaF?subBlocks.filter(b=>b.area===areaF):subBlocks;
+  if(filteredBlocks.length){
+    h+=`<details open style="margin-bottom:14px;border:1px solid var(--border);border-radius:6px;background:#fff;">`;
+    h+=`<summary style="cursor:pointer;padding:8px 12px;background:#f1f5f9;font-weight:600;border-radius:6px 6px 0 0;">🏢 Section 2: 営業所別 (特殊シフト/個人別) — ${filteredBlocks.length}ブロック</summary>`;
+    h+=`<div style="padding:10px;">`;
+    filteredBlocks.forEach(b=>{
+      if(!b.staffRows.length)return;
+      const edColor=b.editionLabel==='朝刊'?'#0369a1':b.editionLabel==='競馬'?'#dc2626':'#9333ea';
+      h+=`<div style="margin-bottom:14px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;">`;
+      h+=`<div style="background:#f8fafc;padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;"><b>${b.area}</b> — <span style="color:${edColor};">${b.editionLabel||'(混在)'}</span> — ${b.dateInfos.length}日 × ${b.staffRows.length}名 (行${b.headerRow+1})</div>`;
+      h+=`<div style="overflow:auto;max-height:50vh;">`;
+      h+='<table style="border-collapse:collapse;font-size:11px;white-space:nowrap;">';
+      h+='<thead><tr style="background:#f1f5f9;"><th style="border:1px solid #cbd5e1;padding:4px 8px;position:sticky;left:0;z-index:1;background:#e2e8f0;min-width:100px;">スタッフ</th>';
+      b.dateInfos.forEach(d=>{
+        const bg=d.dow===0?'#fee2e2':d.dow===6?'#dbeafe':'#f1f5f9';
+        const dowColor=d.dow===0?'#dc2626':d.dow===6?'#2563eb':'#475569';
+        h+=`<th style="border:1px solid #cbd5e1;padding:2px 4px;background:${bg};min-width:80px;"><div>${d.month}/${d.day}</div><div style="font-size:10px;color:${dowColor};font-weight:bold;">${dows[d.dow]}</div></th>`;
+      });
+      h+='</tr></thead><tbody>';
+      b.staffRows.forEach(({rowIdx,name})=>{
+        h+=`<tr><td style="border:1px solid #cbd5e1;padding:4px 8px;font-weight:600;background:#f8fafc;position:sticky;left:0;">${name}</td>`;
+        b.dateInfos.forEach(d=>{
+          const v=admSeCellValue(rowIdx,d.col);
+          const dirty=admSeState.dirty.has(`${rowIdx},${d.col}`);
+          h+=admSeCellHtml(rowIdx,d.col,v,dirty,null,80);
+        });
+        h+='</tr>';
+      });
+      h+='</tbody></table></div></div>';
+    });
+    h+=`</div></details>`;
+  }
+  h+=`</div>`;
+  return h;
 }
 
 function admSeColLabel(c){
