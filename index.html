@@ -5489,6 +5489,7 @@ function admJinRender(){
   h+='</tr></thead><tbody>';
   let shown=0;
   let hiddenDupRows=0;
+  let hiddenAskul=0;
   if(admJinDedupeMode){
     // 同姓同名統合表示: 1名1行 (プライマリ) でレンダリング
     const view=admJinBuildMergedView();
@@ -5497,6 +5498,7 @@ function admJinRender(){
       const m=item.merged,sources=item.sources;
       const area=m[0]||'',range=m[1]||'',name=m[2]||'';
       if(!area&&!name&&!range)return;
+      if(area==='アスクル'){hiddenAskul++;return;}// アスクル拠点は非表示
       if(areaF&&area!==areaF)return;
       if(search&&!name.includes(search)&&!area.includes(search)&&!range.includes(search))return;
       h+='<tr>';
@@ -5537,6 +5539,7 @@ function admJinRender(){
       const range=String(r[1]||'').trim();
       const name=String(r[2]||'').trim();
       if(!area&&!name&&!range)continue;
+      if(area==='アスクル'){hiddenAskul++;continue;}// アスクル拠点は非表示
       if(areaF&&area!==areaF)continue;
       if(search&&!name.includes(search)&&!area.includes(search)&&!range.includes(search))continue;
       h+='<tr>';
@@ -5555,7 +5558,10 @@ function admJinRender(){
     }
   }
   h+='</tbody></table>';
-  const note=admJinDedupeMode&&hiddenDupRows?`(同姓同名 ${hiddenDupRows}行は非表示 / 淡青セルは重複行から拾った値、編集するとプライマリ行に保存)`:'';
+  const notes=[];
+  if(admJinDedupeMode&&hiddenDupRows)notes.push(`同姓同名 ${hiddenDupRows}行は非表示 / 淡青セルは重複行から拾った値、編集するとプライマリ行に保存`);
+  if(hiddenAskul)notes.push(`拠点=アスクル ${hiddenAskul}名は非表示`);
+  const note=notes.length?`(${notes.join(' / ')})`:'';
   h+=`<div style="padding:6px 4px;color:var(--text-sub);font-size:11px;">表示: ${shown}名 ${note}</div>`;
   h+='</div></div>';
   return h;
