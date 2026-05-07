@@ -4646,7 +4646,8 @@ function admSeOnCellInput(ev){
 }
 
 function admSeUpdateDirtyBadge(){
-  const n=admSeState.dirty.size;
+  const mode=admSeState.mode||'pretty';
+  const n=mode==='jin'?admJinState.dirty.size:admSeState.dirty.size;
   const span=document.getElementById('adm-se-dirty');
   if(span)span.textContent=n;
   const btn=document.getElementById('adm-se-save');
@@ -4687,27 +4688,32 @@ function admSeIsBlackout(course,jsDay,isPm){
 function admSeSetMode(mode){
   admSeState.mode=mode;
   admSeRender();
+  admSeUpdateDirtyBadge();
 }
 
 // 描画
 function admSeRender(){
   const cont=document.getElementById('adm-se-content');
-  if(!admSeState.rows.length){cont.innerHTML='<p style="padding:20px;color:var(--text-sub);text-align:center;">シートを選択してください</p>';return;}
   const mode=admSeState.mode||'pretty';
   let h='';
   // モードトグル
   const tabBtn=(m,label)=>`<button onclick="admSeSetMode('${m}')" style="background:${mode===m?'var(--primary)':'#f1f5f9'};color:${mode===m?'#fff':'var(--text-sub)'};border:none;padding:6px 14px;border-radius:6px 6px 0 0;cursor:pointer;font-weight:600;font-size:12px;margin-right:4px;">${label}</button>`;
-  h+=`<div style="background:#fff;padding:8px 10px 0 10px;border-bottom:1px solid var(--border);">${tabBtn('pretty','📋 見やすい表')}${tabBtn('raw','🔢 Raw グリッド')}</div>`;
-  if(mode==='raw'){
+  h+=`<div style="background:#fff;padding:8px 10px 0 10px;border-bottom:1px solid var(--border);">${tabBtn('pretty','📋 見やすい表')}${tabBtn('raw','🔢 Raw グリッド')}${tabBtn('jin','👥 人員名簿')}</div>`;
+  if(mode==='jin'){
+    h+=admJinRender();
+  }else if(!admSeState.rows.length){
+    h+='<p style="padding:20px;color:var(--text-sub);text-align:center;">シートを選択してください</p>';
+  }else if(mode==='raw'){
     h+=admSeRenderRaw();
   }else{
     h+=admSeRenderPretty();
   }
   cont.innerHTML=h;
-  // 変更時イベント
+  // 変更時イベント (モードに応じてハンドラを切替)
+  const handler=mode==='jin'?admJinOnCellInput:admSeOnCellInput;
   cont.querySelectorAll('td[data-r]').forEach(td=>{
-    td.addEventListener('blur',admSeOnCellInput);
-    td.addEventListener('input',admSeOnCellInput);
+    td.addEventListener('blur',handler);
+    td.addEventListener('input',handler);
   });
 }
 
@@ -4925,7 +4931,144 @@ function admSeColLabel(c){
   return s;
 }
 
+// === 人員名簿モード ===
+// 人員名簿シートのレイアウト:
+// Row 0: ["","","","","朝刊","","","","","","","夕刊"]
+// Row 1: 拠点 / 契約範囲 / 氏名 / 電話番号 / 朝刊月-日 (col 4-10) / 夕刊月-日 (col 11-17)
+// Row 2+: スタッフごとの曜日別担当コース
+let admJinState={rows:[],dirty:new Map(),loaded:false};
+
+async function admJinLoad(){
+  const msg=document.getElementById('adm-se-msg');
+  msg.textContent='人員名簿 読み込み中...';msg.style.color='#3b82f6';
+  try{
+    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'人員名簿'})});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    admJinState.rows=(j.rows||[]).map(r=>r.slice());
+    admJinState.dirty=new Map();
+    admJinState.loaded=true;
+    msg.textContent=`✓ 人員名簿 読み込み完了 (${admJinState.rows.length}行)`;msg.style.color='#16a34a';
+    setTimeout(()=>{msg.textContent='';},2000);
+    admSeRender();
+    admSeUpdateDirtyBadge();
+  }catch(e){
+    msg.innerHTML='<span style="color:var(--danger);">人員名簿 読み込み失敗: '+e.message+'</span>';
+  }
+}
+
+function admJinCellValue(r,c){
+  const k=`${r},${c}`;
+  if(admJinState.dirty.has(k))return admJinState.dirty.get(k);
+  return (admJinState.rows[r]||[])[c]||'';
+}
+
+function admJinOnCellInput(ev){
+  const td=ev.target.closest('td[data-r]');
+  if(!td)return;
+  const r=Number(td.dataset.r),c=Number(td.dataset.c);
+  const newVal=td.innerText;
+  const origVal=(admJinState.rows[r]||[])[c]||'';
+  const k=`${r},${c}`;
+  if(newVal===origVal){
+    admJinState.dirty.delete(k);
+    td.style.background='';
+  }else{
+    admJinState.dirty.set(k,newVal);
+    td.style.background='#fef3c7';
+  }
+  admSeUpdateDirtyBadge();
+}
+
+function admJinRender(){
+  if(!admJinState.loaded){
+    admJinLoad();// 非同期。完了後に admSeRender が再呼出
+    return '<p style="padding:20px;color:var(--text-sub);text-align:center;">人員名簿 読み込み中...</p>';
+  }
+  const rows=admJinState.rows;
+  const dows=['月','火','水','木','金','土','日'];
+  const search=((document.getElementById('adm-se-search')||{}).value||'').trim();
+  const areaF=(document.getElementById('adm-se-area')||{}).value||'';
+  let h='<div style="padding:10px;">';
+  h+=`<div style="margin-bottom:8px;color:var(--text-sub);font-size:11px;">📌 人員名簿シート (拠点 / 契約範囲 / 氏名 / 電話番号 / 朝刊月-日 / 夕刊月-日)</div>`;
+  h+='<div style="overflow:auto;max-height:70vh;">';
+  h+='<table style="border-collapse:collapse;font-size:11px;white-space:nowrap;">';
+  h+='<thead style="position:sticky;top:0;z-index:2;">';
+  h+='<tr style="background:#f1f5f9;">';
+  h+='<th rowspan="2" style="border:1px solid #cbd5e1;padding:4px 8px;background:#e2e8f0;position:sticky;left:0;z-index:3;min-width:80px;">拠点</th>';
+  h+='<th rowspan="2" style="border:1px solid #cbd5e1;padding:4px 8px;background:#e2e8f0;min-width:130px;">契約範囲</th>';
+  h+='<th rowspan="2" style="border:1px solid #cbd5e1;padding:4px 8px;background:#e2e8f0;min-width:110px;">氏名</th>';
+  h+='<th rowspan="2" style="border:1px solid #cbd5e1;padding:4px 8px;background:#e2e8f0;min-width:120px;">電話番号</th>';
+  h+='<th colspan="7" style="border:1px solid #cbd5e1;padding:2px 4px;background:#e0f2fe;color:#0369a1;font-size:10px;">朝刊</th>';
+  h+='<th colspan="7" style="border:1px solid #cbd5e1;padding:2px 4px;background:#fdf4ff;color:#9333ea;font-size:10px;">夕刊</th>';
+  h+='</tr>';
+  h+='<tr>';
+  dows.forEach(d=>{
+    const color=d==='日'?'#dc2626':d==='土'?'#2563eb':'#475569';
+    h+=`<th style="border:1px solid #cbd5e1;padding:2px 4px;font-size:10px;color:${color};font-weight:bold;background:#e0f2fe;min-width:62px;">${d}</th>`;
+  });
+  dows.forEach(d=>{
+    const color=d==='日'?'#dc2626':d==='土'?'#2563eb':'#475569';
+    h+=`<th style="border:1px solid #cbd5e1;padding:2px 4px;font-size:10px;color:${color};font-weight:bold;background:#fdf4ff;min-width:62px;">${d}</th>`;
+  });
+  h+='</tr></thead><tbody>';
+  let shown=0;
+  for(let i=2;i<rows.length;i++){
+    const r=rows[i]||[];
+    const area=String(r[0]||'').trim();
+    const range=String(r[1]||'').trim();
+    const name=String(r[2]||'').trim();
+    if(!area&&!name&&!range)continue;
+    if(areaF&&area!==areaF)continue;
+    if(search&&!name.includes(search)&&!area.includes(search)&&!range.includes(search))continue;
+    h+='<tr>';
+    h+=admSeCellHtml(i,0,admJinCellValue(i,0),admJinState.dirty.has(`${i},0`),null,80);
+    h+=admSeCellHtml(i,1,admJinCellValue(i,1),admJinState.dirty.has(`${i},1`),null,130);
+    h+=admSeCellHtml(i,2,admJinCellValue(i,2),admJinState.dirty.has(`${i},2`),null,110);
+    h+=admSeCellHtml(i,3,admJinCellValue(i,3),admJinState.dirty.has(`${i},3`),null,120);
+    for(let c=4;c<=17;c++){
+      h+=admSeCellHtml(i,c,admJinCellValue(i,c),admJinState.dirty.has(`${i},${c}`),null,62);
+    }
+    h+='</tr>';
+    shown++;
+  }
+  h+='</tbody></table>';
+  h+=`<div style="padding:6px 4px;color:var(--text-sub);font-size:11px;">表示: ${shown}名</div>`;
+  h+='</div></div>';
+  return h;
+}
+
+async function admJinSave(){
+  if(!admJinState.dirty.size){alert('変更がありません');return;}
+  const msg=document.getElementById('adm-se-msg');
+  const updates=[];
+  admJinState.dirty.forEach((value,k)=>{
+    const [r,c]=k.split(',').map(Number);
+    updates.push({row:r,col:c,value});
+  });
+  if(!window.confirm(`人員名簿に ${updates.length} 件の変更を保存します。続行?`))return;
+  msg.textContent=`人員名簿 保存中... (${updates.length}件)`;msg.style.color='#3b82f6';
+  try{
+    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:'人員名簿',updates})});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    updates.forEach(u=>{
+      if(!admJinState.rows[u.row])admJinState.rows[u.row]=[];
+      admJinState.rows[u.row][u.col]=u.value;
+    });
+    admJinState.dirty.clear();
+    admSeUpdateDirtyBadge();
+    msg.textContent=`✓ 人員名簿 保存完了 (${updates.length}件)`;msg.style.color='#16a34a';
+    setTimeout(()=>{msg.textContent='';},3000);
+    admSeRender();
+  }catch(e){
+    msg.innerHTML='<span style="color:var(--danger);">人員名簿 保存失敗: '+e.message+'</span>';
+  }
+}
+
 async function admSeSave(){
+  // 人員名簿モードのときは admJinSave へ委譲
+  if((admSeState.mode||'pretty')==='jin')return admJinSave();
   if(!admSeState.dirty.size){alert('変更がありません');return;}
   if(!admSeState.sheetName)return;
   const msg=document.getElementById('adm-se-msg');
