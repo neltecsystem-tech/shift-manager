@@ -736,6 +736,7 @@ tbody tr:hover { background:var(--primary-light); }
           <div style="margin-left:auto;display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;">
             <button onclick="admSeNewMonth()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">➕ 新規月作成</button>
             <button onclick="admSeReload()" style="background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="Google Sheets から再取得">🔄 再読込</button>
+            <button onclick="admSeCheckGaps()" style="background:#dc2626;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="マスタ R:U の必要フラグに対してシフトの空きセルを検出">🔍 空き確認</button>
             <button onclick="admSeSave()" id="adm-se-save" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" disabled>💾 保存 (<span id="adm-se-dirty">0</span>件)</button>
           </div>
         </div>
@@ -4744,6 +4745,118 @@ async function admSeSave(){
 
 // 新規月作成時のデフォルトテンプレートシート名 (「原紙」)
 const ADM_SE_DEFAULT_TEMPLATE='原紙';
+
+// マスタ R:U のキャッシュ: course → {am, pm, keiba} (boolean)
+let admSeMasterReqs=null;
+async function admSeLoadMaster(){
+  if(admSeMasterReqs)return admSeMasterReqs;
+  const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'マスタ'})});
+  const j=await r.json();
+  if(j.error)throw new Error('マスタ取得失敗: '+j.error);
+  const reqs={};
+  (j.rows||[]).forEach(row=>{
+    const course=String(row[17]||'').trim();// R列 (0-indexed=17)
+    if(!course||course==='コース')return;
+    const am=String(row[18]||'').trim()==='✔';
+    const pm=String(row[19]||'').trim()==='✔';
+    const keiba=String(row[20]||'').trim()==='✔';
+    if(am||pm||keiba)reqs[course]={am,pm,keiba};
+  });
+  admSeMasterReqs=reqs;
+  return reqs;
+}
+
+// 現在のシフトに対して、マスタの必要フラグに対する空きセルを検出
+// 戻り値: [{row, col, course, date, dow, type:'AM'|'PM'|'競馬'}]
+function admSeFindGaps(reqs){
+  const rows=admSeState.rows;
+  if(!rows.length)return [];
+  // 日付行 (row 0): col 1, 3, 5, ... の odd 列に日付
+  const dateRow=rows[0]||[];
+  const dows=['日','月','火','水','木','金','土'];
+  const dates=[];
+  // sheetName から年を推定
+  const parsed=parseMonthLabel(admSeState.sheetName);
+  const year=parsed?parsed.year:new Date().getFullYear();
+  const month=parsed?parsed.month:1;
+  for(let c=1;c<dateRow.length;c++){
+    const v=String(dateRow[c]||'').trim();
+    const m=v.match(/^(\d{1,2})\/(\d{1,2})$/);
+    if(m){
+      const mm=Number(m[1]),dd=Number(m[2]);
+      const date=new Date(year,mm-1,dd);
+      dates.push({col:c,month:mm,day:dd,dow:date.getDay()});
+    }
+  }
+  if(!dates.length)return [];
+  const gaps=[];
+  // section 1: row 6 (0-indexed) 〜 maxRow
+  for(let i=6;i<Math.min(116,rows.length);i++){
+    const r=rows[i]||[];
+    const course=String(r[0]||'').trim();
+    if(!course||course==='重複')continue;
+    const req=reqs[course];
+    if(!req)continue;// マスタにないコースはチェック対象外
+    dates.forEach(({col,day,dow})=>{
+      const am=String(r[col]||'').trim();
+      const pm=String(r[col+1]||'').trim();
+      const isSat=dow===6,isFri=dow===5,isSun=dow===0;
+      // 朝刊チェック (毎日)
+      if(req.am&&!am){
+        gaps.push({row:i,col,course,month,day,dow:dows[dow],type:'AM'});
+      }
+      // 夕刊チェック (月-木) — 夕刊フラグ ✔
+      if(req.pm&&!isSat&&!isFri&&!isSun&&!pm){
+        gaps.push({row:i,col:col+1,course,month,day,dow:dows[dow],type:'PM(夕刊)'});
+      }
+      // 競馬チェック (金土) — 金土フラグ ✔
+      if(req.keiba&&(isFri||isSat)&&!pm){
+        gaps.push({row:i,col:col+1,course,month,day,dow:dows[dow],type:'PM(競馬)'});
+      }
+    });
+  }
+  return gaps;
+}
+
+async function admSeCheckGaps(){
+  const msg=document.getElementById('adm-se-msg');
+  const cont=document.getElementById('adm-se-content');
+  if(!admSeState.rows.length){alert('シートを選択してください');return;}
+  msg.textContent='マスタ取得 + 空きチェック中...';msg.style.color='#3b82f6';
+  try{
+    const reqs=await admSeLoadMaster();
+    const gaps=admSeFindGaps(reqs);
+    msg.textContent=`✓ チェック完了: 空き ${gaps.length} 件`;msg.style.color=gaps.length?'#dc2626':'#16a34a';
+    // 結果を上に挿入
+    let h=`<div style="background:#fff;padding:14px;border-bottom:2px solid var(--border);position:sticky;top:0;z-index:5;">`;
+    if(gaps.length===0){
+      h+=`<div style="color:#16a34a;font-weight:600;">✓ マスタ R:U の必要フラグに対して空きはありません (${admSeState.sheetName})</div>`;
+    }else{
+      // タイプ別集計
+      const byType={};gaps.forEach(g=>{byType[g.type]=(byType[g.type]||0)+1;});
+      const summary=Object.entries(byType).map(([t,n])=>`${t}: ${n}件`).join(' / ');
+      h+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div style="color:#dc2626;font-weight:bold;font-size:14px;">⚠️ 空き ${gaps.length} 件 (${summary})</div><button onclick="admSeRender()" style="background:#cbd5e1;color:#1e293b;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">×閉じる</button></div>`;
+      h+=`<div style="max-height:240px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px;">`;
+      h+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#fef2f2;position:sticky;top:0;"><th style="padding:6px;border-bottom:1px solid #fca5a5;text-align:left;">コース</th><th style="padding:6px;border-bottom:1px solid #fca5a5;text-align:left;">日付</th><th style="padding:6px;border-bottom:1px solid #fca5a5;text-align:left;">曜</th><th style="padding:6px;border-bottom:1px solid #fca5a5;text-align:left;">区分</th><th style="padding:6px;border-bottom:1px solid #fca5a5;text-align:left;">セル</th></tr></thead><tbody>`;
+      gaps.slice(0,500).forEach(g=>{
+        h+=`<tr><td style="padding:4px 6px;border-bottom:1px solid #f1f5f9;">${g.course}</td><td style="padding:4px 6px;border-bottom:1px solid #f1f5f9;">${g.month}/${g.day}</td><td style="padding:4px 6px;border-bottom:1px solid #f1f5f9;${g.dow==='日'?'color:#dc2626;':g.dow==='土'?'color:#2563eb;':''}">${g.dow}</td><td style="padding:4px 6px;border-bottom:1px solid #f1f5f9;color:#dc2626;">${g.type}</td><td style="padding:4px 6px;border-bottom:1px solid #f1f5f9;color:var(--text-sub);font-size:11px;">${admSeColLabel(g.col)}${g.row+1}</td></tr>`;
+      });
+      if(gaps.length>500)h+=`<tr><td colspan="5" style="padding:6px;text-align:center;color:var(--text-sub);">...他 ${gaps.length-500} 件</td></tr>`;
+      h+=`</tbody></table></div>`;
+    }
+    h+=`</div>`;
+    // 既存のグリッドの前に挿入 (再描画後にgrid再表示するためにこれをトップに置く)
+    admSeRender();
+    cont.insertAdjacentHTML('afterbegin',h);
+    // 該当セルをハイライト
+    gaps.forEach(g=>{
+      const td=cont.querySelector(`td[data-r="${g.row}"][data-c="${g.col}"]`);
+      if(td)td.style.background='#fee2e2';
+    });
+  }catch(e){
+    msg.innerHTML='<span style="color:var(--danger);">空きチェック失敗: '+e.message+'</span>';
+  }
+}
 
 async function admSeNewMonth(){
   const ym=window.prompt('新規作成する年月を入力してください (例: 2026-06)','');
