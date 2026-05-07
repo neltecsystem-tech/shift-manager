@@ -4733,14 +4733,14 @@ function admSeStaffCellHtml(r,c,val,dirty,minWidth,blackout,isDup){
   if(blackout)bg='background:#000;';
   else if(isDup)bg='background:#fee2e2;';
   else if(dirty)bg='background:#fef3c7;';
-  const mw=minWidth?`min-width:${minWidth}px;`:'min-width:55px;';
+  const mw=minWidth?`min-width:${minWidth}px;`:'min-width:100px;';
   let inputColor='';
   if(blackout)inputColor='color:#000;caret-color:#fff;';
   else if(isDup)inputColor='color:#991b1b;font-weight:600;';
   const title=isDup?'title="⚠️ 同日同編で重複"':'';
-  return `<td style="border:1px solid #e2e8f0;padding:0;${mw}font-size:11px;${bg}">`+
+  return `<td style="border:1px solid #e2e8f0;padding:0;${mw}font-size:13px;${bg}">`+
     `<input type="text" list="adm-se-staff-list" data-r="${r}" data-c="${c}" value="${safe}" ${title} `+
-    `style="border:none;padding:2px 4px;font-size:11px;width:100%;background:transparent;outline:none;${inputColor}"/>`+
+    `style="border:none;padding:4px 6px;font-size:13px;width:100%;background:transparent;outline:none;${inputColor}"/>`+
   `</td>`;
 }
 
@@ -5044,22 +5044,22 @@ function admSeRenderPretty(){
   h+=`<summary style="cursor:pointer;padding:8px 12px;background:#f1f5f9;font-weight:600;border-radius:6px 6px 0 0;">📋 Section 1: コース × 日付 (朝刊/夕刊) — ${courseRows.length}コース × ${s1Dates.length}日</summary>`;
   h+=`<div style="overflow:auto;max-height:60vh;">`;
   if(s1Dates.length&&courseRows.length){
-    h+='<table style="border-collapse:collapse;font-size:11px;white-space:nowrap;">';
+    h+='<table style="border-collapse:collapse;font-size:14px;white-space:nowrap;">';
     h+='<thead style="position:sticky;top:0;z-index:2;">';
-    h+='<tr style="background:#f1f5f9;"><th rowspan="2" style="border:1px solid #cbd5e1;padding:4px 8px;background:#e2e8f0;position:sticky;left:0;z-index:3;min-width:90px;">コース</th>';
+    h+='<tr style="background:#f1f5f9;"><th rowspan="2" style="border:1px solid #cbd5e1;padding:6px 10px;background:#e2e8f0;position:sticky;left:0;z-index:3;min-width:140px;font-size:13px;">コース</th>';
     s1Dates.forEach(d=>{
       const bg=d.dow===0?'#fee2e2':d.dow===6?'#dbeafe':'#f1f5f9';
       const dowColor=d.dow===0?'#dc2626':d.dow===6?'#2563eb':'#475569';
-      h+=`<th colspan="2" style="border:1px solid #cbd5e1;padding:2px 4px;background:${bg};min-width:110px;"><div>${d.month}/${d.day}</div><div style="font-size:10px;color:${dowColor};font-weight:bold;">${dows[d.dow]}</div></th>`;
+      h+=`<th colspan="2" style="border:1px solid #cbd5e1;padding:4px 6px;background:${bg};min-width:200px;font-size:13px;"><div>${d.month}/${d.day}</div><div style="font-size:12px;color:${dowColor};font-weight:bold;">${dows[d.dow]}</div></th>`;
     });
     h+='</tr><tr>';
     s1Dates.forEach(()=>{
-      h+='<th style="border:1px solid #cbd5e1;padding:2px 4px;font-size:10px;color:#0369a1;background:#e0f2fe;">朝</th>';
-      h+='<th style="border:1px solid #cbd5e1;padding:2px 4px;font-size:10px;color:#9333ea;background:#fdf4ff;">夕</th>';
+      h+='<th style="border:1px solid #cbd5e1;padding:3px 4px;font-size:12px;color:#0369a1;background:#e0f2fe;">朝</th>';
+      h+='<th style="border:1px solid #cbd5e1;padding:3px 4px;font-size:12px;color:#9333ea;background:#fdf4ff;">夕</th>';
     });
     h+='</tr></thead><tbody>';
     courseRows.forEach(({rowIdx,course})=>{
-      h+=`<tr><td style="border:1px solid #cbd5e1;padding:4px 8px;font-weight:600;background:#f8fafc;position:sticky;left:0;z-index:1;">${course}</td>`;
+      h+=`<tr><td style="border:1px solid #cbd5e1;padding:6px 10px;font-weight:600;background:#f8fafc;position:sticky;left:0;z-index:1;font-size:13px;">${course}</td>`;
       s1Dates.forEach(d=>{
         const am=admSeCellValue(rowIdx,d.col);
         const pm=admSeCellValue(rowIdx,d.col+1);
@@ -5069,8 +5069,8 @@ function admSeRenderPretty(){
         const pmBlack=admSeIsBlackout(course,d.dow,true);
         const amDup=dupCells.has(`${rowIdx},${d.col}`);
         const pmDup=dupCells.has(`${rowIdx},${d.col+1}`);
-        h+=admSeStaffCellHtml(rowIdx,d.col,am,amDirty,55,amBlack,amDup);
-        h+=admSeStaffCellHtml(rowIdx,d.col+1,pm,pmDirty,55,pmBlack,pmDup);
+        h+=admSeStaffCellHtml(rowIdx,d.col,am,amDirty,100,amBlack,amDup);
+        h+=admSeStaffCellHtml(rowIdx,d.col+1,pm,pmDirty,100,pmBlack,pmDup);
       });
       h+='</tr>';
     });
