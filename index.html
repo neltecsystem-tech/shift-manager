@@ -5174,7 +5174,22 @@ async function admSeNewMonth(){
     msg.textContent=`シート作成: ${sheetName}...`;
     const cr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create_sheet',sheet_name:sheetName})});
     const cj=await cr.json();
-    if(cj.error)throw new Error(cj.error);
+    if(cj.error){
+      // 既存シートが存在する場合は新規作成せず、編集モードに切り替えるか確認
+      if(/already exists/i.test(cj.error)){
+        if(window.confirm(`「${sheetName}」は既に存在します。\n\n既存シートを読み込んで編集しますか?`)){
+          const sel=document.getElementById('adm-se-sheet');
+          if(![...sel.options].some(o=>o.value===sheetName))await admSeInit();
+          sel.value=sheetName;
+          msg.textContent=`既存シート「${sheetName}」を読み込み中...`;msg.style.color='#3b82f6';
+          await admSeLoad();
+        }else{
+          msg.textContent='';
+        }
+        return;
+      }
+      throw new Error(cj.error);
+    }
 
     msg.textContent=`日付 ${dates.length}日 + コース ${orderedCourses.length}件 + 担当者 ${filledCells}セル を書き込み中...`;
     const colEnd=admSeColLabel(numCols-1);
