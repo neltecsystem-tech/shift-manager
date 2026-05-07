@@ -4742,6 +4742,9 @@ async function admSeSave(){
   }
 }
 
+// 新規月作成時のデフォルトテンプレートシート名 (「原紙」)
+const ADM_SE_DEFAULT_TEMPLATE='原紙';
+
 async function admSeNewMonth(){
   const ym=window.prompt('新規作成する年月を入力してください (例: 2026-06)','');
   if(!ym)return;
@@ -4749,19 +4752,20 @@ async function admSeNewMonth(){
   if(!m){alert('YYYY-MM 形式で入力してください');return;}
   const year=Number(m[1]),month=Number(m[2]);
   const sheetName=`${month}月シフト${year}`;
-  // 前月をテンプレートにするか確認
-  const prevDate=new Date(year,month-2,1);// month-1-1 → month-2 は前月の月
-  const prevSheet=`${prevDate.getMonth()+1}月シフト${prevDate.getFullYear()}`;
-  const useTpl=window.confirm(`「${sheetName}」を作成します。\n\n前月のシフト「${prevSheet}」をテンプレートとしてコピーしますか?\n[OK] = 前月をコピー / [キャンセル] = 空で作成`);
+  // テンプレートシート名を確認 (デフォルト: 原紙)
+  const tplName=window.prompt(`「${sheetName}」を作成します。\n\nテンプレートシート名を入力 (空欄=空シートで作成):`,ADM_SE_DEFAULT_TEMPLATE);
+  if(tplName===null)return;// キャンセル
+  const useTpl=tplName.trim()!=='';
   const msg=document.getElementById('adm-se-msg');
-  msg.textContent=`新規シート作成中: ${sheetName}...`;msg.style.color='#3b82f6';
+  msg.textContent=`新規シート作成中: ${sheetName}${useTpl?` (テンプレート: ${tplName})`:''}...`;msg.style.color='#3b82f6';
   try{
     const body={action:'create_sheet',sheet_name:sheetName};
-    if(useTpl)body.template_sheet_name=prevSheet;
+    if(useTpl)body.template_sheet_name=tplName.trim();
     const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json();
     if(j.error)throw new Error(j.error);
-    msg.textContent=`✓ ${sheetName} を作成しました${useTpl?` (${prevSheet} からコピー)`:''}`;msg.style.color='#16a34a';
+    msg.textContent=`✓ ${sheetName} を作成しました${useTpl?` (${tplName} からコピー)`:''}`;msg.style.color='#16a34a';
+    setTimeout(()=>{const m2=document.getElementById('adm-se-msg');if(m2&&m2.textContent.includes(sheetName))m2.textContent='';},5000);
     // シート一覧を再ロード
     const sel=document.getElementById('adm-se-sheet');
     sel.innerHTML='<option value="">選択してください</option>';
