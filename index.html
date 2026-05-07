@@ -4610,6 +4610,10 @@ async function admSeLoad(){
     setTimeout(()=>{msg.textContent='';},2000);
     admSeUpdateDirtyBadge();
     admSeRender();
+    // マスタ R:U 取得は黒塗り判定に使う。初回のみフェッチして再描画
+    if(!admSeMasterReqs){
+      admSeLoadMaster().then(()=>admSeRender()).catch(()=>{});
+    }
   }catch(e){
     msg.innerHTML='<span style="color:var(--danger);">読み込み失敗: '+e.message+'</span>';
     cont.innerHTML='';
@@ -4656,12 +4660,27 @@ function admSeCellValue(r,c){
   return (admSeState.rows[r]||[])[c]||'';
 }
 // セル HTML 生成
-function admSeCellHtml(r,c,val,dirty,color,minWidth){
+function admSeCellHtml(r,c,val,dirty,color,minWidth,blackout){
   const safe=String(val).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const bg=dirty?'background:#fef3c7;':'';
+  let bg='';
+  if(blackout)bg='background:#000;color:#000;caret-color:#fff;';
+  else if(dirty)bg='background:#fef3c7;';
   const mw=minWidth?`min-width:${minWidth}px;`:'min-width:55px;';
-  const colorStyle=color&&val?`color:${color};`:'';
+  const colorStyle=!blackout&&color&&val?`color:${color};`:'';
   return `<td contenteditable="true" data-r="${r}" data-c="${c}" style="border:1px solid #e2e8f0;padding:2px 4px;${mw}font-size:11px;${bg}${colorStyle}">${safe}</td>`;
+}
+
+// マスタ R:U フラグからセル黒塗り判定 (admSeMasterReqs キャッシュ前提)
+// 朝刊✔がない → AM 黒 / 夕刊✔がない → 月-木 PM 黒 / 金土✔がない → 金土 PM 黒 / 日PM は常に黒
+function admSeIsBlackout(course,jsDay,isPm){
+  const reqs=admSeMasterReqs;
+  if(!reqs)return false;
+  const req=reqs[course];
+  if(!req)return false;
+  if(!isPm)return !req.am;
+  if(jsDay===0)return true;
+  if(jsDay===5||jsDay===6)return !req.keiba;
+  return !req.pm;
 }
 
 // 描画モード切替 (デフォルト: pretty)
@@ -4803,8 +4822,10 @@ function admSeRenderPretty(){
         const pm=admSeCellValue(rowIdx,d.col+1);
         const amDirty=admSeState.dirty.has(`${rowIdx},${d.col}`);
         const pmDirty=admSeState.dirty.has(`${rowIdx},${d.col+1}`);
-        h+=admSeCellHtml(rowIdx,d.col,am,amDirty,null,55);
-        h+=admSeCellHtml(rowIdx,d.col+1,pm,pmDirty,null,55);
+        const amBlack=admSeIsBlackout(course,d.dow,false);
+        const pmBlack=admSeIsBlackout(course,d.dow,true);
+        h+=admSeCellHtml(rowIdx,d.col,am,amDirty,null,55,amBlack);
+        h+=admSeCellHtml(rowIdx,d.col+1,pm,pmDirty,null,55,pmBlack);
       });
       h+='</tr>';
     });
