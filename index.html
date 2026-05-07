@@ -4937,8 +4937,7 @@ async function admSeSave(){
   }
 }
 
-// 新規月作成時のデフォルトテンプレートシート名 (「原紙」)
-const ADM_SE_DEFAULT_TEMPLATE='原紙';
+// 新規月作成: マスタ R 列のコース一覧から自動生成 (テンプレート不使用)
 
 // マスタ R:U のキャッシュ: course → {am, pm, keiba} (boolean)
 let admSeMasterReqs=null;
@@ -5053,26 +5052,64 @@ async function admSeCheckGaps(){
 }
 
 async function admSeNewMonth(){
-  const ym=window.prompt('新規作成する年月を入力してください (例: 2026-06)','');
+  const ym=window.prompt('新規作成する年月を入力 (例: 2026-06)','');
   if(!ym)return;
   const m=ym.match(/^(\d{4})-(\d{1,2})$/);
   if(!m){alert('YYYY-MM 形式で入力してください');return;}
   const year=Number(m[1]),month=Number(m[2]);
   const sheetName=`${month}月シフト${year}`;
-  // テンプレートシート名を確認 (デフォルト: 原紙)
-  const tplName=window.prompt(`「${sheetName}」を作成します。\n\nテンプレートシート名を入力 (空欄=空シートで作成):`,ADM_SE_DEFAULT_TEMPLATE);
-  if(tplName===null)return;// キャンセル
-  const useTpl=tplName.trim()!=='';
+  const dows=['日','月','火','水','木','金','土'];
+  const lastDay=new Date(year,month,0).getDate();
+  if(!window.confirm(`「${sheetName}」を作成します。\n\nマスタ R 列のコース一覧から自動生成:\n• 日付 (${month}/1〜${month}/${lastDay})\n• 曜日\n• 朝刊/夕刊 ヘッダ\n• 全コース行 (空セル)\n\n続行?`))return;
+
   const msg=document.getElementById('adm-se-msg');
-  msg.textContent=`新規シート作成中: ${sheetName}${useTpl?` (テンプレート: ${tplName})`:''}...`;msg.style.color='#3b82f6';
+  msg.textContent='マスタ取得中...';msg.style.color='#3b82f6';
   try{
-    const body={action:'create_sheet',sheet_name:sheetName};
-    if(useTpl)body.template_sheet_name=tplName.trim();
-    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const j=await r.json();
-    if(j.error)throw new Error(j.error);
-    msg.textContent=`✓ ${sheetName} を作成しました${useTpl?` (${tplName} からコピー)`:''}`;msg.style.color='#16a34a';
+    // 1. マスタからコース一覧取得
+    const reqs=await admSeLoadMaster();
+    const courses=Object.keys(reqs);
+    if(!courses.length)throw new Error('マスタにコースが見つかりません');
+
+    // 2. 日付リスト
+    const dates=[];
+    for(let d=1;d<=lastDay;d++){
+      const dt=new Date(year,month-1,d);
+      dates.push({day:d,dow:dows[dt.getDay()]});
+    }
+
+    // 3. シート用 2D 配列を構築
+    // Row 0: 日付 (col 1=date1, col 3=date2, ...)
+    // Row 3: 曜日 (col 1=dow1, col 3=dow2, ...)
+    // Row 5: 朝刊/夕刊 (col 1=朝刊, col 2=夕刊, ...)
+    // Row 7+: コース (col 0=course)
+    const numCols=1+dates.length*2;
+    const mkRow=()=>new Array(numCols).fill('');
+    const sheetRows=[];
+    const r0=mkRow();dates.forEach((d,i)=>{r0[1+i*2]=`${month}/${d.day}`;});sheetRows.push(r0);
+    sheetRows.push(mkRow());// Row 1
+    sheetRows.push(mkRow());// Row 2
+    const r3=mkRow();dates.forEach((d,i)=>{r3[1+i*2]=d.dow;});sheetRows.push(r3);
+    sheetRows.push(mkRow());// Row 4
+    const r5=mkRow();dates.forEach((d,i)=>{r5[1+i*2]='朝刊';r5[2+i*2]='夕刊';});sheetRows.push(r5);
+    sheetRows.push(mkRow());// Row 6
+    courses.forEach(c=>{const cr=mkRow();cr[0]=c;sheetRows.push(cr);});
+
+    // 4. 空シート作成 → update_range で全部書き込み
+    msg.textContent=`シート作成: ${sheetName}...`;
+    const cr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create_sheet',sheet_name:sheetName})});
+    const cj=await cr.json();
+    if(cj.error)throw new Error(cj.error);
+
+    msg.textContent=`日付 ${dates.length}日 + コース ${courses.length}件 を書き込み中...`;
+    const colEnd=admSeColLabel(numCols-1);
+    const range=`A1:${colEnd}${sheetRows.length}`;
+    const ur=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:sheetName,range,values:sheetRows})});
+    const uj=await ur.json();
+    if(uj.error)throw new Error(uj.error);
+
+    msg.textContent=`✓ ${sheetName} を作成しました (コース${courses.length}件 / ${lastDay}日)`;msg.style.color='#16a34a';
     setTimeout(()=>{const m2=document.getElementById('adm-se-msg');if(m2&&m2.textContent.includes(sheetName))m2.textContent='';},5000);
+
     // シート一覧を再ロード
     const sel=document.getElementById('adm-se-sheet');
     sel.innerHTML='<option value="">選択してください</option>';
