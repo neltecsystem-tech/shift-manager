@@ -883,10 +883,23 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:14px;font-size:12px;color:var(--text-sub);line-height:1.6;">
           ダイヤグラム.xlsx (4コース横並びレイアウト) をアップロードすると、店舗マスタから住所・座標を取得して<b>印刷用ページ</b>と<b>Googleマップナビリンク (10地点ずつ)</b> を生成します。
         </div>
+        <div style="margin-bottom:10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;"><input type="radio" name="adm-dg-src" value="excel" checked onchange="admDgSwitchSrc()"> エクセルファイル</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;"><input type="radio" name="adm-dg-src" value="sheet" onchange="admDgSwitchSrc()"> Googleスプレッドシート</label>
+        </div>
         <div class="filters" style="margin-bottom:14px;">
-          <div style="flex:1;min-width:280px;">
+          <div id="adm-dg-src-excel" style="flex:1;min-width:280px;">
             <label>エクセルファイル</label>
             <input type="file" id="adm-dg-file" accept=".xlsx,.xls" onchange="admDgOnFile(event)">
+          </div>
+          <div id="adm-dg-src-sheet" style="flex:1;min-width:280px;display:none;">
+            <label>スプレッドシートURL or ID</label>
+            <input type="text" id="adm-dg-sheet-url" placeholder="https://docs.google.com/spreadsheets/d/{ID}/edit#gid=0" style="width:100%;">
+            <div style="display:flex;gap:6px;align-items:center;margin-top:4px;">
+              <select id="adm-dg-sheet-pick" style="flex:1;display:none;" onchange="admDgFetchSheet()"></select>
+              <button onclick="admDgFetchSheet()" id="adm-dg-fetch-btn" style="background:#0891b2;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">📥 取得</button>
+            </div>
+            <div style="font-size:10px;color:var(--text-sub);margin-top:4px;">非公開シートはサービスアカウント<br><code style="font-size:10px;">workchat@my-project-78970-492704.iam.gserviceaccount.com</code><br>に閲覧権限を付与してください</div>
           </div>
           <div>
             <label>出発地点 (住所)</label>
@@ -3929,6 +3942,67 @@ function admDgInit(){
   admDgRenderAliases().catch(()=>{});
 }
 
+function admDgSwitchSrc(){
+  const src=document.querySelector('input[name="adm-dg-src"]:checked').value;
+  document.getElementById('adm-dg-src-excel').style.display=(src==='excel')?'':'none';
+  document.getElementById('adm-dg-src-sheet').style.display=(src==='sheet')?'':'none';
+  document.getElementById('adm-dg-process-btn').disabled=true;
+  document.getElementById('adm-dg-coursecfg').innerHTML='';
+  document.getElementById('adm-dg-status').textContent='';
+  admDgParsed=null;
+}
+
+function admDgParseRows(rows){
+  const blocks=[0,5,10,15];
+  const courseNames=[],stopsAll=[];
+  blocks.forEach((c,i)=>{
+    const stops=[];
+    for(let r=1;r<rows.length;r++){
+      const row=rows[r]||[];
+      const id=row[c];const name=row[c+1];const time=row[c+2];const dist=row[c+3];
+      if(!name && !id)break;
+      if(!name)continue;
+      stops.push({id,name:String(name).trim(),time,dist});
+    }
+    stopsAll.push(stops);
+    courseNames.push('コース'+(i+1));
+  });
+  admDgParsed={courseNames,stopsAll};
+  const cfgHtml=courseNames.map((n,i)=>'<div style="display:inline-block;margin-right:12px;"><label style="font-size:11px;">コース'+(i+1)+'名</label><input type="text" class="adm-dg-cname" value="'+n+'" style="min-width:140px;"></div>').join('');
+  document.getElementById('adm-dg-coursecfg').innerHTML='<div style="background:#f8fafc;padding:10px;border-radius:8px;">'+cfgHtml+'<div style="font-size:11px;color:var(--text-sub);margin-top:6px;">読込: '+stopsAll.map((s,i)=>'コース'+(i+1)+'='+s.length+'件').join(' / ')+'</div></div>';
+  document.getElementById('adm-dg-process-btn').disabled=false;
+}
+
+async function admDgFetchSheet(){
+  const url=document.getElementById('adm-dg-sheet-url').value.trim();
+  if(!url){alert('URLまたはIDを入力してください');return;}
+  const pick=document.getElementById('adm-dg-sheet-pick');
+  const sheetName=pick.style.display!=='none'?pick.value:'';
+  document.getElementById('adm-dg-status').textContent='スプレッドシート取得中...';
+  document.getElementById('adm-dg-fetch-btn').disabled=true;
+  try{
+    const res=await admDgEf({action:'fetch_sheet',sheet_id_or_url:url,sheet_name:sheetName});
+    if(res.error){
+      document.getElementById('adm-dg-status').textContent='取得失敗: '+res.error;
+      return;
+    }
+    // populate sheet picker if multiple sheets
+    if(res.sheets&&res.sheets.length>1){
+      pick.innerHTML=res.sheets.map(s=>'<option value="'+s.title.replace(/"/g,'&quot;')+'"'+(s.title===res.used.title?' selected':'')+'>'+s.title+'</option>').join('');
+      pick.style.display='';
+    }else{
+      pick.style.display='none';
+    }
+    const rows=res.values||[];
+    admDgParseRows(rows);
+    document.getElementById('adm-dg-status').textContent='取得完了: シート「'+(res.used?.title||'')+'」 ('+rows.length+'行)。「⚙ 生成」を押してください。';
+  }catch(err){
+    document.getElementById('adm-dg-status').textContent='取得失敗: '+(err.message||err);
+  }finally{
+    document.getElementById('adm-dg-fetch-btn').disabled=false;
+  }
+}
+
 function admDgFmtTime(frac){
   if(typeof frac!=='number')return String(frac||'');
   const m=Math.round(frac*1440);
@@ -3944,24 +4018,7 @@ function admDgOnFile(e){
       const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
       const sh=wb.Sheets[wb.SheetNames[0]];
       const rows=XLSX.utils.sheet_to_json(sh,{header:1,defval:''});
-      const blocks=[0,5,10,15];
-      const courseNames=[],stopsAll=[];
-      blocks.forEach((c,i)=>{
-        const stops=[];
-        for(let r=1;r<rows.length;r++){
-          const row=rows[r];
-          const id=row[c];const name=row[c+1];const time=row[c+2];const dist=row[c+3];
-          if(!name && !id)break;
-          if(!name)continue;
-          stops.push({id,name:String(name).trim(),time,dist});
-        }
-        stopsAll.push(stops);
-        courseNames.push('コース'+(i+1));
-      });
-      admDgParsed={courseNames,stopsAll};
-      const cfgHtml=courseNames.map((n,i)=>'<div style="display:inline-block;margin-right:12px;"><label style="font-size:11px;">コース'+(i+1)+'名</label><input type="text" class="adm-dg-cname" value="'+n+'" style="min-width:140px;"></div>').join('');
-      document.getElementById('adm-dg-coursecfg').innerHTML='<div style="background:#f8fafc;padding:10px;border-radius:8px;">'+cfgHtml+'<div style="font-size:11px;color:var(--text-sub);margin-top:6px;">読込: '+stopsAll.map((s,i)=>'コース'+(i+1)+'='+s.length+'件').join(' / ')+'</div></div>';
-      document.getElementById('adm-dg-process-btn').disabled=false;
+      admDgParseRows(rows);
       document.getElementById('adm-dg-status').textContent='エクセル解析完了。「⚙ 生成」を押してください。';
     }catch(err){
       document.getElementById('adm-dg-status').textContent='エクセル解析失敗: '+(err.message||err);
