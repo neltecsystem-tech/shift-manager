@@ -879,6 +879,21 @@ tbody tr:hover { background:var(--primary-light); }
       <!-- システム設定 -->
       <div id="adm-settings" class="adm-panel" style="display:none;">
         <div style="margin-bottom:24px;">
+          <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">🎛️ 通常スタッフが見れる機能</h3>
+          <div style="background:#f8fafc;border-radius:8px;padding:16px;font-size:13px;">
+            <div style="color:var(--text-sub);margin-bottom:10px;font-size:12px;">
+              admin 権限を持たないスタッフ (通常ログイン) のナビメニュー表示を制御します。チェックを外すとそのスタッフからは非表示になります。<br>
+              <b>※ admin 権限を持つスタッフ・管理者ログイン (パスワード) には影響しません。</b>
+            </div>
+            <div id="adm-featvis-list" style="display:flex;flex-wrap:wrap;gap:10px 18px;"></div>
+            <div style="margin-top:14px;display:flex;gap:8px;align-items:center;">
+              <button onclick="admFeatureVisSave()" style="background:var(--primary);color:#fff;border:none;padding:8px 18px;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;">💾 保存</button>
+              <button onclick="admFeatureVisReset()" style="background:#cbd5e1;color:#1e293b;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:12px;">↺ デフォルトに戻す</button>
+              <span id="adm-featvis-msg" style="font-size:12px;color:var(--text-sub);"></span>
+            </div>
+          </div>
+        </div>
+        <div style="margin-bottom:24px;">
           <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">🔑 管理者パスワード変更</h3>
           <div style="max-width:400px;">
             <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">現在のパスワード</label><input type="password" id="adm-pw-current" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
@@ -3787,6 +3802,51 @@ function adminLogout(){
   showView('dashboard',document.querySelector('.nav-links button'));
 }
 
+// === 通常スタッフ向け 機能表示設定 ===
+// localStorage に { dashboard:true, shift:true, ... } 形式で保存
+const FEATURE_LIST=[
+  {key:'dashboard',label:'ダッシュボード'},
+  {key:'shift',label:'月別シフト'},
+  {key:'tenpo',label:'店舗検索'},
+  {key:'search',label:'横断検索'},
+  {key:'staff',label:'スタッフ一覧'},
+  {key:'invoice',label:'請求書'},
+  {key:'measure',label:'測定'},
+  {key:'diagram',label:'ダイヤグラム'},
+];
+function admFeatureVisLoad(){
+  try{
+    const raw=localStorage.getItem('sysFeatureVisibility');
+    if(raw)return JSON.parse(raw);
+  }catch(_){}
+  return {};
+}
+function admFeatureVisRender(){
+  const cont=document.getElementById('adm-featvis-list');
+  if(!cont)return;
+  const cfg=admFeatureVisLoad();
+  cont.innerHTML=FEATURE_LIST.map(f=>{
+    const checked=(cfg[f.key]!==false);// デフォルト ON
+    return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;min-width:160px;"><input type="checkbox" data-feat="${f.key}" ${checked?'checked':''}> ${f.label}</label>`;
+  }).join('');
+}
+function admFeatureVisSave(){
+  const cont=document.getElementById('adm-featvis-list');
+  if(!cont)return;
+  const cfg={};
+  cont.querySelectorAll('input[data-feat]').forEach(el=>{cfg[el.dataset.feat]=el.checked;});
+  try{localStorage.setItem('sysFeatureVisibility',JSON.stringify(cfg));}catch(_){}
+  const msg=document.getElementById('adm-featvis-msg');
+  if(msg){msg.textContent='✓ 保存しました (次回ログイン時 or リロード後に反映)';msg.style.color='#16a34a';setTimeout(()=>{msg.textContent='';},3000);}
+}
+function admFeatureVisReset(){
+  if(!window.confirm('全機能を表示する状態に戻します。よろしいですか?'))return;
+  try{localStorage.removeItem('sysFeatureVisibility');}catch(_){}
+  admFeatureVisRender();
+  const msg=document.getElementById('adm-featvis-msg');
+  if(msg){msg.textContent='✓ デフォルトに戻しました';msg.style.color='#16a34a';setTimeout(()=>{msg.textContent='';},3000);}
+}
+
 function adminTab(t){
   document.querySelectorAll('.adm-panel').forEach(p=>p.style.display='none');
   document.querySelectorAll('.adm-tab').forEach(b=>{b.style.background='#f1f5f9';b.style.color='var(--text-sub)';});
@@ -3804,6 +3864,7 @@ function adminTab(t){
   if(t==='measure')admMsrInit();
   if(t==='paystatement')admPayInit().catch(()=>{});
   if(t==='employee')admEmpInit().catch(()=>{});
+  if(t==='settings')admFeatureVisRender();
   if(t==='shiftedit')admSeInit().catch(()=>{});
   if(t==='data')adminShowDataInfo();
   if(t==='settings')adminShowSysInfo();
@@ -10429,6 +10490,7 @@ function sysApplyPermissions(perms){
     'dashboard':{always:true},
     'shift':{always:true},
     'tenpo':{always:true},
+    'search':{always:true},
     'staff':{always:true},
     'defects':{perm:'defects'},
     'shopmaster':{perm:'shopmaster'},
@@ -10436,12 +10498,17 @@ function sysApplyPermissions(perms){
     'measure':{always:true},
     'diagram':{always:true},
   };
+  // 通常スタッフ (admin 権限なし) には機能表示設定を適用
+  const featCfg=(typeof admFeatureVisLoad==='function')?admFeatureVisLoad():{};
+  const isRegular=!isAll&&!perms.includes('admin');
   document.querySelectorAll('.nav-links button[onclick*="showView"]').forEach(btn=>{
     const m=btn.getAttribute('onclick').match(/showView\('(\w+)'/);
     if(!m)return;
     const view=m[1];
     const rule=navMap[view];
     if(!rule){btn.style.display='';return;}
+    // 通常スタッフかつ機能表示設定で OFF にされていれば非表示
+    if(isRegular&&featCfg[view]===false){btn.style.display='none';return;}
     if(isAll||rule.always){btn.style.display='';return;}
     if(rule.perm&&perms.includes(rule.perm)){btn.style.display='';return;}
     btn.style.display='none';
