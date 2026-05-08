@@ -3999,6 +3999,7 @@ function adminTab(t){
 const ADM_DG_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/diagram-process';
 let admDgParsed=null; // {courseNames:[], stops:[[],[],[],[]]}
 let admDgResult=null; // EF result
+let admDgNotesCache=new Map(); // course_name -> notes text (DBから読込キャッシュ)
 
 async function admDgEf(body){
   const res=await fetch(ADM_DG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -4014,6 +4015,46 @@ function admDgInit(){
   document.getElementById('adm-dg-results').innerHTML='';
   admDgParsed=null;admDgResult=null;
   admDgRenderAliases().catch(()=>{});
+  admDgLoadNotes().catch(()=>{});
+}
+
+async function admDgLoadNotes(){
+  try{
+    const res=await admDgEf({action:'list_notes'});
+    admDgNotesCache.clear();
+    (res.notes||[]).forEach(n=>admDgNotesCache.set(n.course_name,n.notes||''));
+  }catch(_){}
+}
+
+function admDgGetNote(courseName){return admDgNotesCache.get(courseName)||'';}
+
+async function admDgSaveNote(idx){
+  const cn=document.querySelectorAll('.adm-dg-cname')[idx];
+  const tn=document.querySelectorAll('.adm-dg-cnote')[idx];
+  if(!cn||!tn)return;
+  const courseName=cn.value.trim();
+  if(!courseName)return;
+  const notes=tn.value;
+  // ローカル即反映
+  admDgNotesCache.set(courseName,notes);
+  // バックグラウンド保存
+  try{
+    await admDgEf({action:'set_note',course_name:courseName,notes});
+    const ind=document.getElementById('adm-dg-note-status-'+idx);
+    if(ind){ind.textContent='✓ 保存';ind.style.color='#16a34a';setTimeout(()=>{ind.textContent='';},2000);}
+  }catch(err){
+    const ind=document.getElementById('adm-dg-note-status-'+idx);
+    if(ind){ind.textContent='保存失敗';ind.style.color='#dc2626';}
+  }
+}
+
+function admDgOnCourseNameChange(idx){
+  const cn=document.querySelectorAll('.adm-dg-cname')[idx];
+  const tn=document.querySelectorAll('.adm-dg-cnote')[idx];
+  if(!cn||!tn)return;
+  const newName=cn.value.trim();
+  // 別コース名に変えたらDBから対応するnoteをロード
+  tn.value=admDgGetNote(newName);
 }
 
 function admDgSwitchSrc(){
@@ -4042,8 +4083,21 @@ function admDgParseRows(rows){
     courseNames.push('コース'+(i+1));
   });
   admDgParsed={courseNames,stopsAll};
-  const cfgHtml=courseNames.map((n,i)=>'<div style="display:inline-block;margin-right:12px;"><label style="font-size:11px;">コース'+(i+1)+'名</label><input type="text" class="adm-dg-cname" value="'+n+'" style="min-width:140px;"></div>').join('');
-  document.getElementById('adm-dg-coursecfg').innerHTML='<div style="background:#f8fafc;padding:10px;border-radius:8px;">'+cfgHtml+'<div style="font-size:11px;color:var(--text-sub);margin-top:6px;">読込: '+stopsAll.map((s,i)=>'コース'+(i+1)+'='+s.length+'件').join(' / ')+'</div></div>';
+  const cfgHtml=courseNames.map((n,i)=>{
+    const stopCnt=stopsAll[i].length;
+    const noteVal=(admDgGetNote(n)||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:10px;margin-bottom:8px;">'+
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'+
+      '<label style="font-size:11px;font-weight:600;">コース'+(i+1)+'名</label>'+
+      '<input type="text" class="adm-dg-cname" value="'+n+'" style="min-width:160px;" onblur="admDgOnCourseNameChange('+i+')">'+
+      '<span style="font-size:11px;color:var(--text-sub);">('+stopCnt+'件)</span>'+
+      '<span id="adm-dg-note-status-'+i+'" style="font-size:11px;margin-left:8px;"></span>'+
+      '</div>'+
+      '<label style="font-size:11px;color:var(--text-sub);">📝 配送特記 (DBに自動保存)</label>'+
+      '<textarea class="adm-dg-cnote" rows="2" style="width:100%;font-size:12px;font-family:inherit;padding:4px 6px;border:1px solid #cbd5e1;border-radius:4px;resize:vertical;" onblur="admDgSaveNote('+i+')" placeholder="例: 月曜は店舗XX休業 / 12時以降は裏口から納品 等">'+noteVal+'</textarea>'+
+      '</div>';
+  }).join('');
+  document.getElementById('adm-dg-coursecfg').innerHTML='<div style="background:#f8fafc;padding:10px;border-radius:8px;">'+cfgHtml+'</div>';
   document.getElementById('adm-dg-process-btn').disabled=false;
 }
 
@@ -4106,10 +4160,11 @@ async function admDgProcess(){
   if(!admDgParsed)return;
   const depot=document.getElementById('adm-dg-depot').value.trim();
   const cnames=[...document.querySelectorAll('.adm-dg-cname')].map(i=>i.value.trim()||'コース');
+  const cnotes=[...document.querySelectorAll('.adm-dg-cnote')].map(i=>i.value);
   document.getElementById('adm-dg-status').textContent='マスタ照合・住所取得中...';
   document.getElementById('adm-dg-results').innerHTML='';
   try{
-    const diagrams=admDgParsed.stopsAll.map((stops,i)=>({name:cnames[i],stops}));
+    const diagrams=admDgParsed.stopsAll.map((stops,i)=>({name:cnames[i],notes:cnotes[i]||'',stops}));
     const res=await admDgEf({action:'process',depot_address:depot,diagrams});
     if(res.error){document.getElementById('adm-dg-status').textContent='エラー: '+res.error;return;}
     admDgResult=res;
@@ -4151,6 +4206,9 @@ function admDgRenderResults(){
     html+='<h3 style="margin:0;font-size:14px;color:var(--primary);">'+admDgEsc(d.name)+' (全'+d.stops.length+'地点 / ナビ'+navs.length+'本)</h3>';
     html+='<button onclick="admDgPrintCourse('+di+')" style="background:var(--primary);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🖨 印刷/PDF</button>';
     html+='</div>';
+    if(d.notes&&d.notes.trim()){
+      html+='<div style="background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:12px;line-height:1.5;"><b style="color:#854d0e;">📝 配送特記</b><div style="white-space:pre-wrap;margin-top:4px;color:#422006;">'+admDgEsc(d.notes)+'</div></div>';
+    }
     html+='<div class="table-wrap"><table style="font-size:11px;width:100%;border-collapse:collapse;">';
     html+='<thead><tr><th>順</th><th>店舗ID</th><th>店舗名</th><th>到着</th><th>区間距離</th><th>住所</th></tr></thead><tbody>';
     d.stops.forEach((s,idx)=>{
@@ -4190,9 +4248,15 @@ function admDgPrintCourse(i){
   body+='body{font-family:-apple-system,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;margin:10mm;color:#111;font-size:9pt;}';
   body+='h1{font-size:14pt;margin:0 0 6px;}h2{font-size:11pt;margin:14px 0 6px;}.meta{font-size:9pt;color:#555;margin-bottom:8px;}';
   body+='table{border-collapse:collapse;width:100%;}th,td{border:1px solid #777;padding:3px 6px;}th{background:#e8e8e8;}.start{background:#fff7c2;font-weight:bold;}.unmatched{background:#fee2e2;}';
-  body+='td.center{text-align:center;}td.addr{font-size:8pt;color:#333;}.pgbreak{page-break-before:always;}ol{padding-left:20px;}ol li{margin-bottom:4px;word-break:break-all;font-size:8pt;}a{color:#000;}@media print{@page{size:A4 portrait;margin:10mm;}}';
+  body+='td.center{text-align:center;}td.addr{font-size:8pt;color:#333;}.pgbreak{page-break-before:always;}ol{padding-left:20px;}ol li{margin-bottom:4px;word-break:break-all;font-size:8pt;}a{color:#000;}';
+  body+='.notes-box{background:#fef9c3;border:1.5pt solid #ca8a04;border-radius:4pt;padding:6pt 8pt;margin-bottom:8pt;font-size:10pt;line-height:1.45;-webkit-print-color-adjust:exact;print-color-adjust:exact;}';
+  body+='.notes-box .lbl{font-weight:bold;color:#854d0e;font-size:10pt;}.notes-box .txt{white-space:pre-wrap;margin-top:3pt;color:#422006;}';
+  body+='@media print{@page{size:A4 portrait;margin:10mm;}}';
   body+='</style></head><body>';
   body+='<h1>'+admDgEsc(d.name)+'</h1><div class="meta">出発: '+admDgEsc(depot)+' ／ 全'+d.stops.length+'地点</div>';
+  if(d.notes&&d.notes.trim()){
+    body+='<div class="notes-box"><div class="lbl">📝 配送特記</div><div class="txt">'+admDgEsc(d.notes)+'</div></div>';
+  }
   body+='<table><thead><tr><th>順</th><th>店舗ID</th><th>店舗名</th><th>到着時刻</th><th>区間距離</th><th>住所</th></tr></thead><tbody>';
   d.stops.forEach((s,idx)=>{
     const idStr=s.id?String(parseInt(String(s.id).replace(/\D/g,''),10)||s.id):'-';
