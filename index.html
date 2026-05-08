@@ -10810,6 +10810,43 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
   });
 }
 
+// 任意の店舗から「現在地→その店舗以降9件」のナビを開く (中断後の再開用)
+async function diagNavFromHere(id){
+  const r=window.__diagNavFromHere&&window.__diagNavFromHere[id];
+  if(!r){alert('ナビ情報なし。再読み込みしてください。');return;}
+  const w=window.open('about:blank','_blank');
+  try{
+    await diagLoad();
+    const shops=diagBuildCourseRoute(r.type,r.cn,r.area||undefined).filter(s=>s.lat!=null&&s.lng!=null);
+    const startIdx=shops.findIndex(s=>s.seq===r.fromSeq);
+    if(startIdx<0){if(w)w.close();alert('対象店舗が見つかりません (マスタ変更？)');return;}
+    const chunk=shops.slice(startIdx,startIdx+9);
+    if(chunk.length===0){if(w)w.close();alert('対象店舗がありません');return;}
+    const labelOf=(s)=>{
+      const nm=(s.name||'').trim();
+      const addr=(s.addr||'').trim();
+      if(nm&&addr)return nm+' '+addr;
+      if(nm)return nm;
+      if(addr)return addr;
+      return `${s.lat},${s.lng}`;
+    };
+    const last=chunk[chunk.length-1];
+    const rest=chunk.slice(0,-1);
+    const params=new URLSearchParams();
+    params.set('api','1');
+    // origin省略 = 端末の現在地 (Google Maps が GPS 許可を要求)
+    params.set('destination',labelOf(last));
+    if(rest.length>0)params.set('waypoints',rest.map(labelOf).join('|'));
+    params.set('travelmode','driving');
+    const url=`https://www.google.com/maps/dir/?${params.toString()}`;
+    if(w)w.location.href=url;
+    else window.location.href=url;
+  }catch(e){
+    if(w)w.close();
+    alert('ナビ起動エラー: '+(e&&e.message?e.message:e));
+  }
+}
+
 async function diagNavOpen(routeId){
   const r=window.__diagNavRoutes&&window.__diagNavRoutes[routeId];
   if(!r){alert('ナビ情報が見つかりません。再読み込みしてください。');return;}
@@ -10858,6 +10895,7 @@ function diagRender(){
   if(!diagShopData.length){content.innerHTML='';summary.innerHTML='';return;}
   // ナビボタンの引数保管(各レンダーでリセット)
   window.__diagNavRoutes=[];
+  window.__diagNavFromHere=[];
   const area=document.getElementById('diag-area').value;
   const type=document.getElementById('diag-type').value;
   const course=document.getElementById('diag-course').value;
@@ -10919,7 +10957,7 @@ function diagRender(){
     h+=`</div></div>`;
 
     // 詳細テーブル
-    h+=`<table style="font-size:13px;"><thead><tr><th style="width:40px;">順</th><th>店舗名</th><th>住所</th><th style="width:80px;">店着</th><th style="min-width:160px;">📝 特記 (タップで編集)</th></tr></thead><tbody>`;
+    h+=`<table style="font-size:13px;"><thead><tr><th style="width:40px;">順</th><th>店舗名</th><th>住所</th><th style="width:80px;">店着</th><th style="width:100px;">ナビ</th><th style="min-width:160px;">📝 特記 (タップで編集)</th></tr></thead><tbody>`;
     shops.forEach(s=>{
       const tm=diagParseTime(s.schedTime);
       const hasLL=s.lat!=null&&s.lng!=null;
@@ -10934,7 +10972,13 @@ function diagRender(){
       const sNote=diagStoreNotes.get(s.name)||'';
       const linkBadges=diagLinkBadgesHtml(sNote);
       const noteCell=`<div style="position:relative;"><textarea data-store="${diagEsc(s.name)}" rows="1" onblur="diagSaveStoreNote(this, this.dataset.store)" placeholder="特記事項 / URLや[ラベル](URL)もOK" style="width:100%;font-size:11px;padding:3px 5px;border:1px solid #fbbf24;border-radius:3px;background:${sNote?'#fffef5':'#fff'};resize:vertical;font-family:inherit;color:#422006;min-height:24px;">${diagEsc(sNote)}</textarea><span class="diag-note-status" style="position:absolute;right:4px;top:-14px;font-size:10px;"></span>${linkBadges}</div>`;
-      h+=`<tr><td style="text-align:center;color:var(--text-sub);">${s.seq}</td><td style="font-weight:600;">${s.name}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;color:${tm!=null?'#1e40af':'#cbd5e1'};">${s.schedTime||'--:--'}</td><td>${noteCell}</td></tr>`;
+      let navBtn='';
+      if(hasLL){
+        const fromId=window.__diagNavFromHere.length;
+        window.__diagNavFromHere.push({type,cn,area:area||'',fromSeq:s.seq});
+        navBtn=`<button onclick="diagNavFromHere(${fromId})" title="現在地→ ${diagEsc(s.name)} 以降9件のナビを開く" style="background:#10b981;color:#fff;border:none;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;">▶ 現在地から</button>`;
+      }
+      h+=`<tr><td style="text-align:center;color:var(--text-sub);">${s.seq}</td><td style="font-weight:600;">${s.name}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;color:${tm!=null?'#1e40af':'#cbd5e1'};">${s.schedTime||'--:--'}</td><td style="text-align:center;">${navBtn}</td><td>${noteCell}</td></tr>`;
     });
     h+=`</tbody></table>`;
 
@@ -11063,7 +11107,7 @@ function diagExportPdf(){
     });
     body+=`</div></div>`;
 
-    // 2段組み明細
+    // 2段組み明細 (PDFはナビボタン列を含めない)
     body+=`<div class="tbl-wrap"><table><thead><tr><th>#</th><th>店舗名</th><th>住所</th><th>店着</th><th>特記</th></tr></thead><tbody>`;
     shops.forEach(s=>{
       let addr=s.addr||'';
