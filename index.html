@@ -3999,7 +3999,7 @@ function adminTab(t){
 const ADM_DG_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/diagram-process';
 let admDgParsed=null; // {courseNames:[], stops:[[],[],[],[]]}
 let admDgResult=null; // EF result
-let admDgNotesCache=new Map(); // course_name -> notes text (DBから読込キャッシュ)
+let admDgStoreNotes=new Map(); // store_name -> notes text
 
 async function admDgEf(body){
   const res=await fetch(ADM_DG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -4015,46 +4015,31 @@ function admDgInit(){
   document.getElementById('adm-dg-results').innerHTML='';
   admDgParsed=null;admDgResult=null;
   admDgRenderAliases().catch(()=>{});
-  admDgLoadNotes().catch(()=>{});
+  admDgLoadStoreNotes().catch(()=>{});
 }
 
-async function admDgLoadNotes(){
+async function admDgLoadStoreNotes(){
   try{
-    const res=await admDgEf({action:'list_notes'});
-    admDgNotesCache.clear();
-    (res.notes||[]).forEach(n=>admDgNotesCache.set(n.course_name,n.notes||''));
+    const res=await admDgEf({action:'list_store_notes'});
+    admDgStoreNotes.clear();
+    (res.notes||[]).forEach(n=>admDgStoreNotes.set(n.store_name,n.notes||''));
   }catch(_){}
 }
 
-function admDgGetNote(courseName){return admDgNotesCache.get(courseName)||'';}
-
-async function admDgSaveNote(idx){
-  const cn=document.querySelectorAll('.adm-dg-cname')[idx];
-  const tn=document.querySelectorAll('.adm-dg-cnote')[idx];
-  if(!cn||!tn)return;
-  const courseName=cn.value.trim();
-  if(!courseName)return;
-  const notes=tn.value;
-  // ローカル即反映
-  admDgNotesCache.set(courseName,notes);
-  // バックグラウンド保存
+async function admDgSaveStoreNote(ta,storeName){
+  if(!storeName)return;
+  const notes=ta.value;
+  admDgStoreNotes.set(storeName,notes);
+  // 通常画面のキャッシュも同期
+  if(typeof diagStoreNotes!=='undefined')diagStoreNotes.set(storeName,notes);
+  const ind=ta.parentElement?.querySelector('.adm-dg-note-status');
+  if(ind){ind.textContent='保存中...';ind.style.color='#64748b';}
   try{
-    await admDgEf({action:'set_note',course_name:courseName,notes});
-    const ind=document.getElementById('adm-dg-note-status-'+idx);
-    if(ind){ind.textContent='✓ 保存';ind.style.color='#16a34a';setTimeout(()=>{ind.textContent='';},2000);}
+    await admDgEf({action:'set_store_note',store_name:storeName,notes});
+    if(ind){ind.textContent='✓ 保存';ind.style.color='#16a34a';setTimeout(()=>{if(ind)ind.textContent='';},2000);}
   }catch(err){
-    const ind=document.getElementById('adm-dg-note-status-'+idx);
     if(ind){ind.textContent='保存失敗';ind.style.color='#dc2626';}
   }
-}
-
-function admDgOnCourseNameChange(idx){
-  const cn=document.querySelectorAll('.adm-dg-cname')[idx];
-  const tn=document.querySelectorAll('.adm-dg-cnote')[idx];
-  if(!cn||!tn)return;
-  const newName=cn.value.trim();
-  // 別コース名に変えたらDBから対応するnoteをロード
-  tn.value=admDgGetNote(newName);
 }
 
 function admDgSwitchSrc(){
@@ -4085,19 +4070,13 @@ function admDgParseRows(rows){
   admDgParsed={courseNames,stopsAll};
   const cfgHtml=courseNames.map((n,i)=>{
     const stopCnt=stopsAll[i].length;
-    const noteVal=(admDgGetNote(n)||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:10px;margin-bottom:8px;">'+
-      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'+
-      '<label style="font-size:11px;font-weight:600;">コース'+(i+1)+'名</label>'+
-      '<input type="text" class="adm-dg-cname" value="'+n+'" style="min-width:160px;" onblur="admDgOnCourseNameChange('+i+')">'+
+    return '<div style="display:inline-block;margin-right:12px;margin-bottom:6px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px;">'+
+      '<label style="font-size:11px;font-weight:600;">コース'+(i+1)+'名</label> '+
+      '<input type="text" class="adm-dg-cname" value="'+n+'" style="min-width:140px;"> '+
       '<span style="font-size:11px;color:var(--text-sub);">('+stopCnt+'件)</span>'+
-      '<span id="adm-dg-note-status-'+i+'" style="font-size:11px;margin-left:8px;"></span>'+
-      '</div>'+
-      '<label style="font-size:11px;color:var(--text-sub);">📝 配送特記 (DBに自動保存)</label>'+
-      '<textarea class="adm-dg-cnote" rows="2" style="width:100%;font-size:12px;font-family:inherit;padding:4px 6px;border:1px solid #cbd5e1;border-radius:4px;resize:vertical;" onblur="admDgSaveNote('+i+')" placeholder="例: 月曜は店舗XX休業 / 12時以降は裏口から納品 等">'+noteVal+'</textarea>'+
       '</div>';
   }).join('');
-  document.getElementById('adm-dg-coursecfg').innerHTML='<div style="background:#f8fafc;padding:10px;border-radius:8px;">'+cfgHtml+'</div>';
+  document.getElementById('adm-dg-coursecfg').innerHTML='<div style="background:#f8fafc;padding:10px;border-radius:8px;">'+cfgHtml+'<div style="font-size:11px;color:var(--text-sub);margin-top:4px;">📝 配送特記は生成後、各店舗行で個別に編集できます (店舗名キーで全社共有保存)</div></div>';
   document.getElementById('adm-dg-process-btn').disabled=false;
 }
 
@@ -4160,11 +4139,10 @@ async function admDgProcess(){
   if(!admDgParsed)return;
   const depot=document.getElementById('adm-dg-depot').value.trim();
   const cnames=[...document.querySelectorAll('.adm-dg-cname')].map(i=>i.value.trim()||'コース');
-  const cnotes=[...document.querySelectorAll('.adm-dg-cnote')].map(i=>i.value);
   document.getElementById('adm-dg-status').textContent='マスタ照合・住所取得中...';
   document.getElementById('adm-dg-results').innerHTML='';
   try{
-    const diagrams=admDgParsed.stopsAll.map((stops,i)=>({name:cnames[i],notes:cnotes[i]||'',stops}));
+    const diagrams=admDgParsed.stopsAll.map((stops,i)=>({name:cnames[i],stops}));
     const res=await admDgEf({action:'process',depot_address:depot,diagrams});
     if(res.error){document.getElementById('adm-dg-status').textContent='エラー: '+res.error;return;}
     admDgResult=res;
@@ -4206,21 +4184,23 @@ function admDgRenderResults(){
     html+='<h3 style="margin:0;font-size:14px;color:var(--primary);">'+admDgEsc(d.name)+' (全'+d.stops.length+'地点 / ナビ'+navs.length+'本)</h3>';
     html+='<button onclick="admDgPrintCourse('+di+')" style="background:var(--primary);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🖨 印刷/PDF</button>';
     html+='</div>';
-    if(d.notes&&d.notes.trim()){
-      html+='<div style="background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:12px;line-height:1.5;"><b style="color:#854d0e;">📝 配送特記</b><div style="white-space:pre-wrap;margin-top:4px;color:#422006;">'+admDgEsc(d.notes)+'</div></div>';
-    }
     html+='<div class="table-wrap"><table style="font-size:11px;width:100%;border-collapse:collapse;">';
-    html+='<thead><tr><th>順</th><th>店舗ID</th><th>店舗名</th><th>到着</th><th>区間距離</th><th>住所</th></tr></thead><tbody>';
+    html+='<thead><tr><th>順</th><th>店舗ID</th><th>店舗名</th><th>到着</th><th>区間距離</th><th>住所</th><th style="min-width:140px;">📝 特記</th></tr></thead><tbody>';
     d.stops.forEach((s,idx)=>{
       const idStr=s.id?String(parseInt(String(s.id).replace(/\D/g,''),10)||s.id):'-';
       const cls=s.isStart?'background:#fff7c2;font-weight:bold;':(s.matched===false?'background:#fee2e2;':'');
       const addr=s.address||(s.matched===false?'(マスタ未登録: '+admDgEsc(s.name)+')':'');
+      // 編集対象は master_name を優先 (一致するキー)、なければ excel上の名前
+      const noteKey=s.master_name||s.name||'';
+      const noteVal=admDgStoreNotes.get(noteKey)||(s.store_note||'');
+      const noteCell=s.isStart?'':('<div style="position:relative;"><textarea data-store="'+admDgEsc(noteKey)+'" rows="1" onblur="admDgSaveStoreNote(this, this.dataset.store)" placeholder="特記事項" style="width:100%;font-size:10px;padding:2px 4px;border:1px solid #fbbf24;border-radius:3px;background:'+(noteVal?'#fffef5':'#fff')+';resize:vertical;font-family:inherit;color:#422006;min-height:22px;">'+admDgEsc(noteVal)+'</textarea><span class="adm-dg-note-status" style="position:absolute;right:2px;top:-12px;font-size:9px;"></span></div>');
       html+='<tr style="'+cls+'"><td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+idx+'</td>';
       html+='<td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+admDgEsc(idStr)+'</td>';
       html+='<td style="border:1px solid #ddd;padding:3px 6px;">'+admDgEsc(s.name)+'</td>';
       html+='<td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+admDgFmtTime(s.time)+'</td>';
       html+='<td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+admDgEsc(s.dist||'')+'</td>';
-      html+='<td style="border:1px solid #ddd;padding:3px 6px;font-size:10px;color:#444;">'+admDgEsc(addr)+'</td></tr>';
+      html+='<td style="border:1px solid #ddd;padding:3px 6px;font-size:10px;color:#444;">'+admDgEsc(addr)+'</td>';
+      html+='<td style="border:1px solid #ddd;padding:2px 4px;background:#fffbeb;">'+noteCell+'</td></tr>';
     });
     html+='</tbody></table></div>';
     html+='<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12px;color:var(--primary);">🗺 ナビリンク '+navs.length+'本を表示</summary><ol style="font-size:11px;margin-top:6px;">';
@@ -4249,19 +4229,17 @@ function admDgPrintCourse(i){
   body+='h1{font-size:14pt;margin:0 0 6px;}h2{font-size:11pt;margin:14px 0 6px;}.meta{font-size:9pt;color:#555;margin-bottom:8px;}';
   body+='table{border-collapse:collapse;width:100%;}th,td{border:1px solid #777;padding:3px 6px;}th{background:#e8e8e8;}.start{background:#fff7c2;font-weight:bold;}.unmatched{background:#fee2e2;}';
   body+='td.center{text-align:center;}td.addr{font-size:8pt;color:#333;}.pgbreak{page-break-before:always;}ol{padding-left:20px;}ol li{margin-bottom:4px;word-break:break-all;font-size:8pt;}a{color:#000;}';
-  body+='.notes-box{background:#fef9c3;border:1.5pt solid #ca8a04;border-radius:4pt;padding:6pt 8pt;margin-bottom:8pt;font-size:10pt;line-height:1.45;-webkit-print-color-adjust:exact;print-color-adjust:exact;}';
-  body+='.notes-box .lbl{font-weight:bold;color:#854d0e;font-size:10pt;}.notes-box .txt{white-space:pre-wrap;margin-top:3pt;color:#422006;}';
+  body+='td.note{background:#fef9c3;color:#422006;font-size:8pt;white-space:pre-wrap;-webkit-print-color-adjust:exact;print-color-adjust:exact;}';
   body+='@media print{@page{size:A4 portrait;margin:10mm;}}';
   body+='</style></head><body>';
   body+='<h1>'+admDgEsc(d.name)+'</h1><div class="meta">出発: '+admDgEsc(depot)+' ／ 全'+d.stops.length+'地点</div>';
-  if(d.notes&&d.notes.trim()){
-    body+='<div class="notes-box"><div class="lbl">📝 配送特記</div><div class="txt">'+admDgEsc(d.notes)+'</div></div>';
-  }
-  body+='<table><thead><tr><th>順</th><th>店舗ID</th><th>店舗名</th><th>到着時刻</th><th>区間距離</th><th>住所</th></tr></thead><tbody>';
+  body+='<table><thead><tr><th>順</th><th>店舗ID</th><th>店舗名</th><th>到着時刻</th><th>区間距離</th><th>住所</th><th>特記</th></tr></thead><tbody>';
   d.stops.forEach((s,idx)=>{
     const idStr=s.id?String(parseInt(String(s.id).replace(/\D/g,''),10)||s.id):'-';
     const cls=s.isStart?'start':(s.matched===false?'unmatched':'');
-    body+='<tr class="'+cls+'"><td class="center">'+idx+'</td><td class="center">'+admDgEsc(idStr)+'</td><td>'+admDgEsc(s.name)+'</td><td class="center">'+admDgFmtTime(s.time)+'</td><td class="center">'+admDgEsc(s.dist||'')+'</td><td class="addr">'+admDgEsc(s.address||'')+'</td></tr>';
+    const noteKey=s.master_name||s.name||'';
+    const noteVal=admDgStoreNotes.get(noteKey)||(s.store_note||'');
+    body+='<tr class="'+cls+'"><td class="center">'+idx+'</td><td class="center">'+admDgEsc(idStr)+'</td><td>'+admDgEsc(s.name)+'</td><td class="center">'+admDgFmtTime(s.time)+'</td><td class="center">'+admDgEsc(s.dist||'')+'</td><td class="addr">'+admDgEsc(s.address||'')+'</td><td class="note">'+admDgEsc(noteVal)+'</td></tr>';
   });
   body+='</tbody></table>';
   body+='<div class="pgbreak"><h2>🗺 Googleナビ リンク (1リンク=スタート+9件 / 計'+navs.length+'本)</h2><ol>';
@@ -10480,25 +10458,25 @@ async function diagReverseGeocode(lat,lng){
   return '';
 }
 
-// ===== 配送特記キャッシュ (通常画面ダイヤグラム用) =====
-const diagNotesCache=new Map();
+// ===== 店舗特記キャッシュ (通常画面ダイヤグラム用) =====
+const diagStoreNotes=new Map();
 
-async function diagLoadNotes(){
+async function diagLoadStoreNotes(){
   try{
-    const res=await admDgEf({action:'list_notes'});
-    diagNotesCache.clear();
-    (res.notes||[]).forEach(n=>diagNotesCache.set(n.course_name,n.notes||''));
+    const res=await admDgEf({action:'list_store_notes'});
+    diagStoreNotes.clear();
+    (res.notes||[]).forEach(n=>diagStoreNotes.set(n.store_name,n.notes||''));
   }catch(_){}
 }
 
-async function diagSaveNote(ta,courseName){
-  if(!courseName)return;
+async function diagSaveStoreNote(ta,storeName){
+  if(!storeName)return;
   const notes=ta.value;
-  diagNotesCache.set(courseName,notes);
+  diagStoreNotes.set(storeName,notes);
   const ind=ta.parentElement?.querySelector('.diag-note-status');
   if(ind){ind.textContent='保存中...';ind.style.color='#64748b';}
   try{
-    await admDgEf({action:'set_note',course_name:courseName,notes});
+    await admDgEf({action:'set_store_note',store_name:storeName,notes});
     if(ind){ind.textContent='✓ 保存';ind.style.color='#16a34a';setTimeout(()=>{if(ind)ind.textContent='';},2000);}
   }catch(err){
     if(ind){ind.textContent='保存失敗';ind.style.color='#dc2626';}
@@ -10509,7 +10487,7 @@ function diagEsc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt
 
 function diagInit(){
   diagInited=true;
-  diagLoadNotes().then(()=>{ if(diagShopData.length)diagRender(); });
+  diagLoadStoreNotes().then(()=>{ if(diagShopData.length)diagRender(); });
   if(!diagShopData.length)diagLoad();
   else diagFilter();
 }
@@ -10703,13 +10681,6 @@ function diagRender(){
     h+=`<div style="font-size:13px;color:var(--text-sub);">🏪 ${shops.length}店舗 ／ 🕐 ${firstT!=null?diagFmtMin(firstT):'--:--'} 〜 ${lastT!=null?diagFmtMin(lastT):'--:--'} ／ 店着時間設定: ${timedCnt}/${shops.length}</div>`;
     h+=`</div>`;
 
-    // 配送特記 (タップで編集 / 自動保存)
-    const noteVal=diagNotesCache.get(cn)||'';
-    h+=`<div style="background:#fef9c3;border-bottom:1px solid #fde047;padding:10px 16px;">`;
-    h+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><label style="font-size:11px;font-weight:600;color:#854d0e;">📝 配送特記 (タップで編集 / 自動保存)</label><span class="diag-note-status" style="font-size:11px;"></span></div>`;
-    h+=`<textarea data-cn="${diagEsc(cn)}" rows="2" style="width:100%;font-size:13px;font-family:inherit;padding:6px 8px;border:1px solid #fbbf24;border-radius:4px;background:#fffef5;resize:vertical;color:#422006;" placeholder="例: 月曜は店舗XX休業 / 12時以降は裏口から納品 等" onblur="diagSaveNote(this, this.dataset.cn)">${diagEsc(noteVal)}</textarea>`;
-    h+=`</div>`;
-
     // 運行バー
     h+=`<div style="padding:22px 20px 28px;background:#fafbfc;border-bottom:1px solid var(--border);">`;
     h+=`<div style="position:relative;height:52px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;">`;
@@ -10730,7 +10701,7 @@ function diagRender(){
     h+=`</div></div>`;
 
     // 詳細テーブル
-    h+=`<table style="font-size:13px;"><thead><tr><th style="width:40px;">順</th><th>店舗名</th><th>住所</th><th style="width:80px;">店着</th></tr></thead><tbody>`;
+    h+=`<table style="font-size:13px;"><thead><tr><th style="width:40px;">順</th><th>店舗名</th><th>住所</th><th style="width:80px;">店着</th><th style="min-width:160px;">📝 特記 (タップで編集)</th></tr></thead><tbody>`;
     shops.forEach(s=>{
       const tm=diagParseTime(s.schedTime);
       const hasLL=s.lat!=null&&s.lng!=null;
@@ -10742,7 +10713,9 @@ function diagRender(){
       }else{
         addrCell=`<span style="color:#cbd5e1;">（緯度経度なし）</span>`;
       }
-      h+=`<tr><td style="text-align:center;color:var(--text-sub);">${s.seq}</td><td style="font-weight:600;">${s.name}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;color:${tm!=null?'#1e40af':'#cbd5e1'};">${s.schedTime||'--:--'}</td></tr>`;
+      const sNote=diagStoreNotes.get(s.name)||'';
+      const noteCell=`<div style="position:relative;"><textarea data-store="${diagEsc(s.name)}" rows="1" onblur="diagSaveStoreNote(this, this.dataset.store)" placeholder="特記事項" style="width:100%;font-size:11px;padding:3px 5px;border:1px solid #fbbf24;border-radius:3px;background:${sNote?'#fffef5':'#fff'};resize:vertical;font-family:inherit;color:#422006;min-height:24px;">${diagEsc(sNote)}</textarea><span class="diag-note-status" style="position:absolute;right:4px;top:-14px;font-size:10px;"></span></div>`;
+      h+=`<tr><td style="text-align:center;color:var(--text-sub);">${s.seq}</td><td style="font-weight:600;">${s.name}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;color:${tm!=null?'#1e40af':'#cbd5e1'};">${s.schedTime||'--:--'}</td><td>${noteCell}</td></tr>`;
     });
     h+=`</tbody></table>`;
 
@@ -10820,8 +10793,7 @@ function diagExportPdf(){
     .course-card:not(:first-of-type){page-break-before:always;break-before:page;}
     .course-head{background:#f1f5f9;padding:3px 8px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #cbd5e1;font-size:10px;}
     .course-head b{color:#1d4ed8;}
-    .course-note{background:#fef9c3;border-bottom:1px solid #fbbf24;padding:3px 8px;font-size:9px;color:#422006;font-weight:600;line-height:1.35;}
-    .course-note .course-note-txt{font-weight:normal;white-space:pre-wrap;}
+    td.note{background:#fef9c3;color:#422006;font-size:8px;white-space:pre-wrap;max-width:120px;}
     .bar-wrap{padding:14px 10px 18px;background:#fafbfc;border-bottom:1px solid #cbd5e1;position:relative;}
     .bar{position:relative;height:26px;background:#fff;border:1px solid #cbd5e1;border-radius:3px;}
     .bar .tick{position:absolute;top:0;bottom:0;border-left:1px dashed #e2e8f0;}
@@ -10856,10 +10828,6 @@ function diagExportPdf(){
     const lastT=times.length?Math.max(...times):null;
     body+=`<div class="course-card">`;
     body+=`<div class="course-head"><div><b>${cn}</b> ／ ${typeLabel}</div><div class="doc-sub">🏪 ${shops.length}店舗 ／ 🕐 ${firstT!=null?diagFmtMin(firstT):'--:--'} 〜 ${lastT!=null?diagFmtMin(lastT):'--:--'} ／ 店着時間設定: ${times.length}/${shops.length}</div></div>`;
-    const pdfNote=(diagNotesCache.get(cn)||'').trim();
-    if(pdfNote){
-      body+=`<div class="course-note">📝 配送特記: <span class="course-note-txt">${diagEsc(pdfNote)}</span></div>`;
-    }
     body+=`<div class="bar-wrap"><div class="bar">`;
     const ticks=6;
     for(let ti=0;ti<=ticks;ti++){
@@ -10877,7 +10845,7 @@ function diagExportPdf(){
     body+=`</div></div>`;
 
     // 2段組み明細
-    body+=`<div class="tbl-wrap"><table><thead><tr><th>#</th><th>店舗名</th><th>住所</th><th>店着</th></tr></thead><tbody>`;
+    body+=`<div class="tbl-wrap"><table><thead><tr><th>#</th><th>店舗名</th><th>住所</th><th>店着</th><th>特記</th></tr></thead><tbody>`;
     shops.forEach(s=>{
       let addr=s.addr||'';
       if(!addr){
@@ -10888,7 +10856,8 @@ function diagExportPdf(){
           addr='';
         }
       }
-      body+=`<tr><td class="seq">${s.seq}</td><td class="name">${s.name||''}</td><td class="addr">${addr}</td><td class="time">${s.schedTime||'--:--'}</td></tr>`;
+      const sNote=(diagStoreNotes.get(s.name)||'').trim();
+      body+=`<tr><td class="seq">${s.seq}</td><td class="name">${s.name||''}</td><td class="addr">${addr}</td><td class="time">${s.schedTime||'--:--'}</td><td class="note">${diagEsc(sNote)}</td></tr>`;
     });
     body+=`</tbody></table></div>`;
     body+=`</div>`;
