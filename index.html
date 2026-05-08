@@ -4030,13 +4030,19 @@ async function admDgSaveStoreNote(ta,storeName){
   if(!storeName)return;
   const notes=ta.value;
   admDgStoreNotes.set(storeName,notes);
-  // 通常画面のキャッシュも同期
   if(typeof diagStoreNotes!=='undefined')diagStoreNotes.set(storeName,notes);
   const ind=ta.parentElement?.querySelector('.adm-dg-note-status');
   if(ind){ind.textContent='保存中...';ind.style.color='#64748b';}
   try{
     await admDgEf({action:'set_store_note',store_name:storeName,notes});
     if(ind){ind.textContent='✓ 保存';ind.style.color='#16a34a';setTimeout(()=>{if(ind)ind.textContent='';},2000);}
+    // リンクバッジ更新
+    const wrap=ta.parentElement;
+    if(wrap){
+      const oldBadges=wrap.querySelector('div[style*="margin-top:3px"]');
+      if(oldBadges)oldBadges.remove();
+      wrap.insertAdjacentHTML('beforeend',diagLinkBadgesHtml(notes));
+    }
   }catch(err){
     if(ind){ind.textContent='保存失敗';ind.style.color='#dc2626';}
   }
@@ -4193,7 +4199,8 @@ function admDgRenderResults(){
       // 編集対象は master_name を優先 (一致するキー)、なければ excel上の名前
       const noteKey=s.master_name||s.name||'';
       const noteVal=admDgStoreNotes.get(noteKey)||(s.store_note||'');
-      const noteCell=s.isStart?'':('<div style="position:relative;"><textarea data-store="'+admDgEsc(noteKey)+'" rows="1" onblur="admDgSaveStoreNote(this, this.dataset.store)" placeholder="特記事項" style="width:100%;font-size:10px;padding:2px 4px;border:1px solid #fbbf24;border-radius:3px;background:'+(noteVal?'#fffef5':'#fff')+';resize:vertical;font-family:inherit;color:#422006;min-height:22px;">'+admDgEsc(noteVal)+'</textarea><span class="adm-dg-note-status" style="position:absolute;right:2px;top:-12px;font-size:9px;"></span></div>');
+      const linkBadges=diagLinkBadgesHtml(noteVal);
+      const noteCell=s.isStart?'':('<div style="position:relative;"><textarea data-store="'+admDgEsc(noteKey)+'" rows="1" onblur="admDgSaveStoreNote(this, this.dataset.store)" placeholder="特記/URL可" style="width:100%;font-size:10px;padding:2px 4px;border:1px solid #fbbf24;border-radius:3px;background:'+(noteVal?'#fffef5':'#fff')+';resize:vertical;font-family:inherit;color:#422006;min-height:22px;">'+admDgEsc(noteVal)+'</textarea><span class="adm-dg-note-status" style="position:absolute;right:2px;top:-12px;font-size:9px;"></span>'+linkBadges+'</div>');
       html+='<tr style="'+cls+'"><td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+idx+'</td>';
       html+='<td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+admDgEsc(idStr)+'</td>';
       html+='<td style="border:1px solid #ddd;padding:3px 6px;">'+admDgEsc(s.name)+'</td>';
@@ -4239,7 +4246,11 @@ function admDgPrintCourse(i){
     const cls=s.isStart?'start':(s.matched===false?'unmatched':'');
     const noteKey=s.master_name||s.name||'';
     const noteVal=admDgStoreNotes.get(noteKey)||(s.store_note||'');
-    body+='<tr class="'+cls+'"><td class="center">'+idx+'</td><td class="center">'+admDgEsc(idStr)+'</td><td>'+admDgEsc(s.name)+'</td><td class="center">'+admDgFmtTime(s.time)+'</td><td class="center">'+admDgEsc(s.dist||'')+'</td><td class="addr">'+admDgEsc(s.address||'')+'</td><td class="note">'+admDgEsc(noteVal)+'</td></tr>';
+    const pdfLinks=diagExtractLinks(noteVal);
+    const cleanNote=noteVal.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'$1').replace(/\s*https?:\/\/\S+\s*/g,' ').trim();
+    const linkLines=pdfLinks.length?'\n'+pdfLinks.map(l=>'🔗 '+l.label+': '+l.url).join('\n'):'';
+    const printNote=cleanNote+linkLines;
+    body+='<tr class="'+cls+'"><td class="center">'+idx+'</td><td class="center">'+admDgEsc(idStr)+'</td><td>'+admDgEsc(s.name)+'</td><td class="center">'+admDgFmtTime(s.time)+'</td><td class="center">'+admDgEsc(s.dist||'')+'</td><td class="addr">'+admDgEsc(s.address||'')+'</td><td class="note">'+admDgEsc(printNote)+'</td></tr>';
   });
   body+='</tbody></table>';
   body+='<div class="pgbreak"><h2>🗺 Googleナビ リンク (1リンク=スタート+9件 / 計'+navs.length+'本)</h2><ol>';
@@ -10473,17 +10484,59 @@ async function diagSaveStoreNote(ta,storeName){
   if(!storeName)return;
   const notes=ta.value;
   diagStoreNotes.set(storeName,notes);
+  if(typeof admDgStoreNotes!=='undefined')admDgStoreNotes.set(storeName,notes);
   const ind=ta.parentElement?.querySelector('.diag-note-status');
   if(ind){ind.textContent='保存中...';ind.style.color='#64748b';}
   try{
     await admDgEf({action:'set_store_note',store_name:storeName,notes});
     if(ind){ind.textContent='✓ 保存';ind.style.color='#16a34a';setTimeout(()=>{if(ind)ind.textContent='';},2000);}
+    // リンクバッジを更新 (新しいURLが入った可能性)
+    const wrap=ta.parentElement;
+    if(wrap){
+      const oldBadges=wrap.querySelector('div[style*="margin-top:3px"]');
+      if(oldBadges)oldBadges.remove();
+      wrap.insertAdjacentHTML('beforeend',diagLinkBadgesHtml(notes));
+    }
   }catch(err){
     if(ind){ind.textContent='保存失敗';ind.style.color='#dc2626';}
   }
 }
 
 function diagEsc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// 特記テキストからリンクを抽出: [label](url) と 裸のURL の両方
+function diagExtractLinks(text){
+  if(!text)return [];
+  const links=[];
+  const seen=new Set();
+  // [label](url) を先に拾う
+  const md=/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+  let m;
+  let stripped=text;
+  while((m=md.exec(text))){
+    const url=m[2],label=m[1].trim()||url;
+    if(!seen.has(url)){links.push({label,url});seen.add(url);}
+  }
+  stripped=text.replace(md,'');
+  // 残った裸のURL
+  const re=/https?:\/\/[^\s\])]+/g;
+  while((m=re.exec(stripped))){
+    const url=m[0];
+    if(!seen.has(url)){
+      // ファイル名 or ドメインからラベル生成
+      const fname=url.split(/[/?#]/).filter(Boolean).pop()||url;
+      const label=decodeURIComponent(fname).slice(0,40);
+      links.push({label,url});seen.add(url);
+    }
+  }
+  return links;
+}
+
+function diagLinkBadgesHtml(notes){
+  const links=diagExtractLinks(notes);
+  if(!links.length)return '';
+  return '<div style="margin-top:3px;display:flex;gap:3px;flex-wrap:wrap;">'+links.map(l=>'<a href="'+diagEsc(l.url)+'" target="_blank" rel="noopener" style="font-size:10px;background:#dbeafe;color:#1d4ed8;padding:2px 6px;border-radius:3px;text-decoration:none;border:1px solid #bfdbfe;">🔗 '+diagEsc(l.label)+'</a>').join('')+'</div>';
+}
 
 function diagInit(){
   diagInited=true;
@@ -10714,7 +10767,8 @@ function diagRender(){
         addrCell=`<span style="color:#cbd5e1;">（緯度経度なし）</span>`;
       }
       const sNote=diagStoreNotes.get(s.name)||'';
-      const noteCell=`<div style="position:relative;"><textarea data-store="${diagEsc(s.name)}" rows="1" onblur="diagSaveStoreNote(this, this.dataset.store)" placeholder="特記事項" style="width:100%;font-size:11px;padding:3px 5px;border:1px solid #fbbf24;border-radius:3px;background:${sNote?'#fffef5':'#fff'};resize:vertical;font-family:inherit;color:#422006;min-height:24px;">${diagEsc(sNote)}</textarea><span class="diag-note-status" style="position:absolute;right:4px;top:-14px;font-size:10px;"></span></div>`;
+      const linkBadges=diagLinkBadgesHtml(sNote);
+      const noteCell=`<div style="position:relative;"><textarea data-store="${diagEsc(s.name)}" rows="1" onblur="diagSaveStoreNote(this, this.dataset.store)" placeholder="特記事項 / URLや[ラベル](URL)もOK" style="width:100%;font-size:11px;padding:3px 5px;border:1px solid #fbbf24;border-radius:3px;background:${sNote?'#fffef5':'#fff'};resize:vertical;font-family:inherit;color:#422006;min-height:24px;">${diagEsc(sNote)}</textarea><span class="diag-note-status" style="position:absolute;right:4px;top:-14px;font-size:10px;"></span>${linkBadges}</div>`;
       h+=`<tr><td style="text-align:center;color:var(--text-sub);">${s.seq}</td><td style="font-weight:600;">${s.name}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;color:${tm!=null?'#1e40af':'#cbd5e1'};">${s.schedTime||'--:--'}</td><td>${noteCell}</td></tr>`;
     });
     h+=`</tbody></table>`;
@@ -10857,7 +10911,12 @@ function diagExportPdf(){
         }
       }
       const sNote=(diagStoreNotes.get(s.name)||'').trim();
-      body+=`<tr><td class="seq">${s.seq}</td><td class="name">${s.name||''}</td><td class="addr">${addr}</td><td class="time">${s.schedTime||'--:--'}</td><td class="note">${diagEsc(sNote)}</td></tr>`;
+      const sLinks=diagExtractLinks(sNote);
+      const linkText=sLinks.length?'\n'+sLinks.map(l=>'🔗 '+l.label+': '+l.url).join('\n'):'';
+      // メモ本文 (markdown形式の[label](url)はラベルのみ表示する形に整形)
+      const cleanNote=sNote.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'$1').replace(/\s*https?:\/\/\S+\s*/g,' ').trim();
+      const noteCell=cleanNote+linkText;
+      body+=`<tr><td class="seq">${s.seq}</td><td class="name">${s.name||''}</td><td class="addr">${addr}</td><td class="time">${s.schedTime||'--:--'}</td><td class="note">${diagEsc(noteCell)}</td></tr>`;
     });
     body+=`</tbody></table></div>`;
     body+=`</div>`;
