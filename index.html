@@ -880,6 +880,11 @@ tbody tr:hover { background:var(--primary-light); }
 
       <!-- ダイヤグラム作成 -->
       <div id="adm-diagram" class="adm-panel" style="display:none;">
+        <details style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px;margin-bottom:14px;">
+          <summary style="cursor:pointer;font-weight:600;font-size:13px;color:#166534;">🌐 公開URL一覧 (Googleサイト等の埋込先)</summary>
+          <div style="margin-top:8px;font-size:12px;color:#166534;">公開URLは認証不要で誰でも閲覧可能です。Googleサイトの「埋め込み」ブロックでURLを貼ると iframe で表示されます。</div>
+          <div id="adm-dg-published" style="margin-top:10px;"></div>
+        </details>
         <div style="margin-bottom:14px;font-size:12px;color:var(--text-sub);line-height:1.6;">
           ダイヤグラム.xlsx または Googleスプレッドシート (4コース横並びレイアウト) を読み込むと、店舗マスタから住所・座標を取得して<b>印刷用ページ</b>と<b>Googleマップナビリンク (10地点ずつ)</b> を生成します。
         </div>
@@ -1065,6 +1070,9 @@ function init(){
     Object.keys(DEFS).forEach(k=>{const d=DEFS[k];if((d.type==='shift'||d.type==='shift_ev')&&CSVDATA_B64[k]){load(k);d.type==='shift'?parseShift(k):parseShiftEv(k);}});
     loadLiveShifts();// 起動高速化のため最初は localStorage から
     document.getElementById('loading').classList.add('hidden');
+    // 公開ダイヤグラムURL (?dg=xxxx) のときは公開ビュー表示
+    const pubSlug=new URLSearchParams(location.search).get('dg');
+    if(pubSlug){pubDgShow(pubSlug);return;}
     showView('dashboard',document.querySelector('.nav-links button'));
     // 起動直後にサーバーキャッシュ (Supabase pg_cron が 0/8/16 JST に更新) から最新を取得
     // localStorage より新ければ画面を再描画
@@ -4000,6 +4008,7 @@ const ADM_DG_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/diagram-p
 let admDgParsed=null; // {courseNames:[], stops:[[],[],[],[]]}
 let admDgResult=null; // EF result
 let admDgStoreNotes=new Map(); // store_name -> notes text
+let admDgLastDepot='';
 
 async function admDgEf(body){
   const res=await fetch(ADM_DG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -4016,6 +4025,7 @@ function admDgInit(){
   admDgParsed=null;admDgResult=null;
   admDgRenderAliases().catch(()=>{});
   admDgLoadStoreNotes().catch(()=>{});
+  admDgRenderPublishedList().catch(()=>{});
 }
 
 async function admDgLoadStoreNotes(){
@@ -4147,13 +4157,14 @@ async function admDgProcess(){
   const cnames=[...document.querySelectorAll('.adm-dg-cname')].map(i=>i.value.trim()||'コース');
   document.getElementById('adm-dg-status').textContent='マスタ照合・住所取得中...';
   document.getElementById('adm-dg-results').innerHTML='';
+  admDgLastDepot=depot;
   try{
     const diagrams=admDgParsed.stopsAll.map((stops,i)=>({name:cnames[i],stops}));
     const res=await admDgEf({action:'process',depot_address:depot,diagrams});
     if(res.error){document.getElementById('adm-dg-status').textContent='エラー: '+res.error;return;}
     admDgResult=res;
     const s=res.stats||{};
-    document.getElementById('adm-dg-status').innerHTML=`✓ 処理完了: ${s.matched||0}/${s.total||0} マッチ (alias経由${s.from_alias||0}件) / 未マッチ${s.unmatched||0}件`;
+    document.getElementById('adm-dg-status').innerHTML=`✓ 処理完了: ${s.matched||0}/${s.total||0} マッチ (alias経由${s.from_alias||0}件) / 未マッチ${s.unmatched||0}件 &nbsp;&nbsp;<button onclick="admDgPublish()" style="background:#16a34a;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🌐 公開URL作成</button>`;
     admDgRenderResults();
   }catch(err){
     document.getElementById('adm-dg-status').textContent='処理失敗: '+(err.message||err);
@@ -4179,6 +4190,132 @@ function admDgBuildNavUrls(stops){
 }
 
 function admDgEsc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// ===== 公開ダイヤグラムビュー (Googleサイト等の埋込用) =====
+async function pubDgShow(slug){
+  // ナビ・ヘッダー全部隠す
+  const root=document.querySelector('.nav-links')?.parentElement;
+  if(root)root.style.display='none';
+  document.querySelectorAll('main > *').forEach(el=>{ if(el.id!=='pub-dg-root')el.style.display='none'; });
+  let host=document.getElementById('pub-dg-root');
+  if(!host){
+    host=document.createElement('div');
+    host.id='pub-dg-root';
+    host.style.padding='12px';
+    host.style.maxWidth='1200px';
+    host.style.margin='0 auto';
+    (document.querySelector('main')||document.body).appendChild(host);
+  }
+  host.style.display='';
+  host.innerHTML='<div style="text-align:center;padding:40px;color:var(--text-sub);">読み込み中...</div>';
+  try{
+    await diagLoadStoreNotes();
+    const res=await admDgEf({action:'get_published_diagram',slug});
+    if(res.error){host.innerHTML='<div style="color:#dc2626;text-align:center;padding:40px;">'+admDgEsc(res.error)+'</div>';return;}
+    const dg=res.diagram;
+    const data=dg.data;
+    let html='<div style="background:#fff;border-radius:8px;padding:14px;margin-bottom:14px;border:1px solid #e2e8f0;">';
+    html+='<h1 style="margin:0;font-size:18px;color:var(--primary);">'+admDgEsc(dg.title||'ダイヤグラム')+'</h1>';
+    if(dg.depot_address)html+='<div style="font-size:12px;color:var(--text-sub);margin-top:4px;">出発: '+admDgEsc(dg.depot_address)+'</div>';
+    html+='<div style="font-size:11px;color:var(--text-sub);margin-top:2px;">最終更新: '+(dg.updated_at||'').slice(0,16).replace('T',' ')+'</div>';
+    html+='</div>';
+    (data.diagrams||[]).forEach((d,di)=>{
+      const navs=admDgBuildNavUrls(d.stops);
+      html+='<div style="border:1px solid #cbd5e1;border-radius:8px;padding:12px;margin-bottom:14px;background:#fff;">';
+      html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">';
+      html+='<h3 style="margin:0;font-size:14px;color:var(--primary);">'+admDgEsc(d.name)+' (全'+d.stops.length+'地点 / ナビ'+navs.length+'本)</h3>';
+      html+='<button onclick="admDgPrintCourse('+di+')" style="background:var(--primary);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🖨 印刷/PDF</button>';
+      html+='</div>';
+      html+='<div style="overflow-x:auto;"><table style="font-size:11px;width:100%;border-collapse:collapse;">';
+      html+='<thead><tr><th>順</th><th>店舗ID</th><th>店舗名</th><th>到着</th><th>区間距離</th><th>住所</th><th style="min-width:140px;">📝 特記</th></tr></thead><tbody>';
+      d.stops.forEach((s,idx)=>{
+        const idStr=s.id?String(parseInt(String(s.id).replace(/\D/g,''),10)||s.id):'-';
+        const cls=s.isStart?'background:#fff7c2;font-weight:bold;':(s.matched===false?'background:#fee2e2;':'');
+        const addr=s.address||(s.matched===false?'(マスタ未登録)':'');
+        const noteKey=s.master_name||s.name||'';
+        const noteVal=diagStoreNotes.get(noteKey)||(s.store_note||'');
+        const linkBadges=diagLinkBadgesHtml(noteVal);
+        const noteCell=s.isStart?'':('<div style="position:relative;"><textarea data-store="'+admDgEsc(noteKey)+'" rows="1" onblur="diagSaveStoreNote(this, this.dataset.store)" placeholder="特記/URL可" style="width:100%;font-size:10px;padding:2px 4px;border:1px solid #fbbf24;border-radius:3px;background:'+(noteVal?'#fffef5':'#fff')+';resize:vertical;font-family:inherit;color:#422006;min-height:22px;">'+admDgEsc(noteVal)+'</textarea><span class="diag-note-status" style="position:absolute;right:2px;top:-12px;font-size:9px;"></span>'+linkBadges+'</div>');
+        html+='<tr style="'+cls+'"><td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+idx+'</td>';
+        html+='<td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+admDgEsc(idStr)+'</td>';
+        html+='<td style="border:1px solid #ddd;padding:3px 6px;">'+admDgEsc(s.name)+'</td>';
+        html+='<td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+admDgFmtTime(s.time)+'</td>';
+        html+='<td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+admDgEsc(s.dist||'')+'</td>';
+        html+='<td style="border:1px solid #ddd;padding:3px 6px;font-size:10px;color:#444;">'+admDgEsc(addr)+'</td>';
+        html+='<td style="border:1px solid #ddd;padding:2px 4px;background:#fffbeb;">'+noteCell+'</td></tr>';
+      });
+      html+='</tbody></table></div>';
+      if(navs.length>0){
+        html+='<div style="margin-top:8px;padding:8px;background:#fef3c7;border-radius:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">';
+        html+='<span style="font-size:12px;color:#92400e;font-weight:600;">📍 Googleマップ:</span>';
+        navs.forEach((u,j)=>{
+          const startIdx=j*9;
+          const endIdx=Math.min(startIdx+9,d.stops.filter(s=>s.lat&&s.lng).length-1);
+          html+=`<a href="${admDgEsc(u)}" target="_blank" rel="noopener" style="background:#3b82f6;color:#fff;padding:4px 10px;border-radius:4px;font-size:11px;text-decoration:none;font-weight:600;">${startIdx+1}〜${endIdx+1}</a>`;
+        });
+        html+='</div>';
+      }
+      html+='</div>';
+    });
+    // 公開ビュー用に admDgResult を流用 (印刷ボタンが参照する)
+    admDgResult=data;
+    admDgLastDepot=dg.depot_address||'';
+    host.innerHTML=html;
+  }catch(err){
+    host.innerHTML='<div style="color:#dc2626;text-align:center;padding:40px;">読込失敗: '+admDgEsc(err.message||err)+'</div>';
+  }
+}
+
+async function admDgPublish(){
+  if(!admDgResult){alert('先にダイヤグラムを生成してください');return;}
+  const defaultTitle=admDgResult.diagrams.map(d=>d.name).join(' / ');
+  const title=prompt('公開URLのタイトル (Googleサイト等の埋込用)', defaultTitle);
+  if(title==null)return;
+  try{
+    const res=await admDgEf({action:'publish_diagram',title:title.trim()||defaultTitle,depot_address:admDgLastDepot,data:admDgResult});
+    if(res.error){alert('公開失敗: '+res.error);return;}
+    const slug=res.slug;
+    const url=`${location.origin}${location.pathname}?dg=${slug}`;
+    const msg='公開URLを作成しました。\n\n'+url+'\n\nクリップボードにコピーしますか？';
+    if(confirm(msg)){
+      try{await navigator.clipboard.writeText(url);alert('コピーしました');}catch(e){window.prompt('手動でコピーしてください:',url);}
+    }
+    admDgRenderPublishedList();
+  }catch(err){alert('公開失敗: '+(err.message||err));}
+}
+
+async function admDgRenderPublishedList(){
+  const wrap=document.getElementById('adm-dg-published');
+  if(!wrap)return;
+  try{
+    const res=await admDgEf({action:'list_published_diagrams'});
+    const list=res.diagrams||[];
+    if(list.length===0){wrap.innerHTML='<div style="font-size:11px;color:var(--text-sub);padding:6px;">公開済みなし</div>';return;}
+    let h='<table style="font-size:11px;border-collapse:collapse;width:100%;"><thead><tr><th style="border:1px solid #ddd;padding:4px;">タイトル</th><th style="border:1px solid #ddd;padding:4px;">公開URL</th><th style="border:1px solid #ddd;padding:4px;">更新</th><th style="border:1px solid #ddd;padding:4px;">操作</th></tr></thead><tbody>';
+    list.forEach(d=>{
+      const url=`${location.origin}${location.pathname}?dg=${d.slug}`;
+      const safeSlug=d.slug.replace(/[^a-z0-9]/gi,'');
+      const dt=(d.updated_at||'').slice(0,16).replace('T',' ');
+      h+=`<tr><td style="border:1px solid #ddd;padding:4px;">${admDgEsc(d.title||'(無題)')}</td><td style="border:1px solid #ddd;padding:4px;font-family:monospace;font-size:10px;word-break:break-all;"><a href="${url}" target="_blank" style="color:#1a73e8;">${url}</a></td><td style="border:1px solid #ddd;padding:4px;font-size:10px;">${dt}</td><td style="border:1px solid #ddd;padding:4px;text-align:center;white-space:nowrap;"><button onclick="admDgCopyUrl('${safeSlug}')" style="background:#3b82f6;color:#fff;border:none;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;margin-right:4px;">コピー</button><button onclick="admDgDeletePublished('${safeSlug}')" style="background:#fee2e2;color:#991b1b;border:none;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;">削除</button></td></tr>`;
+    });
+    h+='</tbody></table>';
+    wrap.innerHTML=h;
+  }catch(err){wrap.innerHTML='<div style="color:#dc2626;font-size:11px;">読込失敗: '+(err.message||err)+'</div>';}
+}
+
+async function admDgCopyUrl(slug){
+  const url=`${location.origin}${location.pathname}?dg=${slug}`;
+  try{await navigator.clipboard.writeText(url);alert('コピーしました:\n'+url);}catch(e){window.prompt('手動でコピーしてください:',url);}
+}
+
+async function admDgDeletePublished(slug){
+  if(!confirm('「'+slug+'」の公開URLを削除しますか？\n（既に共有済みのリンクは無効になります）'))return;
+  try{
+    const res=await admDgEf({action:'delete_published_diagram',slug});
+    if(res.error){alert('削除失敗: '+res.error);return;}
+    admDgRenderPublishedList();
+  }catch(err){alert('削除失敗: '+(err.message||err));}
+}
 
 function admDgRenderResults(){
   if(!admDgResult)return;
