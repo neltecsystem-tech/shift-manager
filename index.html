@@ -753,9 +753,10 @@ tbody tr:hover { background:var(--primary-light); }
               <button onclick="admSeCloseVacation()" style="background:transparent;border:none;font-size:20px;cursor:pointer;color:#64748b;">×</button>
             </div>
             <!-- タブ切り替え -->
-            <div style="display:flex;gap:4px;border-bottom:1px solid #e2e8f0;margin-bottom:14px;">
+            <div style="display:flex;gap:4px;border-bottom:1px solid #e2e8f0;margin-bottom:14px;flex-wrap:wrap;">
               <button id="adm-se-vac-tab-driver" onclick="admSeVacSwitchTab('driver')" style="background:#8b5cf6;color:#fff;border:none;padding:8px 14px;border-radius:6px 6px 0 0;cursor:pointer;font-weight:600;font-size:13px;">👤 希望者から</button>
               <button id="adm-se-vac-tab-course" onclick="admSeVacSwitchTab('course')" style="background:#f1f5f9;color:#475569;border:none;padding:8px 14px;border-radius:6px 6px 0 0;cursor:pointer;font-weight:600;font-size:13px;">🚚 コースから (逆引き)</button>
+              <button id="adm-se-vac-tab-handover" onclick="admSeVacSwitchTab('handover')" style="background:#f1f5f9;color:#475569;border:none;padding:8px 14px;border-radius:6px 6px 0 0;cursor:pointer;font-weight:600;font-size:13px;">🤝 引継 (Section 2)</button>
             </div>
             <!-- Tab A: 希望者から -->
             <div id="adm-se-vac-form-driver" style="display:flex;flex-direction:column;gap:12px;">
@@ -816,6 +817,37 @@ tbody tr:hover { background:var(--primary-light); }
               <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end;">
                 <button onclick="admSeVacationPreviewByCourse()" style="background:#f1f5f9;color:#1e293b;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🔍 プレビュー</button>
                 <button onclick="admSeVacationApplyByCourse()" style="background:#8b5cf6;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">✓ 適用</button>
+              </div>
+            </div>
+            <!-- Tab C: 引継 (Section 2 へ書込) -->
+            <div id="adm-se-vac-form-handover" style="display:none;flex-direction:column;gap:12px;">
+              <div style="padding:8px 10px;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e;">📌 Section 2 (営業所別ブロック) の該当スタッフ行に「引継」を書き込みます (支払い計算で半額対象)</div>
+              <div style="display:flex;gap:8px;">
+                <div style="flex:1;">
+                  <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">開始日</label>
+                  <select id="adm-se-vac-date3" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="">選択してください</option></select>
+                </div>
+                <div style="flex:1;">
+                  <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">終了日 (空欄=単日)</label>
+                  <select id="adm-se-vac-date3-end" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="">単日</option></select>
+                </div>
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">時間帯</label>
+                <select id="adm-se-vac-edition3" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="both">両方 (朝刊+夕刊)</option><option value="am">朝刊のみ</option><option value="pm">夕刊のみ</option></select>
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">対象スタッフ (引継対象として登録)</label>
+                <input type="text" id="adm-se-vac-handover-staff" list="adm-se-staff-list" placeholder="名前を入力" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;">
+              </div>
+              <div>
+                <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">書込値</label>
+                <select id="adm-se-vac-handover-value" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="引継">引継</option><option value="研修">研修</option><option value="希望休">希望休</option><option value="有給">有給</option><option value="欠勤">欠勤</option><option value="出張">出張</option><option value="ミーティング">ミーティング</option></select>
+              </div>
+              <div id="adm-se-vac-preview3" style="margin-top:8px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#334155;display:none;"></div>
+              <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end;">
+                <button onclick="admSeHandoverPreview()" style="background:#f1f5f9;color:#1e293b;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🔍 プレビュー</button>
+                <button onclick="admSeHandoverApply()" style="background:#f59e0b;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">✓ 適用</button>
               </div>
             </div>
           </div>
@@ -5279,6 +5311,147 @@ function admSeColLabel(c){
   return s;
 }
 
+// === Section 2 パース (引継などの特殊シフト書込用) ===
+// 戻り値: [{area, headerRow, dateCols:[{col, dateLabel}], editionPerCol:{col:'AM'|'PM'}, staffRows:[{rowIdx, name}]}]
+function admSeParseSection2(){
+  const rows=admSeState.rows;
+  const blocks=[];
+  const areas=['城北','川越','立川','川崎高津'];
+  const isDateStr=v=>/^\d{1,2}\/\d{1,2}$/.test(String(v||'').trim());
+  let curArea='';
+  for(let i=120;i<rows.length-2;i++){
+    const r=rows[i]||[];
+    const a=String(r[0]||'').trim();
+    const b=String(r[1]||'').trim();
+    const isAreaHdr=areas.includes(a)&&isDateStr(b);
+    const isSubHdr=a===''&&isDateStr(b)&&curArea;
+    if(!(isAreaHdr||isSubHdr))continue;
+    if(isAreaHdr)curArea=a;
+    const dateCols=[];
+    for(let c=1;c<r.length;c++){
+      const v=String(r[c]||'').trim();
+      if(isDateStr(v))dateCols.push({col:c,dateLabel:v});
+    }
+    let editionRow=rows[i+2]||[];
+    const hasEd=row=>row&&row.some(v=>v&&(String(v).includes('朝刊')||String(v).includes('夕刊')||String(v).includes('競馬')));
+    if(!hasEd(editionRow)){
+      for(let er=i+3;er<Math.min(rows.length,i+10);er++){
+        if(hasEd(rows[er])){editionRow=rows[er];break;}
+      }
+    }
+    const editionPerCol={};
+    dateCols.forEach(d=>{
+      const ed=String(editionRow[d.col]||'').trim();
+      editionPerCol[d.col]=(ed.includes('夕刊')||ed.includes('競馬'))?'PM':'AM';
+    });
+    const staffRows=[];
+    for(let j=i+3;j<rows.length;j++){
+      const r2=rows[j]||[];
+      const nm=String(r2[0]||'').trim();
+      const colB=String(r2[1]||'').trim();
+      if(nm===''&&isDateStr(colB))break;
+      if(!nm)continue;
+      if(areas.includes(nm)&&isDateStr(colB))break;
+      staffRows.push({rowIdx:j,name:nm});
+    }
+    blocks.push({area:curArea,headerRow:i,dateCols,editionPerCol,staffRows});
+  }
+  return blocks;
+}
+
+// 引継対象スタッフを Section 2 の指定日付範囲・時間帯で検索 → 該当セル
+// 戻り値: [{row, col, area, edition, oldValue, dateLabel}]
+function admSeFindSection2CellsForStaff(staffName,startCol,endCol,edition){
+  const matches=[];
+  if(!staffName||!startCol)return matches;
+  const dateRow=admSeState.rows[0]||[];
+  const dateCols1=admSeVacationDateColRange(startCol,endCol);
+  if(!dateCols1.length)return matches;
+  const targetDates=new Set(dateCols1.map(c=>String(dateRow[c]||'').trim()));
+  const blocks=admSeParseSection2();
+  const norm=invNormName(staffName);
+  blocks.forEach(b=>{
+    const staff=b.staffRows.find(s=>invNormName(s.name)===norm);
+    if(!staff)return;
+    b.dateCols.forEach(d=>{
+      if(!targetDates.has(d.dateLabel))return;
+      const ed=b.editionPerCol[d.col]||'AM';
+      if(edition==='am'&&ed!=='AM')return;
+      if(edition==='pm'&&ed!=='PM')return;
+      const oldValue=String(admSeCellValue(staff.rowIdx,d.col)||'').trim();
+      matches.push({row:staff.rowIdx,col:d.col,area:b.area,edition:ed,oldValue,dateLabel:d.dateLabel});
+    });
+  });
+  return matches;
+}
+
+function admSeHandoverPreview(){
+  const startCol=document.getElementById('adm-se-vac-date3').value;
+  const endCol=document.getElementById('adm-se-vac-date3-end').value;
+  const edition=document.getElementById('adm-se-vac-edition3').value;
+  const staff=document.getElementById('adm-se-vac-handover-staff').value.trim();
+  const value=document.getElementById('adm-se-vac-handover-value').value;
+  const prev=document.getElementById('adm-se-vac-preview3');
+  if(!startCol){alert('開始日を選択してください');return;}
+  if(!staff){alert('対象スタッフを入力してください');return;}
+  const matches=admSeFindSection2CellsForStaff(staff,startCol,endCol,edition);
+  if(!matches.length){
+    prev.style.display='block';prev.style.background='#fef2f2';prev.style.borderColor='#fecaca';prev.style.color='#991b1b';
+    prev.innerHTML=`⚠️ Section 2 に「${staff}」の該当行が見つかりません (営業所サブブロック内に存在しないか、日付範囲がカバーされていません)`;
+    return;
+  }
+  prev.style.display='block';prev.style.background='#f0fdf4';prev.style.borderColor='#bbf7d0';prev.style.color='#166534';
+  const lines=matches.slice(0,20).map(m=>`• ${m.dateLabel} ${m.area} ${m.edition}: ${m.oldValue||'(空)'} → ${value}`);
+  const more=matches.length>20?`<br>... 他 ${matches.length-20}件`:'';
+  prev.innerHTML=`✓ ${matches.length}件のセルに「${value}」を書き込みます:<br>${lines.join('<br>')}${more}`;
+}
+
+async function admSeHandoverApply(){
+  const startCol=document.getElementById('adm-se-vac-date3').value;
+  const endCol=document.getElementById('adm-se-vac-date3-end').value;
+  const edition=document.getElementById('adm-se-vac-edition3').value;
+  const staff=document.getElementById('adm-se-vac-handover-staff').value.trim();
+  const value=document.getElementById('adm-se-vac-handover-value').value;
+  if(!startCol){alert('開始日を選択してください');return;}
+  if(!staff){alert('対象スタッフを入力してください');return;}
+  const matches=admSeFindSection2CellsForStaff(staff,startCol,endCol,edition);
+  if(!matches.length){alert(`Section 2 に「${staff}」の該当行が見つかりません`);return;}
+  const summaryLines=matches.slice(0,15).map(m=>`${m.dateLabel} ${m.area} ${m.edition}: ${m.oldValue||'(空)'} → ${value}`);
+  const more=matches.length>15?`\n... 他 ${matches.length-15}件`:'';
+  if(!window.confirm(`${staff} さんの Section 2 セルに「${value}」を書き込みます (${matches.length}件、まだ保存されません):\n\n${summaryLines.join('\n')}${more}\n\n適用しますか?`))return;
+  matches.forEach(m=>{
+    const k=`${m.row},${m.col}`;
+    const orig=String((admSeState.rows[m.row]||[])[m.col]||'');
+    if(value===orig)admSeState.dirty.delete(k);
+    else admSeState.dirty.set(k,value);
+  });
+  admSeUpdateDirtyBadge();
+  admSeRender();
+  admSeCloseVacation();
+  const msg=document.getElementById('adm-se-msg');
+  msg.textContent=`✓ 引継登録: ${matches.length}件のセルに「${value}」を書き込み (💾 保存ボタンで反映)`;msg.style.color='#16a34a';
+  // 履歴記録
+  try{
+    const dateRow=admSeState.rows[0]||[];
+    const dowRow=admSeState.rows[3]||[];
+    const startLabel=String(dateRow[Number(startCol)]||'').trim();
+    const endLabel=endCol?String(dateRow[Number(endCol)]||'').trim():'';
+    const dateStr=endLabel&&endLabel!==startLabel?`${startLabel}〜${endLabel}`:startLabel;
+    const dowStr=String(dowRow[Number(startCol)]||'').trim();
+    const editLabel={am:'朝刊',pm:'夕刊',both:'両方'}[edition]||edition;
+    const detail=matches.map(m=>`${m.dateLabel}${m.area}${m.edition}:${m.oldValue||'(空)'}→${value}`).join(' / ');
+    await admSeLogVacation({
+      timestamp:new Date().toISOString(),
+      sheetName:admSeState.sheetName,
+      dateStr,dowStr,editLabel,
+      requester:`(Section 2: ${value}) ${staff}`,
+      replacement:'',
+      changeCount:matches.length,detail,
+    });
+  }catch(e){console.warn('履歴記録失敗:',e);}
+  setTimeout(()=>{msg.textContent='';},4000);
+}
+
 // === 🏖️ 休暇登録モーダル ===
 // シート選択中の日付一覧をモーダルの日付ドロップダウンに反映
 function admSeOpenVacation(){
@@ -5296,11 +5469,13 @@ function admSeOpenVacation(){
       optsEnd.push(`<option value="${c}">${label}</option>`);
     }
   }
-  // 両タブの日付ドロップダウンに反映
+  // 全タブの日付ドロップダウンに反映
   document.getElementById('adm-se-vac-date').innerHTML=opts.join('');
   document.getElementById('adm-se-vac-date-end').innerHTML=optsEnd.join('');
   document.getElementById('adm-se-vac-date2').innerHTML=opts.join('');
   document.getElementById('adm-se-vac-date2-end').innerHTML=optsEnd.join('');
+  document.getElementById('adm-se-vac-date3').innerHTML=opts.join('');
+  document.getElementById('adm-se-vac-date3-end').innerHTML=optsEnd.join('');
   // コース ドロップダウン (コースから タブ用)
   const rows=admSeState.rows;
   const courses=[];const seen=new Set();
@@ -5322,26 +5497,33 @@ function admSeOpenVacation(){
   document.getElementById('adm-se-vac-newdriver').value='';
   document.getElementById('adm-se-vac-preview2').style.display='none';
   document.getElementById('adm-se-vac-current').textContent='現在の担当: ―';
+  // 引継 タブクリア
+  document.getElementById('adm-se-vac-edition3').value='both';
+  document.getElementById('adm-se-vac-handover-staff').value='';
+  document.getElementById('adm-se-vac-handover-value').value='引継';
+  document.getElementById('adm-se-vac-preview3').style.display='none';
   // タブ初期化 (driver タブをデフォルト)
   admSeVacSwitchTab('driver');
   document.getElementById('adm-se-vacation-modal').style.display='flex';
 }
 
-// タブ切替
+// タブ切替 (driver / course / handover)
 function admSeVacSwitchTab(tab){
-  const td=document.getElementById('adm-se-vac-tab-driver');
-  const tc=document.getElementById('adm-se-vac-tab-course');
-  const fd=document.getElementById('adm-se-vac-form-driver');
-  const fc=document.getElementById('adm-se-vac-form-course');
-  if(tab==='driver'){
-    td.style.background='#8b5cf6';td.style.color='#fff';
-    tc.style.background='#f1f5f9';tc.style.color='#475569';
-    fd.style.display='flex';fc.style.display='none';
-  }else{
-    td.style.background='#f1f5f9';td.style.color='#475569';
-    tc.style.background='#8b5cf6';tc.style.color='#fff';
-    fd.style.display='none';fc.style.display='flex';
-  }
+  const tabs={driver:'adm-se-vac-tab-driver',course:'adm-se-vac-tab-course',handover:'adm-se-vac-tab-handover'};
+  const forms={driver:'adm-se-vac-form-driver',course:'adm-se-vac-form-course',handover:'adm-se-vac-form-handover'};
+  const activeColors={driver:'#8b5cf6',course:'#8b5cf6',handover:'#f59e0b'};
+  Object.keys(tabs).forEach(k=>{
+    const tb=document.getElementById(tabs[k]);
+    const fm=document.getElementById(forms[k]);
+    if(!tb||!fm)return;
+    if(k===tab){
+      tb.style.background=activeColors[k];tb.style.color='#fff';
+      fm.style.display='flex';
+    }else{
+      tb.style.background='#f1f5f9';tb.style.color='#475569';
+      fm.style.display='none';
+    }
+  });
 }
 
 // コース×日付×時間帯 から現在の担当者を表示
