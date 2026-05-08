@@ -10480,8 +10480,36 @@ async function diagReverseGeocode(lat,lng){
   return '';
 }
 
+// ===== 配送特記キャッシュ (通常画面ダイヤグラム用) =====
+const diagNotesCache=new Map();
+
+async function diagLoadNotes(){
+  try{
+    const res=await admDgEf({action:'list_notes'});
+    diagNotesCache.clear();
+    (res.notes||[]).forEach(n=>diagNotesCache.set(n.course_name,n.notes||''));
+  }catch(_){}
+}
+
+async function diagSaveNote(ta,courseName){
+  if(!courseName)return;
+  const notes=ta.value;
+  diagNotesCache.set(courseName,notes);
+  const ind=ta.parentElement?.querySelector('.diag-note-status');
+  if(ind){ind.textContent='保存中...';ind.style.color='#64748b';}
+  try{
+    await admDgEf({action:'set_note',course_name:courseName,notes});
+    if(ind){ind.textContent='✓ 保存';ind.style.color='#16a34a';setTimeout(()=>{if(ind)ind.textContent='';},2000);}
+  }catch(err){
+    if(ind){ind.textContent='保存失敗';ind.style.color='#dc2626';}
+  }
+}
+
+function diagEsc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
 function diagInit(){
   diagInited=true;
+  diagLoadNotes().then(()=>{ if(diagShopData.length)diagRender(); });
   if(!diagShopData.length)diagLoad();
   else diagFilter();
 }
@@ -10675,6 +10703,13 @@ function diagRender(){
     h+=`<div style="font-size:13px;color:var(--text-sub);">🏪 ${shops.length}店舗 ／ 🕐 ${firstT!=null?diagFmtMin(firstT):'--:--'} 〜 ${lastT!=null?diagFmtMin(lastT):'--:--'} ／ 店着時間設定: ${timedCnt}/${shops.length}</div>`;
     h+=`</div>`;
 
+    // 配送特記 (タップで編集 / 自動保存)
+    const noteVal=diagNotesCache.get(cn)||'';
+    h+=`<div style="background:#fef9c3;border-bottom:1px solid #fde047;padding:10px 16px;">`;
+    h+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><label style="font-size:11px;font-weight:600;color:#854d0e;">📝 配送特記 (タップで編集 / 自動保存)</label><span class="diag-note-status" style="font-size:11px;"></span></div>`;
+    h+=`<textarea data-cn="${diagEsc(cn)}" rows="2" style="width:100%;font-size:13px;font-family:inherit;padding:6px 8px;border:1px solid #fbbf24;border-radius:4px;background:#fffef5;resize:vertical;color:#422006;" placeholder="例: 月曜は店舗XX休業 / 12時以降は裏口から納品 等" onblur="diagSaveNote(this, this.dataset.cn)">${diagEsc(noteVal)}</textarea>`;
+    h+=`</div>`;
+
     // 運行バー
     h+=`<div style="padding:22px 20px 28px;background:#fafbfc;border-bottom:1px solid var(--border);">`;
     h+=`<div style="position:relative;height:52px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;">`;
@@ -10785,6 +10820,8 @@ function diagExportPdf(){
     .course-card:not(:first-of-type){page-break-before:always;break-before:page;}
     .course-head{background:#f1f5f9;padding:3px 8px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #cbd5e1;font-size:10px;}
     .course-head b{color:#1d4ed8;}
+    .course-note{background:#fef9c3;border-bottom:1px solid #fbbf24;padding:3px 8px;font-size:9px;color:#422006;font-weight:600;line-height:1.35;}
+    .course-note .course-note-txt{font-weight:normal;white-space:pre-wrap;}
     .bar-wrap{padding:14px 10px 18px;background:#fafbfc;border-bottom:1px solid #cbd5e1;position:relative;}
     .bar{position:relative;height:26px;background:#fff;border:1px solid #cbd5e1;border-radius:3px;}
     .bar .tick{position:absolute;top:0;bottom:0;border-left:1px dashed #e2e8f0;}
@@ -10819,6 +10856,10 @@ function diagExportPdf(){
     const lastT=times.length?Math.max(...times):null;
     body+=`<div class="course-card">`;
     body+=`<div class="course-head"><div><b>${cn}</b> ／ ${typeLabel}</div><div class="doc-sub">🏪 ${shops.length}店舗 ／ 🕐 ${firstT!=null?diagFmtMin(firstT):'--:--'} 〜 ${lastT!=null?diagFmtMin(lastT):'--:--'} ／ 店着時間設定: ${times.length}/${shops.length}</div></div>`;
+    const pdfNote=(diagNotesCache.get(cn)||'').trim();
+    if(pdfNote){
+      body+=`<div class="course-note">📝 配送特記: <span class="course-note-txt">${diagEsc(pdfNote)}</span></div>`;
+    }
     body+=`<div class="bar-wrap"><div class="bar">`;
     const ticks=6;
     for(let ti=0;ti<=ticks;ti++){
