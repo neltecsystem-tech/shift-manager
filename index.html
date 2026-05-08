@@ -403,6 +403,7 @@ tbody tr:hover { background:var(--primary-light); }
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-admin"> 🔧 管理画面</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-defects"> 🔧 不具合管理</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-shopmaster"> 🏪 店舗マスタ</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-shiftedit"> 📝 シフト編集</label>
         </div>
         <div style="display:flex;gap:8px;">
           <button onclick="invDeleteRate()" id="inv-re-delete-btn" style="display:none;background:#dc2626;color:#fff;border:none;padding:12px 20px;border-radius:10px;font-size:14px;font-weight:bold;cursor:pointer;">🗑 削除</button>
@@ -3416,6 +3417,7 @@ function invAddRate(){
   document.getElementById('inv-re-perm-admin').checked=false;
   document.getElementById('inv-re-perm-defects').checked=false;
   document.getElementById('inv-re-perm-shopmaster').checked=false;
+  document.getElementById('inv-re-perm-shiftedit').checked=false;
   ['inv-re-kw-mon','inv-re-kw-tue','inv-re-kw-wed','inv-re-kw-thu','inv-re-kw-fri','inv-re-kw-sat','inv-re-kw-sun'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('inv-re-kw-pattern').value='';
   invKwPatternChange();
@@ -3463,6 +3465,7 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-perm-admin').checked=permStr.includes('admin');
   document.getElementById('inv-re-perm-defects').checked=permStr.includes('defects');
   document.getElementById('inv-re-perm-shopmaster').checked=permStr.includes('shopmaster');
+  document.getElementById('inv-re-perm-shiftedit').checked=permStr.includes('shiftedit');
   document.getElementById('inv-rate-edit').style.display='flex';
 }
 
@@ -3502,6 +3505,7 @@ async function invSaveRate(){
   if(document.getElementById('inv-re-perm-admin').checked)permArr.push('admin');
   if(document.getElementById('inv-re-perm-defects').checked)permArr.push('defects');
   if(document.getElementById('inv-re-perm-shopmaster').checked)permArr.push('shopmaster');
+  if(document.getElementById('inv-re-perm-shiftedit').checked)permArr.push('shiftedit');
   const perms=permArr.join(',');
   const kwAmDaily=['mon','tue','wed','thu','fri','sat','sun'].map(d=>document.getElementById('inv-re-kw-'+d).value).join(',');
   const kwPattern=document.getElementById('inv-re-kw-pattern').value;
@@ -3738,13 +3742,44 @@ let adminAuthed=false;
 let adminPw=localStorage.getItem('adminPw')||INV_PW;
 
 async function adminShowLogin(){
-  if(adminAuthed){showView('admin');adminTab('invoices');return;}
+  if(adminAuthed){
+    applyAdminTabPermissions();
+    showView('admin');
+    // シフト編集権限のみのユーザーは シフト編集タブをデフォルトに
+    const onlyShiftEdit=!sysUserHasPerm('admin')&&sysUserHasPerm('shiftedit');
+    adminTab(onlyShiftEdit?'shiftedit':'invoices');
+    return;
+  }
   const ok=await showPermLogin('🔧 管理画面ログイン',adminPw,'admin');
   if(!ok)return;
   adminAuthed=true;
+  applyAdminTabPermissions();
   showView('admin');
   document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
   adminTab('invoices');
+}
+
+// 現在のユーザーが特定の権限を持っているか
+function sysUserHasPerm(perm){
+  if(typeof sysUserPerms==='undefined'||!sysUserPerms)return false;
+  return sysUserPerms.includes('all')||sysUserPerms.includes(perm);
+}
+
+// 管理画面のタブ可視性をユーザー権限に応じて制御
+// admin 権限なし & shiftedit のみ → シフト編集タブのみ表示
+function applyAdminTabPermissions(){
+  const hasAdmin=sysUserHasPerm('admin');
+  const hasShiftEdit=sysUserHasPerm('shiftedit');
+  document.querySelectorAll('.adm-tab').forEach(btn=>{
+    const id=btn.id||'';
+    // シフト編集タブは shiftedit or admin で表示
+    if(id==='adm-tab-shiftedit'){
+      btn.style.display=(hasAdmin||hasShiftEdit)?'':'none';
+      return;
+    }
+    // それ以外のタブは admin 必須
+    btn.style.display=hasAdmin?'':'none';
+  });
 }
 
 function adminLogout(){
@@ -3875,6 +3910,7 @@ function adminRenderStaff(){
     if(ps.includes('admin'))permTags.push('<span style="background:#fdf4ff;color:#7c3aed;padding:1px 6px;border-radius:8px;font-size:10px;">管理</span>');
     if(ps.includes('defects'))permTags.push('<span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:8px;font-size:10px;">不具合</span>');
     if(ps.includes('shopmaster'))permTags.push('<span style="background:#dcfce7;color:#166534;padding:1px 6px;border-radius:8px;font-size:10px;">店舗</span>');
+    if(ps.includes('shiftedit'))permTags.push('<span style="background:#ede9fe;color:#6d28d9;padding:1px 6px;border-radius:8px;font-size:10px;">シフト編集</span>');
     const permDisp=permTags.length?permTags.join(' '):'<span style="color:#94a3b8;font-size:11px;">-</span>';
     h+=`<tr>
       <td><b>${r.name}</b></td>
@@ -10330,6 +10366,7 @@ showView=function(v,btn){origShowView(v,btn);if(v==='measure')showView_measure()
 let sysLoggedIn=false;
 let sysUserName='';
 let sysIsAdmin=false;
+let sysUserPerms=[];
 
 function sysShowAdminLogin(){
   document.getElementById('sys-admin-area').style.display='block';
@@ -10352,13 +10389,15 @@ async function sysDoLogin(){
   }
   sysLoggedIn=true;sysUserName=staff.name;sysIsAdmin=false;
   const perms=(staff.permissions||'').split(',').filter(Boolean);
+  sysUserPerms=perms;
   document.getElementById('sys-login').style.display='none';
   document.getElementById('sys-user-label').textContent='👤 '+sysUserName;
   sysApplyPermissions(perms);
   // 各画面の認証をスキップ
   if(perms.includes('defects'))defectAuthed=true;
   if(perms.includes('shopmaster'))smAuthed=true;
-  if(perms.includes('admin')){adminAuthed=true;adminPw=INV_PW;}
+  // admin or shiftedit 権限でも管理画面に入れる (タブはタブ側で制限)
+  if(perms.includes('admin')||perms.includes('shiftedit')){adminAuthed=true;adminPw=INV_PW;}
   msrAuthed=true;msrStaffName=sysUserName;
   // 請求書もログイン済みにする
   invAuthed=true;invIsAdmin=false;invStaffName=sysUserName;
@@ -10373,6 +10412,7 @@ function sysAdminLogin(){
     errEl.textContent='管理者パスワードが正しくありません';errEl.style.display='block';return;
   }
   sysLoggedIn=true;sysUserName='管理者';sysIsAdmin=true;
+  sysUserPerms=['all'];
   document.getElementById('sys-login').style.display='none';
   document.getElementById('sys-user-label').textContent='👑 管理者';
   sysApplyPermissions(['all']);
@@ -10406,13 +10446,13 @@ function sysApplyPermissions(perms){
     if(rule.perm&&perms.includes(rule.perm)){btn.style.display='';return;}
     btn.style.display='none';
   });
-  // 管理ボタン
+  // 管理ボタン: admin or shiftedit のいずれかで表示
   const adminBtn=document.querySelector('.nav-links button[onclick*="adminShowLogin"]');
-  if(adminBtn)adminBtn.style.display=(isAll||perms.includes('admin'))?'':'none';
+  if(adminBtn)adminBtn.style.display=(isAll||perms.includes('admin')||perms.includes('shiftedit'))?'':'none';
 }
 
 function sysLogout(){
-  sysLoggedIn=false;sysUserName='';sysIsAdmin=false;
+  sysLoggedIn=false;sysUserName='';sysIsAdmin=false;sysUserPerms=[];
   defectAuthed=false;smAuthed=false;adminAuthed=false;msrAuthed=false;msrStaffName='';
   invAuthed=false;invIsAdmin=false;invStaffName='';
   document.getElementById('sys-login').style.display='flex';
