@@ -10,6 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="data.js"></script>
 <style>
 :root { --primary:#1a56db; --primary-light:#e8eefb; --bg:#f5f6fa; --card:#fff; --border:#dde1e8; --text:#1e293b; --text-sub:#64748b; --danger:#dc2626; }
@@ -479,6 +480,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('employee')" id="adm-tab-employee" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">👤 社員管理</button>
         <button onclick="adminTab('shiftedit')" id="adm-tab-shiftedit" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📝 シフト編集</button>
         <button onclick="adminTab('measure')" id="adm-tab-measure" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⏱ 測定データ</button>
+        <button onclick="adminTab('diagram')" id="adm-tab-diagram" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📐 ダイヤグラム</button>
         <button onclick="adminTab('settings')" id="adm-tab-settings" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⚙ システム設定</button>
       </div>
 
@@ -874,6 +876,41 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="adm-msr-summary" style="margin-bottom:8px;"></div>
         <div class="table-wrap" id="adm-msr-table"></div>
+      </div>
+
+      <!-- ダイヤグラム作成 -->
+      <div id="adm-diagram" class="adm-panel" style="display:none;">
+        <div style="margin-bottom:14px;font-size:12px;color:var(--text-sub);line-height:1.6;">
+          ダイヤグラム.xlsx (4コース横並びレイアウト) をアップロードすると、店舗マスタから住所・座標を取得して<b>印刷用ページ</b>と<b>Googleマップナビリンク (10地点ずつ)</b> を生成します。
+        </div>
+        <div class="filters" style="margin-bottom:14px;">
+          <div style="flex:1;min-width:280px;">
+            <label>エクセルファイル</label>
+            <input type="file" id="adm-dg-file" accept=".xlsx,.xls" onchange="admDgOnFile(event)">
+          </div>
+          <div>
+            <label>出発地点 (住所)</label>
+            <input type="text" id="adm-dg-depot" value="東京都板橋区熊野町45-6" style="min-width:240px;">
+          </div>
+          <div style="display:flex;align-items:flex-end;">
+            <button onclick="admDgProcess()" id="adm-dg-process-btn" disabled style="background:var(--primary);color:#fff;border:none;padding:8px 18px;border-radius:8px;cursor:pointer;font-weight:600;">⚙ 生成</button>
+          </div>
+        </div>
+        <div id="adm-dg-coursecfg" style="margin-bottom:12px;"></div>
+        <div id="adm-dg-status" style="margin-bottom:8px;font-size:12px;color:var(--text-sub);"></div>
+        <div id="adm-dg-results"></div>
+        <details style="margin-top:24px;background:#f8fafc;border-radius:8px;padding:12px;">
+          <summary style="cursor:pointer;font-weight:600;font-size:13px;">🔧 名称マッピング管理 (未マッチ店舗用)</summary>
+          <div style="margin-top:10px;font-size:12px;color:var(--text-sub);">
+            新エクセルの店舗名 → 店舗マスタの正式名 を登録すると、次回以降自動でマッチします。
+          </div>
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+            <div><label style="font-size:11px;">エクセル上の名称 (新)</label><input type="text" id="adm-dg-alias-new" placeholder="例: ローソンTF杉並方南町" style="min-width:240px;"></div>
+            <div><label style="font-size:11px;">店舗マスタの正式名</label><input type="text" id="adm-dg-alias-master" placeholder="例: LATF杉並方南町" style="min-width:240px;"></div>
+            <button onclick="admDgAddAlias()" style="background:var(--primary);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">追加/更新</button>
+          </div>
+          <div id="adm-dg-aliases" style="margin-top:12px;"></div>
+        </details>
       </div>
 
       <!-- システム設定 -->
@@ -3868,6 +3905,213 @@ function adminTab(t){
   if(t==='shiftedit')admSeInit().catch(()=>{});
   if(t==='data')adminShowDataInfo();
   if(t==='settings')adminShowSysInfo();
+  if(t==='diagram')admDgInit();
+}
+
+// ===== ダイヤグラム作成 =====
+const ADM_DG_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/diagram-process';
+let admDgParsed=null; // {courseNames:[], stops:[[],[],[],[]]}
+let admDgResult=null; // EF result
+
+async function admDgEf(body){
+  const res=await fetch(ADM_DG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!res.ok){const t=await res.text();throw new Error('EF '+res.status+' '+t);}
+  return res.json();
+}
+
+function admDgInit(){
+  document.getElementById('adm-dg-file').value='';
+  document.getElementById('adm-dg-process-btn').disabled=true;
+  document.getElementById('adm-dg-coursecfg').innerHTML='';
+  document.getElementById('adm-dg-status').textContent='';
+  document.getElementById('adm-dg-results').innerHTML='';
+  admDgParsed=null;admDgResult=null;
+  admDgRenderAliases().catch(()=>{});
+}
+
+function admDgFmtTime(frac){
+  if(typeof frac!=='number')return String(frac||'');
+  const m=Math.round(frac*1440);
+  return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+}
+
+function admDgOnFile(e){
+  const f=e.target.files?.[0];
+  if(!f){return;}
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    try{
+      const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
+      const sh=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(sh,{header:1,defval:''});
+      const blocks=[0,5,10,15];
+      const courseNames=[],stopsAll=[];
+      blocks.forEach((c,i)=>{
+        const stops=[];
+        for(let r=1;r<rows.length;r++){
+          const row=rows[r];
+          const id=row[c];const name=row[c+1];const time=row[c+2];const dist=row[c+3];
+          if(!name && !id)break;
+          if(!name)continue;
+          stops.push({id,name:String(name).trim(),time,dist});
+        }
+        stopsAll.push(stops);
+        courseNames.push('コース'+(i+1));
+      });
+      admDgParsed={courseNames,stopsAll};
+      const cfgHtml=courseNames.map((n,i)=>'<div style="display:inline-block;margin-right:12px;"><label style="font-size:11px;">コース'+(i+1)+'名</label><input type="text" class="adm-dg-cname" value="'+n+'" style="min-width:140px;"></div>').join('');
+      document.getElementById('adm-dg-coursecfg').innerHTML='<div style="background:#f8fafc;padding:10px;border-radius:8px;">'+cfgHtml+'<div style="font-size:11px;color:var(--text-sub);margin-top:6px;">読込: '+stopsAll.map((s,i)=>'コース'+(i+1)+'='+s.length+'件').join(' / ')+'</div></div>';
+      document.getElementById('adm-dg-process-btn').disabled=false;
+      document.getElementById('adm-dg-status').textContent='エクセル解析完了。「⚙ 生成」を押してください。';
+    }catch(err){
+      document.getElementById('adm-dg-status').textContent='エクセル解析失敗: '+(err.message||err);
+      admDgParsed=null;
+    }
+  };
+  reader.readAsArrayBuffer(f);
+}
+
+async function admDgProcess(){
+  if(!admDgParsed)return;
+  const depot=document.getElementById('adm-dg-depot').value.trim();
+  const cnames=[...document.querySelectorAll('.adm-dg-cname')].map(i=>i.value.trim()||'コース');
+  document.getElementById('adm-dg-status').textContent='マスタ照合・住所取得中...';
+  document.getElementById('adm-dg-results').innerHTML='';
+  try{
+    const diagrams=admDgParsed.stopsAll.map((stops,i)=>({name:cnames[i],stops}));
+    const res=await admDgEf({action:'process',depot_address:depot,diagrams});
+    if(res.error){document.getElementById('adm-dg-status').textContent='エラー: '+res.error;return;}
+    admDgResult=res;
+    const s=res.stats||{};
+    document.getElementById('adm-dg-status').innerHTML=`✓ 処理完了: ${s.matched||0}/${s.total||0} マッチ (alias経由${s.from_alias||0}件) / 未マッチ${s.unmatched||0}件`;
+    admDgRenderResults();
+  }catch(err){
+    document.getElementById('adm-dg-status').textContent='処理失敗: '+(err.message||err);
+  }
+}
+
+function admDgBuildNavUrls(stops){
+  const pts=stops.filter(s=>s.lat&&s.lng);
+  const chunks=[];let i=0;
+  while(i<pts.length-1){
+    const chunk=pts.slice(i,Math.min(i+10,pts.length));
+    if(chunk.length<2)break;
+    chunks.push(chunk);
+    if(i+10>=pts.length)break;
+    i+=9;
+  }
+  return chunks.map(chunk=>{
+    const origin=chunk[0].lat+','+chunk[0].lng;
+    const dest=chunk[chunk.length-1].lat+','+chunk[chunk.length-1].lng;
+    const wp=chunk.slice(1,-1).map(p=>p.lat+','+p.lng).join('|');
+    return 'https://www.google.com/maps/dir/?api=1&origin='+origin+'&destination='+dest+(wp?'&waypoints='+encodeURIComponent(wp):'')+'&travelmode=driving';
+  });
+}
+
+function admDgEsc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function admDgRenderResults(){
+  if(!admDgResult)return;
+  let html='';
+  admDgResult.diagrams.forEach((d,di)=>{
+    const navs=admDgBuildNavUrls(d.stops);
+    html+='<div class="adm-dg-course-block" style="border:1px solid #cbd5e1;border-radius:8px;padding:12px;margin-bottom:14px;background:#fff;" data-course-index="'+di+'">';
+    html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">';
+    html+='<h3 style="margin:0;font-size:14px;color:var(--primary);">'+admDgEsc(d.name)+' (全'+d.stops.length+'地点 / ナビ'+navs.length+'本)</h3>';
+    html+='<button onclick="admDgPrintCourse('+di+')" style="background:var(--primary);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🖨 印刷/PDF</button>';
+    html+='</div>';
+    html+='<div class="table-wrap"><table style="font-size:11px;width:100%;border-collapse:collapse;">';
+    html+='<thead><tr><th>順</th><th>店舗ID</th><th>店舗名</th><th>到着</th><th>区間距離</th><th>住所</th></tr></thead><tbody>';
+    d.stops.forEach((s,idx)=>{
+      const idStr=s.id?String(parseInt(String(s.id).replace(/\D/g,''),10)||s.id):'-';
+      const cls=s.isStart?'background:#fff7c2;font-weight:bold;':(s.matched===false?'background:#fee2e2;':'');
+      const addr=s.address||(s.matched===false?'(マスタ未登録: '+admDgEsc(s.name)+')':'');
+      html+='<tr style="'+cls+'"><td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+idx+'</td>';
+      html+='<td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+admDgEsc(idStr)+'</td>';
+      html+='<td style="border:1px solid #ddd;padding:3px 6px;">'+admDgEsc(s.name)+'</td>';
+      html+='<td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+admDgFmtTime(s.time)+'</td>';
+      html+='<td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+admDgEsc(s.dist||'')+'</td>';
+      html+='<td style="border:1px solid #ddd;padding:3px 6px;font-size:10px;color:#444;">'+admDgEsc(addr)+'</td></tr>';
+    });
+    html+='</tbody></table></div>';
+    html+='<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12px;color:var(--primary);">🗺 ナビリンク '+navs.length+'本を表示</summary><ol style="font-size:11px;margin-top:6px;">';
+    navs.forEach((u,j)=>{
+      const startIdx=j*9;
+      const endIdx=Math.min(startIdx+9,d.stops.filter(s=>s.lat&&s.lng).length-1);
+      html+='<li style="margin-bottom:4px;word-break:break-all;"><b>区間'+(j+1)+'</b> (順'+startIdx+'→順'+endIdx+'): <a href="'+admDgEsc(u)+'" target="_blank" style="color:#1a73e8;">'+admDgEsc(u)+'</a></li>';
+    });
+    html+='</ol></details></div>';
+  });
+  if(admDgResult.unmatched&&admDgResult.unmatched.length>0){
+    html+='<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:12px;margin-bottom:14px;"><h3 style="margin:0 0 6px;font-size:13px;color:#991b1b;">⚠ 未マッチ ('+admDgResult.unmatched.length+'件)</h3><ul style="font-size:11px;margin:0;padding-left:20px;">';
+    admDgResult.unmatched.forEach(u=>{html+='<li>'+admDgEsc(u.diagram)+': ID='+admDgEsc(u.id||'-')+' / '+admDgEsc(u.name)+'</li>';});
+    html+='</ul><div style="font-size:11px;color:#991b1b;margin-top:6px;">下のマッピング管理で正式名を登録すると次回以降自動で解決します。</div></div>';
+  }
+  document.getElementById('adm-dg-results').innerHTML=html;
+}
+
+function admDgPrintCourse(i){
+  if(!admDgResult)return;
+  const d=admDgResult.diagrams[i];
+  const navs=admDgBuildNavUrls(d.stops);
+  const depot=admDgResult.depot?.address||'';
+  let body='<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>'+admDgEsc(d.name)+'</title><style>';
+  body+='body{font-family:-apple-system,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;margin:10mm;color:#111;font-size:9pt;}';
+  body+='h1{font-size:14pt;margin:0 0 6px;}h2{font-size:11pt;margin:14px 0 6px;}.meta{font-size:9pt;color:#555;margin-bottom:8px;}';
+  body+='table{border-collapse:collapse;width:100%;}th,td{border:1px solid #777;padding:3px 6px;}th{background:#e8e8e8;}.start{background:#fff7c2;font-weight:bold;}.unmatched{background:#fee2e2;}';
+  body+='td.center{text-align:center;}td.addr{font-size:8pt;color:#333;}.pgbreak{page-break-before:always;}ol{padding-left:20px;}ol li{margin-bottom:4px;word-break:break-all;font-size:8pt;}a{color:#000;}@media print{@page{size:A4 portrait;margin:10mm;}}';
+  body+='</style></head><body>';
+  body+='<h1>'+admDgEsc(d.name)+'</h1><div class="meta">出発: '+admDgEsc(depot)+' ／ 全'+d.stops.length+'地点</div>';
+  body+='<table><thead><tr><th>順</th><th>店舗ID</th><th>店舗名</th><th>到着時刻</th><th>区間距離</th><th>住所</th></tr></thead><tbody>';
+  d.stops.forEach((s,idx)=>{
+    const idStr=s.id?String(parseInt(String(s.id).replace(/\D/g,''),10)||s.id):'-';
+    const cls=s.isStart?'start':(s.matched===false?'unmatched':'');
+    body+='<tr class="'+cls+'"><td class="center">'+idx+'</td><td class="center">'+admDgEsc(idStr)+'</td><td>'+admDgEsc(s.name)+'</td><td class="center">'+admDgFmtTime(s.time)+'</td><td class="center">'+admDgEsc(s.dist||'')+'</td><td class="addr">'+admDgEsc(s.address||'')+'</td></tr>';
+  });
+  body+='</tbody></table>';
+  body+='<div class="pgbreak"><h2>🗺 Googleナビ リンク (1リンク=スタート+9件 / 計'+navs.length+'本)</h2><ol>';
+  navs.forEach((u,j)=>{const startIdx=j*9;const endIdx=Math.min(startIdx+9,d.stops.filter(s=>s.lat&&s.lng).length-1);body+='<li><b>区間'+(j+1)+'</b> (順'+startIdx+'→順'+endIdx+'): <a href="'+admDgEsc(u)+'">'+admDgEsc(u)+'</a></li>';});
+  body+='</ol></div></body></html>';
+  const w=window.open('','_blank');
+  w.document.open();w.document.write(body);w.document.close();
+  setTimeout(()=>{try{w.print();}catch(_){}},500);
+}
+
+async function admDgRenderAliases(){
+  try{
+    const res=await admDgEf({action:'list_aliases'});
+    const list=res.aliases||[];
+    let h='';
+    if(list.length===0){h='<div style="font-size:11px;color:var(--text-sub);">登録なし</div>';}
+    else{
+      h='<table style="font-size:11px;border-collapse:collapse;width:100%;"><thead><tr><th style="border:1px solid #ddd;padding:4px;">エクセル名</th><th style="border:1px solid #ddd;padding:4px;">マスタ正式名</th><th style="border:1px solid #ddd;padding:4px;">備考</th><th style="border:1px solid #ddd;padding:4px;">操作</th></tr></thead><tbody>';
+      list.forEach(a=>{h+='<tr><td style="border:1px solid #ddd;padding:4px;">'+admDgEsc(a.alias)+'</td><td style="border:1px solid #ddd;padding:4px;">'+admDgEsc(a.master_name)+'</td><td style="border:1px solid #ddd;padding:4px;">'+admDgEsc(a.note||'')+'</td><td style="border:1px solid #ddd;padding:4px;text-align:center;"><button onclick="admDgDelAlias(\''+a.alias.replace(/\\/g,'\\\\').replace(/\x27/g,'\\\x27')+'\')" style="background:#fee2e2;color:#991b1b;border:none;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;">削除</button></td></tr>';});
+      h+='</tbody></table>';
+    }
+    document.getElementById('adm-dg-aliases').innerHTML=h;
+  }catch(err){document.getElementById('adm-dg-aliases').innerHTML='<div style="color:#dc2626;font-size:11px;">読込失敗: '+(err.message||err)+'</div>';}
+}
+
+async function admDgAddAlias(){
+  const alias=document.getElementById('adm-dg-alias-new').value.trim();
+  const master=document.getElementById('adm-dg-alias-master').value.trim();
+  if(!alias||!master){alert('両方の項目を入力してください');return;}
+  try{
+    const res=await admDgEf({action:'add_alias',alias,master_name:master});
+    if(res.error){alert('保存失敗: '+res.error);return;}
+    document.getElementById('adm-dg-alias-new').value='';
+    document.getElementById('adm-dg-alias-master').value='';
+    admDgRenderAliases();
+  }catch(err){alert('保存失敗: '+(err.message||err));}
+}
+
+async function admDgDelAlias(alias){
+  if(!confirm('「'+alias+'」のマッピングを削除しますか？'))return;
+  try{
+    const res=await admDgEf({action:'delete_alias',alias});
+    if(res.error){alert('削除失敗: '+res.error);return;}
+    admDgRenderAliases();
+  }catch(err){alert('削除失敗: '+(err.message||err));}
 }
 
 // --- 請求書管理 ---
