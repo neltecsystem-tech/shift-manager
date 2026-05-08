@@ -881,8 +881,82 @@ tbody tr:hover { background:var(--primary-light); }
       <!-- ダイヤグラム作成 -->
       <div id="adm-diagram" class="adm-panel" style="display:none;">
         <div style="margin-bottom:14px;font-size:12px;color:var(--text-sub);line-height:1.6;">
-          ダイヤグラム.xlsx (4コース横並びレイアウト) をアップロードすると、店舗マスタから住所・座標を取得して<b>印刷用ページ</b>と<b>Googleマップナビリンク (10地点ずつ)</b> を生成します。
+          ダイヤグラム.xlsx または Googleスプレッドシート (4コース横並びレイアウト) を読み込むと、店舗マスタから住所・座標を取得して<b>印刷用ページ</b>と<b>Googleマップナビリンク (10地点ずつ)</b> を生成します。
         </div>
+
+        <details style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px;margin-bottom:14px;">
+          <summary style="cursor:pointer;font-weight:600;font-size:13px;color:#1d4ed8;">📖 ソースの書式・必要な列構成 (クリックで展開)</summary>
+          <div style="margin-top:10px;font-size:12px;line-height:1.7;color:#334155;">
+            <p style="margin:0 0 8px;"><b>必須レイアウト</b>: 1シート内に4コースが横並び。各コースは <b>4列ブロック + 1列空白</b> の繰り返し。</p>
+            <table style="border-collapse:collapse;font-size:11px;margin-bottom:10px;background:#fff;">
+              <thead>
+                <tr style="background:#dbeafe;">
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;">列</th>
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;">A</th>
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;">B</th>
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;">C</th>
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;">D</th>
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;background:#e2e8f0;">E</th>
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;">F</th>
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;">G</th>
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;">H</th>
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;">I</th>
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;background:#e2e8f0;">J</th>
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;">K…N</th>
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;background:#e2e8f0;">O</th>
+                  <th style="border:1px solid #93c5fd;padding:4px 8px;">P…S</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;font-weight:600;">役割</td>
+                  <td colspan="4" style="border:1px solid #93c5fd;padding:4px 8px;text-align:center;background:#fef3c7;">コース1</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;text-align:center;background:#e2e8f0;color:#94a3b8;">空</td>
+                  <td colspan="4" style="border:1px solid #93c5fd;padding:4px 8px;text-align:center;background:#fef3c7;">コース2</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;text-align:center;background:#e2e8f0;color:#94a3b8;">空</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;text-align:center;background:#fef3c7;">コース3</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;text-align:center;background:#e2e8f0;color:#94a3b8;">空</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;text-align:center;background:#fef3c7;">コース4</td>
+                </tr>
+                <tr>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;font-weight:600;">中身</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;font-size:10px;">店舗ID</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;font-size:10px;">舗名</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;font-size:10px;">到着時刻</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;font-size:10px;">区間距離</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;background:#f1f5f9;"></td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;font-size:10px;">店舗ID</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;font-size:10px;">舗名</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;font-size:10px;">到着時刻</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;font-size:10px;">区間距離</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;background:#f1f5f9;"></td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;font-size:10px;">同左</td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;background:#f1f5f9;"></td>
+                  <td style="border:1px solid #93c5fd;padding:4px 8px;font-size:10px;">同左</td>
+                </tr>
+              </tbody>
+            </table>
+            <p style="margin:8px 0 4px;"><b>各列の書式</b>:</p>
+            <ul style="margin:0 0 8px 18px;padding:0;">
+              <li><b>店舗ID</b> (1列目): 数値。店舗マスタの「店舗コード」(C列) と一致するもの。空欄なら名称マッチで補完。</li>
+              <li><b>舗名</b> (2列目): 店舗名。略称可 (LA=ローソン, FM=ファミリーマート, LS=ローソンストア100 等)。出発地点は <code>【出発】住所</code> または <code>出発地点</code> と記入。</li>
+              <li><b>到着時刻</b> (3列目): Excel時刻型 (例: 0.5 = 12:00) または <code>HH:MM</code> 文字列。</li>
+              <li><b>区間距離</b> (4列目): <code>3.8km</code> のような文字列または数値。表示用 (計算には使わない)。</li>
+            </ul>
+            <p style="margin:8px 0 4px;"><b>行の構成</b>:</p>
+            <ul style="margin:0 0 8px 18px;padding:0;">
+              <li><b>1行目</b>: ヘッダー (舗名 / 到着時間 / 区間距離 …)。読み飛ばします。</li>
+              <li><b>2行目</b>: 出発地点 (各コース共通の depot 行)。</li>
+              <li><b>3行目以降</b>: 順番に店舗を記入。空白セル (店舗名が空) でそのコースの末尾と判定。</li>
+            </ul>
+            <p style="margin:8px 0 4px;"><b>注意点</b>:</p>
+            <ul style="margin:0 0 0 18px;padding:0;">
+              <li>4コース未満の場合は使わないブロックを空白のままにする (例: コース3とコース4を空にすれば2コース分のみ生成)。</li>
+              <li>店舗マスタにない店舗は<span style="background:#fee2e2;padding:0 4px;">赤背景</span>で表示。下部の「🔧 名称マッピング管理」で alias を登録すると次回以降自動マッチ。</li>
+              <li>住所と緯度経度は <b>店舗マスタ (AD/AE/AF列)</b> から自動取得するので、本ツール側でジオコーディングは不要。</li>
+            </ul>
+          </div>
+        </details>
         <div style="margin-bottom:10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
           <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;"><input type="radio" name="adm-dg-src" value="excel" checked onchange="admDgSwitchSrc()"> エクセルファイル</label>
           <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;"><input type="radio" name="adm-dg-src" value="sheet" onchange="admDgSwitchSrc()"> Googleスプレッドシート</label>
