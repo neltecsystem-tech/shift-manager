@@ -4171,6 +4171,24 @@ async function admDgProcess(){
   }
 }
 
+// 店舗名+住所をナビ表示用ラベルに変換 (店舗名でピン名が表示される)
+function admDgNavLabel(s){
+  // 出発地点 (isStart) は住所のみ (店舗名なし)
+  if(s.isStart){
+    if(s.address)return s.address;
+    if(s.lat&&s.lng)return s.lat+','+s.lng;
+    return '';
+  }
+  // 通常店舗: 店舗名 + 住所 (Google Maps が店舗名で表示する)
+  const nm=s.official_name||s.master_name||s.name||'';
+  const addr=s.address||'';
+  if(nm&&addr)return nm+' '+addr;
+  if(nm&&s.lat&&s.lng)return nm; // 住所がない場合は名前だけ (チェーン店は曖昧になる可能性あり)
+  if(addr)return addr;
+  if(s.lat&&s.lng)return s.lat+','+s.lng;
+  return '';
+}
+
 function admDgBuildNavUrls(stops){
   const pts=stops.filter(s=>s.lat&&s.lng);
   const chunks=[];let i=0;
@@ -4182,10 +4200,11 @@ function admDgBuildNavUrls(stops){
     i+=9;
   }
   return chunks.map(chunk=>{
-    const origin=chunk[0].lat+','+chunk[0].lng;
-    const dest=chunk[chunk.length-1].lat+','+chunk[chunk.length-1].lng;
-    const wp=chunk.slice(1,-1).map(p=>p.lat+','+p.lng).join('|');
-    return 'https://www.google.com/maps/dir/?api=1&origin='+origin+'&destination='+dest+(wp?'&waypoints='+encodeURIComponent(wp):'')+'&travelmode=driving';
+    const labelOf=(s)=>encodeURIComponent(admDgNavLabel(s)||(s.lat+','+s.lng));
+    const origin=labelOf(chunk[0]);
+    const dest=labelOf(chunk[chunk.length-1]);
+    const wp=chunk.slice(1,-1).map(labelOf).join('|');
+    return 'https://www.google.com/maps/dir/?api=1&origin='+origin+'&destination='+dest+(wp?'&waypoints='+wp:'')+'&travelmode=driving';
   });
 }
 
@@ -10810,10 +10829,19 @@ async function diagNavOpen(routeId){
     }
     const last=chunk[chunk.length-1];
     const rest=chunk.slice(0,-1);
+    // 店舗名+住所をナビ表示用ラベルに (Google Maps が店舗名で表示する)
+    const labelOf=(s)=>{
+      const nm=(s.name||'').trim();
+      const addr=(s.addr||'').trim();
+      if(nm&&addr)return nm+' '+addr;
+      if(nm)return nm;
+      if(addr)return addr;
+      return `${s.lat},${s.lng}`;
+    };
     const params=new URLSearchParams();
     params.set('api','1');
-    params.set('destination',`${last.lat},${last.lng}`);
-    if(rest.length>0)params.set('waypoints',rest.map(s=>`${s.lat},${s.lng}`).join('|'));
+    params.set('destination',labelOf(last));
+    if(rest.length>0)params.set('waypoints',rest.map(labelOf).join('|'));
     params.set('travelmode','driving');
     const url=`https://www.google.com/maps/dir/?${params.toString()}`;
     if(w)w.location.href=url;
