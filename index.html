@@ -7271,30 +7271,36 @@ async function admSeNewMonth(){
 }
 
 // 営業所別の反映先スプレッドシート設定
+// 各 target は複数エリアをまとめて 1 シートに書ける (例: 城北シート = 城北 + 川越)
 const SHIFT_SPREADSHEET_ID='1yVKQLSmdc9RZ2U5m4CIPqAl4JqP9siiSeSRP0z3SEEM';
 const IMPORTRANGE_TARGET_SS='1B0fJftK8raFyasa8aT8-U_pmHabo3VeibnqwsbmsezQ';
-const IMPORTRANGE_TARGET_SHEETS={
-  '城北':'城北',
-  '立川':'立川シフト貼り付け',
-  '川崎高津':'川崎高津シフト貼り付け',
-};
+const IMPORTRANGE_TARGETS=[
+  {key:'城北+川越',sheet:'城北',areas:['城北','川越']},
+  {key:'立川',sheet:'立川シフト貼り付け',areas:['立川']},
+  {key:'川崎高津',sheet:'川崎高津シフト貼り付け',areas:['川崎高津']},
+];
 
 // 新月作成後、各営業所の反映先シートに IMPORTRANGE 数式を右側追加
 async function admSeWriteImportRangeForNewMonth(sheetName,orderedCourses,numCols){
-  // 営業所別の行範囲 (1-indexed sheet row) を計算
+  // 全エリアの行範囲 (1-indexed sheet row) を計算
   const areaRange={};// area → {firstRow, lastRow}
   orderedCourses.forEach((c,ci)=>{
     const a=areaOfCourse(c);
-    if(!IMPORTRANGE_TARGET_SHEETS[a])return;
+    if(!a)return;
     const sheetRow=8+ci;// JS row (7+ci) → sheet row (8+ci, 1-indexed)
     if(!areaRange[a])areaRange[a]={firstRow:sheetRow,lastRow:sheetRow};
     else areaRange[a].lastRow=sheetRow;
   });
   const lastColLabel=admSeColLabel(numCols-1);
   const sourceUrl=`https://docs.google.com/spreadsheets/d/${SHIFT_SPREADSHEET_ID}`;
-  for(const[area,targetSheet]of Object.entries(IMPORTRANGE_TARGET_SHEETS)){
-    if(!areaRange[area])continue;
-    const{firstRow,lastRow}=areaRange[area];
+  for(const target of IMPORTRANGE_TARGETS){
+    // 該当エリアの contiguous 範囲 (orderedCourses はエリア順なので min..max で連続)
+    const ranges=target.areas.map(a=>areaRange[a]).filter(Boolean);
+    if(!ranges.length)continue;
+    const firstRow=Math.min(...ranges.map(r=>r.firstRow));
+    const lastRow=Math.max(...ranges.map(r=>r.lastRow));
+    const targetSheet=target.sheet;
+    const area=target.key;
     // 反映先シート読込 → 既存の月ヘッダで重複チェック + 次の空列検出
     const tr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:targetSheet,spreadsheet_id:IMPORTRANGE_TARGET_SS})});
     const tj=await tr.json();
