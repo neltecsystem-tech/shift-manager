@@ -7271,18 +7271,22 @@ async function admSeNewMonth(){
 }
 
 // 営業所別の反映先スプレッドシート設定
-// 1 シートに複数エリアブロックを並べて書ける (同じ sheet 名で複数エントリにすればOK)
-// 反映先: 1B0fJftK8r... (実際のシート: 立川シフト貼り付け / 城北・川崎高津シフト貼り付け)
+// 反映先: 1B0fJftK8r... 実シート構成:
+//   - 立川シフト貼り付け: 立川エリアのみ
+//   - 城北・川崎高津シフト貼り付け: 城北 + 川越 + 川崎高津 を縦に並べて 1 シート
+// レイアウト (target sheet):
+//   row 1: 日付 (col A=コース名, col B+=日付ヘッダ)
+//   row 2: 朝刊/夕刊
+//   row 3: 曜日
+//   row 4+: コース名 (col A) + 各月の担当データ (col B+ 月ごとに右に追加)
 const SHIFT_SPREADSHEET_ID='1yVKQLSmdc9RZ2U5m4CIPqAl4JqP9siiSeSRP0z3SEEM';
 const IMPORTRANGE_TARGET_SS='1B0fJftK8raFyasa8aT8-U_pmHabo3VeibnqwsbmsezQ';
 const IMPORTRANGE_TARGETS=[
-  // 「城北・川崎高津シフト貼り付け」シートに 城北+川越 ブロック → 川崎高津 ブロック の順で並べて書く
-  {key:'城北+川越',sheet:'城北・川崎高津シフト貼り付け',areas:['城北','川越']},
-  {key:'川崎高津',sheet:'城北・川崎高津シフト貼り付け',areas:['川崎高津']},
-  {key:'立川',sheet:'立川シフト貼り付け',areas:['立川']},
+  {sheet:'城北・川崎高津シフト貼り付け',areas:['城北','川越','川崎高津']},
+  {sheet:'立川シフト貼り付け',areas:['立川']},
 ];
 
-// 新月作成後、各営業所の反映先シートに IMPORTRANGE 数式を右側追加
+// 新月作成後、各反映先シートに IMPORTRANGE 数式を右側追加
 async function admSeWriteImportRangeForNewMonth(sheetName,orderedCourses,numCols){
   // 全エリアの行範囲 (1-indexed sheet row) を計算
   const areaRange={};// area → {firstRow, lastRow}
@@ -7293,55 +7297,63 @@ async function admSeWriteImportRangeForNewMonth(sheetName,orderedCourses,numCols
     if(!areaRange[a])areaRange[a]={firstRow:sheetRow,lastRow:sheetRow};
     else areaRange[a].lastRow=sheetRow;
   });
-  const lastColLabel=admSeColLabel(numCols-1);
+  // source の最終列 (col A=course のため B 列以降が日付データ)
+  const lastSourceColLabel=admSeColLabel(numCols-1);
+  // 月のデータ列幅 = numCols - 1 (col A を除く)
+  const monthWidth=numCols-1;
   const sourceUrl=`https://docs.google.com/spreadsheets/d/${SHIFT_SPREADSHEET_ID}`;
-  // 同一シートに複数エントリ書込時、IMPORTRANGE 展開待ちで再フェッチが不安定になるので
-  // シート単位でグループ化 → 1 度フェッチして列位置を内部で進める
-  const groups={};// sheet名 → [target,...]
-  IMPORTRANGE_TARGETS.forEach(t=>{(groups[t.sheet]=groups[t.sheet]||[]).push(t);});
-  for(const[targetSheet,targets]of Object.entries(groups)){
-    // 該当シートを 1 度だけ取得
+  for(const target of IMPORTRANGE_TARGETS){
+    const targetSheet=target.sheet;
+    // 反映先取得
     const tr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:targetSheet,spreadsheet_id:IMPORTRANGE_TARGET_SS})});
     const tj=await tr.json();
     if(tj.error){console.warn(`[${targetSheet}] 取得失敗:`,tj.error);continue;}
     const targetRows=tj.rows||[];
-    const row1=targetRows[0]||[];
-    // 初期 nextCol = row 1〜3 の右端 +1
-    let nextCol=0;
-    for(let r=0;r<3;r++){
-      const row=targetRows[r]||[];
-      for(let c=0;c<row.length;c++){
-        if(String(row[c]||'').trim())nextCol=Math.max(nextCol,c+1);
-      }
+    // 反映先 col A をスキャン → 各エリアの最初の行 (0-indexed) を取得
+    const targetAreaStart={};// area → 0-indexed row
+    for(let r=3;r<targetRows.length;r++){
+      const courseName=String((targetRows[r]||[])[0]||'').trim();
+      if(!courseName)continue;
+      const a=areaOfCourse(courseName);
+      if(a&&targetAreaStart[a]===undefined)targetAreaStart[a]=r;
     }
-    // このシートの全 target を順に処理 (列位置を内部で進める)
-    for(const target of targets){
-      const ranges=target.areas.map(a=>areaRange[a]).filter(Boolean);
-      if(!ranges.length)continue;
-      const firstRow=Math.min(...ranges.map(r=>r.firstRow));
-      const lastRow=Math.max(...ranges.map(r=>r.lastRow));
-      const area=target.key;
-      const blockLabel=`${sheetName} (${area})`;
-      // 重複チェック (同名ブロックが既に存在ならスキップ)
-      if(row1.some(v=>String(v||'').trim()===blockLabel)){
-        console.log(`[${targetSheet}] 「${blockLabel}」は既に存在 — スキップ`);
-        continue;
-      }
-      const f=range=>`=IMPORTRANGE("${sourceUrl}","${sheetName}!${range}")`;
-      const updates=[
-        {row:0,col:nextCol,value:blockLabel},
-        {row:1,col:nextCol,value:f(`A1:${lastColLabel}1`)},
-        {row:2,col:nextCol,value:f(`A4:${lastColLabel}4`)},
-        {row:3,col:nextCol,value:f(`A6:${lastColLabel}6`)},
-        {row:4,col:nextCol,value:f(`A${firstRow}:${lastColLabel}${lastRow}`)},
-      ];
-      const wr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:targetSheet,spreadsheet_id:IMPORTRANGE_TARGET_SS,updates})});
-      const wj=await wr.json();
-      if(wj.error)console.warn(`[${targetSheet}] ${area} 書込失敗:`,wj.error);
-      else console.log(`[${targetSheet}] ${blockLabel} を列 ${admSeColLabel(nextCol)} に書込 (行 ${firstRow}-${lastRow})`);
-      // 次のブロック位置を内部で進める (numCols 列幅 = source の総列数)
-      nextCol+=numCols;
+    // 次の空列 (col 1 から row 1 をスキャン、col A はコース名なのでスキップ)
+    let nextCol=1;
+    const row0=targetRows[0]||[];
+    for(let c=1;c<row0.length;c++){
+      if(String(row0[c]||'').trim())nextCol=c+1;
     }
+    // 既に同月のデータが存在するかチェック (row 1 に同じ日付ヘッダが連続したら重複)
+    // 簡易チェック: 月の最初の日付 "M/1" を含むセルを検索
+    const monthFirstDate=`${parseMonthLabel(sheetName)?.month||0}/1`;
+    if(row0.some(v=>String(v||'').trim()===monthFirstDate)){
+      console.log(`[${targetSheet}] 「${sheetName}」(${monthFirstDate}) は既に書込済み — スキップ`);
+      continue;
+    }
+    const f=range=>`=IMPORTRANGE("${sourceUrl}","${sheetName}!${range}")`;
+    // ヘッダ 3 行 + 各エリアコース行
+    const updates=[
+      // row 0 (target row 1): 日付ヘッダ source B1:..1
+      {row:0,col:nextCol,value:f(`B1:${lastSourceColLabel}1`)},
+      // row 1 (target row 2): 朝刊/夕刊 source B6:..6
+      {row:1,col:nextCol,value:f(`B6:${lastSourceColLabel}6`)},
+      // row 2 (target row 3): 曜日 source B4:..4
+      {row:2,col:nextCol,value:f(`B4:${lastSourceColLabel}4`)},
+    ];
+    // 各エリアの IMPORTRANGE (target col A の該当行から始める)
+    target.areas.forEach(area=>{
+      if(!areaRange[area]||targetAreaStart[area]===undefined)return;
+      const{firstRow,lastRow}=areaRange[area];
+      updates.push({
+        row:targetAreaStart[area],
+        col:nextCol,
+        value:f(`B${firstRow}:${lastSourceColLabel}${lastRow}`),
+      });
+    });
+    const wr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:targetSheet,spreadsheet_id:IMPORTRANGE_TARGET_SS,updates})});
+    const wj=await wr.json();
+    if(wj.error)console.warn(`[${targetSheet}] 書込失敗:`,wj.error);
+    else console.log(`[${targetSheet}] ${sheetName} を列 ${admSeColLabel(nextCol)} に書込 (${updates.length} セル)`);
   }
 }
 
