@@ -175,7 +175,10 @@ tbody tr:hover { background:var(--primary-light); }
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <h2 style="margin-bottom:0">不具合管理</h2>
-        <button onclick="defectShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ 新規登録</button>
+        <div style="display:flex;gap:8px;">
+          <button onclick="defectAiAnalyze()" style="background:#8b5cf6;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;" title="フィルタ適用後のデータを AI が分析します">🤖 AI 分析</button>
+          <button onclick="defectShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ 新規登録</button>
+        </div>
       </div>
       <div class="filters">
         <div><label>月</label><select id="df-month" onchange="defectLoad()"></select></div>
@@ -185,6 +188,16 @@ tbody tr:hover { background:var(--primary-light); }
       </div>
       <div id="df-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
       <div class="table-wrap" id="df-table"></div>
+    </div>
+
+    <!-- AI 分析モーダル -->
+    <div id="df-ai-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:200;justify-content:center;align-items:center;padding:20px;">
+      <div style="background:#fff;border-radius:16px;padding:24px;width:100%;max-width:780px;max-height:90vh;overflow-y:auto;position:relative;">
+        <button onclick="document.getElementById('df-ai-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;">✕</button>
+        <h3 style="color:#8b5cf6;margin-bottom:8px;">🤖 不具合 AI 分析</h3>
+        <div id="df-ai-meta" style="font-size:12px;color:var(--text-sub);margin-bottom:16px;"></div>
+        <div id="df-ai-content" style="font-size:14px;line-height:1.8;"></div>
+      </div>
     </div>
 
     <!-- 登録/編集モーダル -->
@@ -1869,6 +1882,62 @@ function defectRender(){
   });
   h+='</tbody></table>';
   document.getElementById('df-table').innerHTML=h;
+}
+
+// 軽量 Markdown レンダラ (見出し / 箇条書き / 太字 のみ)
+function defectMdToHtml(md){
+  const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const lines=String(md||'').split(/\r?\n/);
+  let html='';let inUl=false;
+  const closeUl=()=>{if(inUl){html+='</ul>';inUl=false;}};
+  for(let raw of lines){
+    const line=raw.trimEnd();
+    if(!line.trim()){closeUl();continue;}
+    let m;
+    if((m=line.match(/^##\s+(.+)$/))){closeUl();html+=`<h4 style="color:#8b5cf6;margin:18px 0 8px;font-size:15px;border-bottom:1px solid #ede9fe;padding-bottom:4px;">${esc(m[1])}</h4>`;continue;}
+    if((m=line.match(/^#\s+(.+)$/))){closeUl();html+=`<h3 style="color:#6d28d9;margin:18px 0 8px;">${esc(m[1])}</h3>`;continue;}
+    if((m=line.match(/^\s*[-*]\s+(.+)$/))){if(!inUl){html+='<ul style="margin:4px 0 8px 18px;padding:0;">';inUl=true;}let item=esc(m[1]);item=item.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');html+=`<li style="margin-bottom:4px;">${item}</li>`;continue;}
+    closeUl();
+    let p=esc(line);p=p.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+    html+=`<p style="margin:6px 0;">${p}</p>`;
+  }
+  closeUl();
+  return html;
+}
+
+async function defectAiAnalyze(){
+  if(!defectData||!defectData.length){
+    alert('分析対象データがありません。フィルタを調整してください。');
+    return;
+  }
+  const month=document.getElementById('df-month').value;
+  const area=document.getElementById('df-area').value;
+  const cat=document.getElementById('df-category').value;
+  const modal=document.getElementById('df-ai-modal');
+  const meta=document.getElementById('df-ai-meta');
+  const content=document.getElementById('df-ai-content');
+  const filterTxt=[`月:${month}`,area?`営業所:${area}`:'',cat?`項目:${cat}`:''].filter(Boolean).join(' / ');
+  meta.textContent=`対象 ${defectData.length}件 (${filterTxt})`;
+  content.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:30px;">🤖 AI が分析中... (10〜20秒かかります)</p>';
+  modal.style.display='flex';
+  try{
+    const resp=await fetch('https://erfcsnzdooswgpvgrapb.supabase.co/functions/v1/defect-analyze',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        defects:defectData.map(r=>({date:r.date,time:r.time,area:r.area,shop:r.shop,course:r.course,driver:r.driver,content:r.content,category:r.category,reason:r.reason})),
+        context:{month,area,category:cat}
+      })
+    });
+    const json=await resp.json();
+    if(!resp.ok||json.error){throw new Error(json.error||('HTTP '+resp.status));}
+    content.innerHTML=defectMdToHtml(json.analysis);
+    if(json.usage){
+      const tokInfo=`(モデル: ${json.model||'haiku'} / 入力 ${json.usage.input_tokens||0}tok / 出力 ${json.usage.output_tokens||0}tok)`;
+      meta.textContent=`対象 ${json.defect_count}件 (${filterTxt}) ${tokInfo}`;
+    }
+  }catch(e){
+    content.innerHTML=`<p style="color:var(--danger);padding:20px;">分析エラー: ${(e.message||e).toString().replace(/</g,'&lt;')}</p>`;
+  }
 }
 
 function defectShowAdd(){
