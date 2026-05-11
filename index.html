@@ -1147,13 +1147,15 @@ function parseShift(key){
     dates.forEach(({col,d})=>{
       const staffAm=(r[col]||'').trim();
       const staffPm=(r[col+1]||'').trim();
-      if(staffAm&&staffAm!=='0'){
+      // 数字のみ (1-2桁) は実在しないスタッフ名として除外
+      const isNumericOnly=v=>/^\d{1,2}$/.test(v);
+      if(staffAm&&staffAm!=='0'&&!isNumericOnly(staffAm)){
         if(!areaData[area])areaData[area]={};
         if(!areaData[area][staffAm])areaData[area][staffAm]={};
         if(!areaData[area][staffAm][d])areaData[area][staffAm][d]={am:'',pm:''};
         areaData[area][staffAm][d].am=courseName;
       }
-      if(staffPm&&staffPm!=='0'){
+      if(staffPm&&staffPm!=='0'&&!isNumericOnly(staffPm)){
         if(!areaData[area])areaData[area]={};
         if(!areaData[area][staffPm])areaData[area][staffPm]={};
         if(!areaData[area][staffPm][d])areaData[area][staffPm][d]={am:'',pm:''};
@@ -1194,6 +1196,8 @@ function parseShift(key){
         // (この break は !nm の continue より前に評価する必要がある)
         if(nm===''&&isDateVal(colB))break;
         if(!nm)continue;
+        // 数字のみの行は実在しないスタッフ名として除外
+        if(/^\d{1,2}$/.test(nm))continue;
         if(areas2.some(x=>nm===x)&&isDateVal(colB))break;
         // section 1 に未登場のスタッフ (引継研修中の新人/応援要員等) も拾うため
         // areaData[curArea2][nm] が無くても特別値があれば lazy に作成する
