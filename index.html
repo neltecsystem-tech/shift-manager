@@ -7249,7 +7249,13 @@ async function admSeNewMonth(){
       if(fj.error)console.warn('format_cells failed:',fj.error);
     }
 
-    msg.textContent=`✓ ${sheetName} を作成しました (コース${orderedCourses.length}件 / ${lastDay}日 / 担当${filledCells}セル自動入力 / 黒塗り${blackCells.length}セル)`;msg.style.color='#16a34a';
+    // 6. 別スプレッドシートに IMPORTRANGE 数式を書込 (営業所別シートに右側追加)
+    msg.textContent='反映先スプレッドシートに IMPORTRANGE 書込中...';
+    try{
+      await admSeWriteImportRangeForNewMonth(sheetName,orderedCourses,numCols);
+    }catch(e){console.warn('IMPORTRANGE 反映失敗:',e);}
+
+    msg.textContent=`✓ ${sheetName} を作成しました (コース${orderedCourses.length}件 / ${lastDay}日 / 担当${filledCells}セル自動入力 / 黒塗り${blackCells.length}セル / 反映先 IMPORTRANGE 書込)`;msg.style.color='#16a34a';
     setTimeout(()=>{const m2=document.getElementById('adm-se-msg');if(m2&&m2.textContent.includes(sheetName))m2.textContent='';},5000);
 
     // シート一覧を再ロード
@@ -7260,6 +7266,72 @@ async function admSeNewMonth(){
     admSeLoad();
   }catch(e){
     msg.innerHTML='<span style="color:var(--danger);">作成失敗: '+e.message+'</span>';
+  }
+}
+
+// 営業所別の反映先スプレッドシート設定
+const SHIFT_SPREADSHEET_ID='1yVKQLSmdc9RZ2U5m4CIPqAl4JqP9siiSeSRP0z3SEEM';
+const IMPORTRANGE_TARGET_SS='1B0fJftK8raFyasa8aT8-U_pmHabo3VeibnqwsbmsezQ';
+const IMPORTRANGE_TARGET_SHEETS={
+  '城北':'城北',
+  '立川':'立川シフト貼り付け',
+  '川崎高津':'川崎高津シフト貼り付け',
+};
+
+// 新月作成後、各営業所の反映先シートに IMPORTRANGE 数式を右側追加
+async function admSeWriteImportRangeForNewMonth(sheetName,orderedCourses,numCols){
+  // 営業所別の行範囲 (1-indexed sheet row) を計算
+  const areaRange={};// area → {firstRow, lastRow}
+  orderedCourses.forEach((c,ci)=>{
+    const a=areaOfCourse(c);
+    if(!IMPORTRANGE_TARGET_SHEETS[a])return;
+    const sheetRow=8+ci;// JS row (7+ci) → sheet row (8+ci, 1-indexed)
+    if(!areaRange[a])areaRange[a]={firstRow:sheetRow,lastRow:sheetRow};
+    else areaRange[a].lastRow=sheetRow;
+  });
+  const lastColLabel=admSeColLabel(numCols-1);
+  const sourceUrl=`https://docs.google.com/spreadsheets/d/${SHIFT_SPREADSHEET_ID}`;
+  for(const[area,targetSheet]of Object.entries(IMPORTRANGE_TARGET_SHEETS)){
+    if(!areaRange[area])continue;
+    const{firstRow,lastRow}=areaRange[area];
+    // 反映先シート読込 → 既存の月ヘッダで重複チェック + 次の空列検出
+    const tr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:targetSheet,spreadsheet_id:IMPORTRANGE_TARGET_SS})});
+    const tj=await tr.json();
+    if(tj.error){console.warn(`[${targetSheet}] 取得失敗:`,tj.error);continue;}
+    const targetRows=tj.rows||[];
+    const row1=targetRows[0]||[];
+    // 既に同じ月ラベルが row1 にあればスキップ (重複書込防止)
+    if(row1.some(v=>String(v||'').trim()===sheetName)){
+      console.log(`[${targetSheet}] 「${sheetName}」は既に存在 — スキップ`);
+      continue;
+    }
+    // row1 と row2 (日付IMPORTRANGE展開先) の右端を見て次の空列を決定
+    let nextCol=0;
+    for(let r=0;r<3;r++){
+      const row=targetRows[r]||[];
+      for(let c=0;c<row.length;c++){
+        if(String(row[c]||'').trim())nextCol=Math.max(nextCol,c+1);
+      }
+    }
+    // 隣接で書く (空列を入れない)
+    // 4 つの IMPORTRANGE を書込:
+    // row1 col X: 月ラベル
+    // row2 col X: 日付行 (sheet row 1)
+    // row3 col X: 曜日行 (sheet row 4)
+    // row4 col X: 朝刊/夕刊行 (sheet row 6)
+    // row5 col X: 営業所コース行 (sheet row firstRow:lastRow)
+    const f=range=>`=IMPORTRANGE("${sourceUrl}","${sheetName}!${range}")`;
+    const updates=[
+      {row:0,col:nextCol,value:`${sheetName} (${area})`},
+      {row:1,col:nextCol,value:f(`A1:${lastColLabel}1`)},
+      {row:2,col:nextCol,value:f(`A4:${lastColLabel}4`)},
+      {row:3,col:nextCol,value:f(`A6:${lastColLabel}6`)},
+      {row:4,col:nextCol,value:f(`A${firstRow}:${lastColLabel}${lastRow}`)},
+    ];
+    const wr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:targetSheet,spreadsheet_id:IMPORTRANGE_TARGET_SS,updates})});
+    const wj=await wr.json();
+    if(wj.error)console.warn(`[${targetSheet}] 書込失敗:`,wj.error);
+    else console.log(`[${targetSheet}] ${sheetName} を列 ${admSeColLabel(nextCol)} に書込 (${area} 行 ${firstRow}-${lastRow})`);
   }
 }
 
