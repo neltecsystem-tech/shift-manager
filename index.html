@@ -9583,12 +9583,35 @@ async function admPayDiagnose(){
   cont.innerHTML=h;
 }
 
+// 社員の営業所別稼働日数 (有給スロット = 支払い対象スロット をカウント)
+function admPayGetAreaDays(monthLabel,staffName){
+  const months=DB.shifts[monthLabel];
+  const counts={};let total=0;
+  if(!months)return {total:0,byArea:counts};
+  const target=invNormName(staffName);
+  Object.entries(months).forEach(([area,obj])=>{
+    if(!obj||!obj.entries)return;
+    const entry=obj.entries.find(e=>invNormName(e.course)===target);
+    if(!entry)return;
+    let days=0;
+    entry.a.forEach(({am,pm})=>{
+      if(!admPayIsNonPaidShift(am))days++;
+      if(!admPayIsNonPaidShift(pm))days++;
+    });
+    counts[area]=(counts[area]||0)+days;
+    total+=days;
+  });
+  return {total,byArea:counts};
+}
+
 // 営業所別の支払い合計を計算して Supabase に保存 (NexPort 業務管理→収支 の支払い列に反映)
+// 外注: admPayBuildStatement の grandTotal を主稼働営業所に
+// 社員: monthly_salary を営業所別稼働日数で按分
 async function admPaySaveToNexport(){
   const monthVal=document.getElementById('adm-pay-month').value;
   const msg=document.getElementById('adm-pay-msg');
   if(!monthVal){alert('年月を選択してください');return;}
-  if(!confirm(`${monthVal} の営業所別 支払合計を NexPort に保存します。\n（社員除く外注ドライバー全員を集計）\n\n続行?`))return;
+  if(!confirm(`${monthVal} の営業所別 支払合計を NexPort に保存します。\n（外注: 支払い明細の grandTotal を主稼働営業所に / 社員: 月給を営業所別稼働日数で按分）\n\n続行?`))return;
   msg.textContent='シフト＆単価マスタを読み込み中...';msg.style.color='#3b82f6';
   const [y,m]=monthVal.split('-').map(Number);
   const monthLabel=await admPayEnsureMonthLoaded(y,m);
@@ -9598,23 +9621,60 @@ async function admPaySaveToNexport(){
   if(!invSpecial.length){try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}}
   if(!invShopMasterCache){msg.textContent='店舗マスタを読み込み中...';await invLoadShopMaster();}
 
-  msg.textContent='全ドライバー集計中...';
+  msg.textContent='集計中...';
   // 営業所別の合計
-  const byArea={};// area -> {amount, driver_count}
-  let total=0,driverTotal=0,skipped=0;
+  const byArea={};// area -> {outsource, employee, driver_count, employee_count}
+  const ensure=(area)=>{if(!byArea[area])byArea[area]={outsource:0,employee:0,driver_count:0,employee_count:0};return byArea[area];};
+  let outsourceTotal=0,employeeTotal=0,outsourceCount=0,employeeCount=0,skipped=0;
+
+  // === 外注 ===
   invRates.forEach(rate=>{
-    if(rate.biz_type==='社員')return;// 社員は支払い対象外
+    if(rate.biz_type==='社員')return;
     const primary=admPayGetPrimaryArea(monthLabel,rate.name);
     if(!primary){skipped++;return;}
     const stmt=admPayBuildStatement(rate,y,m,monthLabel,monthVal);
     if(!stmt||!(stmt.grandTotal>0))return;
-    if(!byArea[primary])byArea[primary]={amount:0,driver_count:0};
-    byArea[primary].amount+=stmt.grandTotal;
-    byArea[primary].driver_count++;
-    total+=stmt.grandTotal;
-    driverTotal++;
+    const a=ensure(primary);
+    a.outsource+=stmt.grandTotal;
+    a.driver_count++;
+    outsourceTotal+=stmt.grandTotal;
+    outsourceCount++;
   });
-  const summaries=Object.entries(byArea).map(([area,v])=>({area,amount:v.amount,driver_count:v.driver_count}));
+
+  // === 社員 (月給を稼働日数で按分) ===
+  invRates.forEach(rate=>{
+    if(rate.biz_type!=='社員')return;
+    const salary=Number(rate.monthly_salary)||0;
+    if(salary<=0)return;
+    const dist=admPayGetAreaDays(monthLabel,rate.name);
+    if(dist.total<=0){skipped++;return;}
+    let assigned=0;
+    const entries=Object.entries(dist.byArea);
+    entries.forEach(([area,days],i)=>{
+      let portion;
+      if(i===entries.length-1){
+        // 最終 area は端数調整 (累計と salary の差を割り当て)
+        portion=salary-assigned;
+      }else{
+        portion=Math.round(salary*days/dist.total);
+        assigned+=portion;
+      }
+      const a=ensure(area);
+      a.employee+=portion;
+      a.employee_count++;// 注: 同じ社員でも複数営業所にいると複数回カウント (許容)
+    });
+    employeeTotal+=salary;
+    employeeCount++;
+  });
+
+  const summaries=Object.entries(byArea).map(([area,v])=>({
+    area,
+    amount:v.outsource+v.employee,
+    outsource_amount:v.outsource,
+    employee_amount:v.employee,
+    driver_count:v.driver_count,
+    employee_count:v.employee_count,
+  }));
   if(summaries.length===0){
     msg.textContent='⚠️ 集計対象データがありません (シフト未登録 / 単価マスタ未登録)';msg.style.color='var(--danger)';
     return;
@@ -9627,8 +9687,9 @@ async function admPaySaveToNexport(){
     });
     const j=await res.json();
     if(j.error){msg.textContent='❌ 保存失敗: '+j.error;msg.style.color='var(--danger)';return;}
-    const detail=summaries.map(s=>`${s.area}: ¥${s.amount.toLocaleString()} (${s.driver_count}名)`).join(' / ');
-    msg.innerHTML=`✓ NexPort に反映完了 (${monthVal}): 合計 ¥${total.toLocaleString()} / ${driverTotal}名${skipped?` / 主稼働不明スキップ ${skipped}名`:''}<br><span style="font-size:12px;color:var(--text-sub);">${detail}</span>`;
+    const total=outsourceTotal+employeeTotal;
+    const detail=summaries.map(s=>`${s.area}: 外注¥${s.outsource_amount.toLocaleString()} + 社員¥${Math.round(s.employee_amount).toLocaleString()} = ¥${Math.round(s.amount).toLocaleString()}`).join(' / ');
+    msg.innerHTML=`✓ NexPort に反映完了 (${monthVal}): 合計 ¥${total.toLocaleString()} (外注${outsourceCount}名¥${outsourceTotal.toLocaleString()} + 社員${employeeCount}名¥${employeeTotal.toLocaleString()})${skipped?` / 主稼働不明スキップ ${skipped}名`:''}<br><span style="font-size:12px;color:var(--text-sub);">${detail}</span>`;
     msg.style.color='#16a34a';
   }catch(err){
     msg.textContent='❌ 通信エラー: '+(err&&err.message?err.message:err);msg.style.color='var(--danger)';
