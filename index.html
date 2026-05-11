@@ -8826,16 +8826,13 @@ function buildAreaTotalPage(area,monthVal,courses){
       <button onclick="admBillAreaConfirmAll('${area}','${monthVal}')" style="background:#22c55e;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">✓ 営業所全コース確定</button>
     </div>`;
   }
-  // 消費税 (10%)
-  const taxRate=0.10;
+  // 営業所別請求書は消費税なし (税抜小計が総合計)
   const subtotal=tot.grand;
-  const tax=Math.round(subtotal*taxRate);
-  const grandWithTax=subtotal+tax;
 
   h+=`<div style="display:flex;gap:12px;margin-bottom:16px;">`;
   h+=`<div style="flex:1;background:#dbeafe;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#1d4ed8;">朝刊合計</div><div style="font-size:20px;font-weight:bold;color:#1d4ed8;">¥${tot.am.toLocaleString()}</div><div style="font-size:10px;color:#1d4ed8;">朝刊店舗 ${tot.amCount}店（延べ）</div></div>`;
   h+=`<div style="flex:1;background:#fae8ff;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#9333ea;">夕刊/競馬合計</div><div style="font-size:20px;font-weight:bold;color:#9333ea;">¥${tot.pm.toLocaleString()}</div><div style="font-size:10px;color:#9333ea;">夕刊 ${tot.pmCount}店 ／ 競馬 ${tot.keibaCount}店</div></div>`;
-  h+=`<div style="flex:1;background:#fef3c7;border:2px solid #f59e0b;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#92400e;">総合計（税込）</div><div style="font-size:24px;font-weight:bold;color:#92400e;">¥${grandWithTax.toLocaleString()}</div><div style="font-size:10px;color:#92400e;">税抜 ¥${subtotal.toLocaleString()} + 消費税 ¥${tax.toLocaleString()}</div></div>`;
+  h+=`<div style="flex:1;background:#fef3c7;border:2px solid #f59e0b;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#92400e;">総合計</div><div style="font-size:24px;font-weight:bold;color:#92400e;">¥${subtotal.toLocaleString()}</div></div>`;
   h+=`</div>`;
   if(confirmedCnt>0){
     h+=`<div style="padding:8px 12px;background:#dcfce7;border-radius:6px;font-size:12px;margin-bottom:12px;color:#166534;">✓ ${confirmedCnt}/${courses.length}コースが確定済み（確定金額を優先使用）</div>`;
@@ -8867,23 +8864,11 @@ function buildAreaTotalPage(area,monthVal,courses){
   if(kuchiAmFee>0)h+=extraRow(`庫内作業費（朝刊） ${amDays}日 × ¥6,000`,kuchiAmFee);
   if(kuchiKeibaFee>0)h+=extraRow(`庫内作業費（競馬） ${keibaWorkDays}日 × ¥9,000`,kuchiKeibaFee);
   if(yumaFee>0)h+=extraRow(`優馬直送便 ${keibaWorkDays}日 × ¥7,000`,yumaFee);
-  // 小計（税抜）
-  h+=`<tr style="background:#f8fafc;font-weight:600;">`;
-  h+=`<td style="border:1px solid #ccc;padding:8px;">小計（税抜）</td>`;
-  h+=`<td style="border:1px solid #ccc;padding:8px;text-align:right;">${courses.length}コース</td>`;
-  h+=`<td style="border:1px solid #ccc;padding:8px;text-align:right;">¥${subtotal.toLocaleString()}</td>`;
-  h+=`</tr>`;
-  // 消費税
-  h+=`<tr style="background:#f8fafc;">`;
-  h+=`<td style="border:1px solid #ccc;padding:8px;">消費税（10%）</td>`;
-  h+=`<td style="border:1px solid #ccc;padding:8px;text-align:right;color:var(--text-sub);">-</td>`;
-  h+=`<td style="border:1px solid #ccc;padding:8px;text-align:right;">¥${tax.toLocaleString()}</td>`;
-  h+=`</tr>`;
-  // 合計（税込）
+  // 合計
   h+=`<tr style="background:#fef3c7;font-weight:bold;font-size:16px;">`;
-  h+=`<td style="border:1px solid #999;padding:12px;">合計（税込）</td>`;
+  h+=`<td style="border:1px solid #999;padding:12px;">合計</td>`;
   h+=`<td style="border:1px solid #999;padding:12px;text-align:right;">${courses.length}コース</td>`;
-  h+=`<td style="border:1px solid #999;padding:12px;text-align:right;font-size:18px;color:#92400e;">¥${grandWithTax.toLocaleString()}</td>`;
+  h+=`<td style="border:1px solid #999;padding:12px;text-align:right;font-size:18px;color:#92400e;">¥${subtotal.toLocaleString()}</td>`;
   h+=`</tr></tbody></table>`;
   h+=`<p style="font-size:11px;color:var(--text-sub);margin-top:8px;">※ 店舗数は延べ数（同じ店舗が朝刊・夕刊・競馬それぞれカウント）／ コース別内訳は2ページ目以降</p>`;
   h+=`</div>`;
