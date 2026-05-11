@@ -724,6 +724,7 @@ tbody tr:hover { background:var(--primary-light); }
             <button onclick="admPayDiagnose()" style="background:#dc2626;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="シフトに入っているのに明細が作れないスタッフを表示">⚠️ 未作成スタッフ確認</button>
             <button onclick="admPayBulkPdfZip()" style="background:#7c3aed;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📦 個別PDFをZIP保存</button>
             <button onclick="admPayPrint()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🖨 印刷 / PDF</button>
+            <button onclick="admPaySaveToNexport()" style="background:#1A3C8F;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="営業所別合計を Supabase に保存し、NexPort 業務管理→収支 の支払い列に反映">💾 NexPortに反映</button>
           </div>
         </div>
         <div id="adm-pay-msg" style="margin-top:8px;font-size:13px;"></div>
@@ -9580,6 +9581,58 @@ async function admPayDiagnose(){
   if(area)renderList(`📍 別営業所が主稼働 (${area} 一括対象外)`,'#fef3c7','#fbbf24',r.wrongArea,'主稼働営業所',`${area} 以外を主稼働とするドライバーは別営業所の一括作成で表示されます。`);
   h+=`</div>`;
   cont.innerHTML=h;
+}
+
+// 営業所別の支払い合計を計算して Supabase に保存 (NexPort 業務管理→収支 の支払い列に反映)
+async function admPaySaveToNexport(){
+  const monthVal=document.getElementById('adm-pay-month').value;
+  const msg=document.getElementById('adm-pay-msg');
+  if(!monthVal){alert('年月を選択してください');return;}
+  if(!confirm(`${monthVal} の営業所別 支払合計を NexPort に保存します。\n（社員除く外注ドライバー全員を集計）\n\n続行?`))return;
+  msg.textContent='シフト＆単価マスタを読み込み中...';msg.style.color='#3b82f6';
+  const [y,m]=monthVal.split('-').map(Number);
+  const monthLabel=await admPayEnsureMonthLoaded(y,m);
+  if(!monthLabel){msg.textContent=`❌ ${m}月シフト${y} のデータが取得できませんでした`;msg.style.color='var(--danger)';return;}
+  if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
+  if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}}
+  if(!invSpecial.length){try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}}
+  if(!invShopMasterCache){msg.textContent='店舗マスタを読み込み中...';await invLoadShopMaster();}
+
+  msg.textContent='全ドライバー集計中...';
+  // 営業所別の合計
+  const byArea={};// area -> {amount, driver_count}
+  let total=0,driverTotal=0,skipped=0;
+  invRates.forEach(rate=>{
+    if(rate.biz_type==='社員')return;// 社員は支払い対象外
+    const primary=admPayGetPrimaryArea(monthLabel,rate.name);
+    if(!primary){skipped++;return;}
+    const stmt=admPayBuildStatement(rate,y,m,monthLabel,monthVal);
+    if(!stmt||!(stmt.grandTotal>0))return;
+    if(!byArea[primary])byArea[primary]={amount:0,driver_count:0};
+    byArea[primary].amount+=stmt.grandTotal;
+    byArea[primary].driver_count++;
+    total+=stmt.grandTotal;
+    driverTotal++;
+  });
+  const summaries=Object.entries(byArea).map(([area,v])=>({area,amount:v.amount,driver_count:v.driver_count}));
+  if(summaries.length===0){
+    msg.textContent='⚠️ 集計対象データがありません (シフト未登録 / 単価マスタ未登録)';msg.style.color='var(--danger)';
+    return;
+  }
+  msg.textContent='保存中...';
+  try{
+    const res=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/payment-summary',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'save_summary',year_month:monthVal,summaries}),
+    });
+    const j=await res.json();
+    if(j.error){msg.textContent='❌ 保存失敗: '+j.error;msg.style.color='var(--danger)';return;}
+    const detail=summaries.map(s=>`${s.area}: ¥${s.amount.toLocaleString()} (${s.driver_count}名)`).join(' / ');
+    msg.innerHTML=`✓ NexPort に反映完了 (${monthVal}): 合計 ¥${total.toLocaleString()} / ${driverTotal}名${skipped?` / 主稼働不明スキップ ${skipped}名`:''}<br><span style="font-size:12px;color:var(--text-sub);">${detail}</span>`;
+    msg.style.color='#16a34a';
+  }catch(err){
+    msg.textContent='❌ 通信エラー: '+(err&&err.message?err.message:err);msg.style.color='var(--danger)';
+  }
 }
 
 // 営業所一括作成: 主稼働が指定営業所のドライバー全員の明細を生成
