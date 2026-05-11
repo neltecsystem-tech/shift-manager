@@ -187,6 +187,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div><label>検索</label><input type="search" id="df-search" autocomplete="off" placeholder="店舗名・ドライバー..." oninput="dbInput('defectFilter')"></div>
       </div>
       <div id="df-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
+      <div id="df-summary" style="margin-bottom:12px;"></div>
       <div class="table-wrap" id="df-table"></div>
     </div>
 
@@ -1863,8 +1864,73 @@ function defectFilter(){
   defectRender();
 }
 
+function defectNormName(s){
+  if(!s)return '';
+  return String(s).normalize('NFKC').replace(/[\s　]/g,'').replace(/瀧/g,'滝').toLowerCase();
+}
+
+function defectRenderSummary(){
+  const el=document.getElementById('df-summary');
+  if(!el)return;
+  if(!defectData||!defectData.length){el.innerHTML='';return;}
+
+  // 集計
+  const byArea={},byCat={},byDriver={},byShop={};
+  const driverDisplay={};const shopDisplay={};
+  defectData.forEach(r=>{
+    if(r.area)byArea[r.area]=(byArea[r.area]||0)+1;
+    if(r.category)byCat[r.category]=(byCat[r.category]||0)+1;
+    if(r.driver){
+      const k=defectNormName(r.driver);
+      byDriver[k]=(byDriver[k]||0)+1;
+      if(!driverDisplay[k])driverDisplay[k]=r.driver;
+    }
+    if(r.shop){
+      const key=`${r.shop}${r.course?'/コース'+r.course:''}`;
+      byShop[key]=(byShop[key]||0)+1;
+      if(!shopDisplay[key])shopDisplay[key]=key;
+    }
+  });
+
+  const total=defectData.length;
+  const sortDesc=obj=>Object.entries(obj).sort((a,b)=>b[1]-a[1]);
+  const areaColor=a=>{if(a.includes('城北'))return '#3b82f6';if(a.includes('川越'))return '#10b981';if(a.includes('立川'))return '#f59e0b';if(a.includes('川崎'))return '#ec4899';return '#94a3b8';};
+
+  // 営業所
+  const areaChips=sortDesc(byArea).map(([k,v])=>{
+    const pct=Math.round(v/total*100);
+    return `<span style="display:inline-block;background:${areaColor(k)};color:#fff;padding:3px 10px;border-radius:12px;font-size:12px;margin:2px;font-weight:600;">${k} ${v}件 (${pct}%)</span>`;
+  }).join('');
+
+  // 項目
+  const catChips=sortDesc(byCat).map(([k,v])=>`<span style="display:inline-block;background:#e0e7ff;color:#3730a3;padding:3px 10px;border-radius:12px;font-size:12px;margin:2px;">${k} ${v}</span>`).join('');
+
+  // 多発ドライバー (2件以上)
+  const drvList=sortDesc(byDriver).filter(([,v])=>v>=2).slice(0,8);
+  const drvChips=drvList.length
+    ? drvList.map(([k,v])=>{const c=v>=4?'#dc2626':v>=3?'#ea580c':'#d97706';return `<span style="display:inline-block;background:${c};color:#fff;padding:3px 10px;border-radius:12px;font-size:12px;margin:2px;font-weight:600;">${driverDisplay[k]} ${v}件</span>`;}).join('')
+    : '<span style="color:var(--text-sub);font-size:12px;">該当なし</span>';
+
+  // 多発店舗 (2件以上)
+  const shopList=sortDesc(byShop).filter(([,v])=>v>=2).slice(0,8);
+  const shopChips=shopList.length
+    ? shopList.map(([k,v])=>{const c=v>=3?'#dc2626':'#d97706';return `<span style="display:inline-block;background:${c};color:#fff;padding:3px 10px;border-radius:12px;font-size:12px;margin:2px;font-weight:600;">${shopDisplay[k]} ${v}件</span>`;}).join('')
+    : '<span style="color:var(--text-sub);font-size:12px;">該当なし</span>';
+
+  el.innerHTML=`
+    <div style="background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:start;font-size:12px;">
+        <div style="color:var(--text-sub);font-weight:600;padding-top:4px;">🏢 営業所別</div><div>${areaChips}</div>
+        <div style="color:var(--text-sub);font-weight:600;padding-top:4px;">📋 項目別</div><div>${catChips}</div>
+        <div style="color:var(--text-sub);font-weight:600;padding-top:4px;">🚨 多発ドライバー</div><div>${drvChips}</div>
+        <div style="color:var(--text-sub);font-weight:600;padding-top:4px;">🏪 多発店舗</div><div>${shopChips}</div>
+      </div>
+    </div>`;
+}
+
 function defectRender(){
   document.getElementById('df-count').textContent=defectData.length+'件';
+  defectRenderSummary();
   if(!defectData.length){
     document.getElementById('df-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">データがありません</p>';
     return;
