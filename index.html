@@ -1486,6 +1486,17 @@ function renderShiftView(){
     const allAreas=new Set();
     Object.values(DB.shifts).forEach(areas=>Object.keys(areas).forEach(a=>allAreas.add(a)));
     [...allAreas].forEach(a=>aSel.add(new Option(a,a)));
+    // 当月をデフォルト選択 (なければ最新月)
+    const now=new Date();
+    const curLabel=`${now.getMonth()+1}月シフト${now.getFullYear()}`;
+    const opts=[...mSel.options].map(o=>o.value);
+    if(opts.includes(curLabel)){
+      mSel.value=curLabel;
+    }else{
+      // 当月シフトがまだなければ、最新の月 (年月降順で先頭) を選択
+      const sorted=opts.filter(Boolean).map(v=>({label:v,p:parseMonthLabel(v)})).filter(x=>x.p).sort((a,b)=>(b.p.year-a.p.year)||(b.p.month-a.p.month));
+      if(sorted.length)mSel.value=sorted[0].label;
+    }
     shi=true;
   }
   shFreshAndRender();
