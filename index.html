@@ -485,6 +485,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('staff')" id="adm-tab-staff" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">👥 スタッフ管理</button>
         <button onclick="adminTab('data')" id="adm-tab-data" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📁 データ管理</button>
         <button onclick="adminTab('check')" id="adm-tab-check" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🔍 突合せチェック</button>
+        <button onclick="adminTab('shoplist')" id="adm-tab-shoplist" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 荷主リスト突合</button>
         <button onclick="adminTab('billing')" id="adm-tab-billing" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📄 請求書作成</button>
         <button onclick="adminTab('pricelist')" id="adm-tab-pricelist" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💲 単価一覧</button>
         <button onclick="adminTab('shopcount')" id="adm-tab-shopcount" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📊 店舗集計</button>
@@ -723,6 +724,34 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="adm-chk-summary" style="margin-bottom:12px;"></div>
         <div class="table-wrap" id="adm-chk-result"></div>
+      </div>
+
+      <!-- 荷主リスト突合 -->
+      <div id="adm-shoplist" class="adm-panel" style="display:none;">
+        <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:12px;border-radius:6px;margin-bottom:16px;font-size:13px;color:#92400e;">
+          💡 荷主から送られた xlsx をアップロードし、店舗マスタとの差異を表示します。<br>
+          マッチングキー: <b>STAND</b> (荷主リスト) ↔ <b>店舗コード</b> (店舗マスタ)。<br>
+          結果は画面表示のみで保存しません（CSV出力可）。
+        </div>
+        <div class="filters" style="margin-bottom:12px;">
+          <div>
+            <label>📁 荷主リスト xlsx</label>
+            <input type="file" id="adm-sl-file" accept=".xlsx,.xls" onchange="admShopListUpload(event)" style="padding:6px;border:1px solid var(--border);border-radius:6px;">
+          </div>
+          <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;">
+            <button onclick="admShopListReloadMaster()" style="background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🔄 マスタ再取得</button>
+            <button onclick="admShopListExportCsv()" id="adm-sl-csv-btn" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;display:none;">📥 現在のタブをCSV出力</button>
+          </div>
+        </div>
+        <div id="adm-sl-summary" style="margin-bottom:12px;font-size:13px;"></div>
+        <div id="adm-sl-tabs" style="display:none;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+          <button onclick="admShopListSwitchTab('closeopen')" id="adm-sl-tab-closeopen" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:var(--primary);color:#fff;">🔥 閉店・新店シート</button>
+          <button onclick="admShopListSwitchTab('newshop')" id="adm-sl-tab-newshop" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">➕ 新店候補</button>
+          <button onclick="admShopListSwitchTab('closeshop')" id="adm-sl-tab-closeshop" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">➖ 閉店候補</button>
+          <button onclick="admShopListSwitchTab('diff')" id="adm-sl-tab-diff" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">⚠ 差異あり</button>
+          <button onclick="admShopListSwitchTab('match')" id="adm-sl-tab-match" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">✅ 一致</button>
+        </div>
+        <div id="adm-sl-result" class="table-wrap"></div>
       </div>
 
       <!-- 測定データ -->
@@ -4152,6 +4181,7 @@ function adminTab(t){
   if(t==='data')adminShowDataInfo();
   if(t==='settings')adminShowSysInfo();
   if(t==='diagram')admDgInit();
+  if(t==='shoplist')admShopListInit();
 }
 
 // ===== ダイヤグラム作成 =====
@@ -10186,6 +10216,310 @@ function adminUploadData(){
     }
   };
   reader.readAsText(file);
+}
+
+// ===== 荷主リスト突合 =====
+const ADM_SL_AREAS=['立川','川越','高津','城北','池袋','川越朝'];
+let admSlData=null;
+let admSlMaster=null;
+let admSlResult=null;
+let admSlActiveTab='closeopen';
+
+function admShopListInit(){
+  document.getElementById('adm-sl-summary').innerHTML='<p style="color:var(--text-sub);">📁 上のボタンから荷主リスト xlsx をアップロードしてください</p>';
+  document.getElementById('adm-sl-tabs').style.display='none';
+  document.getElementById('adm-sl-csv-btn').style.display='none';
+  document.getElementById('adm-sl-result').innerHTML='';
+}
+
+async function admShopListReloadMaster(){
+  admBillShopData=null;
+  admSlMaster=null;
+  await admShopListEnsureMaster();
+  if(admSlData)admShopListAnalyze();
+  alert('店舗マスタを再取得しました');
+}
+
+async function admShopListEnsureMaster(){
+  if(admSlMaster)return;
+  if(!admBillShopData){
+    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})});
+    admBillShopData=await resp.json();
+  }
+  const recs=admBillShopData.records||[];
+  admSlMaster=recs.map(r=>({
+    row:r.row_number,
+    code:String(r.col_2||'').trim(),
+    name:String(r.col_3||'').trim(),
+    area:String(r.col_1||'').trim(),
+    amCourse:String(r.col_5||'').trim(),
+    pmCourse:String(r.col_14||'').trim(),
+    keibaCourse:String(r.col_19||'').trim(),
+    lastDeliver:String(r.col_26||'').trim(),
+    closed:String(r.col_1||'').includes('納品中止'),
+  })).filter(m=>m.code);
+}
+
+async function admShopListUpload(event){
+  const file=event.target.files[0];
+  if(!file)return;
+  document.getElementById('adm-sl-summary').innerHTML='<p style="color:var(--text-sub);">📂 読込中...</p>';
+  try{
+    const buf=await file.arrayBuffer();
+    const wb=XLSX.read(new Uint8Array(buf),{type:'array'});
+    const motoSh=wb.Sheets['元'];
+    if(!motoSh)throw new Error('「元」シートが見つかりません');
+    const motoRows=XLSX.utils.sheet_to_json(motoSh,{header:1,defval:''});
+    const coSh=wb.Sheets['閉店・新店'];
+    const coRows=coSh?XLSX.utils.sheet_to_json(coSh,{header:1,defval:''}):[];
+    let parsedDate='';
+    if(motoRows[0]&&motoRows[0][4]){
+      const d=String(motoRows[0][4]);
+      if(/^\d{8}$/.test(d))parsedDate=`${d.slice(0,4)}/${d.slice(4,6)}/${d.slice(6,8)}`;
+    }
+    const cleanStr=v=>String(v||'').trim().replace(/[\s　]+$/,'');
+    const moto=[];
+    for(let i=2;i<motoRows.length;i++){
+      const r=motoRows[i];
+      const stand=String(r[1]||'').trim();
+      if(!stand||stand==='STAND'||isNaN(Number(stand)))continue;
+      moto.push({
+        code:stand,
+        name:cleanStr(r[2]),
+        tokui:String(r[3]||'').trim(),
+        misecd:String(r[4]||'').trim(),
+        open:String(r[5]||'').trim(),
+        close:String(r[6]||'').trim(),
+        addr:cleanStr(r[39]),
+        amArea:cleanStr(r[45]),
+        pmArea:cleanStr(r[47]),
+        keibaArea:cleanStr(r[49]),
+        amDeliv:cleanStr(r[54]),
+        pmDeliv:cleanStr(r[55]),
+        keibaDeliv:cleanStr(r[56]),
+        magDeliv:cleanStr(r[58]),
+      });
+    }
+    const closeOpen=[];
+    for(let i=0;i<coRows.length;i++){
+      const r=coRows[i];
+      const stand=String(r[1]||'').trim();
+      if(!stand||isNaN(Number(stand)))continue;
+      closeOpen.push({
+        code:stand,
+        name:cleanStr(r[2]),
+        tokui:String(r[3]||'').trim(),
+        misecd:String(r[4]||'').trim(),
+        open:String(r[5]||'').trim(),
+        close:String(r[6]||'').trim(),
+        area:cleanStr(r[8]),
+        flag:cleanStr(r[9]),
+      });
+    }
+    admSlData={moto,closeOpen,parsedDate};
+    await admShopListEnsureMaster();
+    admShopListAnalyze();
+  }catch(e){
+    document.getElementById('adm-sl-summary').innerHTML=`<p style="color:var(--danger);">❌ エラー: ${e.message}</p>`;
+  }
+}
+
+function admShopListAnalyze(){
+  if(!admSlData||!admSlMaster)return;
+  const {moto,closeOpen,parsedDate}=admSlData;
+  const masterMap=new Map();
+  admSlMaster.forEach(m=>masterMap.set(m.code,m));
+  const motoNeltec=moto.filter(m=>{
+    const areas=[m.amArea,m.pmArea,m.keibaArea].filter(Boolean);
+    return areas.some(a=>ADM_SL_AREAS.includes(a));
+  });
+  const motoAllMap=new Map();
+  moto.forEach(m=>motoAllMap.set(m.code,m));
+  const coRes=closeOpen.map(co=>({co,master:masterMap.get(co.code)||null}));
+  const newShops=[];
+  motoNeltec.forEach(mt=>{
+    if(!masterMap.has(mt.code)&&(mt.close==='99999999'||!mt.close)){
+      newShops.push({moto:mt,master:null});
+    }
+  });
+  const today=new Date();
+  const todayNum=today.getFullYear()*10000+(today.getMonth()+1)*100+today.getDate();
+  const closedShops=[];
+  admSlMaster.forEach(m=>{
+    if(m.closed)return;
+    const mt=motoAllMap.get(m.code);
+    if(!mt){
+      closedShops.push({master:m,moto:null,reason:'荷主リストに存在しない'});
+    }else if(mt.close&&mt.close!=='99999999'){
+      const closeNum=Number(mt.close);
+      if(closeNum<=todayNum){
+        closedShops.push({master:m,moto:mt,reason:`荷主リストCLOSE=${mt.close.slice(0,4)}/${mt.close.slice(4,6)}/${mt.close.slice(6,8)}`});
+      }
+    }
+  });
+  const diffs=[];
+  const matches=[];
+  motoNeltec.forEach(mt=>{
+    const m=masterMap.get(mt.code);
+    if(!m||m.closed)return;
+    const issues=[];
+    const nameMt=mt.name.replace(/[\s　]/g,'');
+    const nameM=m.name.replace(/[\s　]/g,'').replace(/^[A-Z]\]/,'');
+    if(nameMt!==nameM)issues.push(`店舗名: マスタ「${m.name}」 → 荷主「${mt.name}」`);
+    const masterAreas=m.area.split(',').map(s=>s.trim()).filter(Boolean);
+    const motoUniq=[...new Set([mt.amArea,mt.pmArea,mt.keibaArea].filter(Boolean))];
+    const hasOverlap=motoUniq.some(a=>masterAreas.includes(a));
+    if(!hasOverlap)issues.push(`営業所: マスタ[${masterAreas.join(',')}] → 荷主[${motoUniq.join(',')}]`);
+    if(issues.length>0)diffs.push({master:m,moto:mt,issues});
+    else matches.push({master:m,moto:mt});
+  });
+  admSlResult={
+    closeopen:coRes,newshop:newShops,closeshop:closedShops,diff:diffs,match:matches,
+    stats:{
+      motoTotal:moto.length,motoNeltec:motoNeltec.length,
+      masterTotal:admSlMaster.length,masterActive:admSlMaster.filter(m=>!m.closed).length,
+      parsedDate,
+    },
+  };
+  const s=admSlResult.stats;
+  document.getElementById('adm-sl-summary').innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;"><div style="background:#f1f5f9;padding:10px;border-radius:8px;font-size:12px;"><div style="color:var(--text-sub)">荷主リスト 処理日</div><div style="font-weight:600;font-size:14px;">${s.parsedDate||'-'}</div></div><div style="background:#f1f5f9;padding:10px;border-radius:8px;font-size:12px;"><div style="color:var(--text-sub)">荷主リスト 元シート</div><div style="font-weight:600;font-size:14px;">${s.motoTotal.toLocaleString()}店<span style="font-size:11px;color:var(--text-sub);"> / NELTEC配送 ${s.motoNeltec.toLocaleString()}店</span></div></div><div style="background:#f1f5f9;padding:10px;border-radius:8px;font-size:12px;"><div style="color:var(--text-sub)">店舗マスタ</div><div style="font-weight:600;font-size:14px;">${s.masterTotal.toLocaleString()}店<span style="font-size:11px;color:var(--text-sub);"> / 稼働中 ${s.masterActive.toLocaleString()}店</span></div></div><div style="background:#fee2e2;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#dc2626">閉店・新店</div><div style="font-weight:600;font-size:14px;">${admSlResult.closeopen.length}件</div></div><div style="background:#dcfce7;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#15803d">新店候補</div><div style="font-weight:600;font-size:14px;">${admSlResult.newshop.length}件</div></div><div style="background:#fef3c7;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#92400e">閉店候補</div><div style="font-weight:600;font-size:14px;">${admSlResult.closeshop.length}件</div></div><div style="background:#fef3c7;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#92400e">差異あり</div><div style="font-weight:600;font-size:14px;">${admSlResult.diff.length}件</div></div><div style="background:#e0f2fe;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#075985">一致</div><div style="font-weight:600;font-size:14px;">${admSlResult.match.length}件</div></div></div>`;
+  document.getElementById('adm-sl-tab-closeopen').innerHTML=`🔥 閉店・新店シート (${admSlResult.closeopen.length})`;
+  document.getElementById('adm-sl-tab-newshop').innerHTML=`➕ 新店候補 (${admSlResult.newshop.length})`;
+  document.getElementById('adm-sl-tab-closeshop').innerHTML=`➖ 閉店候補 (${admSlResult.closeshop.length})`;
+  document.getElementById('adm-sl-tab-diff').innerHTML=`⚠ 差異あり (${admSlResult.diff.length})`;
+  document.getElementById('adm-sl-tab-match').innerHTML=`✅ 一致 (${admSlResult.match.length})`;
+  document.getElementById('adm-sl-tabs').style.display='flex';
+  document.getElementById('adm-sl-csv-btn').style.display='';
+  admShopListSwitchTab(admSlActiveTab||'closeopen');
+}
+
+function admShopListSwitchTab(tab){
+  admSlActiveTab=tab;
+  document.querySelectorAll('.adm-sl-tab').forEach(b=>{b.style.background='#f1f5f9';b.style.color='var(--text-sub)';});
+  const el=document.getElementById('adm-sl-tab-'+tab);
+  if(el){el.style.background='var(--primary)';el.style.color='#fff';}
+  admShopListRender();
+}
+
+function admShopListRender(){
+  if(!admSlResult){document.getElementById('adm-sl-result').innerHTML='';return;}
+  const tab=admSlActiveTab;
+  const cont=document.getElementById('adm-sl-result');
+  const fmtDate=d=>d&&/^\d{8}$/.test(d)?`${d.slice(0,4)}/${d.slice(4,6)}/${d.slice(6,8)}`:(d||'-');
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  let html='';
+  if(tab==='closeopen'){
+    const rows=admSlResult.closeopen;
+    if(rows.length===0)html='<p style="text-align:center;padding:30px;color:var(--text-sub);">「閉店・新店」シートにデータがありません</p>';
+    else{
+      html='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">区分</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">OPEN</th><th style="padding:8px;border:1px solid #e2e8f0;">CLOSE</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主営業所</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタ状態</th></tr></thead><tbody>';
+      rows.forEach(({co,master})=>{
+        const tag=co.flag==='閉店'?'<span style="background:#dc2626;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">🔒 閉店</span>':'<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">🆕 新店</span>';
+        let ms='';
+        if(co.flag==='閉店'){
+          if(!master)ms='<span style="color:var(--text-sub);">マスタになし</span>';
+          else if(master.closed)ms='<span style="color:#16a34a;">✓ 納品中止済</span>';
+          else if(master.lastDeliver)ms=`<span style="color:#f59e0b;">最終納品日 ${esc(master.lastDeliver)} 登録済</span>`;
+          else ms='<span style="color:#dc2626;font-weight:600;">⚠ 閉店処理未対応</span>';
+        }else{
+          ms=master?'<span style="color:#16a34a;">✓ 既にマスタ登録あり</span>':'<span style="color:#dc2626;font-weight:600;">⚠ 新規登録要</span>';
+        }
+        html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${tag}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(co.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(co.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${fmtDate(co.open)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${fmtDate(co.close)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(co.area)||'-'}</td><td style="padding:6px;border:1px solid #e2e8f0;">${ms}</td></tr>`;
+      });
+      html+='</tbody></table>';
+    }
+  }else if(tab==='newshop'){
+    const rows=admSlResult.newshop;
+    if(rows.length===0)html='<p style="text-align:center;padding:30px;color:var(--text-sub);">該当なし</p>';
+    else{
+      html='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名(荷主)</th><th style="padding:8px;border:1px solid #e2e8f0;">住所</th><th style="padding:8px;border:1px solid #e2e8f0;">朝刊</th><th style="padding:8px;border:1px solid #e2e8f0;">夕刊</th><th style="padding:8px;border:1px solid #e2e8f0;">競馬</th><th style="padding:8px;border:1px solid #e2e8f0;">OPEN</th></tr></thead><tbody>';
+      rows.forEach(({moto})=>{
+        html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(moto.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(moto.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;font-size:11px;">${esc(moto.addr)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(moto.amArea)||'-'}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(moto.pmArea)||'-'}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(moto.keibaArea)||'-'}</td><td style="padding:6px;border:1px solid #e2e8f0;">${fmtDate(moto.open)}</td></tr>`;
+      });
+      html+='</tbody></table>';
+    }
+  }else if(tab==='closeshop'){
+    const rows=admSlResult.closeshop;
+    if(rows.length===0)html='<p style="text-align:center;padding:30px;color:var(--text-sub);">該当なし</p>';
+    else{
+      html='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名(マスタ)</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタ営業所</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタ朝刊コース</th><th style="padding:8px;border:1px solid #e2e8f0;">理由</th></tr></thead><tbody>';
+      rows.forEach(({master,reason})=>{
+        html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.area)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.amCourse)}</td><td style="padding:6px;border:1px solid #e2e8f0;color:#f59e0b;">${esc(reason)}</td></tr>`;
+      });
+      html+='</tbody></table>';
+    }
+  }else if(tab==='diff'){
+    const rows=admSlResult.diff;
+    if(rows.length===0)html='<p style="text-align:center;padding:30px;color:var(--text-sub);">差異なし 🎉</p>';
+    else{
+      html='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタ店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタ営業所</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主営業所(朝/夕/競)</th><th style="padding:8px;border:1px solid #e2e8f0;">差異</th></tr></thead><tbody>';
+      rows.forEach(({master,moto,issues})=>{
+        const motoArea=[moto.amArea,moto.pmArea,moto.keibaArea].map(a=>a||'-').join('/');
+        html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(moto.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.area)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(motoArea)}</td><td style="padding:6px;border:1px solid #e2e8f0;font-size:11px;color:#92400e;">${issues.map(esc).join('<br>')}</td></tr>`;
+      });
+      html+='</tbody></table>';
+    }
+  }else if(tab==='match'){
+    const rows=admSlResult.match;
+    if(rows.length===0)html='<p style="text-align:center;padding:30px;color:var(--text-sub);">該当なし</p>';
+    else{
+      html=`<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">${rows.length}店舗が一致 (表示は先頭500件、全件はCSV)</p>`;
+      html+='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">営業所</th></tr></thead><tbody>';
+      rows.slice(0,500).forEach(({master})=>{
+        html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.area)}</td></tr>`;
+      });
+      html+='</tbody></table>';
+    }
+  }
+  cont.innerHTML=html;
+}
+
+function admShopListExportCsv(){
+  if(!admSlResult)return;
+  const tab=admSlActiveTab;
+  let header=[],body=[],filename='';
+  if(tab==='closeopen'){
+    header=['区分','店舗コード','店舗名','OPEN','CLOSE','荷主営業所','マスタ状態'];
+    body=admSlResult.closeopen.map(({co,master})=>{
+      let ms='';
+      if(co.flag==='閉店'){
+        if(!master)ms='マスタになし';
+        else if(master.closed)ms='納品中止済';
+        else if(master.lastDeliver)ms=`最終納品日 ${master.lastDeliver}`;
+        else ms='閉店処理未対応';
+      }else ms=master?'マスタ登録あり':'新規登録要';
+      return [co.flag,co.code,co.name,co.open,co.close,co.area,ms];
+    });
+    filename='閉店新店シート';
+  }else if(tab==='newshop'){
+    header=['店舗コード','店舗名','住所','朝刊営業所','夕刊営業所','競馬営業所','OPEN'];
+    body=admSlResult.newshop.map(({moto})=>[moto.code,moto.name,moto.addr,moto.amArea,moto.pmArea,moto.keibaArea,moto.open]);
+    filename='新店候補';
+  }else if(tab==='closeshop'){
+    header=['店舗コード','店舗名','マスタ営業所','マスタ朝刊コース','理由'];
+    body=admSlResult.closeshop.map(({master,reason})=>[master.code,master.name,master.area,master.amCourse,reason]);
+    filename='閉店候補';
+  }else if(tab==='diff'){
+    header=['店舗コード','マスタ店舗名','荷主店舗名','マスタ営業所','荷主朝刊','荷主夕刊','荷主競馬','差異'];
+    body=admSlResult.diff.map(({master,moto,issues})=>[master.code,master.name,moto.name,master.area,moto.amArea,moto.pmArea,moto.keibaArea,issues.join(' / ')]);
+    filename='差異あり';
+  }else if(tab==='match'){
+    header=['店舗コード','店舗名','営業所'];
+    body=admSlResult.match.map(({master})=>[master.code,master.name,master.area]);
+    filename='一致';
+  }
+  const csv=[header,...body].map(row=>row.map(c=>{
+    const s=String(c==null?'':c);
+    return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;
+  }).join(',')).join('\n');
+  const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`荷主突合_${filename}_${(admSlResult.stats.parsedDate||'').replace(/\//g,'')}.csv`;
+  document.body.appendChild(a);a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // --- 突合せチェック ---
