@@ -410,6 +410,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-salary-wrap').style.display=this.value==='社員'?'block':'none';" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人</option><option value="社員">社員</option></select></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-company-wrap"><label style="font-size:12px;color:var(--text-sub)">所属会社名</label><input type="text" id="inv-re-company" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="株式会社○○"></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-salary-wrap"><label style="font-size:12px;color:var(--text-sub)">月給 (円)</label><input type="number" id="inv-re-salary" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 280000" min="0" step="1000"><div style="font-size:11px;color:var(--text-sub);margin-top:3px;">収支管理画面で「社員の給料」として集計されます</div></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">インボイス登録番号</label><input type="text" id="inv-re-invoice" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: T1234567890123 (適格請求書発行事業者)"><div style="font-size:11px;color:var(--text-sub);margin-top:3px;">登録あり=外税表記、なし=内税表記で請求書を生成</div></div>
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">ログイン情報</label></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">ログインID</label><input type="text" id="inv-re-loginid" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">パスワード</label><input type="text" id="inv-re-loginpw" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
@@ -3736,6 +3737,7 @@ function invAddRate(){
   document.getElementById('inv-re-company-wrap').style.display='none';
   document.getElementById('inv-re-salary').value='';
   document.getElementById('inv-re-salary-wrap').style.display='none';
+  document.getElementById('inv-re-invoice').value='';
   invUpdateNameSelect('',true);
   document.getElementById('inv-re-calc').value='固定';
   document.getElementById('inv-re-unit-wrap').style.display='none';
@@ -3780,6 +3782,7 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-company-wrap').style.display=r.biz_type==='法人'?'block':'none';
   document.getElementById('inv-re-salary').value=r.monthly_salary||'';
   document.getElementById('inv-re-salary-wrap').style.display=r.biz_type==='社員'?'block':'none';
+  document.getElementById('inv-re-invoice').value=r.invoice_number||'';
   // 川越タブ
   const kw=r.kw_am_daily||'';
   const kwDays=kw.split(',');
@@ -3836,7 +3839,7 @@ async function invSaveRate(){
   const perms=permArr.join(',');
   const kwAmDaily=['mon','tue','wed','thu','fri','sat','sun'].map(d=>document.getElementById('inv-re-kw-'+d).value).join(',');
   const kwPattern=document.getElementById('inv-re-kw-pattern').value;
-  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,am_sunday:document.getElementById('inv-re-am-sun').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,pm_sunday:document.getElementById('inv-re-pm-sun').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value,calc_type_pm:document.getElementById('inv-re-calc-pm').value,unit_price_pm:document.getElementById('inv-re-unit-pm').value,permissions:perms,kw_am_daily:kwAmDaily.replace(/^,+$/,''),kw_pattern:kwPattern,monthly_salary:document.getElementById('inv-re-salary').value||''};
+  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,am_sunday:document.getElementById('inv-re-am-sun').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,pm_sunday:document.getElementById('inv-re-pm-sun').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value,calc_type_pm:document.getElementById('inv-re-calc-pm').value,unit_price_pm:document.getElementById('inv-re-unit-pm').value,permissions:perms,kw_am_daily:kwAmDaily.replace(/^,+$/,''),kw_pattern:kwPattern,monthly_salary:document.getElementById('inv-re-salary').value||'',invoice_number:document.getElementById('inv-re-invoice').value.trim()};
   const isNewStaff=!rowNum;
   await invApi({action:'save_rate',record,row_number:rowNum?parseInt(rowNum):undefined});
   // 新規スタッフ時は人員名簿シートにも氏名のみで自動追加 (既存の同名行があればスキップ)
