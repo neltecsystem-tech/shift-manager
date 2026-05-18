@@ -2226,6 +2226,38 @@ async function defectSave(){
 // ── 店舗マスタ ──
 const SM_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master';
 const SM_PASSWORD='neltec2026';
+
+// 共通: 店舗マスタ list キャッシュ (TTL 5分 / Promise重複排除 / 429自動リトライ)
+// Why: 旧コードは5箇所が各々fetchしてSheets API per-minute quota (60/user) を即超過する
+const __shopMasterListCache={data:null,ts:0,inflight:null};
+async function fetchShopMasterList(opts){
+  opts=opts||{};
+  const TTL=opts.maxAgeMs??300000;
+  const now=Date.now();
+  if(!opts.force&&__shopMasterListCache.data&&(now-__shopMasterListCache.ts)<TTL){
+    return __shopMasterListCache.data;
+  }
+  if(__shopMasterListCache.inflight)return __shopMasterListCache.inflight;
+  const attempt=async(retry)=>{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})});
+    const json=await resp.json();
+    if(json.error&&/429|Quota exceeded|Read requests per minute/i.test(json.error)&&retry<3){
+      const wait=1500*Math.pow(2,retry); // 1.5s, 3s, 6s
+      await new Promise(r=>setTimeout(r,wait));
+      return attempt(retry+1);
+    }
+    return json;
+  };
+  __shopMasterListCache.inflight=(async()=>{
+    try{
+      const json=await attempt(0);
+      if(!json.error){__shopMasterListCache.data=json;__shopMasterListCache.ts=Date.now();}
+      return json;
+    }finally{__shopMasterListCache.inflight=null;}
+  })();
+  return __shopMasterListCache.inflight;
+}
+function invalidateShopMasterCache(){__shopMasterListCache.data=null;__shopMasterListCache.ts=0;}
 let smAuthed=false;
 let smData=[];
 let smFiltered=[];
@@ -2263,7 +2295,7 @@ async function smInit(){
   smLoad();
 }
 
-async function smLoad(){
+async function smLoad(force){
   document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">読み込み中...</p>';
   try{
     // マスタオプションを並行取得
@@ -2273,8 +2305,8 @@ async function smLoad(){
       smMasterAreas=optJson.areas||[];
       smMasterCourses=optJson.courses||[];
     }
-    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})});
-    const json=await resp.json();
+    if(force)invalidateShopMasterCache();
+    const json=await fetchShopMasterList();
     if(json.error)throw new Error(json.error);
     smHeaders=json.headers||[];
     smData=json.records||[];
@@ -2594,7 +2626,7 @@ async function smBatchAddrUnified(){
   }
   prog.innerHTML=summary;
   btn.disabled=false;btn.style.opacity='1';
-  await smLoad();
+  await smLoad(true);
 }
 
 // GPS一括取得: 住所優先・店舗名フォールバック
@@ -2729,7 +2761,7 @@ async function smBatchLatLngFromAddr(){
   }
   prog.innerHTML=summary;
   btn.disabled=false;btn.style.opacity='1';
-  await smLoad();
+  await smLoad(true);
 }
 
 // ナビ位置検証: lat/lng が指す場所と住所列の整合性を確認
@@ -2812,6 +2844,7 @@ async function smVerifyNavLocation(){
     const res=await resp.json();
     if(res.error)console.warn('判定保存エラー:',res.error);
     else{
+      invalidateShopMasterCache();
       // ローカル smData も更新（再リロードせず即時反映）
       if(smColMap.verify!=null){
         results.forEach(r=>{
@@ -3184,7 +3217,7 @@ async function smSave(){
       await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add',record})});
     }
     document.getElementById('sm-modal').style.display='none';
-    await smLoad();
+    await smLoad(true);
   }catch(e){alert('エラー: '+e.message);}
   btn.textContent=smEditRow?'更新する':'追加する';btn.disabled=false;
 }
@@ -3432,13 +3465,12 @@ function invFindSpecial(date,staff){
   });
 }
 
-// 個建制: 店舗マスタから自動計算
+// 個建制: 店舗マスタから自動計算 (共通キャッシュ経由)
 let invShopMasterCache=null;
 async function invLoadShopMaster(){
   if(invShopMasterCache)return invShopMasterCache;
   try{
-    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})});
-    const json=await resp.json();
+    const json=await fetchShopMasterList();
     invShopMasterCache={records:json.records||[],headers:json.headers||[]};
     return invShopMasterCache;
   }catch(_){return {records:[],headers:[]};}
@@ -4062,7 +4094,7 @@ async function smCloseSave(){
     await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update',row_number:parseInt(rowNum),record})});
     document.getElementById('sm-close-modal').style.display='none';
     alert('閉店情報を保存しました。翌月20日以降にコース名が自動クリアされます。');
-    await smLoad();
+    await smLoad(true);
   }catch(e){alert('エラー: '+e.message);}
   btn.textContent='閉店情報を保存';btn.disabled=false;
 }
@@ -8343,11 +8375,8 @@ function getBillConditions(monthVal){
 let admBillShopData=null;
 
 async function admBillInit(){
-  // 店舗マスタ読み込み
-  if(!admBillShopData){
-    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})});
-    admBillShopData=await resp.json();
-  }
+  // 店舗マスタ読み込み (共通キャッシュ経由、TTL内なら即返却)
+  admBillShopData=await fetchShopMasterList();
   const records=admBillShopData.records||[];
   const headers=admBillShopData.headers||[];
   // 列マッピング
@@ -10245,10 +10274,7 @@ async function admShopListReloadMaster(){
 
 async function admShopListEnsureMaster(){
   if(admSlMaster)return;
-  if(!admBillShopData){
-    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})});
-    admBillShopData=await resp.json();
-  }
+  admBillShopData=await fetchShopMasterList();
   const recs=admBillShopData.records||[];
   admSlMaster=recs.map(r=>({
     row:r.row_number,
@@ -10860,8 +10886,7 @@ async function msrLoadData(){
   document.getElementById('msr-staff-label').textContent=msrStaffName?'👤 '+msrStaffName:'';
   document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">店舗データ読み込み中...</p>';
   try{
-    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list'})});
-    const json=await resp.json();
+    const json=await fetchShopMasterList();
     if(json.error)throw new Error(json.error);
     msrHeaders=json.headers||[];
     msrData=json.records||[];
