@@ -3211,12 +3211,17 @@ async function smSave(){
     }
   });
   try{
-    if(smEditRow){
-      await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update',row_number:smEditRow,record})});
-    }else{
-      await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add',record})});
+    const action=smEditRow?'update':'add';
+    const body=smEditRow?{action,row_number:smEditRow,record}:{action,record};
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
+    if(!resp.ok||json.error){
+      throw new Error(`${action} 失敗 (${resp.status}): ${json.error||'不明なエラー'}`);
     }
     document.getElementById('sm-modal').style.display='none';
+    // Sheets の書込→読出の伝播待ち + キャッシュ無効化
+    invalidateShopMasterCache();
+    await new Promise(r=>setTimeout(r,800));
     await smLoad(true);
   }catch(e){alert('エラー: '+e.message);}
   btn.textContent=smEditRow?'更新する':'追加する';btn.disabled=false;
