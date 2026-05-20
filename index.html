@@ -11676,9 +11676,6 @@ async function diagNavFromHere(id){
     if(startIdx<0){if(w)w.close();alert('対象店舗が見つかりません (マスタ変更？)');return;}
     const chunk=shops.slice(startIdx,startIdx+9);
     if(chunk.length===0){if(w)w.close();alert('対象店舗がありません');return;}
-    // 店舗名+住所をラベルに使う (Google Maps が店舗名で表示する)
-    // 月別ダイヤグラムは origin が現在地なのでウェイポイントは 8 件以下に収まり、
-    // 長ラベルでもジオコーディング失敗は発生しにくい (もともと動作OK)。
     const labelOf=(s)=>{
       const nm=(s.name||'').trim();
       const addr=(s.addr||'').trim();
@@ -11695,23 +11692,13 @@ async function diagNavFromHere(id){
     params.set('destination',labelOf(last));
     if(rest.length>0)params.set('waypoints',rest.map(labelOf).join('|'));
     params.set('travelmode','driving');
-    const mapsUrl=`https://www.google.com/maps/dir/?${params.toString()}`;
-    // 中継ページ経由で Android Intent URL に変換 → Google Maps アプリを明示起動
-    const url=diagWrapNavUrl(mapsUrl);
+    const url=`https://www.google.com/maps/dir/?${params.toString()}`;
     if(w)w.location.href=url;
     else window.location.href=url;
   }catch(e){
     if(w)w.close();
     alert('ナビ起動エラー: '+(e&&e.message?e.message:e));
   }
-}
-
-function diagWrapNavUrl(mapsUrl){
-  try{
-    const u=new URL(location.href);
-    const base=u.origin+u.pathname.replace(/\/[^\/]*$/,'/')+'nav.html';
-    return base+'?u='+encodeURIComponent(mapsUrl);
-  }catch(_e){return mapsUrl;}
 }
 
 async function diagNavOpen(routeId){
@@ -11733,7 +11720,7 @@ async function diagNavOpen(routeId){
     }
     const last=chunk[chunk.length-1];
     const rest=chunk.slice(0,-1);
-    // 店舗名+住所をラベルに使う (Google Maps が店舗名で表示する)
+    // 店舗名+住所をナビ表示用ラベルに (Google Maps が店舗名で表示する)
     const labelOf=(s)=>{
       const nm=(s.name||'').trim();
       const addr=(s.addr||'').trim();
@@ -11747,8 +11734,7 @@ async function diagNavOpen(routeId){
     params.set('destination',labelOf(last));
     if(rest.length>0)params.set('waypoints',rest.map(labelOf).join('|'));
     params.set('travelmode','driving');
-    const mapsUrl=`https://www.google.com/maps/dir/?${params.toString()}`;
-    const url=diagWrapNavUrl(mapsUrl);
+    const url=`https://www.google.com/maps/dir/?${params.toString()}`;
     if(w)w.location.href=url;
     else window.location.href=url; // ポップアップブロックされた場合のフォールバック
   }catch(e){
