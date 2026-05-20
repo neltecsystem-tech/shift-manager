@@ -4385,7 +4385,7 @@ async function admDgProcess(){
     if(res.error){document.getElementById('adm-dg-status').textContent='エラー: '+res.error;return;}
     admDgResult=res;
     const s=res.stats||{};
-    document.getElementById('adm-dg-status').innerHTML=`✓ 処理完了: ${s.matched||0}/${s.total||0} マッチ (alias経由${s.from_alias||0}件) / 未マッチ${s.unmatched||0}件 &nbsp;&nbsp;<button onclick="admDgPublish()" style="background:#16a34a;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🌐 公開URL作成</button>`;
+    document.getElementById('adm-dg-status').innerHTML=`✓ 処理完了: ${s.matched||0}/${s.total||0} マッチ (alias経由${s.from_alias||0}件) / 未マッチ${s.unmatched||0}件 &nbsp;&nbsp;<button onclick="admDgEnsurePlaceIdsAll()" style="background:#0891b2;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">📍 Place ID 取得</button>&nbsp;<button onclick="admDgPublish()" style="background:#16a34a;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🌐 公開URL作成</button>`;
     admDgRenderResults();
   }catch(err){
     document.getElementById('adm-dg-status').textContent='処理失敗: '+(err.message||err);
@@ -4442,6 +4442,13 @@ function admDgBuildNavUrls(stops){
     params.set('origin',coordOf(first));
     params.set('destination',coordOf(last));
     if(mids.length>0)params.set('waypoints',mids.map(coordOf).join('|'));
+    // Place ID があれば付与 — Google マップが店舗名で表示するようになる。
+    // waypoints と同数・同順で `|` 区切り (該当なしは空文字)。
+    if(first.place_id&&!first.isStart)params.set('origin_place_id',first.place_id);
+    if(last.place_id)params.set('destination_place_id',last.place_id);
+    if(mids.length>0&&mids.some(s=>s.place_id)){
+      params.set('waypoint_place_ids',mids.map(s=>s.place_id||'').join('|'));
+    }
     params.set('travelmode','driving');
     return {
       url:'https://www.google.com/maps/dir/?'+params.toString(),
@@ -4622,6 +4629,73 @@ function admDgRenderResults(){
     html+='</ul><div style="font-size:11px;color:#991b1b;margin-top:6px;">下のマッピング管理で正式名を登録すると次回以降自動で解決します。</div></div>';
   }
   document.getElementById('adm-dg-results').innerHTML=html;
+}
+
+// ─── Place ID キャッシュ + 取得 ─────────────────────────────
+// 店舗ごとに Google Place ID を 1回だけ Geocoding API で取得し localStorage に保存。
+// ナビ URL の waypoint_place_ids パラメータに渡せば Google マップが確実に店舗名で
+// 表示してくれる。座標渡しよりさらに精度が高い。
+const ADM_DG_PLACEID_CACHE_KEY='admDg_placeIds_v2';
+const admDgPlaceIdCache=(()=>{
+  try{return JSON.parse(localStorage.getItem(ADM_DG_PLACEID_CACHE_KEY)||'{}');}catch(_e){return {};}
+})();
+function admDgPlaceIdKey(stop){
+  if(stop.master_id)return 'id:'+stop.master_id;
+  const nm=(stop.official_name||stop.master_name||stop.name||'').trim();
+  const addr=(stop.address||'').trim();
+  return 'nm:'+nm+'|'+addr;
+}
+function admDgPersistPlaceIds(){
+  try{localStorage.setItem(ADM_DG_PLACEID_CACHE_KEY,JSON.stringify(admDgPlaceIdCache));}catch(_e){}
+}
+async function admDgFetchPlaceId(stop){
+  if(stop.isStart)return null;
+  const k=admDgPlaceIdKey(stop);
+  if(admDgPlaceIdCache[k]!==undefined)return admDgPlaceIdCache[k];
+  const nm=(stop.official_name||stop.master_name||stop.name||'').trim();
+  const addr=(stop.address||'').trim();
+  if(!nm&&!addr)return null;
+  const q=nm&&addr?`${nm} ${addr}`:(nm||addr);
+  try{
+    const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
+    const r=await fetch(url);
+    const j=await r.json();
+    const pid=j.results?.[0]?.place_id||null;
+    admDgPlaceIdCache[k]=pid;
+    return pid;
+  }catch(_e){return null;}
+}
+async function admDgEnsurePlaceIds(stops,onProgress){
+  // すでにキャッシュにあるものは即注入
+  stops.forEach(s=>{
+    if(!s.place_id&&!s.isStart){
+      const k=admDgPlaceIdKey(s);
+      if(admDgPlaceIdCache[k])s.place_id=admDgPlaceIdCache[k];
+    }
+  });
+  const need=stops.filter(s=>!s.isStart&&!s.place_id&&admDgPlaceIdCache[admDgPlaceIdKey(s)]===undefined);
+  if(!need.length)return;
+  const BATCH=10;let done=0;
+  for(let i=0;i<need.length;i+=BATCH){
+    const slice=need.slice(i,i+BATCH);
+    const ids=await Promise.all(slice.map(admDgFetchPlaceId));
+    slice.forEach((s,j)=>{if(ids[j])s.place_id=ids[j];});
+    done+=slice.length;
+    if(onProgress)onProgress(done,need.length);
+  }
+  admDgPersistPlaceIds();
+}
+async function admDgEnsurePlaceIdsAll(){
+  if(!admDgResult)return;
+  const all=[];
+  (admDgResult.diagrams||[]).forEach(d=>(d.stops||[]).forEach(s=>all.push(s)));
+  const statusEl=document.getElementById('adm-dg-status');
+  const before=statusEl?statusEl.innerHTML:'';
+  await admDgEnsurePlaceIds(all,(done,total)=>{
+    if(statusEl)statusEl.textContent=`Place ID 取得中... ${done}/${total}`;
+  });
+  if(statusEl)statusEl.innerHTML=before+' &nbsp;<span style="color:#0891b2;font-weight:600;">📍 Place ID 適用済み</span>';
+  admDgRenderResults();
 }
 
 function admDgPrintCourse(i){
