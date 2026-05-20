@@ -11676,9 +11676,10 @@ async function diagNavFromHere(id){
     if(startIdx<0){if(w)w.close();alert('対象店舗が見つかりません (マスタ変更？)');return;}
     const chunk=shops.slice(startIdx,startIdx+9);
     if(chunk.length===0){if(w)w.close();alert('対象店舗がありません');return;}
-    // 目的地のみ「店名+住所」(視認性重視)、ウェイポイントは座標 (ルーティング信頼性重視)
-    // 長い住所文字列を 8 個並べると Google Maps のジオコーダが解決失敗 → 経路不検出になりがち
-    const destLabel=(s)=>{
+    // 店舗名+住所をラベルに使う (Google Maps が店舗名で表示する)
+    // 月別ダイヤグラムは origin が現在地なのでウェイポイントは 8 件以下に収まり、
+    // 長ラベルでもジオコーディング失敗は発生しにくい (もともと動作OK)。
+    const labelOf=(s)=>{
       const nm=(s.name||'').trim();
       const addr=(s.addr||'').trim();
       if(nm&&addr)return nm+' '+addr;
@@ -11686,14 +11687,13 @@ async function diagNavFromHere(id){
       if(addr)return addr;
       return `${s.lat},${s.lng}`;
     };
-    const wpLabel=(s)=>(s.lat!=null&&s.lng!=null)?`${s.lat},${s.lng}`:destLabel(s);
     const last=chunk[chunk.length-1];
     const rest=chunk.slice(0,-1);
     const params=new URLSearchParams();
     params.set('api','1');
     // origin省略 = 端末の現在地 (Google Maps が GPS 許可を要求)
-    params.set('destination',destLabel(last));
-    if(rest.length>0)params.set('waypoints',rest.map(wpLabel).join('|'));
+    params.set('destination',labelOf(last));
+    if(rest.length>0)params.set('waypoints',rest.map(labelOf).join('|'));
     params.set('travelmode','driving');
     const mapsUrl=`https://www.google.com/maps/dir/?${params.toString()}`;
     // 中継ページ経由で Android Intent URL に変換 → Google Maps アプリを明示起動
@@ -11733,9 +11733,8 @@ async function diagNavOpen(routeId){
     }
     const last=chunk[chunk.length-1];
     const rest=chunk.slice(0,-1);
-    // 目的地のみ「店名+住所」(視認性重視)、ウェイポイントは座標 (ルーティング信頼性重視)
-    // 長い住所文字列を 8 個並べると Google Maps のジオコーダが解決失敗 → 経路不検出になりがち
-    const destLabel=(s)=>{
+    // 店舗名+住所をラベルに使う (Google Maps が店舗名で表示する)
+    const labelOf=(s)=>{
       const nm=(s.name||'').trim();
       const addr=(s.addr||'').trim();
       if(nm&&addr)return nm+' '+addr;
@@ -11743,11 +11742,10 @@ async function diagNavOpen(routeId){
       if(addr)return addr;
       return `${s.lat},${s.lng}`;
     };
-    const wpLabel=(s)=>(s.lat!=null&&s.lng!=null)?`${s.lat},${s.lng}`:destLabel(s);
     const params=new URLSearchParams();
     params.set('api','1');
-    params.set('destination',destLabel(last));
-    if(rest.length>0)params.set('waypoints',rest.map(wpLabel).join('|'));
+    params.set('destination',labelOf(last));
+    if(rest.length>0)params.set('waypoints',rest.map(labelOf).join('|'));
     params.set('travelmode','driving');
     const mapsUrl=`https://www.google.com/maps/dir/?${params.toString()}`;
     const url=diagWrapNavUrl(mapsUrl);
