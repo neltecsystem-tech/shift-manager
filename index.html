@@ -4413,20 +4413,23 @@ function admDgNavLabel(s){
 function admDgBuildNavUrls(stops){
   const pts=stops.filter(s=>s.lat&&s.lng);
   const chunks=[];let i=0;
+  // Google Maps モバイルは合計 10 ストップ以上で失敗しやすい。
+  // 1 リンクあたり最大 8 ストップ (origin + 6 waypoint + destination) に分割。
+  const CHUNK=8;
   while(i<pts.length-1){
-    const chunk=pts.slice(i,Math.min(i+10,pts.length));
+    const chunk=pts.slice(i,Math.min(i+CHUNK,pts.length));
     if(chunk.length<2)break;
     chunks.push(chunk);
-    if(i+10>=pts.length)break;
-    i+=9;
+    if(i+CHUNK>=pts.length)break;
+    i+=CHUNK-1; // 次のチャンクは前回の destination を origin に
   }
   return chunks.map(chunk=>{
-    // origin/destination は視認性重視で「店名+住所」、ウェイポイントは座標で確実にルーティング
-    // 長い日本語ラベルを 8 個並べると Google Maps のジオコーダが解決失敗 → 経路不検出になる
+    // ウェイポイント + destination は座標で渡す (ジオコーディング不要 → ルーティング確実)
+    // origin だけは出発拠点を視認しやすいよう「店名 or 住所」を維持
     const fullLabel=(s)=>encodeURIComponent(admDgNavLabel(s)||(s.lat+','+s.lng));
     const coordLabel=(s)=>(s.lat!=null&&s.lng!=null)?encodeURIComponent(s.lat+','+s.lng):fullLabel(s);
     const origin=fullLabel(chunk[0]);
-    const dest=fullLabel(chunk[chunk.length-1]);
+    const dest=coordLabel(chunk[chunk.length-1]);
     const wp=chunk.slice(1,-1).map(coordLabel).join('|');
     return 'https://www.google.com/maps/dir/?api=1&origin='+origin+'&destination='+dest+(wp?'&waypoints='+wp:'')+'&travelmode=driving';
   });
