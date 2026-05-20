@@ -4414,9 +4414,11 @@ function admDgNavLabel(s){
 }
 
 // 戻り値: [{url, startName, endName, startIdx, endIdx}]
-// 月別ダイヤグラム (動作実績あり) と同じ素朴な作り。
 // 1 リンク 9 ストップ (1 origin + 7 waypoint + 1 destination)、隣接チャンクは 1 ストップ overlap。
-// ラベルは「店名+住所」のシンプル文字列。Google Maps が解決する。
+// origin / 中継 waypoint / destination は **すべて lat,lng**。Google Maps の
+// geocoder に長い日本語クエリを渡すと「新宿早稲田通」を街路として誤解釈する
+// ケースがあったため、座標で直接ピンを打つ方式に統一。
+// 表示名は Google Maps の逆ジオコーディングに任せる (マスタ座標が正確なら店名表示)。
 function admDgBuildNavUrls(stops){
   const pts=stops.filter(s=>s.lat&&s.lng);
   const chunks=[];let i=0;
@@ -4429,7 +4431,7 @@ function admDgBuildNavUrls(stops){
     i+=CHUNK-1;
   }
   const nameOf=(s)=>(s.official_name||s.master_name||s.name||s.address||'').toString();
-  const labelOf=(s)=>admDgNavLabel(s)||(s.lat+','+s.lng);
+  const coordOf=(s)=>s.lat+','+s.lng;
   return chunks.map(c=>{
     const chunk=pts.slice(c.startIdx,c.endIdx+1);
     const first=chunk[0];
@@ -4437,9 +4439,9 @@ function admDgBuildNavUrls(stops){
     const mids=chunk.slice(1,-1);
     const params=new URLSearchParams();
     params.set('api','1');
-    params.set('origin',labelOf(first));
-    params.set('destination',labelOf(last));
-    if(mids.length>0)params.set('waypoints',mids.map(labelOf).join('|'));
+    params.set('origin',coordOf(first));
+    params.set('destination',coordOf(last));
+    if(mids.length>0)params.set('waypoints',mids.map(coordOf).join('|'));
     params.set('travelmode','driving');
     return {
       url:'https://www.google.com/maps/dir/?'+params.toString(),
