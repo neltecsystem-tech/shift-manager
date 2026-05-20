@@ -4635,7 +4635,7 @@ function admDgRenderResults(){
 // 店舗ごとに Google Place ID を 1回だけ Geocoding API で取得し localStorage に保存。
 // ナビ URL の waypoint_place_ids パラメータに渡せば Google マップが確実に店舗名で
 // 表示してくれる。座標渡しよりさらに精度が高い。
-const ADM_DG_PLACEID_CACHE_KEY='admDg_placeIds_v2';
+const ADM_DG_PLACEID_CACHE_KEY='admDg_placeIds_v3'; // Places API (New) ベースに切替えたので bump
 const admDgPlaceIdCache=(()=>{
   try{return JSON.parse(localStorage.getItem(ADM_DG_PLACEID_CACHE_KEY)||'{}');}catch(_e){return {};}
 })();
@@ -4648,19 +4648,51 @@ function admDgPlaceIdKey(stop){
 function admDgPersistPlaceIds(){
   try{localStorage.setItem(ADM_DG_PLACEID_CACHE_KEY,JSON.stringify(admDgPlaceIdCache));}catch(_e){}
 }
+// Places API (New) Nearby Search: 店舗の lat/lng 周辺で establishment を検索し、
+// 名前マッチで店舗 place_id を取得。Geocoding API は建物 place_id しか返さないので不可。
+const ADM_DG_STORE_TYPES=['convenience_store','supermarket','grocery_store','food_store','store'];
+function admDgNormalizeForMatch(s){
+  return (s||'').normalize('NFKC').replace(/[\s　]/g,'').replace(/[ぁ-ん]/g,c=>String.fromCharCode(c.charCodeAt(0)+0x60)).toLowerCase();
+}
 async function admDgFetchPlaceId(stop){
   if(stop.isStart)return null;
   const k=admDgPlaceIdKey(stop);
   if(admDgPlaceIdCache[k]!==undefined)return admDgPlaceIdCache[k];
-  const nm=(stop.official_name||stop.master_name||stop.name||'').trim();
-  const addr=(stop.address||'').trim();
-  if(!nm&&!addr)return null;
-  const q=nm&&addr?`${nm} ${addr}`:(nm||addr);
+  if(stop.lat==null||stop.lng==null){admDgPlaceIdCache[k]=null;return null;}
+  const targetName=stop.official_name||stop.master_name||stop.name||'';
+  const targetNorm=admDgNormalizeForMatch(targetName);
+  // 1段階目: includedPrimaryTypes 指定で店舗系のみ (ヒット率高)
+  // 2段階目: 全 establishment (fallback)
+  const attempt=async(includedTypes)=>{
+    const body={
+      locationRestriction:{circle:{center:{latitude:stop.lat,longitude:stop.lng},radius:40}},
+      languageCode:'ja',
+      maxResultCount:10,
+    };
+    if(includedTypes)body.includedPrimaryTypes=includedTypes;
+    const resp=await fetch('https://places.googleapis.com/v1/places:searchNearby',{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'X-Goog-Api-Key':GEOCODING_API_KEY,
+        'X-Goog-FieldMask':'places.id,places.displayName,places.types',
+      },
+      body:JSON.stringify(body),
+    });
+    if(!resp.ok)return null;
+    const j=await resp.json();
+    const places=j.places||[];
+    if(!places.length)return null;
+    // 名前正規化マッチを優先 (例: "ローソンストア100 新宿早稲田通店" を含む)
+    const matched=places.find(p=>{
+      const n=admDgNormalizeForMatch(p.displayName?.text||'');
+      return n&&(n.includes(targetNorm)||targetNorm.includes(n));
+    });
+    return matched?.id || places[0]?.id || null;
+  };
   try{
-    const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
-    const r=await fetch(url);
-    const j=await r.json();
-    const pid=j.results?.[0]?.place_id||null;
+    let pid=await attempt(ADM_DG_STORE_TYPES);
+    if(!pid)pid=await attempt(null); // fallback: 全 establishment
     admDgPlaceIdCache[k]=pid;
     return pid;
   }catch(_e){return null;}
