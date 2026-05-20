@@ -4421,10 +4421,13 @@ function admDgBuildNavUrls(stops){
     i+=9;
   }
   return chunks.map(chunk=>{
-    const labelOf=(s)=>encodeURIComponent(admDgNavLabel(s)||(s.lat+','+s.lng));
-    const origin=labelOf(chunk[0]);
-    const dest=labelOf(chunk[chunk.length-1]);
-    const wp=chunk.slice(1,-1).map(labelOf).join('|');
+    // origin/destination は視認性重視で「店名+住所」、ウェイポイントは座標で確実にルーティング
+    // 長い日本語ラベルを 8 個並べると Google Maps のジオコーダが解決失敗 → 経路不検出になる
+    const fullLabel=(s)=>encodeURIComponent(admDgNavLabel(s)||(s.lat+','+s.lng));
+    const coordLabel=(s)=>(s.lat!=null&&s.lng!=null)?encodeURIComponent(s.lat+','+s.lng):fullLabel(s);
+    const origin=fullLabel(chunk[0]);
+    const dest=fullLabel(chunk[chunk.length-1]);
+    const wp=chunk.slice(1,-1).map(coordLabel).join('|');
     return 'https://www.google.com/maps/dir/?api=1&origin='+origin+'&destination='+dest+(wp?'&waypoints='+wp:'')+'&travelmode=driving';
   });
 }
