@@ -4394,10 +4394,13 @@ async function admDgProcess(){
 
 // 店舗名+住所をナビ表示用ラベルに変換 (店舗名でピン名が表示される)
 function admDgNavLabel(s){
-  // 出発地点 (isStart) は住所のみ (店舗名なし)
+  // 出発地点 (isStart): 座標を優先する。EF が depot 住所を server 側で
+  // Geocoding 済みなので lat/lng が信頼できる。住所文字列のままだと
+  // Google Maps が再ジオコーディングして別地点にヒットし「経路が見つかりません」
+  // を引き起こす原因になっていた。
   if(s.isStart){
+    if(s.lat!=null&&s.lng!=null)return s.lat+','+s.lng;
     if(s.address)return s.address;
-    if(s.lat&&s.lng)return s.lat+','+s.lng;
     return '';
   }
   // 通常店舗: 店舗名 + 住所 (Google Maps が店舗名で表示する)
