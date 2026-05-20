@@ -4385,7 +4385,7 @@ async function admDgProcess(){
     if(res.error){document.getElementById('adm-dg-status').textContent='エラー: '+res.error;return;}
     admDgResult=res;
     const s=res.stats||{};
-    document.getElementById('adm-dg-status').innerHTML=`✓ 処理完了: ${s.matched||0}/${s.total||0} マッチ (alias経由${s.from_alias||0}件) / 未マッチ${s.unmatched||0}件 &nbsp;&nbsp;<button onclick="admDgEnsurePlaceIdsAll()" style="background:#0891b2;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">📍 Place ID 取得</button>&nbsp;<button onclick="admDgPublish()" style="background:#16a34a;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🌐 公開URL作成</button>`;
+    document.getElementById('adm-dg-status').innerHTML=`✓ 処理完了: ${s.matched||0}/${s.total||0} マッチ (alias経由${s.from_alias||0}件) / 未マッチ${s.unmatched||0}件 &nbsp;&nbsp;<button onclick="admDgPublish()" style="background:#16a34a;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🌐 公開URL作成</button>`;
     admDgRenderResults();
   }catch(err){
     document.getElementById('adm-dg-status').textContent='処理失敗: '+(err.message||err);
@@ -4411,62 +4411,35 @@ function admDgNavLabel(s){
 }
 
 // 戻り値: [{url, startName, endName, startIdx, endIdx}]
+// 月別ダイヤグラム (動作実績あり) と同じ素朴な作り。
+// 1 リンク 9 ストップ (1 origin + 7 waypoint + 1 destination)、隣接チャンクは 1 ストップ overlap。
+// ラベルは「店名+住所」のシンプル文字列。Google Maps が解決する。
 function admDgBuildNavUrls(stops){
   const pts=stops.filter(s=>s.lat&&s.lng);
   const chunks=[];let i=0;
-  // 月別ダイヤグラムと揃えて 9 ストップ/リンクに分割。
-  // ウェイポイント (中間 7 件) は place_id があれば place_id:XXX、なければ座標。
-  // 店名表示は place_id 由来。ルーティングは place_id か coord ベースで信頼性◎。
   const CHUNK=9;
   while(i<pts.length-1){
     const len=Math.min(i+CHUNK,pts.length)-i;
     if(len<2)break;
     chunks.push({startIdx:i,endIdx:i+len-1});
     if(i+CHUNK>=pts.length)break;
-    i+=CHUNK-1; // 次のチャンクは前回の destination を origin に
+    i+=CHUNK-1;
   }
-  // 座標ラベル (ルーティング用): "lat,lng" 形式
-  const coordLabel=(s)=>(s.lat!=null&&s.lng!=null)?(s.lat+','+s.lng):'';
-  // 視認用ラベル (origin/destination の表示文字列)
-  const fullLabel=(s)=>admDgNavLabel(s)||coordLabel(s);
   const nameOf=(s)=>(s.official_name||s.master_name||s.name||s.address||'').toString();
-  // 中継ページの絶対 URL (GitHub Pages の Shift Manager 配下)
-  // Android: nav.html が Intent URL で Google Maps アプリを明示起動
-  // iOS:     comgooglemaps:// スキームを試行 → 失敗時は web マップに戻る
-  // PC:      そのまま Web の Google Maps を開く
-  const navBase=(()=>{
-    try{
-      const u=new URL(location.href);
-      return u.origin+u.pathname.replace(/\/[^\/]*$/,'/')+'nav.html';
-    }catch(_e){return 'https://neltecsystem-tech.github.io/shift-manager/nav.html';}
-  })();
+  const labelOf=(s)=>admDgNavLabel(s)||(s.lat+','+s.lng);
   return chunks.map(c=>{
     const chunk=pts.slice(c.startIdx,c.endIdx+1);
     const first=chunk[0];
     const last=chunk[chunk.length-1];
     const mids=chunk.slice(1,-1);
-    // Google Maps URL の正しい形式 (https://developers.google.com/maps/documentation/urls/get-started#directions-action):
-    // - origin / destination / waypoints は座標 or 住所文字列
-    // - origin_place_id / destination_place_id / waypoint_place_ids が Place ID 用の "別パラメータ"
-    // - 両方を指定すると Place ID が優先され、店舗名で表示される
     const params=new URLSearchParams();
     params.set('api','1');
-    params.set('origin',fullLabel(first));
-    if(first.place_id)params.set('origin_place_id',first.place_id);
-    params.set('destination',coordLabel(last)||fullLabel(last));
-    if(last.place_id)params.set('destination_place_id',last.place_id);
-    if(mids.length>0){
-      params.set('waypoints',mids.map(s=>coordLabel(s)||fullLabel(s)).join('|'));
-      // waypoint_place_ids は waypoints と同じ件数・順序で揃える必要がある (空でも | で埋める)
-      if(mids.some(s=>s.place_id)){
-        params.set('waypoint_place_ids',mids.map(s=>s.place_id||'').join('|'));
-      }
-    }
+    params.set('origin',labelOf(first));
+    params.set('destination',labelOf(last));
+    if(mids.length>0)params.set('waypoints',mids.map(labelOf).join('|'));
     params.set('travelmode','driving');
-    const mapsUrl='https://www.google.com/maps/dir/?'+params.toString();
     return {
-      url:navBase+'?u='+encodeURIComponent(mapsUrl),
-      mapsUrl,
+      url:'https://www.google.com/maps/dir/?'+params.toString(),
       startIdx:c.startIdx,
       endIdx:c.endIdx,
       startName:nameOf(first),
@@ -4646,73 +4619,6 @@ function admDgRenderResults(){
   document.getElementById('adm-dg-results').innerHTML=html;
 }
 
-// ─── Place ID キャッシュ + 取得 ─────────────────────────────
-// Google Maps のナビ URL で place_id:XXX を渡すと、Google Maps が確実に店舗名で
-// 表示してくれる。1店舗1回だけ Geocoding API で取得し localStorage に保存。
-const ADM_DG_PLACEID_CACHE_KEY='admDg_placeIds_v1';
-const admDgPlaceIdCache=(()=>{
-  try{return JSON.parse(localStorage.getItem(ADM_DG_PLACEID_CACHE_KEY)||'{}');}catch(_e){return {};}
-})();
-function admDgPlaceIdKey(stop){
-  const nm=(stop.official_name||stop.master_name||stop.name||'').trim();
-  const addr=(stop.address||'').trim();
-  return nm+'|'+addr;
-}
-function admDgPersistPlaceIds(){
-  try{localStorage.setItem(ADM_DG_PLACEID_CACHE_KEY,JSON.stringify(admDgPlaceIdCache));}catch(_e){}
-}
-async function admDgFetchPlaceId(stop){
-  if(stop.isStart)return null; // 出発拠点は店舗ではないのでスキップ
-  const k=admDgPlaceIdKey(stop);
-  if(k==='|')return null;
-  if(admDgPlaceIdCache[k]!==undefined)return admDgPlaceIdCache[k]; // null も記憶 (再試行回避)
-  const nm=(stop.official_name||stop.master_name||stop.name||'').trim();
-  const addr=(stop.address||'').trim();
-  const q=nm&&addr?`${nm} ${addr}`:(nm||addr);
-  if(!q)return null;
-  try{
-    const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
-    const r=await fetch(url);
-    const j=await r.json();
-    const pid=j.results?.[0]?.place_id||null;
-    admDgPlaceIdCache[k]=pid;
-    return pid;
-  }catch(_e){return null;}
-}
-// 並列取得 (10並列まで)、結果を stop.place_id に注入
-async function admDgEnsurePlaceIds(stops,onProgress){
-  const need=stops.filter(s=>!s.isStart&&!s.place_id&&admDgPlaceIdCache[admDgPlaceIdKey(s)]===undefined);
-  // すでにキャッシュにあるものは即注入
-  stops.forEach(s=>{
-    if(!s.place_id){
-      const k=admDgPlaceIdKey(s);
-      if(admDgPlaceIdCache[k])s.place_id=admDgPlaceIdCache[k];
-    }
-  });
-  if(!need.length)return;
-  const BATCH=10;let done=0;
-  for(let i=0;i<need.length;i+=BATCH){
-    const slice=need.slice(i,i+BATCH);
-    const ids=await Promise.all(slice.map(admDgFetchPlaceId));
-    slice.forEach((s,j)=>{if(ids[j])s.place_id=ids[j];});
-    done+=slice.length;
-    if(onProgress)onProgress(done,need.length);
-  }
-  admDgPersistPlaceIds();
-}
-// 全コースのストップから一括取得
-async function admDgEnsurePlaceIdsAll(){
-  if(!admDgResult)return;
-  const all=[];
-  (admDgResult.diagrams||[]).forEach(d=>(d.stops||[]).forEach(s=>all.push(s)));
-  const statusEl=document.getElementById('adm-dg-status');
-  await admDgEnsurePlaceIds(all,(done,total)=>{
-    if(statusEl)statusEl.textContent=`Place ID 取得中... ${done}/${total}`;
-  });
-  if(statusEl)statusEl.textContent='✓ Place ID 取得完了';
-  admDgRenderResults();
-}
-
 // 複数 URL を Supabase EF (shorten-url → TinyURL) でまとめて短縮。失敗時は元 URL を返す。
 async function admDgShortenUrls(urls){
   if(!urls||!urls.length)return urls;
@@ -4732,14 +4638,10 @@ async function admDgShortenUrls(urls){
 async function admDgPrintCourse(i){
   if(!admDgResult)return;
   const d=admDgResult.diagrams[i];
+  const navs=admDgBuildNavUrls(d.stops);
   // ポップアップブロック回避: 先に新規タブを開いてローディング表示 → 後でURL差し込み
   const w=window.open('','_blank');
-  const showLoading=(msg)=>{if(w){w.document.open();w.document.write('<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>PDF準備中...</title></head><body style="font-family:sans-serif;padding:40px;text-align:center;color:#555;">'+msg+'</body></html>');w.document.close();}};
-  showLoading('🔍 Place ID を確認中...');
-  // Place ID を取得 (キャッシュ済みなら即時)。これでナビ URL が place_id ベースになり Google Maps で店名表示される。
-  await admDgEnsurePlaceIds(d.stops,(done,total)=>showLoading('🔍 Place ID 取得中... '+done+'/'+total));
-  const navs=admDgBuildNavUrls(d.stops);
-  showLoading('🔗 ナビリンクを短縮中... ('+navs.length+'本)');
+  if(w){w.document.open();w.document.write('<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>PDF準備中...</title></head><body style="font-family:sans-serif;padding:40px;text-align:center;color:#555;">🔗 ナビリンクを短縮中... <br><small>('+navs.length+'本)</small></body></html>');w.document.close();}
   // PDF用にナビURLを短縮 (TinyURL)。失敗時は長いURLのままフォールバック。
   const shortUrls=await admDgShortenUrls(navs.map(n=>n.url));
   navs.forEach((n,k)=>{n.shortUrl=shortUrls[k]||n.url;});
