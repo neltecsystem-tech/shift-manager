@@ -4609,10 +4609,31 @@ function admDgRenderResults(){
   document.getElementById('adm-dg-results').innerHTML=html;
 }
 
-function admDgPrintCourse(i){
+// 複数 URL を Supabase EF (shorten-url → TinyURL) でまとめて短縮。失敗時は元 URL を返す。
+async function admDgShortenUrls(urls){
+  if(!urls||!urls.length)return urls;
+  try{
+    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shorten-url',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({urls}),
+    });
+    if(!resp.ok)return urls;
+    const j=await resp.json();
+    if(!Array.isArray(j.results))return urls;
+    return urls.map((u,i)=>j.results[i]||u);
+  }catch(_e){return urls;}
+}
+
+async function admDgPrintCourse(i){
   if(!admDgResult)return;
   const d=admDgResult.diagrams[i];
-  const navs=admDgBuildNavUrls(d.stops);
+  const longNavs=admDgBuildNavUrls(d.stops);
+  // ポップアップブロック回避: 先に新規タブを開いてローディング表示 → 後でURL差し込み
+  const w=window.open('','_blank');
+  if(w){w.document.open();w.document.write('<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>PDF準備中...</title></head><body style="font-family:sans-serif;padding:40px;text-align:center;color:#555;">🔗 ナビリンクを短縮中... <br><small>('+longNavs.length+'本)</small></body></html>');w.document.close();}
+  // PDF用にナビURLを短縮 (TinyURL)。失敗時は長いURLのままフォールバック。
+  const navs=await admDgShortenUrls(longNavs);
   const depot=admDgResult.depot?.address||'';
   let body='<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>'+admDgEsc(d.name)+'</title><style>';
   body+='body{font-family:-apple-system,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;margin:10mm;color:#111;font-size:9pt;}';
@@ -4636,12 +4657,19 @@ function admDgPrintCourse(i){
     body+='<tr class="'+cls+'"><td class="center">'+idx+'</td><td class="center">'+admDgEsc(idStr)+'</td><td>'+admDgEsc(s.name)+'</td><td class="center">'+admDgFmtTime(s.time)+'</td><td class="center">'+admDgEsc(s.dist||'')+'</td><td class="addr">'+admDgEsc(s.address||'')+'</td><td class="note">'+admDgEsc(printNote)+'</td></tr>';
   });
   body+='</tbody></table>';
-  body+='<div class="pgbreak"><h2>🗺 Googleナビ リンク (1リンク=スタート+9件 / 計'+navs.length+'本)</h2><ol>';
-  navs.forEach((u,j)=>{const startIdx=j*9;const endIdx=Math.min(startIdx+9,d.stops.filter(s=>s.lat&&s.lng).length-1);body+='<li><b>区間'+(j+1)+'</b> (順'+startIdx+'→順'+endIdx+'): <a href="'+admDgEsc(u)+'">'+admDgEsc(u)+'</a></li>';});
+  // 1リンク=8ストップ (1出発+6中継+1到着)、隣接リンクは1ストップ overlap
+  body+='<div class="pgbreak"><h2>🗺 Googleナビ リンク (1リンク=出発+7件 / 計'+navs.length+'本)</h2><ol>';
+  const pts=d.stops.filter(s=>s.lat&&s.lng);
+  navs.forEach((u,j)=>{const startIdx=j*7;const endIdx=Math.min(startIdx+7,pts.length-1);body+='<li><b>区間'+(j+1)+'</b> (順'+startIdx+'→順'+endIdx+'): <a href="'+admDgEsc(u)+'">'+admDgEsc(u)+'</a></li>';});
   body+='</ol></div></body></html>';
-  const w=window.open('','_blank');
-  w.document.open();w.document.write(body);w.document.close();
-  setTimeout(()=>{try{w.print();}catch(_){}},500);
+  if(w){
+    w.document.open();w.document.write(body);w.document.close();
+    setTimeout(()=>{try{w.print();}catch(_){}},500);
+  }else{
+    // ポップアップブロックされた場合のフォールバック
+    const w2=window.open('','_blank');
+    if(w2){w2.document.open();w2.document.write(body);w2.document.close();setTimeout(()=>{try{w2.print();}catch(_){}},500);}
+  }
 }
 
 async function admDgRenderAliases(){
