@@ -4726,7 +4726,18 @@ async function admDgEnsurePlaceIdsAll(){
   await admDgEnsurePlaceIds(all,(done,total)=>{
     if(statusEl)statusEl.textContent=`Place ID 取得中... ${done}/${total}`;
   });
-  if(statusEl)statusEl.innerHTML=before+' &nbsp;<span style="color:#0891b2;font-weight:600;">📍 Place ID 適用済み</span>';
+  // 取得結果のサマリーを表示
+  const total=all.filter(s=>!s.isStart).length;
+  const got=all.filter(s=>!s.isStart&&s.place_id).length;
+  const miss=total-got;
+  const color=miss===0?'#16a34a':(got===0?'#dc2626':'#f59e0b');
+  console.log('[admDg] Place ID 取得:',got,'/',total,'(失敗',miss,')');
+  if(statusEl)statusEl.innerHTML=before+` &nbsp;<span style="color:${color};font-weight:600;">📍 Place ID: ${got}/${total} 適用</span>`;
+  // 1件目のサンプル URL をログ出力 (デバッグ用)
+  if(admDgResult.diagrams[0]){
+    const navs=admDgBuildNavUrls(admDgResult.diagrams[0].stops);
+    if(navs[0])console.log('[admDg] サンプル URL:',navs[0].url);
+  }
   admDgRenderResults();
 }
 
