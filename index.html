@@ -4385,7 +4385,7 @@ async function admDgProcess(){
     if(res.error){document.getElementById('adm-dg-status').textContent='エラー: '+res.error;return;}
     admDgResult=res;
     const s=res.stats||{};
-    document.getElementById('adm-dg-status').innerHTML=`✓ 処理完了: ${s.matched||0}/${s.total||0} マッチ (alias経由${s.from_alias||0}件) / 未マッチ${s.unmatched||0}件 &nbsp;&nbsp;<button onclick="admDgPublish()" style="background:#16a34a;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🌐 公開URL作成</button>`;
+    document.getElementById('adm-dg-status').innerHTML=`✓ 処理完了: ${s.matched||0}/${s.total||0} マッチ (alias経由${s.from_alias||0}件) / 未マッチ${s.unmatched||0}件 &nbsp;&nbsp;<button onclick="admDgEnsurePlaceIdsAll()" style="background:#0891b2;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">📍 Place ID 取得</button>&nbsp;<button onclick="admDgPublish()" style="background:#16a34a;color:#fff;border:none;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">🌐 公開URL作成</button>`;
     admDgRenderResults();
   }catch(err){
     document.getElementById('adm-dg-status').textContent='処理失敗: '+(err.message||err);
@@ -4410,6 +4410,7 @@ function admDgNavLabel(s){
   return '';
 }
 
+// 戻り値: [{url, startName, endName, startIdx, endIdx}]
 function admDgBuildNavUrls(stops){
   const pts=stops.filter(s=>s.lat&&s.lng);
   const chunks=[];let i=0;
@@ -4417,21 +4418,32 @@ function admDgBuildNavUrls(stops){
   // 1 リンクあたり最大 8 ストップ (origin + 6 waypoint + destination) に分割。
   const CHUNK=8;
   while(i<pts.length-1){
-    const chunk=pts.slice(i,Math.min(i+CHUNK,pts.length));
-    if(chunk.length<2)break;
-    chunks.push(chunk);
+    const len=Math.min(i+CHUNK,pts.length)-i;
+    if(len<2)break;
+    chunks.push({startIdx:i,endIdx:i+len-1});
     if(i+CHUNK>=pts.length)break;
     i+=CHUNK-1; // 次のチャンクは前回の destination を origin に
   }
-  return chunks.map(chunk=>{
-    // ウェイポイント + destination は座標で渡す (ジオコーディング不要 → ルーティング確実)
-    // origin だけは出発拠点を視認しやすいよう「店名 or 住所」を維持
-    const fullLabel=(s)=>encodeURIComponent(admDgNavLabel(s)||(s.lat+','+s.lng));
-    const coordLabel=(s)=>(s.lat!=null&&s.lng!=null)?encodeURIComponent(s.lat+','+s.lng):fullLabel(s);
-    const origin=fullLabel(chunk[0]);
-    const dest=coordLabel(chunk[chunk.length-1]);
-    const wp=chunk.slice(1,-1).map(coordLabel).join('|');
-    return 'https://www.google.com/maps/dir/?api=1&origin='+origin+'&destination='+dest+(wp?'&waypoints='+wp:'')+'&travelmode=driving';
+  // ウェイポイントは place_id (あれば) or 座標。origin だけ「店名 or 住所」維持
+  const wpLabel=(s)=>{
+    if(s.place_id)return 'place_id:'+s.place_id;
+    if(s.lat!=null&&s.lng!=null)return s.lat+','+s.lng;
+    return admDgNavLabel(s)||'';
+  };
+  const fullLabel=(s)=>admDgNavLabel(s)||(s.lat+','+s.lng);
+  const nameOf=(s)=>(s.official_name||s.master_name||s.name||s.address||'').toString();
+  return chunks.map(c=>{
+    const chunk=pts.slice(c.startIdx,c.endIdx+1);
+    const origin=encodeURIComponent(fullLabel(chunk[0]));
+    const dest=encodeURIComponent(wpLabel(chunk[chunk.length-1]));
+    const wp=chunk.slice(1,-1).map(s=>encodeURIComponent(wpLabel(s))).join('|');
+    return {
+      url:'https://www.google.com/maps/dir/?api=1&origin='+origin+'&destination='+dest+(wp?'&waypoints='+wp:'')+'&travelmode=driving',
+      startIdx:c.startIdx,
+      endIdx:c.endIdx,
+      startName:nameOf(chunk[0]),
+      endName:nameOf(chunk[chunk.length-1]),
+    };
   });
 }
 
@@ -4494,10 +4506,8 @@ async function pubDgShow(slug){
       if(navs.length>0){
         html+='<div style="margin-top:8px;padding:8px;background:#fef3c7;border-radius:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">';
         html+='<span style="font-size:12px;color:#92400e;font-weight:600;">📍 Googleマップ:</span>';
-        navs.forEach((u,j)=>{
-          const startIdx=j*9;
-          const endIdx=Math.min(startIdx+9,d.stops.filter(s=>s.lat&&s.lng).length-1);
-          html+=`<a href="${admDgEsc(u)}" target="_blank" rel="noopener" style="background:#3b82f6;color:#fff;padding:4px 10px;border-radius:4px;font-size:11px;text-decoration:none;font-weight:600;">${startIdx+1}〜${endIdx+1}</a>`;
+        navs.forEach((n)=>{
+          html+=`<a href="${admDgEsc(n.url)}" target="_blank" rel="noopener" title="${admDgEsc(n.startName+' → '+n.endName)}" style="background:#3b82f6;color:#fff;padding:4px 10px;border-radius:4px;font-size:11px;text-decoration:none;font-weight:600;">${n.startIdx+1}〜${n.endIdx+1}</a>`;
         });
         html+='</div>';
       }
@@ -4594,10 +4604,9 @@ function admDgRenderResults(){
     });
     html+='</tbody></table></div>';
     html+='<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:12px;color:var(--primary);">🗺 ナビリンク '+navs.length+'本を表示</summary><ol style="font-size:11px;margin-top:6px;">';
-    navs.forEach((u,j)=>{
-      const startIdx=j*9;
-      const endIdx=Math.min(startIdx+9,d.stops.filter(s=>s.lat&&s.lng).length-1);
-      html+='<li style="margin-bottom:4px;word-break:break-all;"><b>区間'+(j+1)+'</b> (順'+startIdx+'→順'+endIdx+'): <a href="'+admDgEsc(u)+'" target="_blank" style="color:#1a73e8;">'+admDgEsc(u)+'</a></li>';
+    navs.forEach((n,j)=>{
+      const caption=admDgEsc(n.startName)+' → '+admDgEsc(n.endName);
+      html+='<li style="margin-bottom:6px;word-break:break-all;"><b>区間'+(j+1)+'</b> (順'+n.startIdx+'→順'+n.endIdx+'): '+caption+'<br><a href="'+admDgEsc(n.url)+'" target="_blank" style="color:#1a73e8;">'+admDgEsc(n.url)+'</a></li>';
     });
     html+='</ol></details></div>';
   });
@@ -4607,6 +4616,73 @@ function admDgRenderResults(){
     html+='</ul><div style="font-size:11px;color:#991b1b;margin-top:6px;">下のマッピング管理で正式名を登録すると次回以降自動で解決します。</div></div>';
   }
   document.getElementById('adm-dg-results').innerHTML=html;
+}
+
+// ─── Place ID キャッシュ + 取得 ─────────────────────────────
+// Google Maps のナビ URL で place_id:XXX を渡すと、Google Maps が確実に店舗名で
+// 表示してくれる。1店舗1回だけ Geocoding API で取得し localStorage に保存。
+const ADM_DG_PLACEID_CACHE_KEY='admDg_placeIds_v1';
+const admDgPlaceIdCache=(()=>{
+  try{return JSON.parse(localStorage.getItem(ADM_DG_PLACEID_CACHE_KEY)||'{}');}catch(_e){return {};}
+})();
+function admDgPlaceIdKey(stop){
+  const nm=(stop.official_name||stop.master_name||stop.name||'').trim();
+  const addr=(stop.address||'').trim();
+  return nm+'|'+addr;
+}
+function admDgPersistPlaceIds(){
+  try{localStorage.setItem(ADM_DG_PLACEID_CACHE_KEY,JSON.stringify(admDgPlaceIdCache));}catch(_e){}
+}
+async function admDgFetchPlaceId(stop){
+  if(stop.isStart)return null; // 出発拠点は店舗ではないのでスキップ
+  const k=admDgPlaceIdKey(stop);
+  if(k==='|')return null;
+  if(admDgPlaceIdCache[k]!==undefined)return admDgPlaceIdCache[k]; // null も記憶 (再試行回避)
+  const nm=(stop.official_name||stop.master_name||stop.name||'').trim();
+  const addr=(stop.address||'').trim();
+  const q=nm&&addr?`${nm} ${addr}`:(nm||addr);
+  if(!q)return null;
+  try{
+    const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
+    const r=await fetch(url);
+    const j=await r.json();
+    const pid=j.results?.[0]?.place_id||null;
+    admDgPlaceIdCache[k]=pid;
+    return pid;
+  }catch(_e){return null;}
+}
+// 並列取得 (10並列まで)、結果を stop.place_id に注入
+async function admDgEnsurePlaceIds(stops,onProgress){
+  const need=stops.filter(s=>!s.isStart&&!s.place_id&&admDgPlaceIdCache[admDgPlaceIdKey(s)]===undefined);
+  // すでにキャッシュにあるものは即注入
+  stops.forEach(s=>{
+    if(!s.place_id){
+      const k=admDgPlaceIdKey(s);
+      if(admDgPlaceIdCache[k])s.place_id=admDgPlaceIdCache[k];
+    }
+  });
+  if(!need.length)return;
+  const BATCH=10;let done=0;
+  for(let i=0;i<need.length;i+=BATCH){
+    const slice=need.slice(i,i+BATCH);
+    const ids=await Promise.all(slice.map(admDgFetchPlaceId));
+    slice.forEach((s,j)=>{if(ids[j])s.place_id=ids[j];});
+    done+=slice.length;
+    if(onProgress)onProgress(done,need.length);
+  }
+  admDgPersistPlaceIds();
+}
+// 全コースのストップから一括取得
+async function admDgEnsurePlaceIdsAll(){
+  if(!admDgResult)return;
+  const all=[];
+  (admDgResult.diagrams||[]).forEach(d=>(d.stops||[]).forEach(s=>all.push(s)));
+  const statusEl=document.getElementById('adm-dg-status');
+  await admDgEnsurePlaceIds(all,(done,total)=>{
+    if(statusEl)statusEl.textContent=`Place ID 取得中... ${done}/${total}`;
+  });
+  if(statusEl)statusEl.textContent='✓ Place ID 取得完了';
+  admDgRenderResults();
 }
 
 // 複数 URL を Supabase EF (shorten-url → TinyURL) でまとめて短縮。失敗時は元 URL を返す。
@@ -4628,12 +4704,17 @@ async function admDgShortenUrls(urls){
 async function admDgPrintCourse(i){
   if(!admDgResult)return;
   const d=admDgResult.diagrams[i];
-  const longNavs=admDgBuildNavUrls(d.stops);
   // ポップアップブロック回避: 先に新規タブを開いてローディング表示 → 後でURL差し込み
   const w=window.open('','_blank');
-  if(w){w.document.open();w.document.write('<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>PDF準備中...</title></head><body style="font-family:sans-serif;padding:40px;text-align:center;color:#555;">🔗 ナビリンクを短縮中... <br><small>('+longNavs.length+'本)</small></body></html>');w.document.close();}
+  const showLoading=(msg)=>{if(w){w.document.open();w.document.write('<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>PDF準備中...</title></head><body style="font-family:sans-serif;padding:40px;text-align:center;color:#555;">'+msg+'</body></html>');w.document.close();}};
+  showLoading('🔍 Place ID を確認中...');
+  // Place ID を取得 (キャッシュ済みなら即時)。これでナビ URL が place_id ベースになり Google Maps で店名表示される。
+  await admDgEnsurePlaceIds(d.stops,(done,total)=>showLoading('🔍 Place ID 取得中... '+done+'/'+total));
+  const navs=admDgBuildNavUrls(d.stops);
+  showLoading('🔗 ナビリンクを短縮中... ('+navs.length+'本)');
   // PDF用にナビURLを短縮 (TinyURL)。失敗時は長いURLのままフォールバック。
-  const navs=await admDgShortenUrls(longNavs);
+  const shortUrls=await admDgShortenUrls(navs.map(n=>n.url));
+  navs.forEach((n,k)=>{n.shortUrl=shortUrls[k]||n.url;});
   const depot=admDgResult.depot?.address||'';
   let body='<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>'+admDgEsc(d.name)+'</title><style>';
   body+='body{font-family:-apple-system,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;margin:10mm;color:#111;font-size:9pt;}';
@@ -4659,8 +4740,10 @@ async function admDgPrintCourse(i){
   body+='</tbody></table>';
   // 1リンク=8ストップ (1出発+6中継+1到着)、隣接リンクは1ストップ overlap
   body+='<div class="pgbreak"><h2>🗺 Googleナビ リンク (1リンク=出発+7件 / 計'+navs.length+'本)</h2><ol>';
-  const pts=d.stops.filter(s=>s.lat&&s.lng);
-  navs.forEach((u,j)=>{const startIdx=j*7;const endIdx=Math.min(startIdx+7,pts.length-1);body+='<li><b>区間'+(j+1)+'</b> (順'+startIdx+'→順'+endIdx+'): <a href="'+admDgEsc(u)+'">'+admDgEsc(u)+'</a></li>';});
+  navs.forEach((n,j)=>{
+    const cap=admDgEsc(n.startName)+' → '+admDgEsc(n.endName);
+    body+='<li><b>区間'+(j+1)+'</b> (順'+n.startIdx+'→順'+n.endIdx+'): '+cap+'<br><a href="'+admDgEsc(n.shortUrl)+'">'+admDgEsc(n.shortUrl)+'</a></li>';
+  });
   body+='</ol></div></body></html>';
   if(w){
     w.document.open();w.document.write(body);w.document.close();
