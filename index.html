@@ -4432,13 +4432,25 @@ function admDgBuildNavUrls(stops){
   };
   const fullLabel=(s)=>admDgNavLabel(s)||(s.lat+','+s.lng);
   const nameOf=(s)=>(s.official_name||s.master_name||s.name||s.address||'').toString();
+  // 中継ページの絶対 URL (GitHub Pages の Shift Manager 配下)
+  // Android: nav.html が Intent URL で Google Maps アプリを明示起動
+  // iOS:     comgooglemaps:// スキームを試行 → 失敗時は web マップに戻る
+  // PC:      そのまま Web の Google Maps を開く
+  const navBase=(()=>{
+    try{
+      const u=new URL(location.href);
+      return u.origin+u.pathname.replace(/\/[^\/]*$/,'/')+'nav.html';
+    }catch(_e){return 'https://neltecsystem-tech.github.io/shift-manager/nav.html';}
+  })();
   return chunks.map(c=>{
     const chunk=pts.slice(c.startIdx,c.endIdx+1);
     const origin=encodeURIComponent(fullLabel(chunk[0]));
     const dest=encodeURIComponent(wpLabel(chunk[chunk.length-1]));
     const wp=chunk.slice(1,-1).map(s=>encodeURIComponent(wpLabel(s))).join('|');
+    const mapsUrl='https://www.google.com/maps/dir/?api=1&origin='+origin+'&destination='+dest+(wp?'&waypoints='+wp:'')+'&travelmode=driving';
     return {
-      url:'https://www.google.com/maps/dir/?api=1&origin='+origin+'&destination='+dest+(wp?'&waypoints='+wp:'')+'&travelmode=driving',
+      url:navBase+'?u='+encodeURIComponent(mapsUrl),
+      mapsUrl,
       startIdx:c.startIdx,
       endIdx:c.endIdx,
       startName:nameOf(chunk[0]),
@@ -11667,13 +11679,23 @@ async function diagNavFromHere(id){
     params.set('destination',destLabel(last));
     if(rest.length>0)params.set('waypoints',rest.map(wpLabel).join('|'));
     params.set('travelmode','driving');
-    const url=`https://www.google.com/maps/dir/?${params.toString()}`;
+    const mapsUrl=`https://www.google.com/maps/dir/?${params.toString()}`;
+    // 中継ページ経由で Android Intent URL に変換 → Google Maps アプリを明示起動
+    const url=diagWrapNavUrl(mapsUrl);
     if(w)w.location.href=url;
     else window.location.href=url;
   }catch(e){
     if(w)w.close();
     alert('ナビ起動エラー: '+(e&&e.message?e.message:e));
   }
+}
+
+function diagWrapNavUrl(mapsUrl){
+  try{
+    const u=new URL(location.href);
+    const base=u.origin+u.pathname.replace(/\/[^\/]*$/,'/')+'nav.html';
+    return base+'?u='+encodeURIComponent(mapsUrl);
+  }catch(_e){return mapsUrl;}
 }
 
 async function diagNavOpen(routeId){
@@ -11711,7 +11733,8 @@ async function diagNavOpen(routeId){
     params.set('destination',destLabel(last));
     if(rest.length>0)params.set('waypoints',rest.map(wpLabel).join('|'));
     params.set('travelmode','driving');
-    const url=`https://www.google.com/maps/dir/?${params.toString()}`;
+    const mapsUrl=`https://www.google.com/maps/dir/?${params.toString()}`;
+    const url=diagWrapNavUrl(mapsUrl);
     if(w)w.location.href=url;
     else window.location.href=url; // ポップアップブロックされた場合のフォールバック
   }catch(e){

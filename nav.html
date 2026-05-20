@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>ナビ起動中...</title>
+<style>
+  body{font-family:-apple-system,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;background:#f8fafc;color:#333;padding:30px 16px;text-align:center;}
+  h1{font-size:18px;margin:0 0 16px;color:#0891b2;}
+  .url{word-break:break-all;font-size:11px;color:#94a3b8;margin-top:12px;}
+  .btn{display:inline-block;background:#0891b2;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:16px;}
+</style>
+</head>
+<body>
+  <h1>🚗 Google マップで起動中...</h1>
+  <p>自動で起動しない場合は下のボタンを押してください。</p>
+  <a id="manual" class="btn" href="#">▶ Google マップで開く</a>
+  <div class="url" id="urlview"></div>
+<script>
+(function(){
+  var params=new URLSearchParams(location.search);
+  var raw=params.get('u');
+  if(!raw){document.body.innerHTML='<p style="padding:40px;">URLが指定されていません</p>';return;}
+  var target;
+  try{target=decodeURIComponent(raw);}catch(_e){target=raw;}
+  if(!/^https?:\/\//.test(target)){document.body.innerHTML='<p style="padding:40px;">不正なURLです</p>';return;}
+  document.getElementById('urlview').textContent=target;
+  document.getElementById('manual').href=target;
+
+  var ua=navigator.userAgent||'';
+  var isAndroid=/android/i.test(ua);
+  var isIOS=/iphone|ipad|ipod/i.test(ua);
+
+  if(isAndroid){
+    // Android Intent URL で Google マップアプリを明示的に起動。
+    // 未インストール時は S.browser_fallback_url のフォールバック URL に戻る。
+    var stripped=target.replace(/^https?:\/\//,'');
+    var fallback=encodeURIComponent(target);
+    var intentUrl='intent://'+stripped+'#Intent;scheme=https;package=com.google.android.apps.maps;'+
+      'S.browser_fallback_url='+fallback+';end';
+    location.replace(intentUrl);
+    setTimeout(function(){
+      // intent URL がブロックされた場合のフォールバック
+      location.replace(target);
+    },1500);
+  }else if(isIOS){
+    // iOS: comgooglemaps URL スキームを試して、失敗時は通常 URL に戻る
+    var iosTarget=target;
+    if(target.indexOf('maps/dir/')>=0){
+      // /maps/dir/?api=1&origin=A&destination=B&waypoints=X|Y → comgooglemaps://?saddr=A&daddr=B+to:X+to:Y
+      try{
+        var u=new URL(target);
+        var origin=u.searchParams.get('origin')||'';
+        var dest=u.searchParams.get('destination')||'';
+        var wp=u.searchParams.get('waypoints')||'';
+        var daddr=[].concat(wp?wp.split('|'):[]).concat(dest?[dest]:[]).join('+to:');
+        iosTarget='comgooglemaps://?saddr='+encodeURIComponent(origin)+'&daddr='+encodeURIComponent(daddr)+'&directionsmode=driving';
+      }catch(_e){}
+    }
+    location.replace(iosTarget);
+    setTimeout(function(){location.replace(target);},1500);
+  }else{
+    location.replace(target);
+  }
+})();
+</script>
+</body>
+</html>
