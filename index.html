@@ -4414,9 +4414,10 @@ function admDgNavLabel(s){
 function admDgBuildNavUrls(stops){
   const pts=stops.filter(s=>s.lat&&s.lng);
   const chunks=[];let i=0;
-  // Google Maps モバイルは合計 10 ストップ以上で失敗しやすい。
-  // 1 リンクあたり最大 8 ストップ (origin + 6 waypoint + destination) に分割。
-  const CHUNK=8;
+  // 月別ダイヤグラムと揃えて 9 ストップ/リンクに分割。
+  // ウェイポイント (中間 7 件) は place_id があれば place_id:XXX、なければ座標。
+  // 店名表示は place_id 由来。ルーティングは place_id か coord ベースで信頼性◎。
+  const CHUNK=9;
   while(i<pts.length-1){
     const len=Math.min(i+CHUNK,pts.length)-i;
     if(len<2)break;
@@ -4750,8 +4751,8 @@ async function admDgPrintCourse(i){
     body+='<tr class="'+cls+'"><td class="center">'+idx+'</td><td class="center">'+admDgEsc(idStr)+'</td><td>'+admDgEsc(s.name)+'</td><td class="center">'+admDgFmtTime(s.time)+'</td><td class="center">'+admDgEsc(s.dist||'')+'</td><td class="addr">'+admDgEsc(s.address||'')+'</td><td class="note">'+admDgEsc(printNote)+'</td></tr>';
   });
   body+='</tbody></table>';
-  // 1リンク=8ストップ (1出発+6中継+1到着)、隣接リンクは1ストップ overlap
-  body+='<div class="pgbreak"><h2>🗺 Googleナビ リンク (1リンク=出発+7件 / 計'+navs.length+'本)</h2><ol>';
+  // 1リンク=9ストップ (1出発+7中継+1到着)、隣接リンクは1ストップ overlap
+  body+='<div class="pgbreak"><h2>🗺 Googleナビ リンク (1リンク=出発+8件 / 計'+navs.length+'本)</h2><ol>';
   navs.forEach((n,j)=>{
     const cap=admDgEsc(n.startName)+' → '+admDgEsc(n.endName);
     body+='<li><b>区間'+(j+1)+'</b> (順'+n.startIdx+'→順'+n.endIdx+'): '+cap+'<br><a href="'+admDgEsc(n.shortUrl)+'">'+admDgEsc(n.shortUrl)+'</a></li>';
