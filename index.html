@@ -4431,7 +4431,10 @@ function admDgBuildNavUrls(stops){
     i+=CHUNK-1;
   }
   const nameOf=(s)=>(s.official_name||s.master_name||s.name||s.address||'').toString();
-  const coordOf=(s)=>s.lat+','+s.lng;
+  // 単一ラベル: place_id があれば place_id:ChIJxxx、なければ lat,lng。
+  // 座標と place_id を別パラメータで両方渡すと Google マップが座標を優先して
+  // place_id を無視するため、waypoints 自体に place_id: プレフィックスを埋める。
+  const labelOf=(s)=>s.place_id?('place_id:'+s.place_id):(s.lat+','+s.lng);
   return chunks.map(c=>{
     const chunk=pts.slice(c.startIdx,c.endIdx+1);
     const first=chunk[0];
@@ -4439,16 +4442,9 @@ function admDgBuildNavUrls(stops){
     const mids=chunk.slice(1,-1);
     const params=new URLSearchParams();
     params.set('api','1');
-    params.set('origin',coordOf(first));
-    params.set('destination',coordOf(last));
-    if(mids.length>0)params.set('waypoints',mids.map(coordOf).join('|'));
-    // Place ID があれば付与 — Google マップが店舗名で表示するようになる。
-    // waypoints と同数・同順で `|` 区切り (該当なしは空文字)。
-    if(first.place_id&&!first.isStart)params.set('origin_place_id',first.place_id);
-    if(last.place_id)params.set('destination_place_id',last.place_id);
-    if(mids.length>0&&mids.some(s=>s.place_id)){
-      params.set('waypoint_place_ids',mids.map(s=>s.place_id||'').join('|'));
-    }
+    params.set('origin',labelOf(first));
+    params.set('destination',labelOf(last));
+    if(mids.length>0)params.set('waypoints',mids.map(labelOf).join('|'));
     params.set('travelmode','driving');
     return {
       url:'https://www.google.com/maps/dir/?'+params.toString(),
