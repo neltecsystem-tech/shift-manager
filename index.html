@@ -4425,13 +4425,10 @@ function admDgBuildNavUrls(stops){
     if(i+CHUNK>=pts.length)break;
     i+=CHUNK-1; // 次のチャンクは前回の destination を origin に
   }
-  // ウェイポイントは place_id (あれば) or 座標。origin だけ「店名 or 住所」維持
-  const wpLabel=(s)=>{
-    if(s.place_id)return 'place_id:'+s.place_id;
-    if(s.lat!=null&&s.lng!=null)return s.lat+','+s.lng;
-    return admDgNavLabel(s)||'';
-  };
-  const fullLabel=(s)=>admDgNavLabel(s)||(s.lat+','+s.lng);
+  // 座標ラベル (ルーティング用): "lat,lng" 形式
+  const coordLabel=(s)=>(s.lat!=null&&s.lng!=null)?(s.lat+','+s.lng):'';
+  // 視認用ラベル (origin/destination の表示文字列)
+  const fullLabel=(s)=>admDgNavLabel(s)||coordLabel(s);
   const nameOf=(s)=>(s.official_name||s.master_name||s.name||s.address||'').toString();
   // 中継ページの絶対 URL (GitHub Pages の Shift Manager 配下)
   // Android: nav.html が Intent URL で Google Maps アプリを明示起動
@@ -4445,17 +4442,35 @@ function admDgBuildNavUrls(stops){
   })();
   return chunks.map(c=>{
     const chunk=pts.slice(c.startIdx,c.endIdx+1);
-    const origin=encodeURIComponent(fullLabel(chunk[0]));
-    const dest=encodeURIComponent(wpLabel(chunk[chunk.length-1]));
-    const wp=chunk.slice(1,-1).map(s=>encodeURIComponent(wpLabel(s))).join('|');
-    const mapsUrl='https://www.google.com/maps/dir/?api=1&origin='+origin+'&destination='+dest+(wp?'&waypoints='+wp:'')+'&travelmode=driving';
+    const first=chunk[0];
+    const last=chunk[chunk.length-1];
+    const mids=chunk.slice(1,-1);
+    // Google Maps URL の正しい形式 (https://developers.google.com/maps/documentation/urls/get-started#directions-action):
+    // - origin / destination / waypoints は座標 or 住所文字列
+    // - origin_place_id / destination_place_id / waypoint_place_ids が Place ID 用の "別パラメータ"
+    // - 両方を指定すると Place ID が優先され、店舗名で表示される
+    const params=new URLSearchParams();
+    params.set('api','1');
+    params.set('origin',fullLabel(first));
+    if(first.place_id)params.set('origin_place_id',first.place_id);
+    params.set('destination',coordLabel(last)||fullLabel(last));
+    if(last.place_id)params.set('destination_place_id',last.place_id);
+    if(mids.length>0){
+      params.set('waypoints',mids.map(s=>coordLabel(s)||fullLabel(s)).join('|'));
+      // waypoint_place_ids は waypoints と同じ件数・順序で揃える必要がある (空でも | で埋める)
+      if(mids.some(s=>s.place_id)){
+        params.set('waypoint_place_ids',mids.map(s=>s.place_id||'').join('|'));
+      }
+    }
+    params.set('travelmode','driving');
+    const mapsUrl='https://www.google.com/maps/dir/?'+params.toString();
     return {
       url:navBase+'?u='+encodeURIComponent(mapsUrl),
       mapsUrl,
       startIdx:c.startIdx,
       endIdx:c.endIdx,
-      startName:nameOf(chunk[0]),
-      endName:nameOf(chunk[chunk.length-1]),
+      startName:nameOf(first),
+      endName:nameOf(last),
     };
   });
 }
