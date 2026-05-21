@@ -9713,7 +9713,83 @@ async function admPayRender(){
     await invLoadShopMaster();
     msg.textContent='';
   }
-  cont.innerHTML=admPayBuildStatementHtml(rate,y,m,monthLabel,monthVal);
+  const stmt=admPayBuildStatement(rate,y,m,monthLabel,monthVal);
+  cont.innerHTML=admPayBuildSaveBar([{rate,stmt}],y,m,monthLabel)+stmt.html;
+}
+
+// 統合明細ビューア用「確定保存」ボタンバー
+// items: [{rate, stmt}]  rate=単価マスタ行 / stmt=admPayBuildStatement の戻り値
+const ADM_PAY_SAVE_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/save-pay-statement';
+const admPaySavePayloadStore={};// barId -> statements[]
+
+function admPayBuildSaveBar(items,y,m,monthLabel){
+  if(!items.length)return '';
+  const id=`adm-pay-save-bar-${Math.random().toString(36).slice(2,8)}`;
+  const label=items.length===1?`「${items[0].rate.name}」の明細を確定保存`:`${items.length}名分を一括確定保存`;
+  const payload=items.map(({rate,stmt})=>{
+    const phone=getPhone(rate.name);
+    const primary=monthLabel?admPayGetPrimaryArea(monthLabel,rate.name):'';
+    return {
+      staff_name:rate.name,
+      phone:phone||'',
+      year:y,
+      month:m,
+      am_sum:stmt.amSum,
+      pm_sum:stmt.pmSum,
+      grand_total:stmt.grandTotal,
+      rows:stmt.rows,
+      calc_type:rate.calc_type||null,
+      calc_type_pm:rate.calc_type_pm||null,
+      biz_type:rate.biz_type||null,
+      company_name:rate.company||null,
+      primary_area:primary||null,
+    };
+  });
+  admPaySavePayloadStore[id]=payload;
+  const noPhone=payload.filter(p=>!p.phone);
+  const escHtml=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const warning=noPhone.length?`<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:11px;color:#92400e;">⚠️ 電話番号未登録 (人員名簿シート D列): ${escHtml(noPhone.map(p=>p.staff_name).slice(0,5).join(', '))}${noPhone.length>5?` 他${noPhone.length-5}名`:''} — 該当者はビューアから検索できません</div>`:'';
+  return `<div id="${id}" style="background:#eef2ff;border:1px solid #6366f1;border-radius:8px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+  <div style="font-size:13px;color:#3730a3;font-weight:600;">📤 統合明細ビューアに公開 (${items.length}名)</div>
+  <button onclick="admPaySaveStatements('${id}')" style="background:#6366f1;color:#fff;border:none;padding:7px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">${escHtml(label)}</button>
+  <div id="${id}-msg" style="font-size:12px;flex-basis:100%;"></div>
+  ${warning}
+  </div>`;
+}
+
+async function admPaySaveStatements(barId){
+  const statements=admPaySavePayloadStore[barId];
+  if(!statements||!statements.length){alert('保存対象がありません');return;}
+  const msg=document.getElementById(`${barId}-msg`);
+  const pw=prompt('管理者パスワードを入力してください:');
+  if(pw===null)return;
+  if(!pw){alert('パスワードが入力されていません');return;}
+  msg.textContent=`💾 保存中... (${statements.length}名)`;msg.style.color='#3b82f6';
+  try{
+    const resp=await fetch(ADM_PAY_SAVE_EF,{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        // anon を使う (verify_jwt=true)
+        'Authorization':'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jY29nbnB0b3ByaHdzYmpud2N1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNDU0NDEsImV4cCI6MjA4OTkyMTQ0MX0.M3h31uPyKYWlNevVW3OvZOonoTidC1KLZ04sB5nRKzU'
+      },
+      body:JSON.stringify({
+        admin_password:pw,
+        finalized_by:(typeof sysUserName!=='undefined'&&sysUserName)?sysUserName:'admin',
+        statements:statements.filter(s=>s.phone),// 電話なしは除外
+      })
+    });
+    const j=await resp.json();
+    if(j.error){throw new Error(j.error);}
+    const skipped=statements.filter(s=>!s.phone).length;
+    const newCount=(j.details||[]).filter(d=>!d.modified).length;
+    const updCount=(j.details||[]).filter(d=>d.modified).length;
+    msg.textContent=`✓ 保存完了 — 新規 ${newCount} / 更新 ${updCount}${skipped?` / スキップ(電話なし) ${skipped}`:''}`;
+    msg.style.color='#16a34a';
+  }catch(e){
+    msg.textContent=`❌ 保存失敗: ${e.message}`;
+    msg.style.color='var(--danger)';
+  }
 }
 
 // 単一ドライバーの明細HTML生成 (admPayRender / admPayBulk から共有)
@@ -10154,7 +10230,10 @@ async function admPayBulk(){
   const escAttr=s=>String(s||'').replace(/"/g,'&quot;');
   const tagWrap=(html,groupKey)=>html.replace('class="adm-pay-statement"',`class="adm-pay-statement" data-group="${escAttr(groupKey)}"`);
 
-  let html=`<div id="adm-pay-bulk-header" style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#166534;font-weight:600;">📋 ${area}営業所 ${monthVal} 一括明細書 — ${drivers.length}名分${companyGroups.size>0?` (法人 ${companyGroups.size}社含む)`:''}</div>`;
+  // 統合明細ビューアへの一括公開バー
+  const allItems=drivers.map(({rate})=>({rate,stmt:stmtCache.get(rate.name)}));
+  let html=admPayBuildSaveBar(allItems,y,m,monthLabel);
+  html+=`<div id="adm-pay-bulk-header" style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#166534;font-weight:600;">📋 ${area}営業所 ${monthVal} 一括明細書 — ${drivers.length}名分${companyGroups.size>0?` (法人 ${companyGroups.size}社含む)`:''}</div>`;
   let blockCount=0;
   const addPageBreak=()=>{if(blockCount>0)html+='<div style="page-break-before:always;height:24px;"></div>';blockCount++;};
 
