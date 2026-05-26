@@ -11924,8 +11924,8 @@ function diagRender(){
     h+=`</div>`;
 
     // 運行バー
-    h+=`<div style="padding:22px 20px 28px;background:#fafbfc;border-bottom:1px solid var(--border);">`;
-    h+=`<div style="position:relative;height:52px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;">`;
+    h+=`<div style="padding:22px 20px 28px;background:#fafbfc;border-bottom:1px solid var(--border);overflow-x:auto;">`;
+    h+=`<div style="position:relative;height:52px;min-width:520px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;">`;
     const ticks=6;
     for(let ti=0;ti<=ticks;ti++){
       const mm=vMin+span*ti/ticks;
@@ -11942,8 +11942,9 @@ function diagRender(){
     });
     h+=`</div></div>`;
 
-    // 詳細テーブル
-    h+=`<table style="font-size:13px;"><thead><tr><th style="width:40px;">順</th><th>店舗名</th><th>住所</th><th style="width:80px;">店着</th><th style="width:100px;">ナビ</th><th style="min-width:160px;">📝 特記 (タップで編集)</th></tr></thead><tbody>`;
+    // 詳細テーブル (横スクロール対応)
+    h+=`<div style="overflow-x:auto;">`;
+    h+=`<table style="font-size:13px;min-width:640px;"><thead><tr><th style="width:40px;">順</th><th>店舗名</th><th>住所</th><th style="width:80px;">店着</th><th style="width:100px;">ナビ</th><th style="min-width:160px;">📝 特記 (タップで編集)</th></tr></thead><tbody>`;
     shops.forEach(s=>{
       const tm=diagParseTime(s.schedTime);
       const hasLL=s.lat!=null&&s.lng!=null;
@@ -11966,7 +11967,7 @@ function diagRender(){
       }
       h+=`<tr><td style="text-align:center;color:var(--text-sub);">${s.seq}</td><td style="font-weight:600;">${s.name}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;color:${tm!=null?'#1e40af':'#cbd5e1'};">${s.schedTime||'--:--'}</td><td style="text-align:center;">${navBtn}</td><td>${noteCell}</td></tr>`;
     });
-    h+=`</tbody></table>`;
+    h+=`</tbody></table></div>`;
 
     // Google Maps ナビゲーション (9店舗/リンクで分割: origin=現在地 + waypoints最大8 + destination=1)
     // タップ時に最新マスタを再取得してから開く
