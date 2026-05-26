@@ -340,7 +340,7 @@ tbody tr:hover { background:var(--primary-light); }
           <label style="font-size:12px;color:var(--text-sub)">終了時間</label><input type="time" id="inve-end" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;">
         </div>
         <div style="margin-bottom:10px;display:none;" id="inve-qty-wrap"><label style="font-size:12px;color:var(--text-sub)">配送個数</label><input type="number" id="inve-qty" onchange="invCalcAmount()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
-        <div style="margin-bottom:10px;display:flex;gap:10px;">
+        <div id="inve-money-wrap" style="margin-bottom:10px;display:flex;gap:10px;">
           <div style="flex:1"><label style="font-size:12px;color:var(--text-sub)">単価</label><input type="text" id="inve-price" readonly style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#f1f5f9;"></div>
           <div style="flex:1"><label style="font-size:12px;color:var(--text-sub)">金額</label><input type="text" id="inve-amount" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;font-weight:bold;"></div>
         </div>
@@ -407,8 +407,9 @@ tbody tr:hover { background:var(--primary-light); }
             <p style="font-size:12px;color:#c2410c;margin:0;background:#fff7ed;padding:6px 8px;border-radius:4px;">⚠ <b>夕刊/競馬は自動適用されません。</b>通常タブの夕刊単価を必ず設定してください。</p>
           </div>
         </div>
-        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-salary-wrap').style.display=this.value==='社員'?'block':'none';" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人</option><option value="社員">社員</option></select></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-owner-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-salary-wrap').style.display=this.value==='社員'?'block':'none';" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人</option><option value="社員">社員</option></select></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-company-wrap"><label style="font-size:12px;color:var(--text-sub)">所属会社名</label><input type="text" id="inv-re-company" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="株式会社○○"></div>
+        <div style="margin-bottom:10px;display:none;" id="inv-re-owner-wrap"><label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;background:#fef9c3;border:1px solid #facc15;border-radius:8px;padding:8px 12px;"><input type="checkbox" id="inv-re-owner"> 👑 オーナー (法人代表者)</label><div style="font-size:11px;color:var(--text-sub);margin-top:3px;padding-left:4px;">チェックなしの法人メンバーは稼働登録・請求書で金額が非表示になります</div></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-salary-wrap"><label style="font-size:12px;color:var(--text-sub)">月給 (円)</label><input type="number" id="inv-re-salary" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 280000" min="0" step="1000"><div style="font-size:11px;color:var(--text-sub);margin-top:3px;">収支管理画面で「社員の給料」として集計されます</div></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">インボイス登録番号</label><input type="text" id="inv-re-invoice" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: T1234567890123 (適格請求書発行事業者)"><div style="font-size:11px;color:var(--text-sub);margin-top:3px;">登録あり=外税表記、なし=内税表記で請求書を生成</div></div>
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">ログイン情報</label></div>
@@ -3247,6 +3248,14 @@ async function invApi(body){
   return resp.json();
 }
 
+// ログイン中ユーザーが「法人だがオーナーではない (=金額非表示対象)」か判定
+function invIsCorpSubStaff(){
+  if(invIsAdmin||!invStaffName)return false;
+  const me=invRates.find(r=>r.name===invStaffName);
+  if(!me||me.biz_type!=='法人')return false;
+  return !(me.permissions||'').split(',').includes('owner');
+}
+
 function invInit(){
   if(!invAuthed){
     invShowLogin();
@@ -3309,6 +3318,15 @@ function invApplyUI(){
   // UI制御: 管理者のみの要素
   const adminEls=document.querySelectorAll('.inv-admin-only');
   adminEls.forEach(el=>{el.style.display=invIsAdmin?'':'none';});
+  // 法人サブスタッフ (オーナー以外) は請求書作成タブを非表示
+  const isCorpSub=invIsCorpSubStaff();
+  const genTab=document.getElementById('inv-tab-generate');
+  if(genTab)genTab.style.display=isCorpSub?'none':'';
+  if(isCorpSub){
+    // 開かれていたら稼働記録に強制切替
+    const genView=document.getElementById('inv-gen-view');
+    if(genView&&genView.style.display!=='none')invSetTab('work');
+  }
   // ログイン中の表示
   const headerArea=document.querySelector('#view-invoice .card h2');
   if(headerArea)headerArea.innerHTML=`📄 請求書 <span style="font-size:13px;color:var(--text-sub);font-weight:normal;margin-left:8px;">${invIsAdmin?'👑 管理者':'👤 '+invStaffName}</span>`;
@@ -3388,14 +3406,17 @@ function invFilterWork(){
   if(staff)filtered=filtered.filter(w=>w.staff===staff);
   document.getElementById('inv-work-count').textContent=`${filtered.length}件`;
   if(!filtered.length){document.getElementById('inv-work-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">稼働データがありません</p>';return;}
-  let h='<table><thead><tr><th>日付</th><th>スタッフ</th><th>コース</th><th>区分</th><th>時間</th><th>個数</th><th>単価</th><th>金額</th><th></th></tr></thead><tbody>';
+  const hideMoney=invIsCorpSubStaff();
+  let h='<table><thead><tr><th>日付</th><th>スタッフ</th><th>コース</th><th>区分</th><th>時間</th><th>個数</th>'+(hideMoney?'':'<th>単価</th><th>金額</th>')+'<th></th></tr></thead><tbody>';
   filtered.forEach(w=>{
     const locked=!invIsAdmin&&w.confirmed;
-    h+=`<tr${locked?' style="background:#f0fdf4;"':''}><td>${w.date}</td><td><b>${w.staff}</b></td><td>${w.course}</td><td>${w.category}</td><td>${w.start_time||''}${w.start_time&&w.end_time?'~':''}${w.end_time||''}</td><td>${w.quantity||''}</td><td>${w.unit_price?'¥'+Number(w.unit_price).toLocaleString():''}</td><td><b>${w.amount?'¥'+Number(w.amount).toLocaleString():''}</b></td><td>${locked?'<span title="確定済み" style="color:#22c55e;font-size:16px;">🔒</span>':'<button onclick="invEditWork('+w.row_number+')" style="background:none;border:none;cursor:pointer;">✏️</button><button onclick="invDeleteWork('+w.row_number+')" style="background:none;border:none;cursor:pointer;">🗑</button>'}</td></tr>`;
+    h+=`<tr${locked?' style="background:#f0fdf4;"':''}><td>${w.date}</td><td><b>${w.staff}</b></td><td>${w.course}</td><td>${w.category}</td><td>${w.start_time||''}${w.start_time&&w.end_time?'~':''}${w.end_time||''}</td><td>${w.quantity||''}</td>${hideMoney?'':`<td>${w.unit_price?'¥'+Number(w.unit_price).toLocaleString():''}</td><td><b>${w.amount?'¥'+Number(w.amount).toLocaleString():''}</b></td>`}<td>${locked?'<span title="確定済み" style="color:#22c55e;font-size:16px;">🔒</span>':'<button onclick="invEditWork('+w.row_number+')" style="background:none;border:none;cursor:pointer;">✏️</button><button onclick="invDeleteWork('+w.row_number+')" style="background:none;border:none;cursor:pointer;">🗑</button>'}</td></tr>`;
   });
   h+='</tbody></table>';
-  const total=filtered.reduce((s,w)=>s+Number(w.amount||0),0);
-  h+=`<p style="text-align:right;font-weight:bold;margin-top:8px;">合計: ¥${total.toLocaleString()}</p>`;
+  if(!hideMoney){
+    const total=filtered.reduce((s,w)=>s+Number(w.amount||0),0);
+    h+=`<p style="text-align:right;font-weight:bold;margin-top:8px;">合計: ¥${total.toLocaleString()}</p>`;
+  }
   document.getElementById('inv-work-table').innerHTML=h;
 }
 
@@ -3636,6 +3657,7 @@ function invShowAdd(){
   document.getElementById('inve-price').value='';
   document.getElementById('inve-amount').value='';
   document.getElementById('inve-qty-wrap').style.display='none';
+  document.getElementById('inve-money-wrap').style.display=invIsCorpSubStaff()?'none':'flex';
   document.getElementById('inve-submit').textContent='登録する';
   document.getElementById('inv-work-modal').style.display='flex';
 }
@@ -3652,6 +3674,7 @@ function invEditWork(rowNum){
   document.getElementById('inve-qty').value=w.quantity;
   document.getElementById('inve-price').value=w.unit_price?'¥'+Number(w.unit_price).toLocaleString():'';
   document.getElementById('inve-amount').value=w.amount?'¥'+Number(w.amount).toLocaleString():'';
+  document.getElementById('inve-money-wrap').style.display=invIsCorpSubStaff()?'none':'flex';
   document.getElementById('inve-submit').textContent='更新する';
   invCalcAmount();
   document.getElementById('inv-work-modal').style.display='flex';
@@ -3772,6 +3795,8 @@ function invAddRate(){
   document.getElementById('inv-re-biztype').value='';
   document.getElementById('inv-re-company').value='';
   document.getElementById('inv-re-company-wrap').style.display='none';
+  document.getElementById('inv-re-owner').checked=false;
+  document.getElementById('inv-re-owner-wrap').style.display='none';
   document.getElementById('inv-re-salary').value='';
   document.getElementById('inv-re-salary-wrap').style.display='none';
   document.getElementById('inv-re-invoice').value='';
@@ -3817,6 +3842,8 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-biztype').value=r.biz_type||'';
   document.getElementById('inv-re-company').value=r.company||'';
   document.getElementById('inv-re-company-wrap').style.display=r.biz_type==='法人'?'block':'none';
+  document.getElementById('inv-re-owner').checked=(r.permissions||'').includes('owner');
+  document.getElementById('inv-re-owner-wrap').style.display=r.biz_type==='法人'?'block':'none';
   document.getElementById('inv-re-salary').value=r.monthly_salary||'';
   document.getElementById('inv-re-salary-wrap').style.display=r.biz_type==='社員'?'block':'none';
   document.getElementById('inv-re-invoice').value=r.invoice_number||'';
@@ -3873,6 +3900,8 @@ async function invSaveRate(){
   if(document.getElementById('inv-re-perm-defects').checked)permArr.push('defects');
   if(document.getElementById('inv-re-perm-shopmaster').checked)permArr.push('shopmaster');
   if(document.getElementById('inv-re-perm-shiftedit').checked)permArr.push('shiftedit');
+  // 法人オーナーフラグ (法人区分の時のみ意味を持つ)
+  if(document.getElementById('inv-re-biztype').value==='法人'&&document.getElementById('inv-re-owner').checked)permArr.push('owner');
   const perms=permArr.join(',');
   const kwAmDaily=['mon','tue','wed','thu','fri','sat','sun'].map(d=>document.getElementById('inv-re-kw-'+d).value).join(',');
   const kwPattern=document.getElementById('inv-re-kw-pattern').value;
@@ -11145,8 +11174,12 @@ async function msrLoadData(){
       if(h==='緯度')msrColMap.lat=i;
       if(h==='経度')msrColMap.lng=i;
     });
-    // 営業所セレクタ
-    const areas=[...new Set(msrData.map(r=>r[`col_${msrColMap.area??1}`]).filter(Boolean))];
+    // 営業所セレクタ (納品中止は除外、 城北は池袋を含む)
+    const areas=[...new Set(msrData
+      .map(r=>String(r[`col_${msrColMap.area??1}`]||''))
+      .filter(a=>a&&!a.includes('納品中止'))
+      .map(a=>a.split(',')[0].trim())
+    )].filter(a=>a&&a!=='池袋');
     document.getElementById('msr-area').innerHTML='<option value="">選択してください</option>'+areas.map(a=>`<option>${a}</option>`).join('');
     // 保存済みデータをlocalStorageから復元
     try{msrTimes=JSON.parse(localStorage.getItem('msrTimes')||'{}');}catch(_){msrTimes={};}
@@ -11156,6 +11189,16 @@ async function msrLoadData(){
   }
 }
 
+// 測定用: 行の営業所が選択営業所にマッチするか (城北は池袋を含む、 納品中止は常に除外)
+function msrAreaMatch(rowArea,selectedArea){
+  const raw=String(rowArea||'');
+  if(raw.includes('納品中止'))return false;
+  if(!selectedArea)return true;
+  const first=raw.split(',')[0].trim();
+  const targets=selectedArea==='城北'?['城北','池袋']:[selectedArea];
+  return targets.includes(first);
+}
+
 function msrFilter(){
   const area=document.getElementById('msr-area').value;
   const type=document.getElementById('msr-type').value;
@@ -11163,7 +11206,7 @@ function msrFilter(){
   if(courseCol===undefined){document.getElementById('msr-course').innerHTML='<option value="">該当列なし</option>';return;}
   // コース一覧を取得（営業所未選択なら全データから）
   let filtered=msrData;
-  if(area)filtered=filtered.filter(r=>r[`col_${msrColMap.area??1}`]===area);
+  filtered=filtered.filter(r=>msrAreaMatch(r[`col_${msrColMap.area??1}`],area));
   const courses=[...new Set(filtered.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   // 候補がなく営業所が選択されている場合、営業所を外して再検索
   if(!courses.length&&area){
@@ -11189,7 +11232,7 @@ function msrRender(){
   const nameCol=msrColMap.name??3;
   const codeCol=msrColMap.code??2;
   let shops=msrData.filter(r=>{
-    if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
+    if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
     return r[`col_${courseCol}`]===course;
   });
   const latCol0=msrColMap.lat;
@@ -11365,7 +11408,7 @@ function msrCheckAutoArrive(){
   const lngCol=msrColMap.lng;
   if(latCol===undefined||lngCol===undefined)return;
   const shops=msrData.filter(r=>{
-    if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
+    if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
     return r[`col_${courseCol}`]===course;
   });
   shops.forEach(s=>{
@@ -11394,7 +11437,7 @@ async function msrSendProgress(){
   const nameCol=msrColMap.name??3;
   const codeCol=msrColMap.code??2;
   const shops=msrData.filter(r=>{
-    if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
+    if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
     return r[`col_${courseCol}`]===course;
   });
   if(orderCol!==undefined)shops.sort((a,b)=>(parseInt(a[`col_${orderCol}`])||99999)-(parseInt(b[`col_${orderCol}`])||99999));
@@ -11452,7 +11495,7 @@ async function msrFinish(){
   const nameCol=msrColMap.name??3;
   const codeCol=msrColMap.code??2;
   const shops=msrData.filter(r=>{
-    if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
+    if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
     return r[`col_${courseCol}`]===course;
   });
   if(orderCol!==undefined)shops.sort((a,b)=>(parseInt(a[`col_${orderCol}`])||99999)-(parseInt(b[`col_${orderCol}`])||99999));
@@ -11512,7 +11555,7 @@ function msrFinishExport(course,startTime,endTime,doneCount,total){
   const nameCol=msrColMap.name??3;
   const codeCol=msrColMap.code??2;
   const shops=msrData.filter(r=>{
-    if(area&&r[`col_${msrColMap.area??1}`]!==area)return false;
+    if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
     return r[`col_${courseCol}`]===course;
   });
   if(orderCol!==undefined)shops.sort((a,b)=>(parseInt(a[`col_${orderCol}`])||99999)-(parseInt(b[`col_${orderCol}`])||99999));
