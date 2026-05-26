@@ -102,6 +102,7 @@ tbody tr:hover { background:var(--primary-light); }
     <button onclick="showView('diagram',this)">ダイヤグラム</button>
     <button onclick="adminShowLogin()" style="margin-left:auto;background:rgba(255,255,255,.15);color:#fff;">🔧 管理</button>
     <span id="sys-user-label" style="color:rgba(255,255,255,.7);font-size:12px;margin-left:8px;"></span>
+    <button id="sys-changepw-btn" onclick="invShowChangePw()" style="display:none;background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;margin-left:4px;" title="自分のログインパスワードを変更">🔑 PW変更</button>
     <button onclick="sysLogout()" style="background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;margin-left:4px;">ログアウト</button>
   </div>
 </div>
@@ -12155,6 +12156,7 @@ async function sysDoLogin(){
   sysUserPerms=perms;
   document.getElementById('sys-login').style.display='none';
   document.getElementById('sys-user-label').textContent='👤 '+sysUserName;
+  document.getElementById('sys-changepw-btn').style.display='';
   sysApplyPermissions(perms);
   // 各画面の認証をスキップ
   if(perms.includes('defects'))defectAuthed=true;
@@ -12178,6 +12180,7 @@ function sysAdminLogin(){
   sysUserPerms=['all'];
   document.getElementById('sys-login').style.display='none';
   document.getElementById('sys-user-label').textContent='👑 管理者';
+  document.getElementById('sys-changepw-btn').style.display='none';
   sysApplyPermissions(['all']);
   // 全画面の認証をスキップ
   defectAuthed=true;smAuthed=true;adminAuthed=true;msrAuthed=true;msrStaffName='管理者';
