@@ -12191,9 +12191,9 @@ function sysApplyPermissions(perms){
   const navMap={
     'dashboard':{always:true},
     'shift':{always:true},
-    'tenpo':{always:true},
-    'search':{always:true},
-    'staff':{always:true},
+    'tenpo':{perm:'admin'},
+    'search':{perm:'admin'},
+    'staff':{perm:'admin'},
     'defects':{perm:'defects'},
     'shopmaster':{perm:'shopmaster'},
     'invoice':{always:true},
