@@ -11754,6 +11754,51 @@ function diagParseTime(t){
 }
 function diagFmtMin(mm){mm=((mm%1440)+1440)%1440;const hh=Math.floor(mm/60),mn=Math.round(mm%60);return `${String(hh).padStart(2,'0')}:${String(mn).padStart(2,'0')}`;}
 
+// コース毎の地図プレビュー (Leaflet + OpenStreetMap)
+function diagShowMap(courseKey){
+  const shops=(window.__diagCourseStops||{})[courseKey];
+  if(!shops||!shops.length){alert('コースデータが見つかりません');return;}
+  const pts=shops.filter(s=>s.lat!=null&&s.lng!=null&&!isNaN(s.lat)&&!isNaN(s.lng));
+  if(!pts.length){alert('このコースには GPS 座標が登録された店舗がありません');return;}
+  const [type,cn]=courseKey.split('|');
+  const typeLabel=type==='am'?'朝刊':type==='pm'?'夕刊':'競馬';
+  const old=document.getElementById('diag-map-modal');
+  if(old)old.remove();
+  const modal=document.createElement('div');
+  modal.id='diag-map-modal';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.8);z-index:400;display:flex;justify-content:center;align-items:center;padding:8px;';
+  modal.innerHTML=`<div style="background:#fff;border-radius:12px;width:100%;max-width:900px;height:92vh;display:flex;flex-direction:column;overflow:hidden;">
+    <div style="padding:10px 16px;background:var(--primary);color:#fff;display:flex;justify-content:space-between;align-items:center;">
+      <div><b>🗺️ ${cn}</b> ／ ${typeLabel} ／ ${pts.length}/${shops.length}地点 (座標あり)</div>
+      <button onclick="document.getElementById('diag-map-modal').remove()" style="background:rgba(255,255,255,.2);color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">✕ 閉じる</button>
+    </div>
+    <div id="diag-map-canvas" style="flex:1;"></div>
+  </div>`;
+  document.body.appendChild(modal);
+  // Leaflet 初期化 (DOM 反映を待つ)
+  setTimeout(()=>{
+    const map=L.map('diag-map-canvas');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:19}).addTo(map);
+    const latlngs=[];
+    pts.forEach(s=>{
+      const ll=[Number(s.lat),Number(s.lng)];
+      latlngs.push(ll);
+      const icon=L.divIcon({
+        html:`<div style="background:#3b82f6;color:#fff;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:13px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);">${s.seq}</div>`,
+        className:'',
+        iconSize:[30,30],
+        iconAnchor:[15,15],
+      });
+      L.marker(ll,{icon}).addTo(map)
+        .bindPopup(`<b>${s.seq}. ${s.name}</b><br>店着: ${s.schedTime||'--:--'}${s.addr?'<br>📍 '+s.addr:''}`);
+    });
+    if(latlngs.length>1){
+      L.polyline(latlngs,{color:'#3b82f6',weight:3,opacity:0.65}).addTo(map);
+    }
+    map.fitBounds(latlngs,{padding:[40,40]});
+  },50);
+}
+
 function diagBuildCourseRoute(type,courseName,areaFilter){
   const courseCol=type==='am'?diagColMap.amCourse:type==='pm'?diagColMap.pmCourse:diagColMap.keibaCourse;
   const orderCol=type==='am'?diagColMap.amOrder:type==='pm'?diagColMap.pmOrder:diagColMap.keibaOrder;
@@ -11920,7 +11965,13 @@ function diagRender(){
     h+=`<div><b style="color:var(--primary);">${cn}</b> ／ ${typeLabel}</div>`;
     const firstT=times.length?Math.min(...times):null;
     const lastT=times.length?Math.max(...times):null;
+    const courseKey=`${type}|${cn}|${area||''}`;
+    window.__diagCourseStops=window.__diagCourseStops||{};
+    window.__diagCourseStops[courseKey]=shops;
+    h+=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">`;
     h+=`<div style="font-size:13px;color:var(--text-sub);">🏪 ${shops.length}店舗 ／ 🕐 ${firstT!=null?diagFmtMin(firstT):'--:--'} 〜 ${lastT!=null?diagFmtMin(lastT):'--:--'} ／ 店着時間設定: ${timedCnt}/${shops.length}</div>`;
+    h+=`<button onclick="diagShowMap('${courseKey.replace(/'/g,"\\'")}')" style="background:#10b981;color:#fff;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;">🗺️ 地図</button>`;
+    h+=`</div>`;
     h+=`</div>`;
 
     // 運行バー
