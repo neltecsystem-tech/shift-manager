@@ -499,6 +499,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('shiftedit')" id="adm-tab-shiftedit" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📝 シフト編集</button>
         <button onclick="adminTab('measure')" id="adm-tab-measure" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⏱ 測定データ</button>
         <button onclick="adminTab('diagram')" id="adm-tab-diagram" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📐 ダイヤグラム</button>
+        <button onclick="adminTab('mymaps')" id="adm-tab-mymaps" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🗺️ マイマップURL</button>
         <button onclick="adminTab('settings')" id="adm-tab-settings" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⚙ システム設定</button>
       </div>
 
@@ -923,6 +924,21 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="adm-msr-summary" style="margin-bottom:8px;"></div>
         <div class="table-wrap" id="adm-msr-table"></div>
+      </div>
+
+      <!-- マイマップURL管理 -->
+      <div id="adm-mymaps" class="adm-panel" style="display:none;">
+        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;color:#166534;line-height:1.6;">
+          コースごとに <a href="https://www.google.com/mymaps" target="_blank" rel="noopener" style="color:#1a56db;">Google マイマップ</a> の URL を登録すると、 ダイヤグラム画面の「🗺️ 地図」ボタンから直接マイマップが開きます。 未登録のコースは従来通り Leaflet プレビューが表示されます。
+        </div>
+        <div class="filters">
+          <div><label>区分</label><select id="adm-mm-type" onchange="admMmRender()"><option value="">すべて</option><option value="am">朝刊</option><option value="pm">夕刊</option><option value="keiba">競馬</option></select></div>
+          <div><label>営業所</label><select id="adm-mm-area" onchange="admMmRender()"><option value="">すべて</option></select></div>
+          <div><label>絞り込み</label><input type="text" id="adm-mm-search" placeholder="コース名で検索" oninput="dbInput('admMmRender',200)" style="width:180px;"></div>
+          <div style="margin-left:auto;"><button onclick="admMmLoad(true)" style="background:#3b82f6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;margin-top:18px;">🔄 再読み込み</button></div>
+        </div>
+        <div id="adm-mm-summary" style="margin-bottom:8px;font-size:12px;color:var(--text-sub);"></div>
+        <div class="table-wrap" id="adm-mm-table"></div>
       </div>
 
       <!-- ダイヤグラム作成 -->
@@ -4252,6 +4268,7 @@ function adminTab(t){
   if(t==='settings')adminShowSysInfo();
   if(t==='diagram')admDgInit();
   if(t==='shoplist')admShopListInit();
+  if(t==='mymaps')admMmInit();
 }
 
 // ===== ダイヤグラム作成 =====
@@ -11754,13 +11771,124 @@ function diagParseTime(t){
 }
 function diagFmtMin(mm){mm=((mm%1440)+1440)%1440;const hh=Math.floor(mm/60),mn=Math.round(mm%60);return `${String(hh).padStart(2,'0')}:${String(mn).padStart(2,'0')}`;}
 
-// コース毎の地図プレビュー (Leaflet + OpenStreetMap)
-function diagShowMap(courseKey){
+// ===== course_mymaps (Supabase) =====
+const SUPA_REST = 'https://nccognptoprhwsbjnwcu.supabase.co/rest/v1';
+const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jY29nbnB0b3ByaHdzYmpud2N1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNDU0NDEsImV4cCI6MjA4OTkyMTQ0MX0.M3h31uPyKYWlNevVW3OvZOonoTidC1KLZ04sB5nRKzU';
+const supaHeaders = ()=>({'apikey':SUPA_ANON,'Authorization':'Bearer '+SUPA_ANON,'Content-Type':'application/json'});
+let mymapsCache = null; // { 'cn|type': url }
+async function loadMymapsCache(force){
+  if(mymapsCache&&!force)return mymapsCache;
+  const r = await fetch(`${SUPA_REST}/course_mymaps?select=course_name,type,mymap_url`,{headers:supaHeaders()});
+  const arr = await r.json();
+  const m = {};
+  for(const x of (arr||[])) m[`${x.course_name}|${x.type}`] = x.mymap_url;
+  mymapsCache = m;
+  return m;
+}
+async function saveMymap(course_name, type, url){
+  const body = {course_name, type, mymap_url:url, updated_at: new Date().toISOString()};
+  const r = await fetch(`${SUPA_REST}/course_mymaps`,{method:'POST',headers:{...supaHeaders(),'Prefer':'resolution=merge-duplicates,return=representation'},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error('保存失敗: '+await r.text());
+  mymapsCache = null;
+}
+async function deleteMymap(course_name, type){
+  const r = await fetch(`${SUPA_REST}/course_mymaps?course_name=eq.${encodeURIComponent(course_name)}&type=eq.${encodeURIComponent(type)}`,{method:'DELETE',headers:supaHeaders()});
+  if(!r.ok)throw new Error('削除失敗: '+await r.text());
+  mymapsCache = null;
+}
+
+// ===== 管理画面: マイマップURL =====
+async function admMmInit(){
+  document.getElementById('adm-mm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">読み込み中...</p>';
+  // ダイヤグラム用店舗データが未取得なら取得
+  if(!diagShopData||!diagShopData.length){
+    try{await diagLoad();}catch(e){document.getElementById('adm-mm-table').innerHTML='<p style="color:#dc2626;padding:20px;">店舗マスタの読み込みに失敗: '+e.message+'</p>';return;}
+  }
+  await admMmLoad(true);
+}
+async function admMmLoad(force){
+  await loadMymapsCache(force);
+  // 営業所セレクタを更新 (店舗マスタから)
+  const areaCol = diagColMap.area;
+  if(areaCol!=null){
+    const areas=[...new Set(diagShopData.map(r=>r[`col_${areaCol}`]).filter(Boolean))].sort();
+    const sel=document.getElementById('adm-mm-area');
+    const cur=sel.value;
+    sel.innerHTML='<option value="">すべて</option>'+areas.map(a=>`<option>${a}</option>`).join('');
+    sel.value=cur;
+  }
+  admMmRender();
+}
+function admMmRender(){
+  const typeFilter=document.getElementById('adm-mm-type').value;
+  const areaFilter=document.getElementById('adm-mm-area').value;
+  const searchFilter=(document.getElementById('adm-mm-search').value||'').toLowerCase();
+  // 店舗マスタからコース一覧を構築 (区分別)
+  const rows=[]; // {area, type, course}
+  const seen=new Set();
+  const types=typeFilter?[typeFilter]:['am','pm','keiba'];
+  for(const t of types){
+    const courseCol=t==='am'?diagColMap.amCourse:t==='pm'?diagColMap.pmCourse:diagColMap.keibaCourse;
+    if(courseCol==null)continue;
+    for(const r of diagShopData){
+      const area=String(r[`col_${diagColMap.area}`]||'');
+      if(areaFilter&&area!==areaFilter)continue;
+      const course=String(r[`col_${courseCol}`]||'').trim();
+      if(!course)continue;
+      const k=`${course}|${t}`;
+      if(seen.has(k))continue;
+      seen.add(k);
+      rows.push({area,type:t,course});
+    }
+  }
+  // フィルタ
+  const filtered=rows.filter(x=>!searchFilter||x.course.toLowerCase().includes(searchFilter));
+  filtered.sort((a,b)=>(a.area+a.type+a.course).localeCompare(b.area+b.type+b.course,undefined,{numeric:true}));
+  const total=filtered.length;
+  const reg=filtered.filter(x=>mymapsCache[`${x.course}|${x.type}`]).length;
+  document.getElementById('adm-mm-summary').textContent=`合計 ${total}コース ／ 登録済 ${reg} ／ 未登録 ${total-reg}`;
+  if(total===0){document.getElementById('adm-mm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">該当コースがありません</p>';return;}
+  const typeLabel={am:'朝刊',pm:'夕刊',keiba:'競馬'};
+  let h='<table style="font-size:13px;"><thead><tr><th style="width:80px;">区分</th><th style="width:90px;">営業所</th><th style="width:100px;">コース</th><th>マイマップURL</th><th style="width:90px;">操作</th></tr></thead><tbody>';
+  for(const x of filtered){
+    const k=`${x.course}|${x.type}`;
+    const cur=mymapsCache[k]||'';
+    const id='mm-'+x.type+'-'+x.course.replace(/[^a-zA-Z0-9]/g,'_');
+    h+=`<tr${cur?' style="background:#f0fdf4;"':''}><td><span style="background:#e0e7ff;color:#3730a3;padding:1px 8px;border-radius:8px;font-size:11px;font-weight:600;">${typeLabel[x.type]}</span></td><td>${x.area}</td><td><b>${x.course}</b></td><td><input type="url" id="${id}" value="${cur.replace(/"/g,'&quot;')}" placeholder="https://www.google.com/maps/d/..." style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;"></td><td><button onclick="admMmSave('${x.course.replace(/'/g,"\\'")}','${x.type}','${id}')" style="background:#22c55e;color:#fff;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;">保存</button>${cur?` <button onclick="admMmDelete('${x.course.replace(/'/g,"\\'")}','${x.type}')" style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:14px;" title="URL削除">🗑</button>`:''}</td></tr>`;
+  }
+  h+='</tbody></table>';
+  document.getElementById('adm-mm-table').innerHTML=h;
+}
+async function admMmSave(course,type,inputId){
+  const url=document.getElementById(inputId).value.trim();
+  if(!url){alert('URLが空です。 削除する場合は🗑ボタンを使用してください。');return;}
+  if(!/^https?:\/\//.test(url)){alert('URL は https:// で始まる必要があります');return;}
+  try{
+    await saveMymap(course,type,url);
+    await admMmLoad(true);
+  }catch(e){alert(e.message);}
+}
+async function admMmDelete(course,type){
+  if(!confirm(`「${course}」(${type==='am'?'朝刊':type==='pm'?'夕刊':'競馬'}) のマイマップURLを削除しますか？`))return;
+  try{
+    await deleteMymap(course,type);
+    await admMmLoad(true);
+  }catch(e){alert(e.message);}
+}
+
+// コース毎の地図プレビュー (Leaflet + OpenStreetMap、 マイマップURL登録あれば優先)
+async function diagShowMap(courseKey){
   const shops=(window.__diagCourseStops||{})[courseKey];
   if(!shops||!shops.length){alert('コースデータが見つかりません');return;}
-  const pts=shops.filter(s=>s.lat!=null&&s.lng!=null&&!isNaN(s.lat)&&!isNaN(s.lng));
-  if(!pts.length){alert('このコースには GPS 座標が登録された店舗がありません');return;}
   const [type,cn]=courseKey.split('|');
+  // マイマップURLが登録されていれば優先 (新規タブで開く)
+  try{
+    const cache = await loadMymapsCache();
+    const url = cache[`${cn}|${type}`];
+    if(url){window.open(url, '_blank', 'noopener');return;}
+  }catch(_){/* キャッシュ失敗時は Leaflet フォールバック */}
+  const pts=shops.filter(s=>s.lat!=null&&s.lng!=null&&!isNaN(s.lat)&&!isNaN(s.lng));
+  if(!pts.length){alert('このコースには GPS 座標が登録された店舗がありません (マイマップURLも未登録)');return;}
   const typeLabel=type==='am'?'朝刊':type==='pm'?'夕刊':'競馬';
   const old=document.getElementById('diag-map-modal');
   if(old)old.remove();
