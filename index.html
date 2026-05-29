@@ -1385,11 +1385,9 @@ async function loadDashDefects(){
   const now=new Date();
   const y=now.getFullYear()%100;
   const m=now.getMonth()+1;
-  const sheetName=encodeURIComponent(`${m}月/${y}`);
-  const url=`https://sheets.googleapis.com/v4/spreadsheets/${DEFECT_SHEET_ID}/values/${sheetName}!A2:I200?key=${DEFECT_API_KEY}`;
   el.innerHTML='<p style="color:var(--text-sub);font-size:12px;">読み込み中...</p>';
   try{
-    const resp=await fetch(url);
+    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/defect-sheet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'read',sheet_name:`${m}月/${y}`,range:'A2:I200'})});
     if(!resp.ok){el.innerHTML='<p style="color:var(--text-sub);font-size:12px;">不具合データなし</p>';return;}
     const json=await resp.json();
     const rows=(json.values||[]).filter(r=>r[0]||r[3]);
@@ -1787,7 +1785,6 @@ function gSearch(){
 
 // ── 不具合管理（Google Sheets連携）──
 const DEFECT_SHEET_ID='1AoE_of_ZhKl1ebncnwl5-_h2RrnVuSmqFDHc01CWoJs';
-const DEFECT_API_KEY='AIzaSyD8p7oPEYI1lXWBVnXBr3z96ON56NJG6hQ';
 let defectData=[];
 let defectAllData=[];
 let defectMonths=[];
@@ -1877,11 +1874,9 @@ async function defectInit(){
 
 async function defectLoad(){
   const month=document.getElementById('df-month').value;
-  const sheetName=encodeURIComponent(month);
-  const url=`https://sheets.googleapis.com/v4/spreadsheets/${DEFECT_SHEET_ID}/values/${sheetName}!A1:I200?key=${DEFECT_API_KEY}`;
   document.getElementById('df-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">読み込み中...</p>';
   try{
-    const resp=await fetch(url);
+    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/defect-sheet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'read',sheet_name:month,range:'A1:I200'})});
     if(!resp.ok){const errText=await resp.text();throw new Error('エラー('+resp.status+'): '+month+' / '+errText.slice(0,200));};
     const json=await resp.json();
     const rows=json.values||[];

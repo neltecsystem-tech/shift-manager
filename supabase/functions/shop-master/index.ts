@@ -11,11 +11,7 @@ const MASTER2_SHEET = 'マスタ2';
 const COL_END = 'AI';
 const N_COLS = 35;
 
-const SERVICE_ACCOUNT = {
-  client_email: 'workchat@my-project-78970-492704.iam.gserviceaccount.com',
-  private_key: `-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCbftKwy+UTdvNJ\nPUTNkw4hVNMam55Kz/FBPUGlda4aGY1JLafRI4zYKvRDJO4aK3pTewf+hUJlghfL\nmxh52RufPfubbMobOT9K2RylwGh07fA8mZxtGI/adUScXStcpWik7S450XeK+2f9\nrFxanDPTTRe6hducqgm3Dzrv039e1YnInN7gS8+EvHvNvbAbfaPo6z4WQmiCtA9q\nMcRndTENcCjfaiaE3hCAT+BWIfRRYy7tC10vzMrP+3mSkXgL8utVLwqceMepOg9F\nHNlkj/6TEtgeFrKP4FtDUfSBGVGKcmp2Kq3LLZC04mt2xKMCflKkaV8IZQCTtujR\n31ULuc8jAgMBAAECggEAS5wmICDtMYNQNodL2viMUOnZwuDz3iXyBoqeTrID6B4P\npQtFxHzYYk60uqeM/f2xPEGheAJdcFWLc45lnu5Sr6Koo4GJXyZ9n8wl0XVXdbAz\ndowtU6EzZgNKywvE54Zo9XV9WlEAI30vKlszBz5YNwGQLbskODA4jCKkQnThxP8n\nsCDYL4frjwDL2ivt2PWnHRlQtJsK4cBiP53nuMSNII+WwNlPEaJxJIpunxTv1inY\nye8Y0hlLioVzXG8OmBzr9/FrvFCSk9vyvOG578E4HbrcJDLRH0JY9Dzv2X7ZCqaC\ndM+mYapVjRMFiHAxA+5W58K1l0eEjD4J0r5kY4OunQKBgQDLaJtA+7BbUPRAc68V\nhjINkrlthmw0+uBFvCgR8CChGJ90gGAxY+LuaOU+uXekXU034ak15RbjdpKYY5Gr\nGHlsNZ57ABqJTRqT0UpMgTlGrBKGsApdh8rWFHJaiaCTZoLr0+HuBQz36cGj61L8\nepEBZY2qCyi66YrPev3mmlMUHwKBgQDDsuSspq6WozFP5aks+3VRyGdwNBlQtorn\n8fU3tmSsg38OVQ2UyU9U4sxNa1QaoLsvffBLxwAR1rJPANQlyiCUaqLsb/Ib1FUf\nojPqOgdIURSmvBBEEJFDTj6EiuJrhbU8kNfWBw3wF3exynuxRTxtHbtuN1v2+QrJ\n3THsdBeEfQKBgDNDoOVGyZKqG3Tm8vhkwtai5PLSjxDnLYDFw/+JWl/fech91kB8\nYSQe8a/WRG37ScvMpr27iAI5zwZzCbJqT6fS96ceRpHWCd25QJV5d/r0wRKK6YHb\nCGbd7lgdGYgsrNBMrUM0qKkOk8wBMgAJz+PfOU3i1BgPZfmWkMj+mfOXAoGASneG\nQJRklvmeSBLSH0XITMh/Y9jPUUFE9iHB9+M1x9d5v5BpzJYV0+1BZKxUopVK5TV8\n/LjKs/8IdruP/pk9cHxrZqDqdeCES7dDHfvazY/c1d12KxBK1lutum3G3rdQUa2k\nE9M3YIbtiv/LtZbs+XB44+W43u/BRTMgTiOW11kCgYAJ8lPHU1LaWBx4NljrpRKM\nEXaMt7lU78XXHnoR7wl21q8AWWVpJGphFXQvIGLcEJGAFksNrrkoUGXIiUHoiCsc\n9btykTJn1/GM8DkXF/TyIdgaL0UqDjU4tOwkayuI/D0nsgl2oQIP/ljU2HSiJIIY\nydAjQkwA4v75yjsVXjt8Kw==\n-----END PRIVATE KEY-----\n`,
-  token_uri: 'https://oauth2.googleapis.com/token',
-};
+const SERVICE_ACCOUNT = JSON.parse(Deno.env.get('GOOGLE_SERVICE_ACCOUNT_KEY')!);
 
 function b64url(data: string): string { return btoa(data).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 
