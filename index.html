@@ -233,6 +233,8 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="smBatchAddrUnified()" id="sm-addr-btn" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📝 住所を一括取得</button>
           <button onclick="smBatchLatLngFromAddr()" id="sm-gps-btn" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 GPSを一括取得</button>
           <button onclick="smVerifyNavLocation()" id="sm-verify-btn" style="background:#a855f7;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔍 ナビ位置検証</button>
+          <button onclick="smShowReplace()" style="background:#f59e0b;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔄 コース一括置換</button>
+          <button onclick="smApplyNewPmCourses()" id="sm-apply-new-btn" title="「新夕刊コース」列の値を「夕刊コース」列に反映し、新列をクリアします。5月の請求/支払が確定したら実行してください。" style="background:#16a34a;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">✅ 新夕刊コースを反映</button>
           <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
           <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 新店登録</button>
         </div>
@@ -271,6 +273,47 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <p style="font-size:12px;color:var(--text-sub);margin-bottom:12px;">※最終納品日の翌月20日を過ぎると、コース名が自動でクリアされ、営業所に「納品中止」が追加されます。</p>
         <button onclick="smCloseSave()" id="smc-submit" style="width:100%;background:var(--danger);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">閉店情報を保存</button>
+      </div>
+    </div>
+
+    <!-- コース一括置換モーダル -->
+    <div id="sm-replace-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:200;justify-content:center;align-items:center;padding:20px;">
+      <div style="background:#fff;border-radius:16px;padding:24px;width:100%;max-width:640px;max-height:90vh;overflow-y:auto;position:relative;">
+        <button onclick="document.getElementById('sm-replace-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;">✕</button>
+        <h3 style="color:#f59e0b;margin-bottom:8px;">🔄 コース一括置換</h3>
+        <p style="font-size:12px;color:var(--text-sub);margin-bottom:14px;">指定したコース名を持つすべての店舗を、新しいコース名に書き換えます。</p>
+        <div style="display:flex;gap:10px;margin-bottom:12px;">
+          <div style="flex:1;">
+            <label style="font-size:12px;color:var(--text-sub);">対象列</label>
+            <select id="smr-col" onchange="smReplacePreview()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;">
+              <option value="pmCourseNew">新夕刊コース (6月以降反映用)</option>
+              <option value="pmCourse">夕刊コース (現行・即時反映)</option>
+              <option value="amCourse">朝刊コース (現行・即時反映)</option>
+              <option value="keibaCourse">競馬コース (現行・即時反映)</option>
+            </select>
+          </div>
+          <div style="flex:1;">
+            <label style="font-size:12px;color:var(--text-sub);">営業所で絞り込み (任意)</label>
+            <select id="smr-area" onchange="smReplacePreview()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">すべて</option></select>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:12px;">
+          <div style="flex:1;">
+            <label style="font-size:12px;color:var(--text-sub);">旧コース名 *</label>
+            <input type="text" id="smr-from" list="smr-from-dl" oninput="smReplacePreview()" placeholder="例: 立川夕刊5" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" autocomplete="off">
+            <datalist id="smr-from-dl"></datalist>
+          </div>
+          <div style="flex:1;">
+            <label style="font-size:12px;color:var(--text-sub);">新コース名</label>
+            <input type="text" id="smr-to" list="smr-to-dl" placeholder="空欄なら該当列を空にします" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" autocomplete="off">
+            <datalist id="smr-to-dl"></datalist>
+          </div>
+        </div>
+        <div id="smr-preview" style="border:1px solid var(--border);border-radius:8px;padding:10px;max-height:280px;overflow-y:auto;margin-bottom:12px;font-size:13px;">
+          <p style="color:var(--text-sub);margin:0;">旧コース名を入力するとプレビューが表示されます。</p>
+        </div>
+        <div id="smr-msg" style="font-size:12px;min-height:16px;margin-bottom:8px;"></div>
+        <button onclick="smReplaceRun()" id="smr-submit" style="width:100%;background:#f59e0b;color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;" disabled>該当 0 件を置換する</button>
       </div>
     </div>
 
@@ -2331,7 +2374,8 @@ async function smLoad(force){
       if(h.includes('店舗名'))smColMap.name=i;
       if(h.includes('開店日'))smColMap.openDate=i;
       if(h.includes('朝刊コース'))smColMap.amCourse=i;
-      if(h.includes('夕刊コース'))smColMap.pmCourse=i;
+      if(h==='新夕刊コース')smColMap.pmCourseNew=i;
+      else if(h.includes('夕刊コース'))smColMap.pmCourse=i;
       if(h.includes('競馬コース'))smColMap.keibaCourse=i;
       if(h.includes('備考'))smColMap.note=i;
       if(h==='住所精度')smColMap.accuracy=i;
@@ -3238,6 +3282,152 @@ async function smSave(){
     await smLoad(true);
   }catch(e){alert('エラー: '+e.message);}
   btn.textContent=smEditRow?'更新する':'追加する';btn.disabled=false;
+}
+
+// ── コース一括置換 ──
+function smShowReplace(){
+  // 営業所セレクト初期化
+  const areaSel=document.getElementById('smr-area');
+  const aIdx=smColMap.area??1;
+  const areas=[...new Set(smData.map(r=>r[`col_${aIdx}`]).filter(Boolean))].sort();
+  areaSel.innerHTML='<option value="">すべて</option>'+areas.map(a=>`<option>${a}</option>`).join('');
+  // datalist 候補 = master courses + 既存のコース値
+  const dl=document.getElementById('smr-to-dl');
+  dl.innerHTML=(smMasterCourses||[]).map(c=>`<option value="${c}">`).join('');
+  // 初期値クリア
+  document.getElementById('smr-from').value='';
+  document.getElementById('smr-to').value='';
+  document.getElementById('smr-area').value='';
+  document.getElementById('smr-col').value='pmCourse';
+  document.getElementById('smr-msg').textContent='';
+  smReplacePreview();
+  document.getElementById('sm-replace-modal').style.display='flex';
+}
+// 一括置換: 「新夕刊コース」対象時は、旧コースを 現在の夕刊コース列 で照合、新値を 新夕刊コース列 へ書き込む
+function smReplaceCols(colKey){
+  // 戻り値: { matchCol: 照合対象列インデックス, writeCol: 書込先列インデックス }
+  if(colKey==='pmCourseNew'){
+    return {matchCol:smColMap.pmCourse,writeCol:smColMap.pmCourseNew};
+  }
+  const i=smColMap[colKey];
+  return {matchCol:i,writeCol:i};
+}
+function smReplaceTargetRows(){
+  const colKey=document.getElementById('smr-col').value;
+  const {matchCol,writeCol}=smReplaceCols(colKey);
+  if(matchCol==null||writeCol==null)return {writeCol:null,rows:[]};
+  const from=(document.getElementById('smr-from').value||'').trim();
+  const area=document.getElementById('smr-area').value;
+  const aIdx=smColMap.area??1;
+  const nIdx=smColMap.name??3;
+  const cIdx=smColMap.code??2;
+  const rows=smData.filter(r=>{
+    if(area&&(r[`col_${aIdx}`]||'')!==area)return false;
+    return (r[`col_${matchCol}`]||'').trim()===from;
+  }).map(r=>({
+    row_number:r.row_number,
+    name:r[`col_${nIdx}`]||'',
+    code:r[`col_${cIdx}`]||'',
+    area:r[`col_${aIdx}`]||'',
+    currentNew:writeCol!=null?(r[`col_${writeCol}`]||'').trim():''
+  }));
+  return {writeCol,rows,from};
+}
+function smReplacePreview(){
+  const colKey=document.getElementById('smr-col').value;
+  const {matchCol}=smReplaceCols(colKey);
+  // 旧コース候補 datalist: 照合対象列の既存値を集計 (営業所フィルタ後)
+  const area=document.getElementById('smr-area').value;
+  const aIdx=smColMap.area??1;
+  const counts={};
+  if(matchCol!=null){
+    smData.forEach(r=>{
+      if(area&&(r[`col_${aIdx}`]||'')!==area)return;
+      const v=(r[`col_${matchCol}`]||'').trim();
+      if(!v)return;
+      counts[v]=(counts[v]||0)+1;
+    });
+  }
+  const sorted=Object.entries(counts).sort((a,b)=>a[0].localeCompare(b[0],'ja'));
+  document.getElementById('smr-from-dl').innerHTML=sorted.map(([v,n])=>`<option value="${v}">${v} (${n}店舗)</option>`).join('');
+  const {rows,from}=smReplaceTargetRows();
+  const prev=document.getElementById('smr-preview');
+  const btn=document.getElementById('smr-submit');
+  if(!from){
+    prev.innerHTML='<p style="color:var(--text-sub);margin:0;">旧コース名を入力するとプレビューが表示されます。</p>';
+    btn.textContent='該当 0 件を置換する';btn.disabled=true;
+    return;
+  }
+  if(!rows.length){
+    prev.innerHTML=`<p style="color:#dc2626;margin:0;">「${from}」に一致する店舗はありません。</p>`;
+    btn.textContent='該当 0 件を置換する';btn.disabled=true;
+    return;
+  }
+  let h='<table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:4px 8px;text-align:left;border-bottom:1px solid var(--border);">営業所</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid var(--border);">店舗コード</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid var(--border);">店舗名</th></tr></thead><tbody>';
+  rows.forEach(r=>{
+    h+=`<tr><td style="padding:4px 8px;border-bottom:1px solid #f1f5f9;">${r.area}</td><td style="padding:4px 8px;border-bottom:1px solid #f1f5f9;">${r.code}</td><td style="padding:4px 8px;border-bottom:1px solid #f1f5f9;">${r.name}</td></tr>`;
+  });
+  h+='</tbody></table>';
+  prev.innerHTML=h;
+  btn.textContent=`該当 ${rows.length} 件を置換する`;btn.disabled=false;
+}
+async function smReplaceRun(){
+  const {writeCol,rows,from}=smReplaceTargetRows();
+  if(!rows.length||writeCol==null)return;
+  const to=(document.getElementById('smr-to').value||'').trim();
+  const colLabel=document.getElementById('smr-col').selectedOptions[0]?.textContent||'';
+  const msg=document.getElementById('smr-msg');
+  const btn=document.getElementById('smr-submit');
+  if(!confirm(`【${colLabel}】\n「${from}」 → 「${to||'(空欄)'}」\n対象 ${rows.length} 店舗を一括置換します。よろしいですか?`))return;
+  btn.disabled=true;btn.textContent='置換中...';msg.style.color='var(--text-sub)';msg.textContent='送信中...';
+  try{
+    const updates=rows.map(r=>({row_number:r.row_number,col_index:writeCol,value:to}));
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_cells',updates})});
+    const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
+    if(!resp.ok||json.error)throw new Error(json.error||`HTTP ${resp.status}`);
+    msg.style.color='#16a34a';msg.textContent=`✓ ${json.updated||rows.length} セルを更新しました。再読込中...`;
+    invalidateShopMasterCache();
+    await new Promise(r=>setTimeout(r,800));
+    await smLoad(true);
+    document.getElementById('sm-replace-modal').style.display='none';
+  }catch(e){
+    msg.style.color='#dc2626';msg.textContent='エラー: '+e.message;
+    btn.disabled=false;btn.textContent=`該当 ${rows.length} 件を置換する`;
+  }
+}
+
+// 新夕刊コースを 夕刊コース列に反映 (2段階確認 + dry-run プレビュー)
+async function smApplyNewPmCourses(){
+  // dry-run でプレビュー取得
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'apply_new_pm_courses',dry_run:true})});
+    const json=await resp.json();
+    if(json.error)throw new Error(json.error);
+    const targets=json.targets||[];
+    if(!targets.length){alert('反映対象の店舗はありません。「新夕刊コース」列に値が入っている店舗がありません。');return;}
+    // プレビュー表示
+    const lines=targets.slice(0,30).map(t=>`・${t.name||'(店舗名なし)'}: ${t.old||'(空)'} → ${t.nw}`).join('\n');
+    const more=targets.length>30?`\n…他 ${targets.length-30} 件`:'';
+    if(!confirm(`【新夕刊コースを反映】\n対象 ${targets.length} 店舗:\n\n${lines}${more}\n\n上記の通り「夕刊コース」列を書き換えます。\n5月の請求/支払い計算は新コースで再計算されます (5月分が確定済みであれば問題なし)。\n\n実行してよろしいですか?`))return;
+    // 二段階確認
+    if(!confirm(`本当に反映しますか? 取り消しできません (新→旧の置換のみで、新列はクリアされます)。`))return;
+  }catch(e){
+    alert('プレビュー取得エラー: '+e.message);return;
+  }
+  const btn=document.getElementById('sm-apply-new-btn');
+  btn.disabled=true;btn.textContent='反映中...';
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'apply_new_pm_courses'})});
+    const json=await resp.json();
+    if(json.error)throw new Error(json.error);
+    alert(`✓ ${json.updated||0} 店舗の夕刊コースを更新しました。`);
+    invalidateShopMasterCache();
+    await new Promise(r=>setTimeout(r,800));
+    await smLoad(true);
+  }catch(e){
+    alert('エラー: '+e.message);
+  }
+  btn.disabled=false;btn.textContent='✅ 新夕刊コースを反映';
 }
 
 // ── 請求書 ──

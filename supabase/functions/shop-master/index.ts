@@ -8,8 +8,11 @@ const corsHeaders = {
 const SPREADSHEET_ID = '1Owv83TGxSl15pqO0MaaF4AaLeslye0frfKAuo62TlGY';
 const SHEET_NAME = '店舗マスタ';
 const MASTER2_SHEET = 'マスタ2';
-const COL_END = 'AI';
-const N_COLS = 35;
+const COL_END = 'AJ';
+const N_COLS = 36;
+// 列マップ (0-indexed): 夕刊コース=13(N列), 新夕刊コース=35(AJ列)
+const PM_COURSE_COL = 13;
+const NEW_PM_COURSE_COL = 35;
 
 const SERVICE_ACCOUNT = JSON.parse(Deno.env.get('GOOGLE_SERVICE_ACCOUNT_KEY')!);
 
@@ -38,8 +41,8 @@ async function getAccessToken(): Promise<string> {
 }
 
 async function ensureExtraHeaders(token: string) {
-  // AF=住所, AG=住所精度, AH=ナビ判定, AI=正式店舗名
-  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AI2`, { headers: { 'Authorization': `Bearer ${token}` } });
+  // AF=住所, AG=住所精度, AH=ナビ判定, AI=正式店舗名, AJ=新夕刊コース
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AJ2`, { headers: { 'Authorization': `Bearer ${token}` } });
   const j = await r.json();
   const cur = (j.values?.[0] ?? []) as string[];
   const next = [
@@ -47,10 +50,11 @@ async function ensureExtraHeaders(token: string) {
     (cur[1] || '').trim() || '住所精度',
     (cur[2] || '').trim() || 'ナビ判定',
     (cur[3] || '').trim() || '正式店舗名',
+    (cur[4] || '').trim() || '新夕刊コース',
   ];
   const changed = next.some((v, i) => v !== (cur[i] || '').trim());
   if (changed) {
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AI2?valueInputOption=USER_ENTERED`, {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AJ2?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ values: [next] }),
@@ -62,7 +66,8 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
-    const { action, record, row_number, updates } = await req.json();
+    const reqBody = await req.json();
+    const { action, record, row_number, updates } = reqBody;
     const token = await getAccessToken();
 
     if (action === 'master_options') {
@@ -284,6 +289,104 @@ Deno.serve(async (req: Request) => {
         });
       }
       return new Response(JSON.stringify({ success: true, updated: updates.length }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    } else if (action === 'apply_new_pm_courses') {
+      // 新夕刊コース(AJ) を 夕刊コース(N) に反映し、AJ をクリア
+      // dry_run:true ならプレビューだけ返す
+      await ensureExtraHeaders(token);
+      const listResp = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A2:${COL_END}10000`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      const lj = await listResp.json();
+      const allRows = (lj.values ?? []) as string[][];
+      // row 0 = ヘッダー (シート行2)、row 1+ = データ (シート行3+)
+      const targets: { row_number: number; old: string; nw: string; name: string }[] = [];
+      for (let i = 1; i < allRows.length; i++) {
+        const row = allRows[i] || [];
+        const nw = (row[NEW_PM_COURSE_COL] || '').trim();
+        if (!nw) continue;
+        const old = (row[PM_COURSE_COL] || '').trim();
+        const name = (row[3] || '').trim();
+        targets.push({ row_number: i + 2, old, nw, name });
+      }
+      if (reqBody.dry_run) {
+        return new Response(JSON.stringify({ success: true, targets }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      if (targets.length === 0) {
+        return new Response(JSON.stringify({ success: true, updated: 0, targets: [] }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const data: any[] = [];
+      for (const t of targets) {
+        // N列 (夕刊コース) に新値を書く
+        data.push({
+          range: `'${SHEET_NAME}'!N${t.row_number}:N${t.row_number}`,
+          values: [[t.nw]],
+        });
+        // AJ列 (新夕刊コース) をクリア
+        data.push({
+          range: `'${SHEET_NAME}'!AJ${t.row_number}:AJ${t.row_number}`,
+          values: [['']],
+        });
+      }
+      const batchResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data }),
+      });
+      if (!batchResp.ok) {
+        const errText = await batchResp.text();
+        return new Response(JSON.stringify({ error: 'batchUpdate failed: ' + batchResp.status + ' ' + errText.slice(0, 300) }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ success: true, updated: targets.length, targets }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    } else if (action === 'batch_update_cells') {
+      // 任意の (row_number, col_index, value) を一括更新する汎用 API
+      // updates: [{ row_number: number, col_index: number, value: string }]
+      if (!Array.isArray(updates) || updates.length === 0) {
+        return new Response(JSON.stringify({ error: 'updates array required' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const colLetter = (idx: number): string => {
+        let n = idx, s = '';
+        while (n >= 0) { s = String.fromCharCode((n % 26) + 65) + s; n = Math.floor(n / 26) - 1; }
+        return s;
+      };
+      const data: any[] = [];
+      for (const u of updates) {
+        if (!u.row_number || u.col_index == null) continue;
+        const letter = colLetter(Number(u.col_index));
+        data.push({
+          range: `'${SHEET_NAME}'!${letter}${u.row_number}:${letter}${u.row_number}`,
+          values: [[u.value ?? '']],
+        });
+      }
+      if (data.length === 0) {
+        return new Response(JSON.stringify({ success: true, updated: 0 }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const batchResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data }),
+      });
+      if (!batchResp.ok) {
+        const errText = await batchResp.text();
+        return new Response(JSON.stringify({ error: 'batchUpdate failed: ' + batchResp.status + ' ' + errText.slice(0, 300) }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ success: true, updated: data.length }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else if (action === 'batch_update_official_name') {
