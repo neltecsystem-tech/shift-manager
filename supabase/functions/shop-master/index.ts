@@ -8,8 +8,8 @@ const corsHeaders = {
 const SPREADSHEET_ID = '1Owv83TGxSl15pqO0MaaF4AaLeslye0frfKAuo62TlGY';
 const SHEET_NAME = '店舗マスタ';
 const MASTER2_SHEET = 'マスタ2';
-const COL_END = 'AJ';
-const N_COLS = 36;
+const COL_END = 'AK';
+const N_COLS = 37;
 // 列マップ (0-indexed)
 // 朝刊:  F=5(course), M=12(order), N=13(time)
 // 夕刊:  N=13(夕刊コース・現運用), O=14(夕刊コース名), R=17(夕刊順番), S=18(店着時間)
@@ -51,8 +51,8 @@ async function getAccessToken(): Promise<string> {
 }
 
 async function ensureExtraHeaders(token: string) {
-  // AF=住所, AG=住所精度, AH=ナビ判定, AI=正式店舗名, AJ=新夕刊コース
-  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AJ2`, { headers: { 'Authorization': `Bearer ${token}` } });
+  // AF=住所, AG=住所精度, AH=ナビ判定, AI=正式店舗名, AJ=新夕刊コース, AK=Place ID
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AK2`, { headers: { 'Authorization': `Bearer ${token}` } });
   const j = await r.json();
   const cur = (j.values?.[0] ?? []) as string[];
   const next = [
@@ -61,10 +61,11 @@ async function ensureExtraHeaders(token: string) {
     (cur[2] || '').trim() || 'ナビ判定',
     (cur[3] || '').trim() || '正式店舗名',
     (cur[4] || '').trim() || '新夕刊コース',
+    (cur[5] || '').trim() || 'Place ID',
   ];
   const changed = next.some((v, i) => v !== (cur[i] || '').trim());
   if (changed) {
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AJ2?valueInputOption=USER_ENTERED`, {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AK2?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ values: [next] }),

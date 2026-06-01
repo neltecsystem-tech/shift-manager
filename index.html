@@ -11913,6 +11913,7 @@ async function diagLoad(){
       if(i===24&&h.includes('店着時間'))diagColMap.keibaTime=i;
       if(h==='緯度')diagColMap.lat=i;
       if(h==='経度')diagColMap.lng=i;
+      if(h==='Place ID')diagColMap.placeId=i;
     });
     const areas=[...new Set(diagShopData.map(r=>r[`col_${diagColMap.area}`]).filter(Boolean))];
     const aSel=document.getElementById('diag-area');
@@ -12148,6 +12149,7 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
       schedTime:timeCol!==undefined?(r[`col_${timeCol}`]||''):'',
       lat:isFinite(lat)?lat:null,
       lng:isFinite(lng)?lng:null,
+      placeId:diagColMap.placeId!==undefined?((r[`col_${diagColMap.placeId}`]||'').trim()||null):null,
     };
   });
 }
@@ -12164,15 +12166,19 @@ async function diagNavFromHere(id){
     if(startIdx<0){if(w)w.close();alert('対象店舗が見つかりません (マスタ変更？)');return;}
     const chunk=shops.slice(startIdx,startIdx+9);
     if(chunk.length===0){if(w)w.close();alert('対象店舗がありません');return;}
-    // 緯度経度直接指定 (Google の地名解決でwaypointが落ちる現象を回避)
+    // 緯度経度 + Place ID (店舗名表示) のハイブリッド指定
     const coordOf=(s)=>`${s.lat},${s.lng}`;
     const last=chunk[chunk.length-1];
     const rest=chunk.slice(0,-1);
     const params=new URLSearchParams();
     params.set('api','1');
-    // origin省略 = 端末の現在地 (Google Maps が GPS 許可を要求)
     params.set('destination',coordOf(last));
-    if(rest.length>0)params.set('waypoints',rest.map(coordOf).join('|'));
+    if(last.placeId)params.set('destination_place_id',last.placeId);
+    if(rest.length>0){
+      params.set('waypoints',rest.map(coordOf).join('|'));
+      // waypoint_place_ids は waypoints と同順・同数 (Place ID なしは空文字)
+      if(rest.some(s=>s.placeId))params.set('waypoint_place_ids',rest.map(s=>s.placeId||'').join('|'));
+    }
     params.set('travelmode','driving');
     const url=`https://www.google.com/maps/dir/?${params.toString()}`;
     if(w)w.location.href=url;
@@ -12202,12 +12208,16 @@ async function diagNavOpen(routeId){
     }
     const last=chunk[chunk.length-1];
     const rest=chunk.slice(0,-1);
-    // 緯度経度直接指定 (Google の地名解決で waypoint が落ちる現象を回避)
+    // 緯度経度 + Place ID (店舗名表示) のハイブリッド指定
     const coordOf=(s)=>`${s.lat},${s.lng}`;
     const params=new URLSearchParams();
     params.set('api','1');
     params.set('destination',coordOf(last));
-    if(rest.length>0)params.set('waypoints',rest.map(coordOf).join('|'));
+    if(last.placeId)params.set('destination_place_id',last.placeId);
+    if(rest.length>0){
+      params.set('waypoints',rest.map(coordOf).join('|'));
+      if(rest.some(s=>s.placeId))params.set('waypoint_place_ids',rest.map(s=>s.placeId||'').join('|'));
+    }
     params.set('travelmode','driving');
     const url=`https://www.google.com/maps/dir/?${params.toString()}`;
     if(w)w.location.href=url;
