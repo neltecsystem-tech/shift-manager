@@ -12164,21 +12164,15 @@ async function diagNavFromHere(id){
     if(startIdx<0){if(w)w.close();alert('対象店舗が見つかりません (マスタ変更？)');return;}
     const chunk=shops.slice(startIdx,startIdx+9);
     if(chunk.length===0){if(w)w.close();alert('対象店舗がありません');return;}
-    const labelOf=(s)=>{
-      const nm=(s.name||'').trim();
-      const addr=(s.addr||'').trim();
-      if(nm&&addr)return nm+' '+addr;
-      if(nm)return nm;
-      if(addr)return addr;
-      return `${s.lat},${s.lng}`;
-    };
+    // 緯度経度直接指定 (Google の地名解決でwaypointが落ちる現象を回避)
+    const coordOf=(s)=>`${s.lat},${s.lng}`;
     const last=chunk[chunk.length-1];
     const rest=chunk.slice(0,-1);
     const params=new URLSearchParams();
     params.set('api','1');
     // origin省略 = 端末の現在地 (Google Maps が GPS 許可を要求)
-    params.set('destination',labelOf(last));
-    if(rest.length>0)params.set('waypoints',rest.map(labelOf).join('|'));
+    params.set('destination',coordOf(last));
+    if(rest.length>0)params.set('waypoints',rest.map(coordOf).join('|'));
     params.set('travelmode','driving');
     const url=`https://www.google.com/maps/dir/?${params.toString()}`;
     if(w)w.location.href=url;
@@ -12208,19 +12202,12 @@ async function diagNavOpen(routeId){
     }
     const last=chunk[chunk.length-1];
     const rest=chunk.slice(0,-1);
-    // 店舗名+住所をナビ表示用ラベルに (Google Maps が店舗名で表示する)
-    const labelOf=(s)=>{
-      const nm=(s.name||'').trim();
-      const addr=(s.addr||'').trim();
-      if(nm&&addr)return nm+' '+addr;
-      if(nm)return nm;
-      if(addr)return addr;
-      return `${s.lat},${s.lng}`;
-    };
+    // 緯度経度直接指定 (Google の地名解決で waypoint が落ちる現象を回避)
+    const coordOf=(s)=>`${s.lat},${s.lng}`;
     const params=new URLSearchParams();
     params.set('api','1');
-    params.set('destination',labelOf(last));
-    if(rest.length>0)params.set('waypoints',rest.map(labelOf).join('|'));
+    params.set('destination',coordOf(last));
+    if(rest.length>0)params.set('waypoints',rest.map(coordOf).join('|'));
     params.set('travelmode','driving');
     const url=`https://www.google.com/maps/dir/?${params.toString()}`;
     if(w)w.location.href=url;
