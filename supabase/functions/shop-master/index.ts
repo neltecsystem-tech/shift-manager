@@ -529,6 +529,157 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: true, updated: updates.length }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    } else if (action === 'create_place_id_helper_tab') {
+      // 「PlaceID未取得」タブを作り、Place ID が空の店舗 (lat/lng あり・納品中止/最終納品日なし) を並べる
+      const TAB_NAME = 'PlaceID未取得';
+      // 1) 既存タブの sheetId 取得
+      const metaResp = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      const meta = await metaResp.json();
+      const existing = (meta.sheets || []).find((s: any) => s.properties?.title === TAB_NAME);
+      // 2) なければ作成
+      if (!existing) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requests: [{ addSheet: { properties: { title: TAB_NAME } } }] }),
+        });
+      } else {
+        // 既存内容をクリア
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(TAB_NAME)}!A:Z:clear`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        });
+      }
+      // 3) master 全行取得
+      await ensureExtraHeaders(token);
+      const listResp = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A2:${COL_END}10000`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      const lj = await listResp.json();
+      const allRows = (lj.values ?? []) as string[][];
+      const headersRow = allRows[0] || [];
+      // 列特定 (master headers ベース)
+      const findCol = (h: string) => headersRow.findIndex((x) => x === h || (x || '').includes(h));
+      const codeIdx = findCol('店舗コード');
+      const nameIdx = findCol('店舗名');
+      const areaIdx = findCol('営業所');
+      const addrIdx = findCol('住所');
+      const latIdx = headersRow.findIndex((x) => x === '緯度');
+      const lngIdx = headersRow.findIndex((x) => x === '経度');
+      const placeIdIdx = headersRow.findIndex((x) => x === 'Place ID');
+      const lastDelIdx = findCol('最終納品日');
+      const targets: { row: number; code: string; name: string; area: string; addr: string; lat: string; lng: string }[] = [];
+      for (let i = 1; i < allRows.length; i++) {
+        const row = allRows[i] || [];
+        const lat = (row[latIdx] || '').trim();
+        const lng = (row[lngIdx] || '').trim();
+        if (!lat || !lng) continue;
+        const pid = (row[placeIdIdx] || '').trim();
+        if (pid) continue;
+        const area = (row[areaIdx] || '').trim();
+        if (area.includes('納品中止')) continue;
+        const lastDel = lastDelIdx >= 0 ? (row[lastDelIdx] || '').trim() : '';
+        if (lastDel) continue;
+        targets.push({
+          row: i + 2,
+          code: row[codeIdx] || '',
+          name: row[nameIdx] || '',
+          area,
+          addr: row[addrIdx] || '',
+          lat, lng,
+        });
+      }
+      // 4) シート書込 (ヘッダー + 24 行)
+      const sheetValues: any[][] = [
+        ['行番号', '店舗コード', '店舗名', '営業所', '住所', '緯度', '経度', '🔍 検索リンク', '📍 GPS位置', 'Place ID または Google Maps URL を貼る', '反映状態'],
+      ];
+      for (const t of targets) {
+        const q = encodeURIComponent(`${t.name} ${t.addr}`);
+        const searchUrl = `https://www.google.com/maps/search/?api=1&query=${q}`;
+        const gpsUrl = `https://www.google.com/maps/search/?api=1&query=${t.lat},${t.lng}`;
+        // HYPERLINK 式にして「🔍 検索」「📍 GPS」とクリック可能リンク表示
+        // ダブルクオート対策で式内は2重化
+        const searchFormula = `=HYPERLINK("${searchUrl.replace(/"/g, '""')}","🔍 名前で検索")`;
+        const gpsFormula = `=HYPERLINK("${gpsUrl.replace(/"/g, '""')}","📍 GPS位置")`;
+        sheetValues.push([t.row, t.code, t.name, t.area, t.addr, t.lat, t.lng, searchFormula, gpsFormula, '', '']);
+      }
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(TAB_NAME)}!A1?valueInputOption=USER_ENTERED`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: sheetValues }),
+      });
+      const tabUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/edit?gid=auto#gid=auto`;
+      return new Response(JSON.stringify({ success: true, count: targets.length, tab: TAB_NAME, url: tabUrl }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+
+    } else if (action === 'apply_place_id_helper_tab') {
+      // 「PlaceID未取得」タブの J列 (10列目) から Place ID を抽出して master AK列 に反映
+      const TAB_NAME = 'PlaceID未取得';
+      const resp = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(TAB_NAME)}!A2:K500`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      const j = await resp.json();
+      const rows = (j.values || []) as string[][];
+      // Place ID 抽出: ChIJ... を含むテキスト or place_id=ChIJ... or URL から正規表現で
+      const extract = (text: string): string | null => {
+        if (!text) return null;
+        const m = text.match(/(ChI[A-Za-z0-9_-]{20,})/);
+        return m ? m[1] : null;
+      };
+      const updates: any[] = [];
+      const results: any[] = [];
+      for (const row of rows) {
+        const masterRow = parseInt(String(row[0] || '').trim(), 10);
+        if (!masterRow) continue;
+        const pasted = String(row[9] || '').trim(); // J列
+        const pid = extract(pasted);
+        if (!pid) {
+          if (pasted) results.push({ row: masterRow, pasted, error: 'Place ID 抽出失敗' });
+          continue;
+        }
+        updates.push({
+          range: `'${SHEET_NAME}'!AK${masterRow}:AK${masterRow}`,
+          values: [[pid]],
+        });
+        results.push({ row: masterRow, pid });
+      }
+      if (updates.length > 0) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data: updates }),
+        });
+      }
+      // K列 (反映状態) も更新
+      const stateUpdates: any[] = [];
+      let i = 0;
+      for (const row of rows) {
+        i++;
+        const masterRow = parseInt(String(row[0] || '').trim(), 10);
+        if (!masterRow) continue;
+        const r = results.find(r => r.row === masterRow);
+        const state = r ? (r.pid ? '✓ 反映済 ' + r.pid : '✗ ' + (r.error || '')) : '(未入力)';
+        stateUpdates.push({
+          range: `'${TAB_NAME}'!K${i + 1}:K${i + 1}`,
+          values: [[state]],
+        });
+      }
+      if (stateUpdates.length > 0) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data: stateUpdates }),
+        });
+      }
+      return new Response(JSON.stringify({ success: true, updated: updates.length, total: results.length, results }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     return new Response(JSON.stringify({ error: 'Unknown action' }), {
