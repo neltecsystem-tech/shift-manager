@@ -12441,7 +12441,33 @@ function diagExportPdf(){
     td.time{font-weight:bold;color:#1e40af;width:12mm;white-space:nowrap;}
     td.name{font-weight:600;}
     td.addr{font-size:8px;color:#475569;}
+    td.nav{width:18mm;text-align:center;}
+    td.nav a{font-size:7.5px;color:#1d4ed8;text-decoration:underline;font-weight:600;}
+    .chunk-nav{padding:4px 8px;background:#fffbeb;border-top:1px solid #fcd34d;display:flex;flex-wrap:wrap;gap:4px;align-items:center;break-inside:avoid;}
+    .chunk-nav-label{font-size:8.5px;font-weight:700;color:#92400e;margin-right:4px;}
+    .chunk-nav-btn{font-size:8.5px;color:#fff;background:#3b82f6;padding:2px 8px;border-radius:3px;text-decoration:none;font-weight:600;display:inline-block;}
+    @media print {
+      .chunk-nav-btn{background:#3b82f6 !important;color:#fff !important;}
+    }
   `;
+
+  // ナビURL構築 (Place ID + 緯度経度 ハイブリッド)
+  const buildNavUrlFromShops=(chunkShops)=>{
+    if(!chunkShops.length)return null;
+    const last=chunkShops[chunkShops.length-1];
+    const rest=chunkShops.slice(0,-1);
+    const coordOf=s=>`${s.lat},${s.lng}`;
+    const params=new URLSearchParams();
+    params.set('api','1');
+    params.set('destination',coordOf(last));
+    if(last.placeId)params.set('destination_place_id',last.placeId);
+    if(rest.length>0){
+      params.set('waypoints',rest.map(coordOf).join('|'));
+      if(rest.some(s=>s.placeId))params.set('waypoint_place_ids',rest.map(s=>s.placeId||'').join('|'));
+    }
+    params.set('travelmode','driving');
+    return 'https://www.google.com/maps/dir/?'+params.toString();
+  };
 
   let body=`<div class="doc-head"><div><h1>🚚 運行ダイヤグラム</h1><div class="doc-sub">${typeLabel} ／ 営業所: ${area||'全営業所'} ／ コース: ${course||'全コース'}</div></div><div class="doc-sub">${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} 出力</div></div>`;
 
@@ -12477,8 +12503,11 @@ function diagExportPdf(){
     });
     body+=`</div></div>`;
 
-    // 2段組み明細 (PDFはナビボタン列を含めない)
-    body+=`<div class="tbl-wrap"><table><thead><tr><th>#</th><th>店舗名</th><th>住所</th><th>店着</th><th>特記</th></tr></thead><tbody>`;
+    // 緯度経度ありの店舗だけナビ可能
+    const navShops=shops.filter(s=>s.lat!=null&&s.lng!=null);
+
+    // 2段組み明細 (ナビ列を含む)
+    body+=`<div class="tbl-wrap"><table><thead><tr><th>#</th><th>店舗名</th><th>住所</th><th>店着</th><th>ナビ</th><th>特記</th></tr></thead><tbody>`;
     shops.forEach(s=>{
       let addr=s.addr||'';
       if(!addr){
@@ -12495,9 +12524,36 @@ function diagExportPdf(){
       // メモ本文 (markdown形式の[label](url)はラベルのみ表示する形に整形)
       const cleanNote=sNote.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'$1').replace(/\s*https?:\/\/\S+\s*/g,' ').trim();
       const noteCell=cleanNote+linkText;
-      body+=`<tr><td class="seq">${s.seq}</td><td class="name">${s.name||''}</td><td class="addr">${addr}</td><td class="time">${s.schedTime||'--:--'}</td><td class="note">${diagEsc(noteCell)}</td></tr>`;
+      // 個別ナビ (現在地→この店舗以降9件)
+      let navCell='';
+      if(s.lat!=null&&s.lng!=null){
+        const startIdx=navShops.findIndex(x=>x.seq===s.seq);
+        if(startIdx>=0){
+          const chunk=navShops.slice(startIdx,startIdx+9);
+          const url=buildNavUrlFromShops(chunk);
+          if(url){
+            navCell=`<a href="${url}" target="_blank" style="color:#1d4ed8;text-decoration:underline;font-weight:600;">▶ 現在地から</a>`;
+          }
+        }
+      }
+      body+=`<tr><td class="seq">${s.seq}</td><td class="name">${s.name||''}</td><td class="addr">${addr}</td><td class="time">${s.schedTime||'--:--'}</td><td class="nav">${navCell}</td><td class="note">${diagEsc(noteCell)}</td></tr>`;
     });
     body+=`</tbody></table></div>`;
+
+    // チャンクナビリンク (9店舗ずつ)
+    if(navShops.length>0){
+      body+=`<div class="chunk-nav"><div class="chunk-nav-label">📍 9店舗チャンクナビ:</div>`;
+      const CHUNK=9;
+      for(let i=0;i<navShops.length;i+=CHUNK){
+        const chunk=navShops.slice(i,i+CHUNK);
+        const url=buildNavUrlFromShops(chunk);
+        const last=chunk[chunk.length-1];
+        if(url){
+          body+=`<a href="${url}" target="_blank" class="chunk-nav-btn">${chunk[0].seq}〜${last.seq} (${chunk.length}店舗)</a>`;
+        }
+      }
+      body+=`</div>`;
+    }
     body+=`</div>`;
   });
 
