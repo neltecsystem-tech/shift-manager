@@ -9802,10 +9802,8 @@ function admPayBuildSaveBar(items,y,m,monthLabel){
 async function admPaySaveStatements(barId){
   const statements=admPaySavePayloadStore[barId];
   if(!statements||!statements.length){alert('保存対象がありません');return;}
+  if(!adminAuthed){alert('管理者権限が必要です');return;}
   const msg=document.getElementById(`${barId}-msg`);
-  const pw=prompt('管理者パスワードを入力してください:');
-  if(pw===null)return;
-  if(!pw){alert('パスワードが入力されていません');return;}
   msg.textContent=`💾 保存中... (${statements.length}名)`;msg.style.color='#3b82f6';
   try{
     const resp=await fetch(ADM_PAY_SAVE_EF,{
@@ -9816,7 +9814,7 @@ async function admPaySaveStatements(barId){
         'Authorization':'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jY29nbnB0b3ByaHdzYmpud2N1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNDU0NDEsImV4cCI6MjA4OTkyMTQ0MX0.M3h31uPyKYWlNevVW3OvZOonoTidC1KLZ04sB5nRKzU'
       },
       body:JSON.stringify({
-        admin_password:pw,
+        admin_password:INV_PW,
         finalized_by:(typeof sysUserName!=='undefined'&&sysUserName)?sysUserName:'admin',
         statements:statements.filter(s=>s.phone),// 電話なしは除外
       })
