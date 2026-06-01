@@ -12062,6 +12062,20 @@ function diagCourseColFor(type){
   if(useNew && diagColMap.pmCourseNew!=null)return diagColMap.pmCourseNew;
   return diagColMap.pmCourse;
 }
+// 営業所フィルタヘルパー: 店舗マスタの営業所列が複合(「池袋, 城北」)でも対応 + 空欄ならコース名から推定
+function diagAreaMatch(r,area,type){
+  if(!area)return true;
+  const a=(r[`col_${diagColMap.area}`]||'').trim();
+  if(a){
+    return a.split(',').some(x=>x.trim()===area);
+  }
+  // 営業所空欄: コース名から推定
+  type=type||(document.getElementById('diag-type')?.value)||'pm';
+  const courseCol=diagCourseColFor(type);
+  if(courseCol==null)return false;
+  const course=(r[`col_${courseCol}`]||'').trim();
+  return areaOfCourse(course)===area;
+}
 function diagFilter(){
   const area=document.getElementById('diag-area').value;
   const type=document.getElementById('diag-type').value;
@@ -12073,7 +12087,7 @@ function diagFilter(){
   const cVal=cSel.value;
   if(courseCol===undefined){cSel.innerHTML='<option value="">該当列なし</option>';diagRender();return;}
   let filtered=diagShopData;
-  if(area)filtered=filtered.filter(r=>{const a=(r[`col_${diagColMap.area}`]||'');return a.split(',').some(x=>x.trim()===area);});
+  if(area)filtered=filtered.filter(r=>diagAreaMatch(r,area,type));
   const courses=[...new Set(filtered.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   cSel.innerHTML='<option value="">すべて</option>'+courses.map(c=>`<option>${c}</option>`).join('');
   if(cVal&&courses.includes(cVal))cSel.value=cVal;
@@ -12255,7 +12269,7 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
   const orderCol=type==='am'?diagColMap.amOrder:type==='pm'?diagColMap.pmOrder:diagColMap.keibaOrder;
   const timeCol=type==='am'?diagColMap.amTime:type==='pm'?diagColMap.pmTime:diagColMap.keibaTime;
   let shops=diagShopData.filter(r=>r[`col_${courseCol}`]===courseName);
-  if(areaFilter)shops=shops.filter(r=>{const a=(r[`col_${diagColMap.area}`]||'');return a.split(',').some(x=>x.trim()===areaFilter);});
+  if(areaFilter)shops=shops.filter(r=>diagAreaMatch(r,areaFilter,type));
   // 店着時間の早い順でソート。時間なしは末尾。同時刻は順番→店舗コードでタイブレーク
   shops.sort((a,b)=>{
     const ta=timeCol!==undefined?diagParseTime(a[`col_${timeCol}`]):null;
@@ -12385,7 +12399,7 @@ function diagRender(){
     targetCourses=[course];
   }else{
     let pool=diagShopData;
-    if(area)pool=pool.filter(r=>{const a=(r[`col_${diagColMap.area}`]||'');return a.split(',').some(x=>x.trim()===area);});
+    if(area)pool=pool.filter(r=>diagAreaMatch(r,area,type));
     targetCourses=[...new Set(pool.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   }
   if(!targetCourses.length){content.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">該当コースがありません</p>';summary.innerHTML='';return;}
@@ -12521,7 +12535,7 @@ function diagExportPdf(){
     targetCourses=[course];
   }else{
     let pool=diagShopData;
-    if(area)pool=pool.filter(r=>{const a=(r[`col_${diagColMap.area}`]||'');return a.split(',').some(x=>x.trim()===area);});
+    if(area)pool=pool.filter(r=>diagAreaMatch(r,area,type));
     targetCourses=[...new Set(pool.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   }
   if(!targetCourses.length){alert('対象コースがありません');return;}
