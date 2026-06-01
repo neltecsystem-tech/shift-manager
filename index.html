@@ -1790,9 +1790,11 @@ function shExportPdf(){
     h1{font-size:13px;margin:0;}
     .doc-sub{font-size:9px;color:#475569;}
     table{width:100%;border-collapse:collapse;font-size:7px;table-layout:fixed;}
-    th,td{border:1px solid #cbd5e1;padding:1px 2px;text-align:center;vertical-align:middle;overflow:hidden;}
+    col.cn{width:30mm;}
+    col.day{width:auto;}
+    th,td{border:1px solid #cbd5e1;padding:1px 1px;text-align:center;vertical-align:middle;overflow:hidden;word-break:break-all;line-height:1.1;}
     th{background:#f1f5f9;font-weight:600;font-size:7px;}
-    td.cn{text-align:left;font-weight:600;background:#fafbfc;white-space:nowrap;max-width:60mm;overflow:hidden;text-overflow:ellipsis;}
+    td.cn{text-align:left;font-weight:600;background:#fafbfc;white-space:nowrap;font-size:8px;padding:1px 4px;overflow:hidden;text-overflow:ellipsis;}
     td.am{background:#eff6ff;color:#0369a1;}
     td.pm{background:#fdf4ff;color:#7e22ce;}
     th.sun,td.sun{background:#fee2e2;color:#dc2626;}
@@ -1802,6 +1804,11 @@ function shExportPdf(){
   `;
   let body=`<div class="doc-head"><div><h1>📅 月別シフト表</h1><div class="doc-sub">${m} ／ 営業所: ${areaF||'全営業所'} ／ 区分: ${edLabel} ／ ${isCourseMode?'コース':'スタッフ'}起点 ／ ${f.length}行</div></div><div class="doc-sub">${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} 出力</div></div>`;
   body+='<table>';
+  // colgroup でコース名列を 30mm、 残り日付セルを均等割り
+  body+='<colgroup>';
+  body+='<col class="cn">';
+  for(let i=0;i<cellCount;i++)body+='<col class="day">';
+  body+='</colgroup>';
   if(isBoth){
     body+=`<thead><tr><th rowspan="2">${rowLabel}</th>`;
     mergedDates.forEach(d=>{const c=d.dow==='日'?'sun':d.dow==='土'?'sat':'';
