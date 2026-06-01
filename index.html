@@ -513,6 +513,13 @@ tbody tr:hover { background:var(--primary-light); }
         <div><label>営業所</label><select id="diag-area" onchange="diagFilter()"><option value="">すべて</option></select></div>
         <div><label>区分</label><select id="diag-type" onchange="diagFilter()"><option value="am">朝刊</option><option value="pm">夕刊</option><option value="keiba">競馬</option></select></div>
         <div><label>コース</label><select id="diag-course" onchange="diagRender()"><option value="">すべて</option></select></div>
+        <div id="diag-newpm-wrap" style="display:none;">
+          <label>夕刊コース基準</label>
+          <select id="diag-newpm" onchange="diagFilter()">
+            <option value="current">現コース (5月運用)</option>
+            <option value="new">新コース (6月以降プレビュー)</option>
+          </select>
+        </div>
       </div>
       <div id="diag-summary" style="margin-bottom:12px;color:var(--text-sub);font-size:13px;"></div>
       <div id="diag-content"></div>
@@ -11931,10 +11938,22 @@ async function diagLoad(){
   }
 }
 
+// 夕刊基準モード (現コース or 新コース) を考慮して、type に対応する コース列インデックスを返す
+function diagCourseColFor(type){
+  if(type==='am')return diagColMap.amCourse;
+  if(type==='keiba')return diagColMap.keibaCourse;
+  // type='pm': 切替トグルを見る
+  const useNew=(document.getElementById('diag-newpm')?.value)==='new';
+  if(useNew && diagColMap.pmCourseNew!=null)return diagColMap.pmCourseNew;
+  return diagColMap.pmCourse;
+}
 function diagFilter(){
   const area=document.getElementById('diag-area').value;
   const type=document.getElementById('diag-type').value;
-  const courseCol=type==='am'?diagColMap.amCourse:type==='pm'?diagColMap.pmCourse:diagColMap.keibaCourse;
+  // 夕刊新コース切替トグルの表示制御
+  const newpmWrap=document.getElementById('diag-newpm-wrap');
+  if(newpmWrap)newpmWrap.style.display=type==='pm'?'block':'none';
+  const courseCol=diagCourseColFor(type);
   const cSel=document.getElementById('diag-course');
   const cVal=cSel.value;
   if(courseCol===undefined){cSel.innerHTML='<option value="">該当列なし</option>';diagRender();return;}
@@ -12117,7 +12136,7 @@ async function diagShowMap(courseKey){
 }
 
 function diagBuildCourseRoute(type,courseName,areaFilter){
-  const courseCol=type==='am'?diagColMap.amCourse:type==='pm'?diagColMap.pmCourse:diagColMap.keibaCourse;
+  const courseCol=diagCourseColFor(type);
   const orderCol=type==='am'?diagColMap.amOrder:type==='pm'?diagColMap.pmOrder:diagColMap.keibaOrder;
   const timeCol=type==='am'?diagColMap.amTime:type==='pm'?diagColMap.pmTime:diagColMap.keibaTime;
   let shops=diagShopData.filter(r=>r[`col_${courseCol}`]===courseName);
@@ -12244,7 +12263,7 @@ function diagRender(){
   const type=document.getElementById('diag-type').value;
   const course=document.getElementById('diag-course').value;
   const typeLabel=type==='am'?'朝刊':type==='pm'?'夕刊':'競馬';
-  const courseCol=type==='am'?diagColMap.amCourse:type==='pm'?diagColMap.pmCourse:diagColMap.keibaCourse;
+  const courseCol=diagCourseColFor(type);
 
   let targetCourses=[];
   if(course){
@@ -12380,7 +12399,7 @@ function diagExportPdf(){
   const type=document.getElementById('diag-type').value;
   const typeLabel=type==='am'?'朝刊':type==='pm'?'夕刊':'競馬';
   const course=document.getElementById('diag-course').value;
-  const courseCol=type==='am'?diagColMap.amCourse:type==='pm'?diagColMap.pmCourse:diagColMap.keibaCourse;
+  const courseCol=diagCourseColFor(type);
 
   let targetCourses=[];
   if(course){
