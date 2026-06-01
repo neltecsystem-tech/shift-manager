@@ -17,6 +17,10 @@ const TANKA_SHEET = '単価マスタ';
 const SERVICE_ACCOUNT = JSON.parse(Deno.env.get('GOOGLE_SERVICE_ACCOUNT_KEY')!);
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const ASKUL_URL = Deno.env.get('ASKUL_URL') || '';
+const ASKUL_KEY = Deno.env.get('ASKUL_SERVICE_KEY') || '';
+const DELIVERY_URL = Deno.env.get('DELIVERY_URL') || '';
+const DELIVERY_KEY = Deno.env.get('DELIVERY_SERVICE_KEY') || '';
 
 // ── Google Sheets 認証 ──
 function b64url(d: string): string { return btoa(d).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
@@ -205,6 +209,82 @@ function targetMonthLabels(now: Date): { label: string; year: number; month: num
   return out;
 }
 
+// ── 他プロジェクトの REST 経由 fetch ヘルパー ──
+async function pgFetch(baseUrl: string, key: string, path: string): Promise<any> {
+  if (!baseUrl || !key) return [];
+  const r = await fetch(`${baseUrl}/rest/v1/${path}`, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` },
+  });
+  if (!r.ok) {
+    console.error(`pgFetch ${path} ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    return [];
+  }
+  return r.json();
+}
+
+// ── アスクル: shift_assignments から日付別シフト取得 ──
+type AskulShift = { date: string; driverName: string; courseName: string };
+async function fetchAskulShifts(fromDate: string, toDate: string): Promise<AskulShift[]> {
+  if (!ASKUL_URL || !ASKUL_KEY) return [];
+  // joinはPostgRESTで select=...,profiles!shift_assignments_driver_id_fkey(...),courses!shift_assignments_course_id_fkey(...)
+  // でも汎用的に shift_assignments と join を 2回query で済ます
+  const assigns = await pgFetch(
+    ASKUL_URL, ASKUL_KEY,
+    `shift_assignments?select=work_date,driver_id,course_id&work_date=gte.${fromDate}&work_date=lte.${toDate}`,
+  );
+  if (!assigns.length) return [];
+  const driverIds = [...new Set(assigns.map((a: any) => a.driver_id).filter(Boolean))];
+  const courseIds = [...new Set(assigns.map((a: any) => a.course_id).filter(Boolean))];
+  const [drivers, courses] = await Promise.all([
+    pgFetch(ASKUL_URL, ASKUL_KEY, `profiles?select=id,full_name&id=in.(${driverIds.join(',')})`),
+    pgFetch(ASKUL_URL, ASKUL_KEY, `courses?select=id,name&id=in.(${courseIds.join(',')})`),
+  ]);
+  const dMap: Record<string, string> = {}; for (const d of drivers) dMap[d.id] = d.full_name || '';
+  const cMap: Record<string, string> = {}; for (const c of courses) cMap[c.id] = c.name || '';
+  return assigns.map((a: any) => ({
+    date: a.work_date,
+    driverName: dMap[a.driver_id] || '',
+    courseName: cMap[a.course_id] || '',
+  })).filter((x: AskulShift) => x.driverName && x.courseName);
+}
+
+// ── デリバリー (ヤマト): yamato_driver_assignments (曜日パターン) を日付に展開 ──
+type DeliveryShift = { date: string; driverName: string; courseName: string };
+async function fetchDeliveryShifts(fromDate: string, toDate: string): Promise<DeliveryShift[]> {
+  if (!DELIVERY_URL || !DELIVERY_KEY) return [];
+  const [assigns, drivers, courses] = await Promise.all([
+    pgFetch(DELIVERY_URL, DELIVERY_KEY, `yamato_driver_assignments?select=driver_id,day_of_week,course_id`),
+    pgFetch(DELIVERY_URL, DELIVERY_KEY, `profiles?select=id,full_name,last_name,first_name`),
+    pgFetch(DELIVERY_URL, DELIVERY_KEY, `yamato_courses?select=id,name,operating_days,active`),
+  ]);
+  if (!assigns.length) return [];
+  const dMap: Record<string, string> = {};
+  for (const d of drivers) {
+    const nm = (d.full_name || '').trim() || `${d.last_name || ''}${d.first_name || ''}`.trim();
+    if (d.id) dMap[d.id] = nm;
+  }
+  const cMap: Record<string, { name: string; operating_days: number[] | null; active: boolean }> = {};
+  for (const c of courses) cMap[c.id] = { name: c.name || '', operating_days: c.operating_days, active: c.active };
+  // 日付を for で回して、曜日が一致するコースを引く
+  const out: DeliveryShift[] = [];
+  const from = new Date(fromDate + 'T00:00:00');
+  const to = new Date(toDate + 'T00:00:00');
+  for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+    const dow = d.getDay(); // 0=日
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    for (const a of assigns) {
+      if (Number(a.day_of_week) !== dow) continue;
+      const driverName = dMap[a.driver_id] || '';
+      const course = cMap[a.course_id];
+      if (!driverName || !course || !course.active) continue;
+      // operating_days があれば曜日チェック
+      if (Array.isArray(course.operating_days) && course.operating_days.length > 0 && !course.operating_days.includes(dow)) continue;
+      out.push({ date: dateStr, driverName, courseName: course.name });
+    }
+  }
+  return out;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
@@ -229,7 +309,7 @@ Deno.serve(async (req: Request) => {
       else unmappedStaff.push(n);
     }
 
-    // 月ごとシフト読込 + パース
+    // ── (1) shift-manager (新聞シフト): 社員のみ対象 ──
     type EventRec = { user_id: string; title: string; event_date: string; event_type: string; all_day: boolean; assigned_by: string; status: string };
     const events: EventRec[] = [];
     const monthsLoaded: { label: string; rows: number }[] = [];
@@ -243,23 +323,49 @@ Deno.serve(async (req: Request) => {
       const parsed = parseShift(sheet, year);
       for (const { name, user_id } of staffToUser) {
         const targetN = normName(name);
-        // 全 area を走査して 名前一致 (正規化済) を拾う
         for (const staffMap of Object.values(parsed)) {
           for (const [shiftName, dateMap] of Object.entries(staffMap)) {
             if (normName(shiftName) !== targetN) continue;
             for (const [date, ed] of Object.entries(dateMap)) {
-              if (ed.am) events.push({
-                user_id, title: `朝 ${ed.am}`, event_date: date,
-                event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted'
-              });
-              if (ed.pm) events.push({
-                user_id, title: `夕 ${ed.pm}`, event_date: date,
-                event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted'
-              });
+              if (ed.am) events.push({ user_id, title: `朝 ${ed.am}`, event_date: date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
+              if (ed.pm) events.push({ user_id, title: `夕 ${ed.pm}`, event_date: date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
             }
           }
         }
       }
+    }
+    const shiftMgrCount = events.length;
+
+    // ── (2)(3) askul / delivery: NexPort profile に名前一致する全メンバー対象 ──
+    // 期間: 当月+翌月 (シフトマネージャー側と同じ期間を使う)
+    const today = now;
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 2, 0); // 翌月末
+    const fromDateStr = `${monthStart.getFullYear()}-${String(monthStart.getMonth()+1).padStart(2,'0')}-${String(monthStart.getDate()).padStart(2,'0')}`;
+    const toDateStr = `${monthEnd.getFullYear()}-${String(monthEnd.getMonth()+1).padStart(2,'0')}-${String(monthEnd.getDate()).padStart(2,'0')}`;
+
+    const [askulShifts, deliveryShifts] = await Promise.all([
+      fetchAskulShifts(fromDateStr, toDateStr),
+      fetchDeliveryShifts(fromDateStr, toDateStr),
+    ]);
+
+    // askul -> events
+    const askulUnmapped = new Set<string>();
+    let askulCount = 0;
+    for (const s of askulShifts) {
+      const uid = userMap[normName(s.driverName)];
+      if (!uid) { askulUnmapped.add(s.driverName); continue; }
+      events.push({ user_id: uid, title: `アスクル ${s.courseName}`, event_date: s.date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
+      askulCount++;
+    }
+    // delivery -> events
+    const deliveryUnmapped = new Set<string>();
+    let deliveryCount = 0;
+    for (const s of deliveryShifts) {
+      const uid = userMap[normName(s.driverName)];
+      if (!uid) { deliveryUnmapped.add(s.driverName); continue; }
+      events.push({ user_id: uid, title: `ヤマト ${s.courseName}`, event_date: s.date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
+      deliveryCount++;
     }
 
     // dry-run 終了
@@ -271,7 +377,10 @@ Deno.serve(async (req: Request) => {
         shain_unmapped: unmappedStaff,
         months: monthsLoaded,
         events_count: events.length,
-        sample: events.slice(0, 10),
+        breakdown: { shift_manager: shiftMgrCount, askul: askulCount, delivery: deliveryCount },
+        askul_unmapped: [...askulUnmapped],
+        delivery_unmapped: [...deliveryUnmapped],
+        sample: events.slice(0, 15),
       }, null, 2), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
@@ -281,13 +390,13 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // 削除対象期間: 取り込んだイベントの日付範囲
+    // 削除対象期間: 取り込んだイベント + askul/delivery の対象期間 を包含
     const dates = [...new Set(events.map(e => e.event_date))].sort();
-    const fromDate = dates[0], toDate = dates[dates.length-1];
-    const userIds = [...new Set(staffToUser.map(s => s.user_id))];
-    // 各 user の シフト 由来のみ削除 (assigned_by='shift-sync')
+    const fromDate = dates.length ? dates[0] : fromDateStr;
+    const toDate = dates.length ? dates[dates.length-1] : toDateStr;
+    // assigned_by='shift-sync' 由来は user 制限なしで全部消す (3ツール由来をまとめて削除)
     const delResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/schedule_events?event_type=eq.シフト&assigned_by=eq.shift-sync&user_id=in.(${userIds.join(',')})&event_date=gte.${fromDate}&event_date=lte.${toDate}`,
+      `${SUPABASE_URL}/rest/v1/schedule_events?event_type=eq.シフト&assigned_by=eq.shift-sync&event_date=gte.${fromDate}&event_date=lte.${toDate}`,
       { method: 'DELETE', headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, Prefer: 'return=representation' } }
     );
     const deletedRows = await delResp.json().catch(() => []);
@@ -317,6 +426,9 @@ Deno.serve(async (req: Request) => {
       shain_mapped: staffToUser.length,
       shain_unmapped: unmappedStaff,
       months: monthsLoaded,
+      breakdown: { shift_manager: shiftMgrCount, askul: askulCount, delivery: deliveryCount },
+      askul_unmapped: [...askulUnmapped],
+      delivery_unmapped: [...deliveryUnmapped],
       date_range: { from: fromDate, to: toDate },
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (e: any) {
