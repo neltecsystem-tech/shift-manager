@@ -12545,37 +12545,37 @@ function diagExportPdf(){
   const title=`ダイヤグラム_${area||'全営業所'}_${typeLabel}_${course||'全コース'}_${dateStr}`;
 
   const printCss=`
-    @page{size:A4 portrait;margin:6mm;}
+    @page{size:A4 portrait;margin:8mm;}
     *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-    body{font-family:'Meiryo','Hiragino Sans',sans-serif;margin:0;padding:0;color:#1e293b;font-size:9px;line-height:1.25;}
-    h1{font-size:13px;margin:0;}
-    .doc-head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:4px;border-bottom:1.5px solid #1e293b;padding-bottom:2px;}
-    .doc-sub{font-size:9px;color:#475569;}
-    .course-card{border:1px solid #cbd5e1;border-radius:4px;margin-bottom:4px;overflow:hidden;page-break-inside:avoid;break-inside:avoid;}
+    body{font-family:'Meiryo','Hiragino Sans',sans-serif;margin:0;padding:0;color:#1e293b;font-size:10.5px;line-height:1.35;}
+    h1{font-size:15px;margin:0;}
+    .doc-head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:6px;border-bottom:1.5px solid #1e293b;padding-bottom:3px;}
+    .doc-sub{font-size:10px;color:#475569;}
+    .course-card{border:1px solid #cbd5e1;border-radius:5px;margin-bottom:6px;overflow:hidden;}
     .course-card:not(:first-of-type){page-break-before:always;break-before:page;}
-    .course-head{background:#f1f5f9;padding:3px 8px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #cbd5e1;font-size:10px;}
-    .course-head b{color:#1d4ed8;}
-    td.note{background:#fef9c3;color:#422006;font-size:8px;white-space:pre-wrap;max-width:120px;}
-    .bar-wrap{padding:14px 10px 18px;background:#fafbfc;border-bottom:1px solid #cbd5e1;position:relative;}
-    .bar{position:relative;height:26px;background:#fff;border:1px solid #cbd5e1;border-radius:3px;}
+    .course-head{background:#f1f5f9;padding:6px 12px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #cbd5e1;font-size:12px;}
+    .course-head b{color:#1d4ed8;font-size:13px;}
+    .bar-wrap{padding:16px 14px 22px;background:#fafbfc;border-bottom:1px solid #cbd5e1;position:relative;page-break-inside:avoid;}
+    .bar{position:relative;height:30px;background:#fff;border:1px solid #cbd5e1;border-radius:4px;}
     .bar .tick{position:absolute;top:0;bottom:0;border-left:1px dashed #e2e8f0;}
-    .bar .tick-lbl{position:absolute;bottom:-14px;transform:translateX(-50%);font-size:7.5px;color:#64748b;}
-    .bar .pt{position:absolute;top:50%;transform:translate(-50%,-50%);width:8px;height:8px;background:#3b82f6;border:1.5px solid #fff;border-radius:50%;box-shadow:0 0 0 0.5px #1e40af;}
-    .bar .pt-lbl{position:absolute;top:2px;transform:translateX(-50%);font-size:6.5px;color:#1e40af;font-weight:700;}
-    .tbl-wrap{display:flex;gap:4mm;padding:3px 6px;align-items:flex-start;}
-    .tbl-wrap > table{flex:1;min-width:0;}
-    table{width:100%;border-collapse:collapse;font-size:8.5px;}
-    th,td{padding:1.5px 4px;border:1px solid #e2e8f0;vertical-align:top;}
-    th{background:#f8fafc;font-weight:600;text-align:left;font-size:8px;}
-    td.seq{text-align:center;color:#64748b;width:6mm;}
-    td.time{font-weight:bold;color:#1e40af;width:12mm;white-space:nowrap;}
+    .bar .tick-lbl{position:absolute;bottom:-16px;transform:translateX(-50%);font-size:9px;color:#64748b;}
+    .bar .pt{position:absolute;top:50%;transform:translate(-50%,-50%);width:10px;height:10px;background:#3b82f6;border:1.5px solid #fff;border-radius:50%;box-shadow:0 0 0 0.5px #1e40af;}
+    .bar .pt-lbl{position:absolute;top:2px;transform:translateX(-50%);font-size:8px;color:#1e40af;font-weight:700;}
+    .tbl-wrap{padding:6px 10px;}
+    table{width:100%;border-collapse:collapse;font-size:10.5px;}
+    th,td{padding:4px 6px;border:1px solid #cbd5e1;vertical-align:top;}
+    th{background:#f1f5f9;font-weight:700;text-align:left;font-size:10px;position:sticky;top:0;}
+    tr{page-break-inside:avoid;}
+    td.seq{text-align:center;color:#64748b;width:8mm;font-weight:600;}
+    td.time{font-weight:bold;color:#1e40af;width:14mm;white-space:nowrap;text-align:center;}
     td.name{font-weight:600;}
-    td.addr{font-size:8px;color:#475569;}
-    td.nav{width:18mm;text-align:center;}
-    td.nav a{font-size:7.5px;color:#1d4ed8;text-decoration:underline;font-weight:600;}
-    .chunk-nav{padding:4px 8px;background:#fffbeb;border-top:1px solid #fcd34d;display:flex;flex-wrap:wrap;gap:4px;align-items:center;break-inside:avoid;}
-    .chunk-nav-label{font-size:8.5px;font-weight:700;color:#92400e;margin-right:4px;}
-    .chunk-nav-btn{font-size:8.5px;color:#fff;background:#3b82f6;padding:2px 8px;border-radius:3px;text-decoration:none;font-weight:600;display:inline-block;}
+    td.addr{font-size:9.5px;color:#475569;}
+    td.nav{width:22mm;text-align:center;}
+    td.nav a{font-size:9.5px;color:#1d4ed8;text-decoration:underline;font-weight:600;}
+    td.note{background:#fef9c3;color:#422006;font-size:9.5px;white-space:pre-wrap;max-width:50mm;}
+    .chunk-nav{padding:8px 12px;background:#fffbeb;border-top:1px solid #fcd34d;display:flex;flex-wrap:wrap;gap:6px;align-items:center;break-inside:avoid;page-break-inside:avoid;}
+    .chunk-nav-label{font-size:10.5px;font-weight:700;color:#92400e;margin-right:6px;}
+    .chunk-nav-btn{font-size:10.5px;color:#fff;background:#3b82f6;padding:4px 10px;border-radius:4px;text-decoration:none;font-weight:600;display:inline-block;}
     @media print {
       .chunk-nav-btn{background:#3b82f6 !important;color:#fff !important;}
     }
@@ -12664,24 +12664,10 @@ function diagExportPdf(){
       return `<tr><td class="seq">${s.seq}</td><td class="name">${diagEsc(s.name||'')}</td><td class="addr">${diagEsc(addr)}</td><td class="time">${s.schedTime||'--:--'}</td><td class="nav">${navCell}</td><td class="note">${diagEsc(noteCell)}</td></tr>`;
     };
     const tableHead=`<thead><tr><th class="th-seq">#</th><th class="th-name">店舗名</th><th class="th-addr">住所</th><th class="th-time">店着</th><th class="th-nav">ナビ</th><th class="th-note">特記</th></tr></thead>`;
-    // 30店舗以上なら 2分割、 それ以下は1テーブル全幅
-    body+=`<div class="tbl-wrap">`;
-    if(shops.length>=30){
-      const half=Math.ceil(shops.length/2);
-      const left=shops.slice(0,half);
-      const right=shops.slice(half);
-      body+=`<table>${tableHead}<tbody>`;
-      left.forEach(s=>body+=rowOf(s));
-      body+=`</tbody></table>`;
-      body+=`<table>${tableHead}<tbody>`;
-      right.forEach(s=>body+=rowOf(s));
-      body+=`</tbody></table>`;
-    }else{
-      body+=`<table>${tableHead}<tbody>`;
-      shops.forEach(s=>body+=rowOf(s));
-      body+=`</tbody></table>`;
-    }
-    body+=`</div>`;
+    // 1テーブル全幅 (店舗数が多い場合は自然に複数ページに分かれる)
+    body+=`<div class="tbl-wrap"><table>${tableHead}<tbody>`;
+    shops.forEach(s=>body+=rowOf(s));
+    body+=`</tbody></table></div>`;
 
     // チャンクナビリンク (9店舗ずつ)
     if(navShops.length>0){
