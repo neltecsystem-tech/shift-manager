@@ -10,9 +10,19 @@ const SHEET_NAME = '店舗マスタ';
 const MASTER2_SHEET = 'マスタ2';
 const COL_END = 'AJ';
 const N_COLS = 36;
-// 列マップ (0-indexed): 夕刊コース=13(N列), 新夕刊コース=35(AJ列)
-const PM_COURSE_COL = 13;
+// 列マップ (0-indexed)
+// 朝刊:  F=5(course), M=12(order), N=13(time)
+// 夕刊:  N=13(夕刊コース・現運用), O=14(夕刊コース名), R=17(夕刊順番), S=18(店着時間)
+//   ※ list の headers では col 14=夕刊コース名 となる。col 13 の "夕刊コース" は別シート由来の表記揺れ対応
+// 競馬:  T=19(course), X=23(order), Y=24(time)
+// 新夕刊コース = AJ=35
+const PM_COURSE_COL = 14;          // 夕刊コース名 (apply_new_pm_courses で書込先 = N列じゃなく O列)
 const NEW_PM_COURSE_COL = 35;
+const EDITION_COLS = [
+  { name: 'am',    courseCol: 5,  orderCol: 12, timeCol: 13 },
+  { name: 'pm',    courseCol: 14, orderCol: 17, timeCol: 18 },
+  { name: 'keiba', courseCol: 19, orderCol: 23, timeCol: 24 },
+];
 
 const SERVICE_ACCOUNT = JSON.parse(Deno.env.get('GOOGLE_SERVICE_ACCOUNT_KEY')!);
 
@@ -60,6 +70,74 @@ async function ensureExtraHeaders(token: string) {
       body: JSON.stringify({ values: [next] }),
     });
   }
+}
+
+// 列インデックス → A1表記の列文字
+function colLetter(idx: number): string {
+  let n = idx, s = '';
+  while (n >= 0) { s = String.fromCharCode((n % 26) + 65) + s; n = Math.floor(n / 26) - 1; }
+  return s;
+}
+
+// HH:MM (または HH:MM:SS) を分に変換。空文字なら -1。
+function timeToMin(s: string): number {
+  if (!s) return -1;
+  const m = String(s).match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return -1;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+// (edition, course) を 店着時間順に再採番。
+// excludeRows: 既に削除予定 等で順番から除外したい行 (省略可)
+async function reorderEdition(token: string, edition: { courseCol: number; orderCol: number; timeCol: number }, course: string) {
+  if (!course) return { updated: 0, course };
+  const resp = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A2:${COL_END}10000`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  const j = await resp.json();
+  const allRows = (j.values ?? []) as string[][];
+  // row 0 = ヘッダー (シート行2)。データ行 i (0-indexed from data) = シート行 i + 3
+  const targets: { row_number: number; time: string; mins: number }[] = [];
+  for (let i = 1; i < allRows.length; i++) {
+    const row = allRows[i] || [];
+    const c = (row[edition.courseCol] || '').trim();
+    if (c !== course) continue;
+    const t = (row[edition.timeCol] || '').trim();
+    targets.push({ row_number: i + 2, time: t, mins: timeToMin(t) });
+  }
+  // 店着時間昇順 (時間なしは末尾)、同時刻は row_number 昇順
+  targets.sort((a, b) => {
+    if (a.mins < 0 && b.mins < 0) return a.row_number - b.row_number;
+    if (a.mins < 0) return 1;
+    if (b.mins < 0) return -1;
+    if (a.mins !== b.mins) return a.mins - b.mins;
+    return a.row_number - b.row_number;
+  });
+  // 採番して書込 (既に正しい値なら省略)
+  const orderLetter = colLetter(edition.orderCol);
+  const data: any[] = [];
+  for (let idx = 0; idx < targets.length; idx++) {
+    const t = targets[idx];
+    const newOrder = String(idx + 1);
+    const currentOrder = (allRows[t.row_number - 2]?.[edition.orderCol] || '').trim();
+    if (currentOrder === newOrder) continue;
+    data.push({
+      range: `'${SHEET_NAME}'!${orderLetter}${t.row_number}:${orderLetter}${t.row_number}`,
+      values: [[newOrder]],
+    });
+  }
+  if (data.length === 0) return { updated: 0, course, total: targets.length };
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data }),
+  });
+  if (!r.ok) {
+    const errText = await r.text();
+    throw new Error('reorder batchUpdate failed: ' + r.status + ' ' + errText.slice(0, 300));
+  }
+  return { updated: data.length, course, total: targets.length };
 }
 
 Deno.serve(async (req: Request) => {
@@ -136,6 +214,8 @@ Deno.serve(async (req: Request) => {
       const rowResult = await rowResp.json();
       const currentRow = (rowResult.values?.[0] ?? []) as string[];
       while (currentRow.length < N_COLS) currentRow.push('');
+      // 更新前のコース値を退避 (コース変更時に旧コースも再採番するため)
+      const oldCourses = EDITION_COLS.map(e => ({ name: e.name, oldCourse: (currentRow[e.courseCol] || '').trim() }));
       Object.entries(record).forEach(([key, val]) => {
         const m = key.match(/^col_(\d+)$/);
         if (m) currentRow[parseInt(m[1])] = val as string;
@@ -145,7 +225,23 @@ Deno.serve(async (req: Request) => {
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ values: [currentRow] }),
       });
-      return new Response(JSON.stringify({ success: true }), {
+      // 再採番: コースまたは店着時間が変更された editions
+      const reorderResults: any[] = [];
+      for (const ed of EDITION_COLS) {
+        const courseChanged = (`col_${ed.courseCol}` in record);
+        const timeChanged = (`col_${ed.timeCol}` in record);
+        if (!courseChanged && !timeChanged) continue;
+        const newCourse = (currentRow[ed.courseCol] || '').trim();
+        const old = oldCourses.find(o => o.name === ed.name)!.oldCourse;
+        const coursesToReorder = new Set<string>();
+        if (newCourse) coursesToReorder.add(newCourse);
+        if (courseChanged && old && old !== newCourse) coursesToReorder.add(old);
+        for (const c of coursesToReorder) {
+          const r = await reorderEdition(token, ed, c);
+          reorderResults.push({ edition: ed.name, ...r });
+        }
+      }
+      return new Response(JSON.stringify({ success: true, reorder: reorderResults }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
 
@@ -174,7 +270,16 @@ Deno.serve(async (req: Request) => {
         });
       }
       const appendResult = await appendResp.json().catch(() => ({}));
-      return new Response(JSON.stringify({ success: true, updates: appendResult.updates ?? null }), {
+      // 再採番: 新店が持つコース+時間 の組み合わせ
+      const reorderResults: any[] = [];
+      for (const ed of EDITION_COLS) {
+        const course = (row[ed.courseCol] || '').trim();
+        const time = (row[ed.timeCol] || '').trim();
+        if (!course || !time) continue;
+        const r = await reorderEdition(token, ed, course);
+        reorderResults.push({ edition: ed.name, ...r });
+      }
+      return new Response(JSON.stringify({ success: true, updates: appendResult.updates ?? null, reorder: reorderResults }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else if (action === 'batch_update_latlng') {
@@ -292,7 +397,7 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else if (action === 'apply_new_pm_courses') {
-      // 新夕刊コース(AJ) を 夕刊コース(N) に反映し、AJ をクリア
+      // 新夕刊コース(AJ) を 夕刊コース名(O) に反映し、AJ をクリア
       // dry_run:true ならプレビューだけ返す
       await ensureExtraHeaders(token);
       const listResp = await fetch(
@@ -323,9 +428,9 @@ Deno.serve(async (req: Request) => {
       }
       const data: any[] = [];
       for (const t of targets) {
-        // N列 (夕刊コース) に新値を書く
+        // O列 (夕刊コース名) に新値を書く
         data.push({
-          range: `'${SHEET_NAME}'!N${t.row_number}:N${t.row_number}`,
+          range: `'${SHEET_NAME}'!O${t.row_number}:O${t.row_number}`,
           values: [[t.nw]],
         });
         // AJ列 (新夕刊コース) をクリア
