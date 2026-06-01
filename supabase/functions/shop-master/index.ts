@@ -652,22 +652,47 @@ Deno.serve(async (req: Request) => {
         if (ml) { out.lat = parseFloat(ml[1]); out.lng = parseFloat(ml[2]); }
         return out;
       };
-      // Find Place From Text API で Place ID 取得
+      // Places API (New) Text Search で Place ID 取得
       const findPlaceId = async (name: string, lat?: number, lng?: number): Promise<string | null> => {
         if (!apiKey) return null;
-        const params = new URLSearchParams({
-          input: name, inputtype: 'textquery', fields: 'place_id', language: 'ja', key: apiKey,
-        });
+        const body: any = { textQuery: name, languageCode: 'ja', maxResultCount: 5 };
         if (lat != null && lng != null) {
-          params.set('locationbias', `point:${lat},${lng}`);
+          body.locationBias = { circle: { center: { latitude: lat, longitude: lng }, radius: 2000 } };
         }
-        const r = await fetch(`https://maps.googleapis.com/maps/api/place/findplacefromtext/json?${params.toString()}`);
+        const r = await fetch('https://places.googleapis.com/v1/places:searchText', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': apiKey,
+            'X-Goog-FieldMask': 'places.id,places.displayName,places.location',
+          },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) return null;
         const jj = await r.json();
-        if (jj.status === 'OK' && jj.candidates && jj.candidates[0]) {
-          return jj.candidates[0].place_id || null;
+        const places = jj.places || [];
+        if (!places.length) return null;
+        // locationBias 内で最も近いものを優先 (距離計算)
+        if (lat != null && lng != null) {
+          places.sort((a: any, b: any) => {
+            const da = Math.hypot((a.location?.latitude || 0) - lat, (a.location?.longitude || 0) - lng);
+            const db = Math.hypot((b.location?.latitude || 0) - lat, (b.location?.longitude || 0) - lng);
+            return da - db;
+          });
         }
-        return null;
+        return places[0].id || null;
       };
+      // タブ自身のデータから店舗名/緯度経度を引く (C列=店舗名, F列=緯度, G列=経度)
+      const tabShopByRow: Record<number, { name: string; lat: number; lng: number }> = {};
+      for (const row of rows) {
+        const mr = parseInt(String(row[0] || '').trim(), 10);
+        if (!mr) continue;
+        tabShopByRow[mr] = {
+          name: String(row[2] || '').trim(),
+          lat: parseFloat(String(row[5] || '')),
+          lng: parseFloat(String(row[6] || '')),
+        };
+      }
       const updates: any[] = [];
       const results: any[] = [];
       for (const row of rows) {
@@ -688,10 +713,24 @@ Deno.serve(async (req: Request) => {
           }
           if (!pid) {
             const p = parseMapsUrl(url);
-            if (p.name) {
-              pid = await findPlaceId(p.name, p.lat, p.lng);
+            // /maps/search/?...&query=NAME 形式も対応
+            let qname = p.name;
+            if (!qname) {
+              const qm = url.match(/[?&]query=([^&]+)/);
+              if (qm) qname = decodeURIComponent(qm[1]).replace(/\+/g, ' ');
+            }
+            if (qname) {
+              pid = await findPlaceId(qname, p.lat, p.lng);
               method = pid ? 'find_place_api' : '';
             }
+          }
+        }
+        // 3) フォールバック: URL ですらない (ページタイトル等) → タブ自身の店名+座標で Text Search
+        if (!pid) {
+          const ts = tabShopByRow[masterRow];
+          if (ts && ts.name && isFinite(ts.lat) && isFinite(ts.lng)) {
+            pid = await findPlaceId(ts.name, ts.lat, ts.lng);
+            method = pid ? 'fallback_master' : '';
           }
         }
         if (!pid) {
