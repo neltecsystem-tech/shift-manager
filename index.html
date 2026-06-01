@@ -12296,17 +12296,17 @@ async function diagNavFromHere(id){
     if(startIdx<0){if(w)w.close();alert('対象店舗が見つかりません (マスタ変更？)');return;}
     const chunk=shops.slice(startIdx,startIdx+9);
     if(chunk.length===0){if(w)w.close();alert('対象店舗がありません');return;}
-    // 緯度経度 + Place ID (店舗名表示) のハイブリッド指定
-    const coordOf=(s)=>`${s.lat},${s.lng}`;
+    // 公式仕様: waypoints=店舗名 + waypoint_place_ids=ChIJ で 名前表示+正確位置
+    // Place ID なしの店舗は lat,lng で fallback (座標表示)
+    const labelOf=(s)=>s.placeId?(s.name||s.addr||`${s.lat},${s.lng}`):`${s.lat},${s.lng}`;
     const last=chunk[chunk.length-1];
     const rest=chunk.slice(0,-1);
     const params=new URLSearchParams();
     params.set('api','1');
-    params.set('destination',coordOf(last));
+    params.set('destination',labelOf(last));
     if(last.placeId)params.set('destination_place_id',last.placeId);
     if(rest.length>0){
-      params.set('waypoints',rest.map(coordOf).join('|'));
-      // waypoint_place_ids は waypoints と同順・同数 (Place ID なしは空文字)
+      params.set('waypoints',rest.map(labelOf).join('|'));
       if(rest.some(s=>s.placeId))params.set('waypoint_place_ids',rest.map(s=>s.placeId||'').join('|'));
     }
     params.set('travelmode','driving');
@@ -12338,14 +12338,14 @@ async function diagNavOpen(routeId){
     }
     const last=chunk[chunk.length-1];
     const rest=chunk.slice(0,-1);
-    // 緯度経度 + Place ID (店舗名表示) のハイブリッド指定
-    const coordOf=(s)=>`${s.lat},${s.lng}`;
+    // 公式仕様: waypoints=店舗名 + waypoint_place_ids=ChIJ で 名前表示+正確位置
+    const labelOf=(s)=>s.placeId?(s.name||s.addr||`${s.lat},${s.lng}`):`${s.lat},${s.lng}`;
     const params=new URLSearchParams();
     params.set('api','1');
-    params.set('destination',coordOf(last));
+    params.set('destination',labelOf(last));
     if(last.placeId)params.set('destination_place_id',last.placeId);
     if(rest.length>0){
-      params.set('waypoints',rest.map(coordOf).join('|'));
+      params.set('waypoints',rest.map(labelOf).join('|'));
       if(rest.some(s=>s.placeId))params.set('waypoint_place_ids',rest.map(s=>s.placeId||'').join('|'));
     }
     params.set('travelmode','driving');
@@ -12557,18 +12557,18 @@ function diagExportPdf(){
     }
   `;
 
-  // ナビURL構築 (Place ID + 緯度経度 ハイブリッド)
+  // ナビURL構築 (公式仕様: waypoints=店舗名 + waypoint_place_ids=ChIJ で名前表示+正確位置)
   const buildNavUrlFromShops=(chunkShops)=>{
     if(!chunkShops.length)return null;
     const last=chunkShops[chunkShops.length-1];
     const rest=chunkShops.slice(0,-1);
-    const coordOf=s=>`${s.lat},${s.lng}`;
+    const labelOf=s=>s.placeId?(s.name||s.addr||`${s.lat},${s.lng}`):`${s.lat},${s.lng}`;
     const params=new URLSearchParams();
     params.set('api','1');
-    params.set('destination',coordOf(last));
+    params.set('destination',labelOf(last));
     if(last.placeId)params.set('destination_place_id',last.placeId);
     if(rest.length>0){
-      params.set('waypoints',rest.map(coordOf).join('|'));
+      params.set('waypoints',rest.map(labelOf).join('|'));
       if(rest.some(s=>s.placeId))params.set('waypoint_place_ids',rest.map(s=>s.placeId||'').join('|'));
     }
     params.set('travelmode','driving');
