@@ -133,7 +133,11 @@ tbody tr:hover { background:var(--primary-light); }
     </div>
   </div>
   <div id="view-shift" class="hidden">
-    <div class="card"><h2>月別シフト表</h2>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+        <h2 style="margin:0">月別シフト表</h2>
+        <button onclick="shExportPdf()" style="background:#dc2626;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📄 PDF</button>
+      </div>
       <div class="sub-tabs" id="sh-mode-tabs" style="margin-bottom:8px">
         <button class="active" onclick="setShMode('staff',this)">スタッフ起点</button>
         <button onclick="setShMode('course',this)">コース起点</button>
@@ -1728,6 +1732,108 @@ function renderShift(){
       else h+=`<td class="pm">${pm}</td>`;
     });h+='</tr>';});
   w.innerHTML=h+'</tbody></table>';
+}
+
+// 月別シフト表を PDF (ブラウザ印刷ダイアログ) で出力
+function shExportPdf(){
+  const m=document.getElementById('sh-month').value;
+  const areaF=document.getElementById('sh-area').value;
+  const cs=document.getElementById('sh-course').value.trim();
+  const ss=document.getElementById('sh-staff').value.trim();
+  const isCourseMode=shMode==='course';
+  const src=isCourseMode?DB.shiftsByCourse:DB.shifts;
+  const monthData=src[m];
+  if(!monthData){alert('データなし。月を選んでから出力してください。');return;}
+  let mergedDates=null,mergedEntries=[];
+  Object.entries(monthData).forEach(([area,sh])=>{
+    if(areaF&&area!==areaF)return;
+    if(!mergedDates)mergedDates=sh.dates;
+    sh.entries.forEach(e=>mergedEntries.push(e));
+  });
+  if(!mergedDates){alert('対象月のデータがありません');return;}
+  if(!isCourseMode&&!areaF){
+    const nameMap={};
+    mergedEntries.forEach(e=>{
+      if(!nameMap[e.course]){nameMap[e.course]={course:e.course,a:e.a.map(x=>({...x}))};return;}
+      const mm=nameMap[e.course];
+      e.a.forEach((x,i)=>{
+        if(x.am&&!mm.a[i].am)mm.a[i].am=x.am;
+        if(x.pm&&!mm.a[i].pm)mm.a[i].pm=x.pm;
+      });
+    });
+    mergedEntries=Object.values(nameMap);
+  }
+  let f=mergedEntries;
+  f=f.filter(e=>e.a.some(x=>{const am=(x.am||'').trim(),pm=(x.pm||'').trim();
+    if(shEd==='am')return am&&am!=='0'&&am!=='希望休';
+    if(shEd==='pm')return pm&&pm!=='0'&&pm!=='希望休';
+    return(am&&am!=='0'&&am!=='希望休')||(pm&&pm!=='0'&&pm!=='希望休');}));
+  if(cs)f=f.filter(e=>e.course.includes(cs));
+  const ssTerms=ss?ss.split(/[,、\s　]+/).filter(Boolean):[];
+  if(ssTerms.length){
+    f=f.filter(e=>ssTerms.some(t=>e.course.includes(t)||e.a.some(x=>((shEd!=='pm'?x.am:'')+' '+(shEd!=='am'?x.pm:'')).includes(t))));
+  }
+  if(!f.length){alert('表示対象の行がありません');return;}
+  const rowLabel=isCourseMode?'コース':'スタッフ';
+  const isBoth=shEd==='both',isAm=shEd==='am';
+  const edLabel=isBoth?'朝刊・夕刊':isAm?'朝刊のみ':'夕刊のみ';
+  const now=new Date();
+  const title=`シフト表_${m}_${areaF||'全営業所'}_${edLabel}_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+  // セル幅を日数とエディションから推定
+  const dayCount=mergedDates.length;
+  const cellCount=isBoth?dayCount*2:dayCount;
+  const css=`
+    @page{size:A4 landscape;margin:5mm;}
+    *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    body{font-family:'Meiryo','Hiragino Sans',sans-serif;margin:0;padding:0;color:#1e293b;font-size:8.5px;}
+    .doc-head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:4px;border-bottom:1.5px solid #1e293b;padding-bottom:2px;}
+    h1{font-size:13px;margin:0;}
+    .doc-sub{font-size:9px;color:#475569;}
+    table{width:100%;border-collapse:collapse;font-size:7px;table-layout:fixed;}
+    th,td{border:1px solid #cbd5e1;padding:1px 2px;text-align:center;vertical-align:middle;overflow:hidden;}
+    th{background:#f1f5f9;font-weight:600;font-size:7px;}
+    td.cn{text-align:left;font-weight:600;background:#fafbfc;white-space:nowrap;max-width:60mm;overflow:hidden;text-overflow:ellipsis;}
+    td.am{background:#eff6ff;color:#0369a1;}
+    td.pm{background:#fdf4ff;color:#7e22ce;}
+    th.sun,td.sun{background:#fee2e2;color:#dc2626;}
+    th.sat,td.sat{background:#dbeafe;color:#1d4ed8;}
+    th[colspan]{border-left:2px solid #64748b;}
+    tr:nth-child(even) td.cn{background:#f1f5f9;}
+  `;
+  let body=`<div class="doc-head"><div><h1>📅 月別シフト表</h1><div class="doc-sub">${m} ／ 営業所: ${areaF||'全営業所'} ／ 区分: ${edLabel} ／ ${isCourseMode?'コース':'スタッフ'}起点 ／ ${f.length}行</div></div><div class="doc-sub">${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} 出力</div></div>`;
+  body+='<table>';
+  if(isBoth){
+    body+=`<thead><tr><th rowspan="2">${rowLabel}</th>`;
+    mergedDates.forEach(d=>{const c=d.dow==='日'?'sun':d.dow==='土'?'sat':'';
+      body+=`<th colspan="2" class="${c}">${d.dn}<br><small>${d.dow}</small></th>`;});
+    body+='</tr><tr>';
+    mergedDates.forEach(d=>{const c=d.dow==='日'?'sun':d.dow==='土'?'sat':'';
+      body+=`<th class="${c}">朝</th><th class="${c}">夕</th>`;});
+    body+='</tr></thead><tbody>';
+  } else {
+    body+=`<thead><tr><th>${rowLabel}</th>`;
+    mergedDates.forEach(d=>{const c=d.dow==='日'?'sun':d.dow==='土'?'sat':'';
+      body+=`<th class="${c}">${d.dn}<br><small>${d.dow}</small></th>`;});
+    body+='</tr></thead><tbody>';
+  }
+  f.forEach(e=>{
+    body+=`<tr><td class="cn">${diagEsc(e.course)}</td>`;
+    e.a.forEach((a,i)=>{
+      const d=mergedDates[i];
+      const c=d.dow==='日'?'sun':d.dow==='土'?'sat':'';
+      let am=a.am||'',pm=a.pm||'';
+      if(am==='0'||am==='希望休')am='';
+      if(pm==='0'||pm==='希望休')pm='';
+      if(isBoth)body+=`<td class="am ${c}">${diagEsc(am)}</td><td class="pm ${c}">${diagEsc(pm)}</td>`;
+      else if(isAm)body+=`<td class="am ${c}">${diagEsc(am)}</td>`;
+      else body+=`<td class="pm ${c}">${diagEsc(pm)}</td>`;
+    });
+    body+='</tr>';
+  });
+  body+='</tbody></table>';
+  const win=window.open('','_blank');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${css}</style></head><body>${body}<script>document.title=${JSON.stringify(title)};setTimeout(()=>window.print(),500);<\/script></body></html>`);
+  win.document.close();
 }
 
 let tpInit=false,tpEd='am';
