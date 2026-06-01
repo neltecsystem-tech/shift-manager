@@ -12023,8 +12023,10 @@ async function diagLoad(){
     diagHeaders.forEach((h,i)=>{
       if(h.includes('営業所'))diagColMap.area=i;
       if(h.includes('店舗コード'))diagColMap.code=i;
-      if(h.includes('店舗名'))diagColMap.name=i;
-      if(h==='住所'||h.includes('住所'))diagColMap.addr=i;
+      if(h==='正式店舗名')diagColMap.officialName=i;
+      else if(h.includes('店舗名'))diagColMap.name=i;
+      // 「住所精度」「住所」両方 includes('住所') にマッチしていたバグ修正: 厳密マッチ
+      if(h==='住所')diagColMap.addr=i;
       if(h.includes('朝刊コース'))diagColMap.amCourse=i;
       if(h.includes('朝刊順番'))diagColMap.amOrder=i;
       // 「新夕刊コース」(AJ列) は別管理。 「夕刊コース名」(O列) のみ pmCourse に入れる
@@ -12546,8 +12548,9 @@ function diagExportPdf(){
     .bar .tick-lbl{position:absolute;bottom:-14px;transform:translateX(-50%);font-size:7.5px;color:#64748b;}
     .bar .pt{position:absolute;top:50%;transform:translate(-50%,-50%);width:8px;height:8px;background:#3b82f6;border:1.5px solid #fff;border-radius:50%;box-shadow:0 0 0 0.5px #1e40af;}
     .bar .pt-lbl{position:absolute;top:2px;transform:translateX(-50%);font-size:6.5px;color:#1e40af;font-weight:700;}
-    .tbl-wrap{columns:2;column-gap:4mm;padding:3px 6px;}
-    table{width:100%;border-collapse:collapse;font-size:8.5px;break-inside:avoid;}
+    .tbl-wrap{display:flex;gap:4mm;padding:3px 6px;align-items:flex-start;}
+    .tbl-wrap > table{flex:1;min-width:0;}
+    table{width:100%;border-collapse:collapse;font-size:8.5px;}
     th,td{padding:1.5px 4px;border:1px solid #e2e8f0;vertical-align:top;}
     th{background:#f8fafc;font-weight:600;text-align:left;font-size:8px;}
     td.seq{text-align:center;color:#64748b;width:6mm;}
@@ -12619,25 +12622,20 @@ function diagExportPdf(){
     // 緯度経度ありの店舗だけナビ可能
     const navShops=shops.filter(s=>s.lat!=null&&s.lng!=null);
 
-    // 2段組み明細 (ナビ列を含む)
-    body+=`<div class="tbl-wrap"><table><thead><tr><th>#</th><th>店舗名</th><th>住所</th><th>店着</th><th>ナビ</th><th>特記</th></tr></thead><tbody>`;
-    shops.forEach(s=>{
+    // 行データを生成
+    const rowOf=(s)=>{
       let addr=s.addr||'';
       if(!addr){
         if(s.lat!=null&&s.lng!=null){
           const cache=diagGeocodeCacheLoad();
           addr=cache[diagLatLngKey(s.lat,s.lng)]||`(${s.lat.toFixed(4)}, ${s.lng.toFixed(4)})`;
-        }else{
-          addr='';
         }
       }
       const sNote=(diagStoreNotes.get(s.name)||'').trim();
       const sLinks=diagExtractLinks(sNote);
       const linkText=sLinks.length?'\n'+sLinks.map(l=>'🔗 '+l.label+': '+l.url).join('\n'):'';
-      // メモ本文 (markdown形式の[label](url)はラベルのみ表示する形に整形)
       const cleanNote=sNote.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'$1').replace(/\s*https?:\/\/\S+\s*/g,' ').trim();
       const noteCell=cleanNote+linkText;
-      // 個別ナビ (現在地→この店舗以降9件)
       let navCell='';
       if(s.lat!=null&&s.lng!=null){
         const startIdx=navShops.findIndex(x=>x.seq===s.seq);
@@ -12649,9 +12647,27 @@ function diagExportPdf(){
           }
         }
       }
-      body+=`<tr><td class="seq">${s.seq}</td><td class="name">${s.name||''}</td><td class="addr">${addr}</td><td class="time">${s.schedTime||'--:--'}</td><td class="nav">${navCell}</td><td class="note">${diagEsc(noteCell)}</td></tr>`;
-    });
-    body+=`</tbody></table></div>`;
+      return `<tr><td class="seq">${s.seq}</td><td class="name">${diagEsc(s.name||'')}</td><td class="addr">${diagEsc(addr)}</td><td class="time">${s.schedTime||'--:--'}</td><td class="nav">${navCell}</td><td class="note">${diagEsc(noteCell)}</td></tr>`;
+    };
+    const tableHead=`<thead><tr><th class="th-seq">#</th><th class="th-name">店舗名</th><th class="th-addr">住所</th><th class="th-time">店着</th><th class="th-nav">ナビ</th><th class="th-note">特記</th></tr></thead>`;
+    // 30店舗以上なら 2分割、 それ以下は1テーブル全幅
+    body+=`<div class="tbl-wrap">`;
+    if(shops.length>=30){
+      const half=Math.ceil(shops.length/2);
+      const left=shops.slice(0,half);
+      const right=shops.slice(half);
+      body+=`<table>${tableHead}<tbody>`;
+      left.forEach(s=>body+=rowOf(s));
+      body+=`</tbody></table>`;
+      body+=`<table>${tableHead}<tbody>`;
+      right.forEach(s=>body+=rowOf(s));
+      body+=`</tbody></table>`;
+    }else{
+      body+=`<table>${tableHead}<tbody>`;
+      shops.forEach(s=>body+=rowOf(s));
+      body+=`</tbody></table>`;
+    }
+    body+=`</div>`;
 
     // チャンクナビリンク (9店舗ずつ)
     if(navShops.length>0){
