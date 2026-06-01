@@ -618,36 +618,91 @@ Deno.serve(async (req: Request) => {
       });
 
     } else if (action === 'apply_place_id_helper_tab') {
-      // 「PlaceID未取得」タブの J列 (10列目) から Place ID を抽出して master AK列 に反映
+      // 「PlaceID未取得」タブの J列 から Place ID/URL を読み取り master AK列 に反映
+      // J列の中身:
+      //   1) ChIJ... 直接   → そのまま使う
+      //   2) https://maps.app.goo.gl/xxx  → リダイレクト先を取得して URL パース
+      //   3) https://www.google.com/maps/place/NAME/@LAT,LNG/... → Find Place From Text API で Place ID 取得
       const TAB_NAME = 'PlaceID未取得';
+      // Geocoding/Places API キー (フロントエンドにも公開済み、 ドメイン制限&API制限あり)
+      const apiKey = 'AIzaSyBWWZHRXPfqCc62boKSRbsEG4ihO2mYl2A';
       const resp = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(TAB_NAME)}!A2:K500`,
         { headers: { 'Authorization': `Bearer ${token}` } }
       );
       const j = await resp.json();
       const rows = (j.values || []) as string[][];
-      // Place ID 抽出: ChIJ... を含むテキスト or place_id=ChIJ... or URL から正規表現で
-      const extract = (text: string): string | null => {
-        if (!text) return null;
-        const m = text.match(/(ChI[A-Za-z0-9_-]{20,})/);
+      const extractChiJ = (text: string): string | null => {
+        const m = (text || '').match(/(Ch[A-Za-z0-9_-]{20,})/);
         return m ? m[1] : null;
+      };
+      // 短縮URL展開
+      const resolveShortUrl = async (url: string): Promise<string> => {
+        try {
+          const r = await fetch(url, { method: 'GET', redirect: 'follow' });
+          return r.url;
+        } catch { return url; }
+      };
+      // /maps/place/NAME/@LAT,LNG パース
+      const parseMapsUrl = (url: string): { name?: string; lat?: number; lng?: number } => {
+        const out: any = {};
+        const mn = url.match(/\/maps\/place\/([^/@]+)/);
+        if (mn) out.name = decodeURIComponent(mn[1]).replace(/\+/g, ' ');
+        const ml = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+        if (ml) { out.lat = parseFloat(ml[1]); out.lng = parseFloat(ml[2]); }
+        return out;
+      };
+      // Find Place From Text API で Place ID 取得
+      const findPlaceId = async (name: string, lat?: number, lng?: number): Promise<string | null> => {
+        if (!apiKey) return null;
+        const params = new URLSearchParams({
+          input: name, inputtype: 'textquery', fields: 'place_id', language: 'ja', key: apiKey,
+        });
+        if (lat != null && lng != null) {
+          params.set('locationbias', `point:${lat},${lng}`);
+        }
+        const r = await fetch(`https://maps.googleapis.com/maps/api/place/findplacefromtext/json?${params.toString()}`);
+        const jj = await r.json();
+        if (jj.status === 'OK' && jj.candidates && jj.candidates[0]) {
+          return jj.candidates[0].place_id || null;
+        }
+        return null;
       };
       const updates: any[] = [];
       const results: any[] = [];
       for (const row of rows) {
         const masterRow = parseInt(String(row[0] || '').trim(), 10);
         if (!masterRow) continue;
-        const pasted = String(row[9] || '').trim(); // J列
-        const pid = extract(pasted);
+        const pasted = String(row[9] || '').trim();
+        if (!pasted) continue;
+        // 1) ChIJ 直接
+        let pid = extractChiJ(pasted);
+        let method = pid ? 'direct' : '';
+        // 2) URL の場合
+        if (!pid && /^https?:\/\//.test(pasted)) {
+          let url = pasted;
+          if (url.includes('maps.app.goo.gl') || url.includes('goo.gl/maps')) {
+            url = await resolveShortUrl(url);
+            pid = extractChiJ(url);
+            method = pid ? 'short_url' : '';
+          }
+          if (!pid) {
+            const p = parseMapsUrl(url);
+            if (p.name) {
+              pid = await findPlaceId(p.name, p.lat, p.lng);
+              method = pid ? 'find_place_api' : '';
+            }
+          }
+        }
         if (!pid) {
-          if (pasted) results.push({ row: masterRow, pasted, error: 'Place ID 抽出失敗' });
+          results.push({ row: masterRow, pasted, error: 'Place ID 抽出失敗' });
           continue;
         }
         updates.push({
           range: `'${SHEET_NAME}'!AK${masterRow}:AK${masterRow}`,
           values: [[pid]],
         });
-        results.push({ row: masterRow, pid });
+        results.push({ row: masterRow, pid, method });
       }
       if (updates.length > 0) {
         await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
@@ -664,7 +719,11 @@ Deno.serve(async (req: Request) => {
         const masterRow = parseInt(String(row[0] || '').trim(), 10);
         if (!masterRow) continue;
         const r = results.find(r => r.row === masterRow);
-        const state = r ? (r.pid ? '✓ 反映済 ' + r.pid : '✗ ' + (r.error || '')) : '(未入力)';
+        let state = '(未入力)';
+        if (r) {
+          if (r.pid) state = `✓ ${r.method||''} ${r.pid}`;
+          else state = '✗ ' + (r.error || '');
+        }
         stateUpdates.push({
           range: `'${TAB_NAME}'!K${i + 1}:K${i + 1}`,
           values: [[state]],
