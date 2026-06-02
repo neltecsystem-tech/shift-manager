@@ -493,7 +493,7 @@ tbody tr:hover { background:var(--primary-light); }
             <p style="font-size:12px;color:#c2410c;margin:0;background:#fff7ed;padding:6px 8px;border-radius:4px;">⚠ <b>夕刊/競馬は自動適用されません。</b>通常タブの夕刊単価を必ず設定してください。</p>
           </div>
         </div>
-        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-owner-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-salary-wrap').style.display=this.value==='社員'?'block':'none';" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人</option><option value="社員">社員</option></select></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-owner-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-salary-wrap').style.display=this.value==='社員'?'block':'none';document.getElementById('inv-re-admin-auto').style.display=this.value==='社員'?'block':'none';" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人</option><option value="社員">社員</option></select></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-company-wrap"><label style="font-size:12px;color:var(--text-sub)">所属会社名</label><input type="text" id="inv-re-company" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="株式会社○○"></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-owner-wrap"><label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;background:#fef9c3;border:1px solid #facc15;border-radius:8px;padding:8px 12px;"><input type="checkbox" id="inv-re-owner"> 👑 オーナー (法人代表者)</label><div style="font-size:11px;color:var(--text-sub);margin-top:3px;padding-left:4px;">チェックなしの法人メンバーは稼働登録・請求書で金額が非表示になります</div></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-salary-wrap"><label style="font-size:12px;color:var(--text-sub)">月給 (円)</label><input type="number" id="inv-re-salary" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 280000" min="0" step="1000"><div style="font-size:11px;color:var(--text-sub);margin-top:3px;">収支管理画面で「社員の給料」として集計されます</div></div>
@@ -502,8 +502,11 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">ログインID</label><input type="text" id="inv-re-loginid" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">パスワード</label><input type="text" id="inv-re-loginpw" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">アクセス権限</label></div>
+        <div id="inv-re-admin-auto" style="display:none;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:#92400e;">
+          ⚙️ <b>区分が「社員」</b> の場合、 自動的に管理者権限 (全機能アクセス可) が付与されます。 個別チェックは不要です。
+        </div>
         <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;">
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-admin"> 🔧 管理画面</label>
+          <label style="display:none;align-items:center;gap:6px;font-size:13px;" id="inv-re-perm-admin-wrap"><input type="checkbox" id="inv-re-perm-admin"> 🔧 管理画面 <span style="color:var(--text-sub);font-size:11px;">(旧式・社員は自動付与)</span></label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-defects"> 🔧 不具合管理</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-shopmaster"> 🏪 店舗マスタ</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-shiftedit"> 📝 シフト編集</label>
@@ -4393,6 +4396,7 @@ function invAddRate(){
   document.getElementById('inv-re-owner-wrap').style.display='none';
   document.getElementById('inv-re-salary').value='';
   document.getElementById('inv-re-salary-wrap').style.display='none';
+  document.getElementById('inv-re-admin-auto').style.display='none';
   document.getElementById('inv-re-invoice').value='';
   invUpdateNameSelect('',true);
   document.getElementById('inv-re-calc').value='固定';
@@ -4440,6 +4444,7 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-owner-wrap').style.display=r.biz_type==='法人'?'block':'none';
   document.getElementById('inv-re-salary').value=r.monthly_salary||'';
   document.getElementById('inv-re-salary-wrap').style.display=r.biz_type==='社員'?'block':'none';
+  document.getElementById('inv-re-admin-auto').style.display=r.biz_type==='社員'?'block':'none';
   document.getElementById('inv-re-invoice').value=r.invoice_number||'';
   // 川越タブ
   const kw=r.kw_am_daily||'';
@@ -5597,7 +5602,9 @@ function adminRenderStaff(){
     const bc=bizColors[r.biz_type]||['#f1f5f9','#94a3b8'];
     const ps=(r.permissions||'').split(',').filter(Boolean);
     const permTags=[];
-    if(ps.includes('admin'))permTags.push('<span style="background:#fdf4ff;color:#7c3aed;padding:1px 6px;border-radius:8px;font-size:10px;">管理</span>');
+    // 社員は自動で管理者扱い
+    const isEmployeeAdmin = r.biz_type === '社員';
+    if(isEmployeeAdmin || ps.includes('admin'))permTags.push('<span style="background:#fdf4ff;color:#7c3aed;padding:1px 6px;border-radius:8px;font-size:10px;">管理'+(isEmployeeAdmin?'(自動)':'')+'</span>');
     if(ps.includes('defects'))permTags.push('<span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:8px;font-size:10px;">不具合</span>');
     if(ps.includes('shopmaster'))permTags.push('<span style="background:#dcfce7;color:#166534;padding:1px 6px;border-radius:8px;font-size:10px;">店舗</span>');
     if(ps.includes('shiftedit'))permTags.push('<span style="background:#ede9fe;color:#6d28d9;padding:1px 6px;border-radius:8px;font-size:10px;">シフト編集</span>');
