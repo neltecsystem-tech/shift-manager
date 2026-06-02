@@ -339,7 +339,7 @@ tbody tr:hover { background:var(--primary-light); }
         <h2 style="margin-bottom:0">📄 請求書</h2>
         <div style="display:flex;gap:8px;">
           <button onclick="invShowChangePw()" id="inv-changepw-btn" style="background:#94a3b8;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;display:none;">🔑 PW変更</button>
-          <button onclick="invShowRates()" class="inv-admin-only" style="background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">⚙ 単価設定</button>
+          <button onclick="invShowRates()" class="inv-admin-only" style="display:none;background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">⚙ 単価設定</button>
           <button onclick="invShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ 稼働入力</button>
         </div>
       </div>
@@ -352,7 +352,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="inv-work-view">
         <div class="filters">
           <div><label>月</label><input type="month" id="inv-month" onchange="invFilterWork()"></div>
-          <div class="inv-admin-only"><label>スタッフ</label><select id="inv-staff-filter" onchange="invFilterWork()"><option value="">すべて</option></select></div>
+          <div class="inv-admin-only" style="display:none;"><label>スタッフ</label><select id="inv-staff-filter" onchange="invFilterWork()"><option value="">すべて</option></select></div>
         </div>
         <div id="inv-work-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
         <div class="table-wrap" id="inv-work-table"></div>
@@ -360,7 +360,7 @@ tbody tr:hover { background:var(--primary-light); }
       <!-- 請求書生成ビュー -->
       <div id="inv-gen-view" style="display:none;">
         <div class="filters">
-          <div class="inv-admin-only"><label>スタッフ</label><select id="inv-gen-staff"><option value="">選択</option></select></div>
+          <div class="inv-admin-only" style="display:none;"><label>スタッフ</label><select id="inv-gen-staff"><option value="">選択</option></select></div>
           <div id="inv-gen-staff-label" style="display:none;"><label style="font-size:12px;color:var(--text-sub)">スタッフ</label><p style="font-weight:bold;font-size:14px;margin-top:4px;" id="inv-gen-staff-name"></p></div>
           <div><label>開始日</label><input type="date" id="inv-gen-from"></div>
           <div><label>終了日</label><input type="date" id="inv-gen-to"></div>
@@ -1986,18 +1986,20 @@ function showPermLogin(title,adminPw,permKey){
       const lid=document.getElementById('perm-login-id').value.trim();
       const lpw=document.getElementById('perm-login-pw').value.trim();
       const errEl=document.getElementById('perm-login-err');
-      // 管理者PW
+      // 管理者PW (サーバ側で照合)
       if(apw){
-        if(apw===adminPw||apw===INV_PW){modal.remove();resolve(true);return;}
-        errEl.textContent='管理者パスワードが正しくありません';errEl.style.display='block';return;
+        document.getElementById('perm-login-btn').textContent='確認中...';
+        const res=await invServerAdminLogin(apw);
+        if(res?.success){modal.remove();resolve(true);return;}
+        errEl.textContent='管理者パスワードが正しくありません';errEl.style.display='block';
+        document.getElementById('perm-login-btn').textContent='ログイン';return;
       }
-      // スタッフログイン
+      // スタッフログイン (サーバ側で照合 + 権限確認)
       if(lid&&lpw){
         document.getElementById('perm-login-btn').textContent='確認中...';
-        if(!invRates.length){try{const res=await invApi({action:'get_rates'});invRates=res.rates||[];}catch(_){}}
-        const staff=invRates.find(r=>r.login_id===lid&&r.login_pw===lpw);
-        if(!staff){errEl.textContent='IDまたはパスワードが正しくありません';errEl.style.display='block';document.getElementById('perm-login-btn').textContent='ログイン';return;}
-        if(!(staff.permissions||'').includes(permKey)){errEl.textContent='この機能へのアクセス権限がありません';errEl.style.display='block';document.getElementById('perm-login-btn').textContent='ログイン';return;}
+        const res=await invServerLogin(lid,lpw);
+        if(!res?.success){errEl.textContent=res?.error||'IDまたはパスワードが正しくありません';errEl.style.display='block';document.getElementById('perm-login-btn').textContent='ログイン';return;}
+        if(!(res.permissions||'').split(',').includes(permKey)){errEl.textContent='この機能へのアクセス権限がありません';errEl.style.display='block';document.getElementById('perm-login-btn').textContent='ログイン';return;}
         modal.remove();resolve(true);return;
       }
       errEl.textContent='パスワードまたはログインID/PWを入力してください';errEl.style.display='block';
@@ -3556,6 +3558,8 @@ const INV_PW='neltec2026';
 let invAuthed=false;
 let invIsAdmin=false;
 let invStaffName='';
+let invAuthToken='';// サーバ発行セッショントークン (HMAC署名)。空なら未認証
+let invStaffPerms='';// ログイン中スタッフの permissions 文字列 (権限ゲート用)
 let invRates=[];
 let invWork=[];
 let invStaffNames=[];
@@ -3566,8 +3570,35 @@ let invCatSel='朝刊';
 const INV_CATS=['朝刊','夕刊/競馬','庫内朝刊','庫内夕刊'];
 
 async function invApi(body){
-  const resp=await fetch(INV_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  return resp.json();
+  // auth_token を自動付与。login/admin_login は token 不要
+  const payload = invAuthToken && !('auth_token' in body) ? {...body, auth_token: invAuthToken} : body;
+  const resp=await fetch(INV_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const data = await resp.json();
+  if(resp.status===401 && data?.code==='AUTH_REQUIRED' && invAuthToken){
+    // トークン期限切れ等で失効した場合は強制ログアウト
+    invAuthToken='';invAuthed=false;invIsAdmin=false;invStaffName='';
+    if(typeof sysLogout==='function')sysLogout();
+    alert('セッションが切れました。再ログインしてください。');
+  }
+  return data;
+}
+
+// 共通スタッフ認証 (サーバ側で login_id/login_pw 照合 + トークン発行)
+async function invServerLogin(login_id, login_pw){
+  const res=await invApi({action:'login', login_id, login_pw});
+  if(res?.success && res.auth_token){
+    invAuthToken=res.auth_token;
+    invStaffPerms=res.permissions||'';
+  }
+  return res;
+}
+// 共通管理者認証
+async function invServerAdminLogin(admin_password){
+  const res=await invApi({action:'admin_login', admin_password});
+  if(res?.success && res.auth_token){
+    invAuthToken=res.auth_token;
+  }
+  return res;
 }
 
 // ログイン中ユーザーが「法人だがオーナーではない (=金額非表示対象)」か判定
@@ -3608,16 +3639,14 @@ async function invDoLogin(){
   if(!id||!pw){document.getElementById('inv-login-err').textContent='IDとパスワードを入力してください';document.getElementById('inv-login-err').style.display='block';return;}
   const btn=document.querySelector('#inv-login-modal button');
   if(btn)btn.textContent='ログイン中...';
-  const res=await invApi({action:'login',login_id:id,login_pw:pw});
+  const res=await invServerLogin(id,pw);
   if(res.success){
     invAuthed=true;invIsAdmin=false;invStaffName=res.staff_name;
-    // ログイン応答に含まれるデータを先にセット
     if(res.rates)invRates=res.rates;
-    if(res.work)invWork=res.work.filter(w=>w.staff===res.staff_name);
+    if(res.work)invWork=res.work;// EF側で自分のレコードのみ
     document.getElementById('inv-login-modal').remove();
     invApplyUI();
     invFilterWork();
-    // 残りのデータを裏で読み込む
     invLoadAllBackground();
   }else{
     document.getElementById('inv-login-err').textContent=res.error||'ログインに失敗しました';
@@ -3626,13 +3655,15 @@ async function invDoLogin(){
   }
 }
 
-function invAdminLogin(){
+async function invAdminLogin(){
   const pw=prompt('管理者パスワードを入力:');
-  if(pw===INV_PW){
+  if(pw===null)return;
+  const res=await invServerAdminLogin(pw);
+  if(res.success){
     invAuthed=true;invIsAdmin=true;invStaffName='';
     document.getElementById('inv-login-modal').remove();
     invLoadAll();
-  }else if(pw!==null){alert('パスワードが正しくありません');}
+  }else{alert('パスワードが正しくありません');}
 }
 
 // UI反映のみ（データロード済み前提）
@@ -4063,6 +4094,7 @@ async function invDeleteWork(rowNum){
 
 // 単価設定
 function invShowRates(){
+  if(!invIsAdmin)return;
   let h='<table style="width:100%;font-size:13px;"><thead><tr><th>スタッフ</th><th>区分</th><th>朝刊(平日)</th><th>朝刊(土日)</th><th>夕刊(月-木)</th><th>夕刊(金-日)</th><th>庫内朝</th><th>庫内夕</th><th>方式</th><th>ID</th><th></th></tr></thead><tbody>';
   invRates.forEach((r,i)=>{
     const bizBadge=r.biz_type==='個人'?'<span style="background:#dbeafe;color:#1d4ed8;padding:1px 6px;border-radius:8px;font-size:11px;">個人</span>':r.biz_type==='法人'?'<span style="background:#dcfce7;color:#166534;padding:1px 6px;border-radius:8px;font-size:11px;">法人</span>'+(r.company?'<br><span style="font-size:11px;color:#64748b;">'+r.company+'</span>':''):'<span style="color:#cbd5e1">-</span>';
@@ -11365,10 +11397,9 @@ async function msrDoLogin(){
   const errEl=document.getElementById('msr-login-err');
   if(!id||!pw){errEl.textContent='IDとパスワードを入力してください';errEl.style.display='block';return;}
   document.getElementById('msr-login-btn').textContent='ログイン中...';
-  if(!invRates.length){try{const res=await invApi({action:'get_rates'});invRates=res.rates||[];}catch(_){}}
-  const staff=invRates.find(r=>r.login_id===id&&r.login_pw===pw);
-  if(!staff){errEl.textContent='IDまたはパスワードが正しくありません';errEl.style.display='block';document.getElementById('msr-login-btn').textContent='ログイン';return;}
-  msrStaffName=staff.name;
+  const res=await invServerLogin(id,pw);
+  if(!res?.success){errEl.textContent=res?.error||'IDまたはパスワードが正しくありません';errEl.style.display='block';document.getElementById('msr-login-btn').textContent='ログイン';return;}
+  msrStaffName=res.staff_name;
   msrAuthed=true;
   document.getElementById('msr-login-modal').remove();
   msrLoadData().then(()=>msrAutoSelectCourse());
@@ -12711,18 +12742,18 @@ async function sysDoLogin(){
   const errEl=document.getElementById('sys-login-err');
   if(!id||!pw){errEl.textContent='IDとパスワードを入力してください';errEl.style.display='block';return;}
   document.getElementById('sys-login-btn').textContent='ログイン中...';
-  // スタッフ認証
-  if(!invRates.length){
-    try{const res=await invApi({action:'get_rates'});invRates=res.rates||[];}catch(_){}
-  }
-  const staff=invRates.find(r=>r.login_id===id&&r.login_pw===pw);
-  if(!staff){
-    errEl.textContent='IDまたはパスワードが正しくありません';errEl.style.display='block';
+  // サーバ側で照合 + トークン発行
+  const res=await invServerLogin(id,pw);
+  if(!res?.success){
+    errEl.textContent=res?.error||'IDまたはパスワードが正しくありません';errEl.style.display='block';
     document.getElementById('sys-login-btn').textContent='ログイン';return;
   }
-  sysLoggedIn=true;sysUserName=staff.name;sysIsAdmin=false;
-  const perms=(staff.permissions||'').split(',').filter(Boolean);
+  sysLoggedIn=true;sysUserName=res.staff_name;sysIsAdmin=false;
+  const perms=(res.permissions||'').split(',').filter(Boolean);
   sysUserPerms=perms;
+  // 自分のrateだけ手元に
+  if(res.rates)invRates=res.rates;
+  if(res.work)invWork=res.work;
   document.getElementById('sys-login').style.display='none';
   document.getElementById('sys-user-label').textContent='👤 '+sysUserName;
   document.getElementById('sys-changepw-btn').style.display='';
@@ -12738,11 +12769,12 @@ async function sysDoLogin(){
   init();
 }
 
-function sysAdminLogin(){
+async function sysAdminLogin(){
   const pw=document.getElementById('sys-admin-pw').value.trim();
   const errEl=document.getElementById('sys-login-err');
   if(!pw){errEl.textContent='管理者パスワードを入力してください';errEl.style.display='block';return;}
-  if(pw!==INV_PW&&pw!==(localStorage.getItem('adminPw')||INV_PW)){
+  const res=await invServerAdminLogin(pw);
+  if(!res?.success){
     errEl.textContent='管理者パスワードが正しくありません';errEl.style.display='block';return;
   }
   sysLoggedIn=true;sysUserName='管理者';sysIsAdmin=true;
@@ -12795,7 +12827,8 @@ function sysApplyPermissions(perms){
 function sysLogout(){
   sysLoggedIn=false;sysUserName='';sysIsAdmin=false;sysUserPerms=[];
   defectAuthed=false;smAuthed=false;adminAuthed=false;msrAuthed=false;msrStaffName='';
-  invAuthed=false;invIsAdmin=false;invStaffName='';
+  invAuthed=false;invIsAdmin=false;invStaffName='';invAuthToken='';invStaffPerms='';
+  invRates=[];invWork=[];invStaffNames=[];invSpecial=[];
   document.getElementById('sys-login').style.display='flex';
   document.getElementById('sys-login-id').value='';
   document.getElementById('sys-login-pw').value='';
