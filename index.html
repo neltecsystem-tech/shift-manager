@@ -574,6 +574,7 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>年月</label><input type="month" id="adm-bill-month"></div>
           <div><button onclick="admBillGenerate()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">明細作成</button></div>
           <div><button onclick="admBillAllCourses()" style="background:#6366f1;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📄 営業所一括作成</button></div>
+          <div><button onclick="admBillAllAreasTotal()" style="background:#0ea5e9;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📊 全営業所合計</button></div>
           <div><button onclick="admBillPrint()" style="background:#64748b;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">🖨 印刷</button></div>
           <div><button onclick="admBillSavePDF()" id="adm-bill-pdf-btn" style="background:#dc2626;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📄 PDF保存</button></div>
         </div>
@@ -9777,6 +9778,124 @@ async function admBillAllCourses(){
   th+=`</tr></table>`;
   document.getElementById('adm-bill-totals').innerHTML=th;
   document.getElementById('adm-bill-preview').innerHTML=allHtml;
+  }catch(e){alert('エラー: '+e.message+'\n'+e.stack);console.error(e);}
+}
+
+// 1営業所の総合計を返す (HTML生成なし、 buildAreaTotalPage と同じ計算式)
+function admBillComputeAreaTotal(area,monthVal,records,cols){
+  const bulkAreas=area==='城北'?['城北','池袋']:[area];
+  const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&bulkAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+  const allC=new Set();
+  filtered.forEach(r=>{
+    if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
+    if(r[`col_${cols.pmCourse}`])allC.add(r[`col_${cols.pmCourse}`]);
+    if(r[`col_${cols.keibaCourse}`])allC.add(r[`col_${cols.keibaCourse}`]);
+  });
+  const courses=[...allC].filter(c=>bulkAreas.some(a=>c.includes(a))).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const tot={am:0,pm:0,grand:0,amCount:0,pmCount:0,keibaCount:0,courses:courses.length,confirmedCnt:0};
+  courses.forEach(course=>{
+    const confirmed=typeof getConfirmedSale==='function'?getConfirmedSale(monthVal,area,course):null;
+    const r=admBillRenderWithTotals(area,course,monthVal);
+    const grand=confirmed?confirmed.grand_total:r.grandTotal;
+    const am=confirmed?confirmed.am_total:r.totalAmSum;
+    const pm=confirmed?confirmed.pm_total:r.totalPmSum;
+    tot.am+=am;tot.pm+=pm;tot.grand+=grand;
+    tot.amCount+=r.amCount;tot.pmCount+=r.pmCount;tot.keibaCount+=r.keibaCount;
+    if(confirmed)tot.confirmedCnt++;
+  });
+  // 作業料/庫内/直送便 (buildAreaTotalPage と同じ)
+  const [y,m]=monthVal.split('-').map(Number);
+  const cond=getBillConditions(monthVal);
+  let workFee=0;
+  if(area==='立川')workFee=Number(cond.work_tachikawa)||0;
+  else if(area==='川崎高津')workFee=Number(cond.work_kawasaki)||0;
+  tot.grand+=workFee;
+  tot.workFee=workFee;
+
+  const daysInMonth=new Date(y,m,0).getDate();
+  const holiday=cond.holiday||[];
+  const noam=cond.noam||[];
+  const nopm=cond.nopm||[];
+  const yeskeiba=cond.yeskeiba||[];
+  let amDays=0,keibaWorkDays=0;
+  for(let d=1;d<=daysInMonth;d++){
+    const dow=new Date(y,m-1,d).getDay();
+    const isHoliday=holiday.includes(d);
+    const isNoAm=noam.includes(d);
+    const isNoPm=nopm.includes(d);
+    const isFri=dow===5,isSat=dow===6;
+    if(!isHoliday&&!isNoAm)amDays++;
+    const isKeibaDispatch=(isFri||isSat||yeskeiba.includes(d))&&!isNoPm;
+    if(!isHoliday&&isKeibaDispatch)keibaWorkDays++;
+  }
+  let extraFee=0;
+  if(area==='立川'){extraFee=amDays*6000+keibaWorkDays*9000;tot.grand+=extraFee;}
+  else if(area==='川崎高津'){extraFee=keibaWorkDays*7000;tot.grand+=extraFee;}
+  tot.extraFee=extraFee;
+  return tot;
+}
+
+// 全営業所の総合計サマリを表示
+async function admBillAllAreasTotal(){
+  try{
+    if(!admBillShopData)await admBillInit();
+    if(!billPricesCache)await loadBillPrices();
+    if(!confirmedSalesCache)await loadConfirmedSales();
+    const monthVal=document.getElementById('adm-bill-month').value;
+    if(!monthVal){alert('年月を選択してください');return;}
+    const records=admBillShopData.records||[];
+    const cols=admBillCols();
+    // adm-bill-area セレクタから営業所一覧を取得 (選択肢 = 空欄+各営業所)
+    const sel=document.getElementById('adm-bill-area');
+    const areas=Array.from(sel.options).map(o=>o.value).filter(Boolean);
+    if(!areas.length){alert('営業所が見つかりません');return;}
+
+    const [y,m]=monthVal.split('-').map(Number);
+    const reiwa=y-2018;
+    const perArea=areas.map(area=>({area,...admBillComputeAreaTotal(area,monthVal,records,cols)}));
+    const grand={am:0,pm:0,grand:0,amCount:0,pmCount:0,keibaCount:0,workFee:0,extraFee:0,courses:0,confirmedCnt:0};
+    perArea.forEach(a=>{grand.am+=a.am;grand.pm+=a.pm;grand.grand+=a.grand;grand.amCount+=a.amCount;grand.pmCount+=a.pmCount;grand.keibaCount+=a.keibaCount;grand.workFee+=a.workFee;grand.extraFee+=a.extraFee;grand.courses+=a.courses;grand.confirmedCnt+=a.confirmedCnt;});
+
+    let h=`<div class="bill-page summary-page" style="background:#fff;padding:24px;border:1px solid var(--border);border-radius:12px;margin-bottom:16px;">`;
+    h+=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;border-bottom:2px solid #0ea5e9;padding-bottom:12px;">`;
+    h+=`<div><h2 style="margin:0;color:#0ea5e9;font-size:22px;">📊 全営業所 総合計</h2><p style="margin:4px 0;font-size:14px;">令和${reiwa}年 ${m}月分（税抜き）</p></div>`;
+    h+=`<div style="text-align:right;"><p style="margin:0;font-size:12px;color:var(--text-sub);">作成日: ${new Date().toLocaleDateString('ja-JP')}</p><p style="margin:4px 0;font-size:11px;color:var(--text-sub);">${grand.confirmedCnt}/${grand.courses} コース確定済み</p></div>`;
+    h+=`</div>`;
+
+    h+=`<div style="display:flex;gap:12px;margin-bottom:16px;">`;
+    h+=`<div style="flex:1;background:#dbeafe;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#1d4ed8;">朝刊合計</div><div style="font-size:20px;font-weight:bold;color:#1d4ed8;">¥${grand.am.toLocaleString()}</div><div style="font-size:10px;color:#1d4ed8;">朝刊店舗 ${grand.amCount}店（延べ）</div></div>`;
+    h+=`<div style="flex:1;background:#fae8ff;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#9333ea;">夕刊/競馬合計</div><div style="font-size:20px;font-weight:bold;color:#9333ea;">¥${grand.pm.toLocaleString()}</div><div style="font-size:10px;color:#9333ea;">夕刊 ${grand.pmCount}店 ／ 競馬 ${grand.keibaCount}店</div></div>`;
+    h+=`<div style="flex:1.4;background:#fef3c7;border:2px solid #f59e0b;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#92400e;">総合計（全営業所）</div><div style="font-size:28px;font-weight:bold;color:#92400e;">¥${grand.grand.toLocaleString()}</div></div>`;
+    h+=`</div>`;
+
+    h+=`<table style="width:100%;border-collapse:collapse;font-size:13px;">`;
+    h+=`<thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:8px;">営業所</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">朝刊</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">夕刊/競馬</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">作業料</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">庫内/直送便</th><th style="border:1px solid #ccc;padding:8px;text-align:right;">総合計</th><th style="border:1px solid #ccc;padding:8px;text-align:center;">確定</th></tr></thead><tbody>`;
+    perArea.forEach(a=>{
+      const allConf=a.confirmedCnt===a.courses&&a.courses>0;
+      const confBadge=allConf?'<span style="color:#16a34a;font-weight:bold;">✓ 全確定</span>':`<span style="color:#92400e;">${a.confirmedCnt}/${a.courses}</span>`;
+      h+=`<tr><td style="border:1px solid #ccc;padding:8px;font-weight:600;">${a.area}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:8px;text-align:right;">¥${a.am.toLocaleString()}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:8px;text-align:right;">¥${a.pm.toLocaleString()}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:8px;text-align:right;color:${a.workFee?'inherit':'#cbd5e1'};">${a.workFee?'¥'+a.workFee.toLocaleString():'-'}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:8px;text-align:right;color:${a.extraFee?'inherit':'#cbd5e1'};">${a.extraFee?'¥'+a.extraFee.toLocaleString():'-'}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:8px;text-align:right;font-weight:bold;font-size:14px;color:var(--primary);">¥${a.grand.toLocaleString()}</td>`;
+      h+=`<td style="border:1px solid #ccc;padding:8px;text-align:center;font-size:11px;">${confBadge}</td></tr>`;
+    });
+    h+=`<tr style="background:#fef3c7;font-weight:bold;">`;
+    h+=`<td style="border:1px solid #ccc;padding:10px;">合計</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:10px;text-align:right;">¥${grand.am.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:10px;text-align:right;">¥${grand.pm.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:10px;text-align:right;">${grand.workFee?'¥'+grand.workFee.toLocaleString():'-'}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:10px;text-align:right;">${grand.extraFee?'¥'+grand.extraFee.toLocaleString():'-'}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:10px;text-align:right;font-size:16px;color:#92400e;">¥${grand.grand.toLocaleString()}</td>`;
+    h+=`<td style="border:1px solid #ccc;padding:10px;text-align:center;font-size:11px;">${grand.confirmedCnt}/${grand.courses}</td>`;
+    h+=`</tr>`;
+    h+=`</tbody></table>`;
+    h+=`<p style="margin-top:8px;font-size:11px;color:var(--text-sub);">※ 総合計は税抜き。各コース確定済みなら確定金額を、未確定なら現在の計算値を採用。</p>`;
+    h+=`</div>`;
+
+    document.getElementById('adm-bill-totals').innerHTML='';
+    document.getElementById('adm-bill-preview').innerHTML=h;
   }catch(e){alert('エラー: '+e.message+'\n'+e.stack);console.error(e);}
 }
 
