@@ -3758,6 +3758,15 @@ function invFilterWork(){
   let filtered=invWork;
   if(month)filtered=filtered.filter(w=>(w.date||'').replace(/\//g,'-').startsWith(month));
   if(staff)filtered=filtered.filter(w=>w.staff===staff);
+  // 日付昇順 + 同日内は スタッフ → 区分 → row_number でソート
+  filtered=[...filtered].sort((a,b)=>{
+    const da=(a.date||'').replace(/\//g,'-');
+    const db=(b.date||'').replace(/\//g,'-');
+    if(da!==db)return da.localeCompare(db);
+    if((a.staff||'')!==(b.staff||''))return (a.staff||'').localeCompare(b.staff||'');
+    if((a.category||'')!==(b.category||''))return (a.category||'').localeCompare(b.category||'');
+    return (a.row_number||0)-(b.row_number||0);
+  });
   document.getElementById('inv-work-count').textContent=`${filtered.length}件`;
   if(!filtered.length){document.getElementById('inv-work-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">稼働データがありません</p>';return;}
   const hideMoney=invIsCorpSubStaff();
