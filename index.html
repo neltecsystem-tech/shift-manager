@@ -3609,6 +3609,21 @@ function invIsCorpSubStaff(){
   if(!me||me.biz_type!=='法人')return false;
   return !(me.permissions||'').split(',').includes('owner');
 }
+// ログイン中ユーザーが「法人オーナー (=配下ドライバーの稼働登録権限あり)」か判定
+function invIsCorpOwner(){
+  if(invIsAdmin||!invStaffName)return false;
+  const me=invRates.find(r=>r.name===invStaffName);
+  if(!me||me.biz_type!=='法人')return false;
+  return (me.permissions||'').split(',').includes('owner');
+}
+// 法人オーナーから見た配下ドライバー名一覧 (自分含む)
+function invOwnerScopeNames(){
+  if(!invIsCorpOwner())return [];
+  const me=invRates.find(r=>r.name===invStaffName);
+  const comp=me?.company||'';
+  if(!comp)return [invStaffName];
+  return invRates.filter(r=>r.biz_type==='法人'&&r.company===comp).map(r=>r.name);
+}
 
 function invInit(){
   if(!invAuthed){
@@ -3669,9 +3684,11 @@ async function invAdminLogin(){
 
 // UI反映のみ（データロード済み前提）
 function invApplyUI(){
-  // UI制御: 管理者のみの要素
+  // UI制御: 管理者 / 法人オーナーが触れる要素 (.inv-admin-only)
+  const isOwner=invIsCorpOwner();
+  const canManage=invIsAdmin||isOwner;
   const adminEls=document.querySelectorAll('.inv-admin-only');
-  adminEls.forEach(el=>{el.style.display=invIsAdmin?'':'none';});
+  adminEls.forEach(el=>{el.style.display=canManage?'':'none';});
   // 法人サブスタッフ (オーナー以外) は請求書作成タブを非表示
   const isCorpSub=invIsCorpSubStaff();
   const genTab=document.getElementById('inv-tab-generate');
@@ -3683,26 +3700,35 @@ function invApplyUI(){
   }
   // ログイン中の表示
   const headerArea=document.querySelector('#view-invoice .card h2');
-  if(headerArea)headerArea.innerHTML=`📄 請求書 <span style="font-size:13px;color:var(--text-sub);font-weight:normal;margin-left:8px;">${invIsAdmin?'👑 管理者':'👤 '+invStaffName}</span>`;
+  const roleBadge=invIsAdmin?'👑 管理者':(isOwner?'🏢 '+invStaffName+' (法人オーナー)':'👤 '+invStaffName);
+  if(headerArea)headerArea.innerHTML=`📄 請求書 <span style="font-size:13px;color:var(--text-sub);font-weight:normal;margin-left:8px;">${roleBadge}</span>`;
   // PW変更ボタン（スタッフモードのみ表示）
   const pwBtn=document.getElementById('inv-changepw-btn');
   if(pwBtn)pwBtn.style.display=(!invIsAdmin&&invStaffName)?'':'none';
-  // スタッフモードの請求書作成: スタッフ名固定表示
+  // スタッフモードの請求書作成: スタッフ名固定表示 (オーナーは選択可なので固定表示しない)
   const genLabel=document.getElementById('inv-gen-staff-label');
   const genName=document.getElementById('inv-gen-staff-name');
   if(genLabel&&genName){
-    if(!invIsAdmin&&invStaffName){genLabel.style.display='block';genName.textContent=invStaffName;}
+    if(!invIsAdmin&&!isOwner&&invStaffName){genLabel.style.display='block';genName.textContent=invStaffName;}
     else{genLabel.style.display='none';}
   }
-  // スタッフセレクタ更新
-  const names=invStaffNames.length?invStaffNames:invRates.map(r=>r.name);
+  // スタッフセレクタ更新: 管理者=全名簿、 オーナー=配下スコープ、 一般スタッフ=自分のみ
+  let names;
+  if(invIsAdmin){
+    names=invStaffNames.length?invStaffNames:invRates.map(r=>r.name);
+  }else if(isOwner){
+    names=invOwnerScopeNames();
+  }else{
+    names=invStaffName?[invStaffName]:[];
+  }
   if(!invIsAdmin&&invStaffName&&!names.includes(invStaffName))names.unshift(invStaffName);
   ['inve-staff','inv-staff-filter','inv-gen-staff'].forEach(id=>{
     const sel=document.getElementById(id);if(!sel)return;
-    const defaultVal=(!invIsAdmin&&invStaffName&&id==='inve-staff')?invStaffName:'';
+    const defaultVal=(!canManage&&invStaffName&&id==='inve-staff')?invStaffName:'';
     const val=sel.value||defaultVal;
     sel.innerHTML=(id==='inve-staff'||id==='inv-gen-staff'?'<option value="">選択</option>':'<option value="">すべて</option>')+names.map(n=>`<option${n===val?' selected':''}>${n}</option>`).join('');
-    if(!invIsAdmin&&invStaffName&&id==='inve-staff'){sel.value=invStaffName;sel.disabled=true;}
+    if(!canManage&&invStaffName&&id==='inve-staff'){sel.value=invStaffName;sel.disabled=true;}
+    else{sel.disabled=false;}
   });
 }
 
@@ -4010,9 +4036,10 @@ function invShowAdd(){
   const today=new Date().toISOString().slice(0,10);
   document.getElementById('inve-date').value=today;
   document.getElementById('inve-date').max=today;
+  const canPickStaff=invIsAdmin||invIsCorpOwner();
+  // 管理者: 空欄スタート / オーナー: 自分をデフォ / 一般: 自分で固定
   document.getElementById('inve-staff').value=invIsAdmin?'':invStaffName;
-  if(!invIsAdmin)document.getElementById('inve-staff').disabled=true;
-  else document.getElementById('inve-staff').disabled=false;
+  document.getElementById('inve-staff').disabled=!canPickStaff;
   document.getElementById('inve-course').value='';
   invCatSel='朝刊';invRenderCatBtns();
   document.getElementById('inve-start').value='';
@@ -4031,6 +4058,7 @@ function invEditWork(rowNum){
   document.getElementById('inve-row').value=rowNum;
   document.getElementById('inve-date').value=(w.date||'').replace(/\//g,'-');
   document.getElementById('inve-staff').value=w.staff;
+  document.getElementById('inve-staff').disabled=!(invIsAdmin||invIsCorpOwner());
   document.getElementById('inve-course').value=w.course;
   invCatSel=w.category||'朝刊';invRenderCatBtns();
   document.getElementById('inve-start').value=w.start_time;
