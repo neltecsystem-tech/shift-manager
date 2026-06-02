@@ -117,13 +117,20 @@ tbody tr:hover { background:var(--primary-light); }
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
         <h2 style="margin:0;">📅 マイシフト <span id="myshift-name" style="font-size:14px;color:var(--text-sub);font-weight:normal;margin-left:8px;"></span></h2>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <label style="font-size:12px;color:var(--text-sub);">月</label>
-          <select id="myshift-month" onchange="renderMyShift()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;"></select>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <div id="myshift-staff-wrap" style="display:none;gap:6px;align-items:center;">
+            <label style="font-size:12px;color:var(--text-sub);">スタッフ</label>
+            <input type="text" id="myshift-staff-filter" placeholder="名前で絞り込み..." oninput="updateMyShiftStaffOptions()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;width:140px;">
+            <select id="myshift-staff" onchange="renderMyShift()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;min-width:140px;"></select>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <label style="font-size:12px;color:var(--text-sub);">月</label>
+            <select id="myshift-month" onchange="renderMyShift()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;"></select>
+          </div>
         </div>
       </div>
       <div id="myshift-content"></div>
-      <p id="myshift-empty" style="display:none;text-align:center;color:var(--text-sub);padding:40px;">この月のあなたのシフトはまだありません。</p>
+      <p id="myshift-empty" style="display:none;text-align:center;color:var(--text-sub);padding:40px;">この月のシフトはまだありません。</p>
     </div>
   </div>
   <div id="view-staff" class="hidden">
@@ -1397,26 +1404,67 @@ function showView(v,btn){
   ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit,invoice:invInit,myshift:initMyShift}[v]||function(){})();
 }
 
-// ---- マイシフト (本人のみ・カレンダー表記) ----
+// ---- マイシフト (本人 / 管理者は任意切替・カレンダー表記) ----
+function myShiftCanPickStaff(){
+  // 管理者なら任意切替、 法人オーナーは配下スコープ内で切替
+  return invIsAdmin||(typeof sysIsAdmin!=='undefined'&&sysIsAdmin)||invIsCorpOwner();
+}
+function myShiftStaffOptions(filterQuery){
+  // 切替可能なスタッフリスト (管理者=全員 / オーナー=自分+配下)
+  let names=[];
+  if(invIsAdmin||(typeof sysIsAdmin!=='undefined'&&sysIsAdmin)){
+    // 管理者: DB.shifts の全エントリ名 + invRates 名前 をマージ
+    const set=new Set();
+    Object.values(DB.shifts||{}).forEach(areas=>{
+      Object.values(areas).forEach(sh=>sh.entries.forEach(e=>{if(e.course)set.add(e.course);}));
+    });
+    (invRates||[]).forEach(r=>{if(r.name)set.add(r.name);});
+    names=[...set].sort();
+  }else if(invIsCorpOwner()){
+    names=invOwnerScopeNames();
+  }
+  if(filterQuery){
+    const q=filterQuery.replace(/[\s　]+/g,'');
+    names=names.filter(n=>n.replace(/[\s　]+/g,'').includes(q));
+  }
+  return names;
+}
+function updateMyShiftStaffOptions(){
+  const sel=document.getElementById('myshift-staff');
+  if(!sel)return;
+  const filter=(document.getElementById('myshift-staff-filter')?.value||'').trim();
+  const userName=(typeof sysUserName!=='undefined'&&sysUserName)||invStaffName||'';
+  let names=myShiftStaffOptions(filter);
+  // 自分を常に先頭に
+  if(userName&&!names.includes(userName))names.unshift(userName);
+  const prev=sel.value;
+  sel.innerHTML=names.map(n=>`<option value="${n}"${n===prev?' selected':''}>${n}${n===userName?' (自分)':''}</option>`).join('');
+  if(!prev||!names.includes(prev))sel.value=userName||names[0]||'';
+}
 function initMyShift(){
   const sel=document.getElementById('myshift-month');
   const months=Object.keys(DB.shifts||{}).sort();
   const prev=sel.value;
   sel.innerHTML=months.map(m=>`<option value="${m}">${m}</option>`).join('');
-  // 既選択を維持、 なければ今月、 さらに無ければ最後の月
   if(prev&&months.includes(prev)){sel.value=prev;}
   else{
     const now=new Date();
     const cur=`${now.getMonth()+1}月シフト${now.getFullYear()}`;
     sel.value=months.includes(cur)?cur:(months[months.length-1]||'');
   }
-  const userName=(typeof sysUserName!=='undefined'&&sysUserName)||invStaffName||'';
-  document.getElementById('myshift-name').textContent=userName?'('+userName+')':'';
+  // スタッフ切替UI: 管理者/オーナーは表示
+  const wrap=document.getElementById('myshift-staff-wrap');
+  if(wrap)wrap.style.display=myShiftCanPickStaff()?'flex':'none';
+  if(myShiftCanPickStaff())updateMyShiftStaffOptions();
   renderMyShift();
 }
 
 function renderMyShift(){
-  const userName=(typeof sysUserName!=='undefined'&&sysUserName)||invStaffName||'';
+  const myName=(typeof sysUserName!=='undefined'&&sysUserName)||invStaffName||'';
+  // 管理者/オーナーが他スタッフを選んでいる場合はそちらを優先
+  const picked=myShiftCanPickStaff()?(document.getElementById('myshift-staff')?.value||''):'';
+  const userName=picked||myName;
+  document.getElementById('myshift-name').textContent=userName?(userName===myName?'('+userName+')':'('+userName+' を表示中)'):'';
   const month=document.getElementById('myshift-month').value;
   const empty=document.getElementById('myshift-empty');
   const content=document.getElementById('myshift-content');
@@ -1504,7 +1552,11 @@ function renderMyShift(){
     h+=`</div>`;
   }
   h+=`</div>`;
-  h+=`<p style="margin-top:10px;font-size:11px;color:var(--text-sub);">※ 自分のシフトのみ表示しています。 他のスタッフのシフトを見るには月別シフト権限が必要です。</p>`;
+  if(userName===myName){
+    h+=`<p style="margin-top:10px;font-size:11px;color:var(--text-sub);">※ 自分のシフトのみ表示しています。 他のスタッフのシフトを見るには月別シフト権限が必要です。</p>`;
+  }else{
+    h+=`<p style="margin-top:10px;font-size:11px;color:#92400e;">⚠️ 管理者として ${userName} のシフトを閲覧中。</p>`;
+  }
   content.innerHTML=h;
 }
 
