@@ -10158,7 +10158,7 @@ async function admPaySaveStatements(barId){
         'Authorization':'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jY29nbnB0b3ByaHdzYmpud2N1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNDU0NDEsImV4cCI6MjA4OTkyMTQ0MX0.M3h31uPyKYWlNevVW3OvZOonoTidC1KLZ04sB5nRKzU'
       },
       body:JSON.stringify({
-        admin_password:INV_PW,
+        auth_token:invAuthToken,// HMAC token (admin_login で発行)
         finalized_by:(typeof sysUserName!=='undefined'&&sysUserName)?sysUserName:'admin',
         statements:statements.filter(s=>s.phone),// 電話なしは除外
       })
