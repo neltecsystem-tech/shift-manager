@@ -19,20 +19,26 @@ body { font-family:'Segoe UI','Meiryo',sans-serif; background:var(--bg); color:v
 .nav { background:var(--primary); color:#fff; padding:0 20px; display:flex; align-items:center; height:52px; position:sticky; top:0; z-index:100; box-shadow:0 2px 8px rgba(0,0,0,.15); }
 .nav h1 { font-size:16px; font-weight:600; margin-right:32px; white-space:nowrap; }
 .nav-links { display:flex; gap:4px; overflow-x:auto; align-items:center; }
-.nav-links button { background:none; border:none; color:rgba(255,255,255,.75); padding:8px 16px; cursor:pointer; font-size:13px; border-radius:6px 6px 0 0; transition:.15s; white-space:nowrap; border-top:3px solid transparent; }
+.nav-links button { position:relative; background:none; border:none; color:rgba(255,255,255,.75); padding:8px 16px 8px 22px; cursor:pointer; font-size:13px; border-radius:6px 6px 0 0; transition:.15s; white-space:nowrap; }
 .nav-links button:hover { background:rgba(255,255,255,.15); color:#fff; }
 .nav-links button.active { background:var(--bg); color:var(--primary); font-weight:600; }
-/* 権限ティア色: 上ボーダーで識別 */
-.nav-links button.tier-owner { border-top-color:#22c55e; }   /* 法人オーナー以上 (緑) */
-.nav-links button.tier-admin { border-top-color:#0f172a; }   /* 管理者のみ (黒) */
-.nav-links button.tier-perm  { border-top-color:#f97316; }   /* 個別権限 (橙) */
-.nav-links button.active.tier-owner { border-top-color:#16a34a; }
-.nav-links button.active.tier-admin { border-top-color:#0f172a; }
-.nav-links button.active.tier-perm  { border-top-color:#ea580c; }
-/* 凡例チップ */
-.tier-legend { display:flex; gap:8px; align-items:center; font-size:10px; color:rgba(255,255,255,.7); margin-left:6px; }
-.tier-legend .chip { display:inline-flex; align-items:center; gap:4px; }
-.tier-legend .swatch { width:10px; height:3px; border-radius:1px; display:inline-block; }
+/* 権限ティア色: 左側の縦カラーバー + 微弱な背景 */
+.nav-links button.tier-public::before,
+.nav-links button.tier-owner::before,
+.nav-links button.tier-admin::before,
+.nav-links button.tier-perm::before {
+  content:''; position:absolute; left:6px; top:50%; transform:translateY(-50%);
+  width:8px; height:8px; border-radius:50%; box-shadow:0 0 0 1.5px rgba(255,255,255,.4);
+}
+.nav-links button.tier-public::before { background:#94a3b8; }   /* 灰: 誰でも */
+.nav-links button.tier-owner::before  { background:#22c55e; }   /* 緑: 法人オーナー以上 */
+.nav-links button.tier-admin::before  { background:#0f172a; box-shadow:0 0 0 1.5px rgba(255,255,255,.6); }   /* 黒: 管理者のみ */
+.nav-links button.tier-perm::before   { background:#f97316; }   /* 橙: 個別権限 */
+/* active時はリングを濃く */
+.nav-links button.active.tier-public::before { box-shadow:0 0 0 1.5px #94a3b8; }
+.nav-links button.active.tier-owner::before  { box-shadow:0 0 0 1.5px #16a34a; }
+.nav-links button.active.tier-admin::before  { box-shadow:0 0 0 1.5px #0f172a; }
+.nav-links button.active.tier-perm::before   { box-shadow:0 0 0 1.5px #ea580c; }
 .container { max-width:1400px; margin:0 auto; padding:16px; }
 .card { background:var(--card); border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,.08); padding:20px; margin-bottom:16px; }
 .card h2 { font-size:16px; margin-bottom:12px; color:var(--primary); border-bottom:2px solid var(--primary-light); padding-bottom:8px; }
