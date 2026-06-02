@@ -91,6 +91,7 @@ tbody tr:hover { background:var(--primary-light); }
   <h1>新聞シフト管理</h1>
   <div class="nav-links">
     <button class="active" onclick="showView('dashboard',this)">ダッシュボード</button>
+    <button onclick="showView('myshift',this)">📅 シフト</button>
     <button onclick="showView('shift',this)">月別シフト</button>
     <button onclick="showView('tenpo',this)">店舗検索</button>
     <button onclick="showView('search',this)" style="display:none">検索</button>
@@ -111,6 +112,19 @@ tbody tr:hover { background:var(--primary-light); }
   <div id="view-dashboard" class="hidden">
     <div class="card"><h2>📊 今月の不具合状況</h2><div id="dash-defects"></div></div>
     <div class="card"><h2>本日のコース担当</h2><div id="dash-area-tabs" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;"></div><div class="table-wrap" id="today-assignments"></div></div>
+  </div>
+  <div id="view-myshift" class="hidden">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+        <h2 style="margin:0;">📅 マイシフト <span id="myshift-name" style="font-size:14px;color:var(--text-sub);font-weight:normal;margin-left:8px;"></span></h2>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <label style="font-size:12px;color:var(--text-sub);">月</label>
+          <select id="myshift-month" onchange="renderMyShift()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;"></select>
+        </div>
+      </div>
+      <div id="myshift-content"></div>
+      <p id="myshift-empty" style="display:none;text-align:center;color:var(--text-sub);padding:40px;">この月のあなたのシフトはまだありません。</p>
+    </div>
   </div>
   <div id="view-staff" class="hidden">
     <div class="card"><h2>スタッフ一覧</h2>
@@ -1380,7 +1394,118 @@ function showView(v,btn){
   const e=document.getElementById('view-'+v);if(e)e.classList.remove('hidden');
   document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
   if(btn)btn.classList.add('active');
-  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit,invoice:invInit}[v]||function(){})();
+  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit,invoice:invInit,myshift:initMyShift}[v]||function(){})();
+}
+
+// ---- マイシフト (本人のみ・カレンダー表記) ----
+function initMyShift(){
+  const sel=document.getElementById('myshift-month');
+  const months=Object.keys(DB.shifts||{}).sort();
+  const prev=sel.value;
+  sel.innerHTML=months.map(m=>`<option value="${m}">${m}</option>`).join('');
+  // 既選択を維持、 なければ今月、 さらに無ければ最後の月
+  if(prev&&months.includes(prev)){sel.value=prev;}
+  else{
+    const now=new Date();
+    const cur=`${now.getMonth()+1}月シフト${now.getFullYear()}`;
+    sel.value=months.includes(cur)?cur:(months[months.length-1]||'');
+  }
+  const userName=(typeof sysUserName!=='undefined'&&sysUserName)||invStaffName||'';
+  document.getElementById('myshift-name').textContent=userName?'('+userName+')':'';
+  renderMyShift();
+}
+
+function renderMyShift(){
+  const userName=(typeof sysUserName!=='undefined'&&sysUserName)||invStaffName||'';
+  const month=document.getElementById('myshift-month').value;
+  const empty=document.getElementById('myshift-empty');
+  const content=document.getElementById('myshift-content');
+  content.innerHTML='';
+  if(!userName||!month||!DB.shifts[month]){empty.style.display='block';return;}
+  // 自分の名前で normalize 比較
+  const norm=s=>(s||'').replace(/[\s　]+/g,'').trim();
+  const myNorm=norm(userName);
+  // 全営業所横断で自分の entries を収集 (同名がエリアに分散している場合に備えて)
+  const myEntries=[];
+  let dates=null;
+  Object.entries(DB.shifts[month]).forEach(([area,sh])=>{
+    sh.entries.forEach(e=>{
+      if(norm(e.course)===myNorm){myEntries.push({area,a:e.a});if(!dates)dates=sh.dates;}
+    });
+  });
+  if(!myEntries.length){empty.style.display='block';return;}
+  empty.style.display='none';
+  // 日付ごとに am/pm を集約 (複数エリア所属の場合は連結)
+  const byDate={};
+  myEntries.forEach(({area,a})=>{
+    a.forEach(slot=>{
+      if(!byDate[slot.d])byDate[slot.d]={dow:slot.dow,am:[],pm:[]};
+      const am=(slot.am||'').trim();
+      const pm=(slot.pm||'').trim();
+      if(am&&am!=='0'&&am!=='希望休')byDate[slot.d].am.push(am);
+      if(pm&&pm!=='0'&&pm!=='希望休')byDate[slot.d].pm.push(pm);
+      // 希望休も表示用に記録
+      if(am==='希望休'||pm==='希望休'){byDate[slot.d].kibo=true;}
+    });
+  });
+  // カレンダー生成: 月の日数を取得して7列の表を組む
+  if(!dates||!dates.length){empty.style.display='block';return;}
+  const firstD=new Date(dates[0].d);
+  const year=firstD.getFullYear();
+  const mon=firstD.getMonth();
+  const daysInMonth=new Date(year,mon+1,0).getDate();
+  const firstDow=new Date(year,mon,1).getDay();// 0=日
+  // カウント
+  let workDays=0,kiboDays=0,offDays=0;
+  for(let d=1;d<=daysInMonth;d++){
+    const ymd=`${year}-${String(mon+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const e=byDate[ymd];
+    if(e){
+      if(e.am.length||e.pm.length)workDays++;
+      else if(e.kibo)kiboDays++;
+      else offDays++;
+    }else offDays++;
+  }
+  // ヘッダ集計
+  let h=`<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">`;
+  h+=`<div style="background:#dbeafe;border-radius:8px;padding:8px 14px;"><span style="font-size:11px;color:#1d4ed8;">稼働日</span><div style="font-size:20px;font-weight:bold;color:#1d4ed8;">${workDays}日</div></div>`;
+  h+=`<div style="background:#fef3c7;border-radius:8px;padding:8px 14px;"><span style="font-size:11px;color:#92400e;">希望休</span><div style="font-size:20px;font-weight:bold;color:#92400e;">${kiboDays}日</div></div>`;
+  h+=`<div style="background:#f1f5f9;border-radius:8px;padding:8px 14px;"><span style="font-size:11px;color:var(--text-sub);">休み</span><div style="font-size:20px;font-weight:bold;color:var(--text-sub);">${offDays}日</div></div>`;
+  h+=`</div>`;
+  // カレンダー本体
+  h+=`<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;font-size:12px;">`;
+  ['日','月','火','水','木','金','土'].forEach((d,i)=>{
+    const c=i===0?'#dc2626':(i===6?'#2563eb':'var(--text-sub)');
+    h+=`<div style="text-align:center;font-weight:bold;color:${c};padding:6px 0;">${d}</div>`;
+  });
+  // 1日目の前に空セル
+  for(let i=0;i<firstDow;i++)h+=`<div></div>`;
+  const todayStr=new Date().toISOString().slice(0,10);
+  for(let d=1;d<=daysInMonth;d++){
+    const ymd=`${year}-${String(mon+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dow=new Date(year,mon,d).getDay();
+    const e=byDate[ymd]||{am:[],pm:[]};
+    const isToday=ymd===todayStr;
+    const isSun=dow===0,isSat=dow===6;
+    const bg=isToday?'#fef3c7':(isSun?'#fff5f5':(isSat?'#f0f9ff':'#fff'));
+    const dnumColor=isSun?'#dc2626':(isSat?'#2563eb':'#0f172a');
+    let body='';
+    if(e.kibo&&!e.am.length&&!e.pm.length){
+      body=`<div style="background:#fde68a;color:#92400e;padding:2px 4px;border-radius:4px;font-size:11px;text-align:center;">希望休</div>`;
+    }else{
+      const amHtml=e.am.length?`<div style="background:#dbeafe;color:#1d4ed8;padding:2px 4px;border-radius:4px;font-size:11px;font-weight:600;text-align:center;">朝 ${e.am.join('/')}</div>`:'';
+      const pmHtml=e.pm.length?`<div style="background:#fae8ff;color:#9333ea;padding:2px 4px;border-radius:4px;font-size:11px;font-weight:600;text-align:center;margin-top:2px;">夕 ${e.pm.join('/')}</div>`:'';
+      body=amHtml+pmHtml;
+      if(!amHtml&&!pmHtml)body=`<div style="color:#cbd5e1;text-align:center;font-size:11px;">休</div>`;
+    }
+    h+=`<div style="border:1px solid ${isToday?'#f59e0b':'var(--border)'};border-radius:6px;background:${bg};padding:6px;min-height:62px;">`;
+    h+=`<div style="font-size:11px;font-weight:bold;color:${dnumColor};margin-bottom:4px;">${d}${isToday?' <span style="background:#f59e0b;color:#fff;padding:0 4px;border-radius:3px;font-size:9px;">今日</span>':''}</div>`;
+    h+=body;
+    h+=`</div>`;
+  }
+  h+=`</div>`;
+  h+=`<p style="margin-top:10px;font-size:11px;color:var(--text-sub);">※ 自分のシフトのみ表示しています。 他のスタッフのシフトを見るには月別シフト権限が必要です。</p>`;
+  content.innerHTML=h;
 }
 
 let dashAreaFilter='';
@@ -12950,7 +13075,9 @@ function sysApplyPermissions(perms){
   // ナビボタンの表示制御: data-view属性で対応
   const navMap={
     'dashboard':{always:true},
-    'shift':{always:true},
+    'myshift':{always:true},
+    // 月別シフト = 管理者 / プランナー(shiftedit) / 法人オーナー のみ
+    'shift':{perms:['admin','shiftedit','owner']},
     'tenpo':{perm:'admin'},
     'search':{perm:'admin'},
     'staff':{perm:'admin'},
@@ -12973,6 +13100,7 @@ function sysApplyPermissions(perms){
     if(isRegular&&featCfg[view]===false){btn.style.display='none';return;}
     if(isAll||rule.always){btn.style.display='';return;}
     if(rule.perm&&perms.includes(rule.perm)){btn.style.display='';return;}
+    if(rule.perms&&rule.perms.some(p=>perms.includes(p))){btn.style.display='';return;}
     btn.style.display='none';
   });
   // 管理ボタン: admin or shiftedit のいずれかで表示
