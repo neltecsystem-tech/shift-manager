@@ -4792,6 +4792,7 @@ const FEATURE_LIST=[
   {key:'measure',label:'測定',tier:'public'},
   {key:'diagram',label:'ダイヤグラム',tier:'public'},
 ];
+// localStorage は server からの load 完了前に sysApplyPermissions が同期的に動くためのキャッシュ
 function admFeatureVisLoad(){
   try{
     const raw=localStorage.getItem('sysFeatureVisibility');
@@ -4799,10 +4800,24 @@ function admFeatureVisLoad(){
   }catch(_){}
   return {};
 }
-function admFeatureVisRender(){
+// サーバから feature_visibility を取得して localStorage キャッシュも更新
+async function admFeatureVisFetchFromServer(){
+  try{
+    const r=await invApi({action:'get_feature_visibility'});
+    if(r&&r.feature_visibility&&typeof r.feature_visibility==='object'){
+      localStorage.setItem('sysFeatureVisibility',JSON.stringify(r.feature_visibility));
+      return r.feature_visibility;
+    }
+  }catch(_){}
+  return null;
+}
+async function admFeatureVisRender(){
   const cont=document.getElementById('adm-featvis-list');
   if(!cont)return;
-  const cfg=admFeatureVisLoad();
+  // 最新をサーバから取得
+  cont.innerHTML='<div style="color:var(--text-sub);font-size:12px;padding:8px;">読み込み中...</div>';
+  const fresh=await admFeatureVisFetchFromServer();
+  const cfg=fresh||admFeatureVisLoad();
   const tierColor={public:'#94a3b8',owner:'#22c55e',admin:'#0f172a',perm:'#f97316'};
   cont.innerHTML=FEATURE_LIST.map(f=>{
     const checked=(cfg[f.key]!==false);// デフォルト ON
@@ -4814,21 +4829,38 @@ function admFeatureVisRender(){
     </label>`;
   }).join('');
 }
-function admFeatureVisSave(){
+async function admFeatureVisSave(){
   const cont=document.getElementById('adm-featvis-list');
   if(!cont)return;
   const cfg={};
   cont.querySelectorAll('input[data-feat]').forEach(el=>{cfg[el.dataset.feat]=el.checked;});
-  try{localStorage.setItem('sysFeatureVisibility',JSON.stringify(cfg));}catch(_){}
   const msg=document.getElementById('adm-featvis-msg');
-  if(msg){msg.textContent='✓ 保存しました (次回ログイン時 or リロード後に反映)';msg.style.color='#16a34a';setTimeout(()=>{msg.textContent='';},3000);}
+  if(msg){msg.textContent='保存中...';msg.style.color='var(--text-sub)';}
+  // サーバに保存 (admin token 必要)
+  const res=await invApi({action:'save_feature_visibility', feature_visibility:cfg});
+  if(res&&res.success){
+    try{localStorage.setItem('sysFeatureVisibility',JSON.stringify(cfg));}catch(_){}
+    if(msg){msg.textContent='✓ サーバに保存しました (全スタッフ次回ログインで反映)';msg.style.color='#16a34a';setTimeout(()=>{msg.textContent='';},5000);}
+    // 自分のナビにも即反映
+    if(typeof sysApplyPermissions==='function'&&typeof sysUserPerms!=='undefined')sysApplyPermissions(sysUserPerms);
+  }else{
+    if(msg){msg.textContent='❌ 保存失敗: '+(res?.error||'unknown');msg.style.color='var(--danger)';}
+  }
 }
-function admFeatureVisReset(){
+async function admFeatureVisReset(){
   if(!window.confirm('全機能を表示する状態に戻します。よろしいですか?'))return;
-  try{localStorage.removeItem('sysFeatureVisibility');}catch(_){}
-  admFeatureVisRender();
   const msg=document.getElementById('adm-featvis-msg');
-  if(msg){msg.textContent='✓ デフォルトに戻しました';msg.style.color='#16a34a';setTimeout(()=>{msg.textContent='';},3000);}
+  if(msg){msg.textContent='リセット中...';msg.style.color='var(--text-sub)';}
+  // 空オブジェクトをサーバに保存 (=全デフォルト)
+  const res=await invApi({action:'save_feature_visibility', feature_visibility:{}});
+  if(res&&res.success){
+    try{localStorage.removeItem('sysFeatureVisibility');}catch(_){}
+    admFeatureVisRender();
+    if(msg){msg.textContent='✓ デフォルトに戻しました (全スタッフに反映)';msg.style.color='#16a34a';setTimeout(()=>{msg.textContent='';},5000);}
+    if(typeof sysApplyPermissions==='function'&&typeof sysUserPerms!=='undefined')sysApplyPermissions(sysUserPerms);
+  }else{
+    if(msg){msg.textContent='❌ リセット失敗: '+(res?.error||'unknown');msg.style.color='var(--danger)';}
+  }
 }
 function admFeatureVisToggleAll(on){
   const cont=document.getElementById('adm-featvis-list');
@@ -13129,6 +13161,8 @@ async function sysDoLogin(){
   document.getElementById('sys-user-label').textContent='👤 '+sysUserName;
   document.getElementById('sys-changepw-btn').style.display='';
   sysApplyPermissions(perms);
+  // 機能表示制御をサーバから取得して再適用 (admin の設定を全スタッフに反映)
+  admFeatureVisFetchFromServer().then(()=>sysApplyPermissions(perms));
   // 各画面の認証をスキップ
   if(perms.includes('defects'))defectAuthed=true;
   if(perms.includes('shopmaster'))smAuthed=true;
