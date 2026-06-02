@@ -1164,15 +1164,22 @@ tbody tr:hover { background:var(--primary-light); }
       <!-- システム設定 -->
       <div id="adm-settings" class="adm-panel" style="display:none;">
         <div style="margin-bottom:24px;">
-          <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">🎛️ 通常スタッフが見れる機能</h3>
+          <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">🎛️ ナビメニュー表示制御 (通常スタッフ向け)</h3>
           <div style="background:#f8fafc;border-radius:8px;padding:16px;font-size:13px;">
-            <div style="color:var(--text-sub);margin-bottom:10px;font-size:12px;">
-              admin 権限を持たないスタッフ (通常ログイン) のナビメニュー表示を制御します。チェックを外すとそのスタッフからは非表示になります。<br>
-              <b>※ admin 権限を持つスタッフ・管理者ログイン (パスワード) には影響しません。</b>
+            <div style="color:var(--text-sub);margin-bottom:10px;font-size:12px;line-height:1.6;">
+              admin 権限を持たないスタッフ (通常ログイン) のナビメニュー表示を制御します。 チェックを外すとそのスタッフからは非表示になります。<br>
+              <b>※ admin 権限を持つスタッフ・管理者ログイン (パスワード) には影響しません。</b><br>
+              <b>※ 元々権限がない機能 (例: 通常スタッフから見た「月別シフト」) はチェック有無に関わらず非表示です。</b><br>
+              凡例: <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#94a3b8;vertical-align:middle;"></span> 誰でも /
+              <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#22c55e;vertical-align:middle;"></span> 法人オーナー以上 /
+              <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#0f172a;vertical-align:middle;"></span> 管理者のみ /
+              <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#f97316;vertical-align:middle;"></span> 個別権限
             </div>
-            <div id="adm-featvis-list" style="display:flex;flex-wrap:wrap;gap:10px 18px;"></div>
-            <div style="margin-top:14px;display:flex;gap:8px;align-items:center;">
+            <div id="adm-featvis-list" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+            <div style="margin-top:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
               <button onclick="admFeatureVisSave()" style="background:var(--primary);color:#fff;border:none;padding:8px 18px;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;">💾 保存</button>
+              <button onclick="admFeatureVisToggleAll(true)" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:12px;">☑ 全部ON</button>
+              <button onclick="admFeatureVisToggleAll(false)" style="background:#94a3b8;color:#fff;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:12px;">☐ 全部OFF</button>
               <button onclick="admFeatureVisReset()" style="background:#cbd5e1;color:#1e293b;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:12px;">↺ デフォルトに戻す</button>
               <span id="adm-featvis-msg" style="font-size:12px;color:var(--text-sub);"></span>
             </div>
@@ -4773,14 +4780,17 @@ function adminLogout(){
 // === 通常スタッフ向け 機能表示設定 ===
 // localStorage に { dashboard:true, shift:true, ... } 形式で保存
 const FEATURE_LIST=[
-  {key:'dashboard',label:'ダッシュボード'},
-  {key:'shift',label:'月別シフト'},
-  {key:'tenpo',label:'店舗検索'},
-  {key:'search',label:'横断検索'},
-  {key:'staff',label:'スタッフ一覧'},
-  {key:'invoice',label:'請求書'},
-  {key:'measure',label:'測定'},
-  {key:'diagram',label:'ダイヤグラム'},
+  {key:'dashboard',label:'ダッシュボード',tier:'public'},
+  {key:'myshift',label:'📅 シフト (本人カレンダー)',tier:'public'},
+  {key:'shift',label:'月別シフト (要オーナー以上)',tier:'owner'},
+  {key:'tenpo',label:'店舗検索 (admin)',tier:'admin'},
+  {key:'search',label:'横断検索 (admin)',tier:'admin'},
+  {key:'staff',label:'スタッフ一覧 (admin)',tier:'admin'},
+  {key:'defects',label:'不具合管理 (要 defects 権限)',tier:'perm'},
+  {key:'shopmaster',label:'店舗マスタ (要 shopmaster 権限)',tier:'perm'},
+  {key:'invoice',label:'請求書',tier:'public'},
+  {key:'measure',label:'測定',tier:'public'},
+  {key:'diagram',label:'ダイヤグラム',tier:'public'},
 ];
 function admFeatureVisLoad(){
   try{
@@ -4793,9 +4803,15 @@ function admFeatureVisRender(){
   const cont=document.getElementById('adm-featvis-list');
   if(!cont)return;
   const cfg=admFeatureVisLoad();
+  const tierColor={public:'#94a3b8',owner:'#22c55e',admin:'#0f172a',perm:'#f97316'};
   cont.innerHTML=FEATURE_LIST.map(f=>{
     const checked=(cfg[f.key]!==false);// デフォルト ON
-    return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;min-width:160px;"><input type="checkbox" data-feat="${f.key}" ${checked?'checked':''}> ${f.label}</label>`;
+    const dotColor=tierColor[f.tier||'public'];
+    return `<label style="display:flex;align-items:center;gap:8px;font-size:13px;min-width:240px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;">
+      <input type="checkbox" data-feat="${f.key}" ${checked?'checked':''}>
+      <span style="width:9px;height:9px;border-radius:50%;background:${dotColor};box-shadow:0 0 0 1.5px rgba(15,23,42,.2);flex-shrink:0;"></span>
+      <span>${f.label}</span>
+    </label>`;
   }).join('');
 }
 function admFeatureVisSave(){
@@ -4813,6 +4829,11 @@ function admFeatureVisReset(){
   admFeatureVisRender();
   const msg=document.getElementById('adm-featvis-msg');
   if(msg){msg.textContent='✓ デフォルトに戻しました';msg.style.color='#16a34a';setTimeout(()=>{msg.textContent='';},3000);}
+}
+function admFeatureVisToggleAll(on){
+  const cont=document.getElementById('adm-featvis-list');
+  if(!cont)return;
+  cont.querySelectorAll('input[data-feat]').forEach(el=>{el.checked=on;});
 }
 
 function adminTab(t){
