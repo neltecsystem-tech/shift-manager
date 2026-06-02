@@ -18,10 +18,21 @@
 body { font-family:'Segoe UI','Meiryo',sans-serif; background:var(--bg); color:var(--text); font-size:14px; }
 .nav { background:var(--primary); color:#fff; padding:0 20px; display:flex; align-items:center; height:52px; position:sticky; top:0; z-index:100; box-shadow:0 2px 8px rgba(0,0,0,.15); }
 .nav h1 { font-size:16px; font-weight:600; margin-right:32px; white-space:nowrap; }
-.nav-links { display:flex; gap:4px; overflow-x:auto; }
-.nav-links button { background:none; border:none; color:rgba(255,255,255,.75); padding:8px 16px; cursor:pointer; font-size:13px; border-radius:6px 6px 0 0; transition:.15s; white-space:nowrap; }
+.nav-links { display:flex; gap:4px; overflow-x:auto; align-items:center; }
+.nav-links button { background:none; border:none; color:rgba(255,255,255,.75); padding:8px 16px; cursor:pointer; font-size:13px; border-radius:6px 6px 0 0; transition:.15s; white-space:nowrap; border-top:3px solid transparent; }
 .nav-links button:hover { background:rgba(255,255,255,.15); color:#fff; }
 .nav-links button.active { background:var(--bg); color:var(--primary); font-weight:600; }
+/* 権限ティア色: 上ボーダーで識別 */
+.nav-links button.tier-owner { border-top-color:#22c55e; }   /* 法人オーナー以上 (緑) */
+.nav-links button.tier-admin { border-top-color:#0f172a; }   /* 管理者のみ (黒) */
+.nav-links button.tier-perm  { border-top-color:#f97316; }   /* 個別権限 (橙) */
+.nav-links button.active.tier-owner { border-top-color:#16a34a; }
+.nav-links button.active.tier-admin { border-top-color:#0f172a; }
+.nav-links button.active.tier-perm  { border-top-color:#ea580c; }
+/* 凡例チップ */
+.tier-legend { display:flex; gap:8px; align-items:center; font-size:10px; color:rgba(255,255,255,.7); margin-left:6px; }
+.tier-legend .chip { display:inline-flex; align-items:center; gap:4px; }
+.tier-legend .swatch { width:10px; height:3px; border-radius:1px; display:inline-block; }
 .container { max-width:1400px; margin:0 auto; padding:16px; }
 .card { background:var(--card); border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,.08); padding:20px; margin-bottom:16px; }
 .card h2 { font-size:16px; margin-bottom:12px; color:var(--primary); border-bottom:2px solid var(--primary-light); padding-bottom:8px; }
@@ -13125,19 +13136,22 @@ async function sysAdminLogin(){
 function sysApplyPermissions(perms){
   const isAll=perms.includes('all');
   // ナビボタンの表示制御: data-view属性で対応
+  // tier: 'public' (誰でも) / 'owner' (オーナー以上) / 'admin' (管理者のみ) / 'perm' (個別権限)
   const navMap={
-    'dashboard':{always:true},
-    'myshift':{always:true},
-    // 月別シフト = 管理者 / プランナー(shiftedit) / 法人オーナー のみ
-    'shift':{perms:['admin','shiftedit','owner']},
-    'tenpo':{perm:'admin'},
-    'search':{perm:'admin'},
-    'staff':{perm:'admin'},
-    'defects':{perm:'defects'},
-    'shopmaster':{perm:'shopmaster'},
-    'invoice':{always:true},
-    'measure':{always:true},
-    'diagram':{always:true},
+    'dashboard':{always:true, tier:'public'},
+    'myshift':{always:true, tier:'public'},
+    'invoice':{always:true, tier:'public'},
+    'measure':{always:true, tier:'public'},
+    'diagram':{always:true, tier:'public'},
+    // 月別シフト = 管理者 / プランナー(shiftedit) / 法人オーナー のみ → 緑
+    'shift':{perms:['admin','shiftedit','owner'], tier:'owner'},
+    // 管理者のみ → 黒
+    'tenpo':{perm:'admin', tier:'admin'},
+    'search':{perm:'admin', tier:'admin'},
+    'staff':{perm:'admin', tier:'admin'},
+    // 個別権限 → 橙
+    'defects':{perm:'defects', tier:'perm'},
+    'shopmaster':{perm:'shopmaster', tier:'perm'},
   };
   // 通常スタッフ (admin 権限なし) には機能表示設定を適用
   const featCfg=(typeof admFeatureVisLoad==='function')?admFeatureVisLoad():{};
@@ -13147,6 +13161,13 @@ function sysApplyPermissions(perms){
     if(!m)return;
     const view=m[1];
     const rule=navMap[view];
+    // tier 色を反映 (常に) + ツールチップ
+    btn.classList.remove('tier-public','tier-owner','tier-admin','tier-perm');
+    if(rule?.tier){
+      btn.classList.add('tier-'+rule.tier);
+      const tierLabel={public:'誰でも閲覧可',owner:'法人オーナー以上のみ',admin:'管理者のみ',perm:'専用権限が必要'}[rule.tier];
+      if(tierLabel)btn.title=tierLabel;
+    }
     if(!rule){btn.style.display='';return;}
     // 通常スタッフかつ機能表示設定で OFF にされていれば非表示
     if(isRegular&&featCfg[view]===false){btn.style.display='none';return;}
@@ -13155,6 +13176,9 @@ function sysApplyPermissions(perms){
     if(rule.perms&&rule.perms.some(p=>perms.includes(p))){btn.style.display='';return;}
     btn.style.display='none';
   });
+  // 管理ボタンも黒ティアに
+  const admBtn=document.querySelector('.nav-links button[onclick*="adminShowLogin"]');
+  if(admBtn){admBtn.classList.remove('tier-public','tier-owner','tier-perm');admBtn.classList.add('tier-admin');}
   // 管理ボタン: admin or shiftedit のいずれかで表示
   const adminBtn=document.querySelector('.nav-links button[onclick*="adminShowLogin"]');
   if(adminBtn)adminBtn.style.display=(isAll||perms.includes('admin')||perms.includes('shiftedit'))?'':'none';
