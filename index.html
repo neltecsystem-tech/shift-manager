@@ -9702,11 +9702,29 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const pmTokushuFee=pmTokushu*(isKawagoe?bp.kw_pm_tokushu:bp.pm_tokushu);
   const pmKanriFee=pmCount*(isKawagoe?bp.kw_pm_kanri:bp.pm_kanri);
   const pmDayTotal=pmShopFee+pmTokushuFee+pmKanriFee;
+  // 特殊請求店舗 (店舗コードベース): JRA)立川 (32006) / ｳｲﾝｽﾞ立川A (32001) は
+  // 朝刊を曜日限定で請求 + 競馬は請求しない。 旧 isTachikawa30 コース判定は廃止。
+  // amBillDow: 朝刊請求対象の曜日 (0=日, 1=月, ... 6=土)
+  // noKeiba: true なら競馬カウントから完全除外
+  // amYesKeibaPrevDay: 前日 yeskeiba 設定があれば曜日関係なく朝刊請求あり
+  const SPECIAL_BILLING_SHOPS={
+    '32006':{amBillDow:[2,6,0],noKeiba:true,amYesKeibaPrevDay:true}, // JRA)立川: 火/土/日 + 前日yeskeiba
+    '32001':{amBillDow:[6,0],  noKeiba:true,amYesKeibaPrevDay:true}, // ｳｲﾝｽﾞ立川A: 土/日 + 前日yeskeiba
+  };
+  // この請求書 (area/course) で対象になる特殊店舗を抽出
+  const specialAmShops=openAmShops.filter(s=>SPECIAL_BILLING_SHOPS[s[`col_${cols.code}`]]);
+
   // 競馬（金〜土）: 川越は全店¥280（特別単価なし）、他は夕刊併用→230、金土のみ→250、特別単価→700
+  // 特殊請求店舗 (noKeiba=true) は競馬カウントから完全除外。
+  const keibaExcludeCodes=new Set(
+    Object.entries(SPECIAL_BILLING_SHOPS).filter(([,v])=>v.noKeiba).map(([k])=>k),
+  );
+  const openKeibaShopsAdj=openKeibaShops.filter(s=>!keibaExcludeCodes.has(s[`col_${cols.code}`]));
+  const keibaCountAdj=openKeibaShopsAdj.length;
   const allPmCodes=new Set(records.filter(r=>notCancelled(r)&&r[`col_${cols.pmCourse}`]).map(s=>s[`col_${cols.code}`]));
-  const keibaSpecial=isKawagoe?[]:openKeibaShops.filter(s=>specialPriceShops.has(s[`col_${cols.code}`]));
-  const keibaAlsoPm=isKawagoe?[]:openKeibaShops.filter(s=>!specialPriceShops.has(s[`col_${cols.code}`])&&allPmCodes.has(s[`col_${cols.code}`]));
-  const keibaOnly=isKawagoe?openKeibaShops:openKeibaShops.filter(s=>!specialPriceShops.has(s[`col_${cols.code}`])&&!allPmCodes.has(s[`col_${cols.code}`]));
+  const keibaSpecial=isKawagoe?[]:openKeibaShopsAdj.filter(s=>specialPriceShops.has(s[`col_${cols.code}`]));
+  const keibaAlsoPm=isKawagoe?[]:openKeibaShopsAdj.filter(s=>!specialPriceShops.has(s[`col_${cols.code}`])&&allPmCodes.has(s[`col_${cols.code}`]));
+  const keibaOnly=isKawagoe?openKeibaShopsAdj:openKeibaShopsAdj.filter(s=>!specialPriceShops.has(s[`col_${cols.code}`])&&!allPmCodes.has(s[`col_${cols.code}`]));
   const keibaSpecialCount=keibaSpecial.length;
   const keibaAlsoPmCount=keibaAlsoPm.length;
   const keibaOnlyCount=keibaOnly.length;
@@ -9715,22 +9733,25 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const keibaSpecialTokushu=keibaSpecial.filter(s=>s[`col_${cols.keibaTokushu}`]==='TRUE').length;
   const keibaShopFee=isKawagoe?keibaOnlyCount*bp.kw_pm:keibaAlsoPmCount*bp.keiba_also_pm+keibaOnlyCount*bp.keiba_only+keibaSpecialCount*bp.keiba_special;
   const keibaTokushuFee=(keibaAlsoPmTokushu+keibaOnlyTokushu+keibaSpecialTokushu)*(isKawagoe?bp.kw_pm_tokushu:bp.keiba_tokushu);
-  const keibaKanriFee=keibaCount*(isKawagoe?bp.kw_pm_kanri:bp.keiba_kanri);
+  const keibaKanriFee=keibaCountAdj*(isKawagoe?bp.kw_pm_kanri:bp.keiba_kanri);
   const keibaDayTotal=keibaShopFee+keibaTokushuFee+keibaKanriFee;
 
-  // 立川朝刊30コース: 月・水・木・金は朝刊なし（火/土/日のみ朝刊請求、JRAは通常通り）
-  const isTachikawa30=area==='立川'&&course==='立川30';
-  // 立川30 火曜日は「ウインズ立川A」を朝刊対象から除外
-  const tachi30TueExcluded=isTachikawa30?openAmShops.filter(s=>(s[`col_${cols.name}`]||'').includes('ウインズ立川A')):[];
-  const amCountTue=isTachikawa30?amCount-tachi30TueExcluded.length:amCount;
-  const amTokushuTue=isTachikawa30?amTokushu-tachi30TueExcluded.filter(s=>s[`col_${cols.amTokushu}`]==='TRUE').length:amTokushu;
-  const amZasshiTue=isTachikawa30?amZasshi-tachi30TueExcluded.filter(s=>s[`col_${cols.zasshi}`]==='TRUE').length:amZasshi;
-  const amDokkonTue=isTachikawa30?amDokkon-tachi30TueExcluded.filter(s=>s[`col_${cols.yuukanDokkon}`]==='TRUE').length:amDokkon;
-  const amShopFeeTue=amCountTue*(isKawagoe?bp.kw_am_shop:bp.am_shop);
-  const amTokushuFeeTue=amTokushuTue*(isKawagoe?bp.kw_am_tokushu:bp.am_tokushu);
-  const amZasshiFeeTue=amZasshiTue*(isKawagoe?bp.kw_am_zasshi:bp.am_zasshi);
-  const amDokkonFeeTue=amDokkonTue*(isKawagoe?bp.kw_am_dokkon:bp.am_dokkon);
-  const amKanriFeeTue=amCountTue*(isKawagoe?bp.kw_am_kanri:bp.am_kanri);
+  // 特殊店舗の朝刊曜日除外: ある日 (dow + 前日yeskeiba 状態) で除外される特殊店舗の合計影響量を返す
+  function specialAmDeductForDay(dow,prevYesKeiba){
+    if(!specialAmShops.length)return {count:0,tokushu:0,zasshi:0,dokkon:0};
+    let count=0,tokushu=0,zasshi=0,dokkon=0;
+    specialAmShops.forEach(s=>{
+      const rule=SPECIAL_BILLING_SHOPS[s[`col_${cols.code}`]];
+      const allowed=rule.amBillDow.includes(dow)||(rule.amYesKeibaPrevDay&&prevYesKeiba);
+      if(!allowed){
+        count++;
+        if(s[`col_${cols.amTokushu}`]==='TRUE')tokushu++;
+        if(s[`col_${cols.zasshi}`]==='TRUE')zasshi++;
+        if(s[`col_${cols.yuukanDokkon}`]==='TRUE')dokkon++;
+      }
+    });
+    return {count,tokushu,zasshi,dokkon};
+  }
 
   function calcDay(dow,day){
     const isHoliday=(cond.holiday||[]).includes(day);
@@ -9739,40 +9760,38 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
     const isYesDokkon=(cond.yesdokkon||[]).includes(day);
     const isNoPm=(cond.nopm||[]).includes(day);
     const isYesKeiba=(cond.yeskeiba||[]).includes(day);
+    const prevYesKeiba=(cond.yeskeiba||[]).includes(day-1);
 
-    const isMon=dow===1,isTue=dow===2,isWed=dow===3,isThu=dow===4,isSun=dow===0,isFri=dow===5,isSat=dow===6;
+    const isMon=dow===1,isSun=dow===0,isFri=dow===5,isSat=dow===6;
     const isKeiba=(isFri||isSat||isSun||isYesKeiba)&&!isNoPm;
-    // 立川30: 前日に競馬配送有りが設定されていたら当日の朝刊は請求する
-    const prevYesKeiba=isTachikawa30&&(cond.yeskeiba||[]).includes(day-1);
-    // 立川30: 月/水/木/金は朝刊なし（JRAのみ請求）ただし前日yeskeibaなら朝刊あり
-    const skipAm=isTachikawa30&&(isMon||isWed||isThu||isFri)&&!prevYesKeiba;
-    // 立川30 火曜日はウインズ立川A除外
-    const useTue=isTachikawa30&&isTue;
 
     // 朝刊
     let dayAm=0,amSF=0,ac=0,amDF=0,ad=0,amTF=0,amZF=0,amKF=0,amKyF=0;
-    if(!isHoliday&&!isNoAm&&!skipAm){
-      if(useTue){
-        amSF=amShopFeeTue;ac=amCountTue;amTF=amTokushuFeeTue;amZF=amZasshiFeeTue;amKF=amKanriFeeTue;
-      }else{
-        amSF=amShopFee;ac=amCount;amTF=amTokushuFee;amZF=amZasshiFee;amKF=amKanriFee;
-      }
+    if(!isHoliday&&!isNoAm){
+      // 特殊請求店舗の除外を当日分計算
+      const ded=specialAmDeductForDay(dow,prevYesKeiba);
+      ac=amCount-ded.count;
+      const acTok=amTokushu-ded.tokushu;
+      const acZas=amZasshi-ded.zasshi;
+      const acDok=amDokkon-ded.dokkon;
+      amSF=ac*(isKawagoe?bp.kw_am_shop:bp.am_shop);
+      amTF=acTok*(isKawagoe?bp.kw_am_tokushu:bp.am_tokushu);
+      amZF=acZas*(isKawagoe?bp.kw_am_zasshi:bp.am_zasshi);
+      amKF=ac*(isKawagoe?bp.kw_am_kanri:bp.am_kanri);
       if(isKawagoe)amKyF=amKyoriFee;
       // 同梱: 月曜は基本なし、ただしyesDokkonで上書き可。noDokkonで除外可。
       const hasDokkon=isYesDokkon||((!isMon)&&!isNoDokkon);
-      ad=hasDokkon?(useTue?amDokkonTue:amDokkon):0;
-      amDF=hasDokkon?(useTue?amDokkonFeeTue:amDokkonFee):0;
+      ad=hasDokkon?acDok:0;
+      amDF=hasDokkon?(acDok*(isKawagoe?bp.kw_am_dokkon:bp.am_dokkon)):0;
       dayAm=amSF+amDF+amTF+amZF+amKF+amKyF;
     }
 
     // 夕刊/競馬
     // 月〜木: 夕刊コース店舗×230
-    // 金〜土: 競馬コース店舗×230
-    // 立川30: 金曜はJRAなし
-    const skipPm=isTachikawa30&&isFri;
+    // 金〜土: 競馬コース店舗×230 (特殊請求店舗は openKeibaShopsAdj で既に除外済)
     let dayPm=0,dShopFee=0,dCount=0,dTokFee=0,dKanFee=0;
-    if(!isHoliday&&!isNoPm&&!skipPm&&!(isSun&&!isYesKeiba)){
-      if(isKeiba){dShopFee=keibaShopFee;dCount=keibaCount;dTokFee=keibaTokushuFee;dKanFee=keibaKanriFee;}
+    if(!isHoliday&&!isNoPm&&!(isSun&&!isYesKeiba)){
+      if(isKeiba){dShopFee=keibaShopFee;dCount=keibaCountAdj;dTokFee=keibaTokushuFee;dKanFee=keibaKanriFee;}
       else{dShopFee=pmShopFee;dCount=pmCount;dTokFee=pmTokushuFee;dKanFee=pmKanriFee;}
       dayPm=dShopFee+dTokFee+dKanFee;
     }
