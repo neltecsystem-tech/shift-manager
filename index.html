@@ -13306,8 +13306,12 @@ function sysLogout(){
       const v=m[1];
       btn.style.display=(v==='dashboard'||v==='shift')?'':'none';
     });
-    // 右上のユーザーラベル/パスワード変更/管理者ログアウト等は非表示
-    ['sys-user-label','sys-changepw-btn','sys-logout-btn'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none';});
+    // 右上のユーザーラベル/PW変更/管理/ログアウト 等は非表示 (ID 無いものは onclick で特定)
+    ['sys-user-label','sys-changepw-btn'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none';});
+    document.querySelectorAll('.nav-links button').forEach(btn=>{
+      const oc=btn.getAttribute('onclick')||'';
+      if(oc.includes('adminShowLogin')||oc.includes('sysLogout'))btn.style.display='none';
+    });
     init();
   });
 })();
