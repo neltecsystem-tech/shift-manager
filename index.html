@@ -13288,6 +13288,30 @@ function sysLogout(){
 
 // init()はログイン後に呼ばれる
 
+// ─── 公開モード (?public=1) ─── ログインなしで「ダッシュボード」「月別シフト」のみ閲覧可
+(function(){
+  const p=new URLSearchParams(location.search);
+  if(p.get('public')!=='1')return;
+  window.addEventListener('DOMContentLoaded',()=>{
+    // ログイン overlay 非表示
+    const lg=document.getElementById('sys-login');if(lg)lg.style.display='none';
+    // 公開モード フラグ + 閲覧用の擬似ログイン状態
+    window.sysPublicMode=true;
+    sysLoggedIn=true;sysUserName='閲覧者';sysIsAdmin=false;
+    sysUserPerms=['shiftedit'];// 月別シフト 表示権限のみ与える (編集系は別 authed フラグ無しで弾かれる)
+    // ナビは「ダッシュボード」「月別シフト」だけ残す
+    document.querySelectorAll('.nav-links button[onclick*="showView"]').forEach(btn=>{
+      const m=btn.getAttribute('onclick').match(/showView\('(\w+)'/);
+      if(!m){btn.style.display='none';return;}
+      const v=m[1];
+      btn.style.display=(v==='dashboard'||v==='shift')?'':'none';
+    });
+    // 右上のユーザーラベル/パスワード変更/管理者ログアウト等は非表示
+    ['sys-user-label','sys-changepw-btn','sys-logout-btn'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none';});
+    init();
+  });
+})();
+
 </script>
 </body>
 </html>
