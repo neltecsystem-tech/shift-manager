@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>新聞シフト管理ツール 管理者マニュアル</title>
+<style>
+  :root{
+    --primary:#1d4ed8; --ink:#1f2937; --sub:#6b7280; --line:#d1d5db; --soft:#f3f4f6;
+    --accent:#b45309; --danger:#dc2626; --ok:#15803d;
+  }
+  *{box-sizing:border-box;}
+  html{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  body{
+    font-family:"Meiryo","Hiragino Kaku Gothic ProN",sans-serif;
+    color:var(--ink); margin:0; line-height:1.7; font-size:14px; background:#e5e7eb;
+  }
+  .page{
+    background:#fff; width:210mm; min-height:297mm; margin:10px auto; padding:18mm 16mm;
+    box-shadow:0 1px 6px rgba(0,0,0,.2);
+  }
+  h1{font-size:26px;margin:0 0 4px;color:var(--primary);}
+  h2{font-size:19px;margin:30px 0 10px;padding:6px 10px;background:var(--primary);color:#fff;border-radius:5px;}
+  h3{font-size:16px;margin:18px 0 6px;color:var(--primary);border-bottom:2px solid var(--line);padding-bottom:3px;}
+  h4{font-size:14px;margin:12px 0 4px;color:var(--accent);}
+  p{margin:6px 0;}
+  ul,ol{margin:6px 0 10px;padding-left:1.4em;}
+  li{margin:3px 0;}
+  code{background:var(--soft);padding:1px 6px;border-radius:4px;font-size:13px;font-family:Consolas,monospace;}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13px;}
+  th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top;}
+  th{background:var(--soft);font-weight:700;white-space:nowrap;}
+  .tag{display:inline-block;background:var(--primary);color:#fff;border-radius:4px;padding:1px 8px;font-size:12px;font-weight:700;margin-right:4px;}
+  .note{background:#fffbeb;border:1px solid #fcd34d;border-left:4px solid var(--accent);padding:8px 12px;border-radius:4px;margin:10px 0;font-size:13px;}
+  .warn{background:#fef2f2;border:1px solid #fca5a5;border-left:4px solid var(--danger);padding:8px 12px;border-radius:4px;margin:10px 0;font-size:13px;}
+  .ok{background:#f0fdf4;border:1px solid #86efac;border-left:4px solid var(--ok);padding:8px 12px;border-radius:4px;margin:10px 0;font-size:13px;}
+  .cover{display:flex;flex-direction:column;justify-content:center;min-height:240mm;text-align:center;}
+  .cover .sub{color:var(--sub);font-size:15px;}
+  .cover .box{margin-top:40px;border:2px solid var(--primary);border-radius:10px;padding:20px 28px;display:inline-block;text-align:left;font-size:13px;}
+  .toc a{color:var(--ink);text-decoration:none;}
+  .toc ol{counter-reset:item;list-style:none;padding-left:0;}
+  .toc>ol>li{margin:5px 0;font-weight:700;}
+  .toc ol ol{padding-left:1.4em;font-weight:400;font-size:13px;}
+  .step{counter-reset:step;list-style:none;padding-left:0;}
+  .step>li{position:relative;padding-left:30px;margin:8px 0;}
+  .step>li::before{counter-increment:step;content:counter(step);position:absolute;left:0;top:0;background:var(--primary);color:#fff;width:21px;height:21px;border-radius:50%;text-align:center;font-size:12px;line-height:21px;font-weight:700;}
+  .toolbar{position:fixed;top:12px;right:12px;z-index:99;}
+  .toolbar button{background:var(--primary);color:#fff;border:none;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.25);}
+  .muted{color:var(--sub);font-size:12px;}
+  .pgbreak{page-break-before:always;}
+  @media print{
+    body{background:#fff;}
+    .page{box-shadow:none;margin:0;width:auto;min-height:auto;padding:14mm 12mm;}
+    .toolbar{display:none;}
+    h2{ -webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  }
+  @page{size:A4;margin:0;}
+</style>
+</head>
+<body>
+
+<div class="toolbar"><button onclick="window.print()">🖨 印刷 / PDF保存</button></div>
+
+<!-- 表紙 -->
+<section class="page">
+  <div class="cover">
+    <div style="font-size:14px;color:var(--sub);letter-spacing:2px;">NELTEC 社内システム</div>
+    <h1 style="font-size:34px;margin:14px 0;">新聞シフト管理ツール<br>管理者マニュアル</h1>
+    <div class="sub">配送シフト・請求書・収支管理・支払明細・店舗マスタ・測定</div>
+    <div class="box">
+      <div><b>対象</b>：管理者（全機能）</div>
+      <div><b>URL</b>：<code>https://neltecsystem-tech.github.io/shift-manager/</code></div>
+      <div><b>推奨ブラウザ</b>：Google Chrome / Microsoft Edge（最新版）</div>
+      <div><b>発行</b>：株式会社NELTEC システム担当</div>
+    </div>
+    <div class="muted" style="margin-top:40px;">本書は社外秘です。取り扱いにご注意ください。</div>
+  </div>
+</section>
+
+<!-- 目次 -->
+<section class="page">
+  <h2>目次</h2>
+  <div class="toc">
+    <ol>
+      <li><a href="#s1">1. はじめに・基本操作</a>
+        <ol>
+          <li>1-1. ログインとログアウト</li>
+          <li>1-2. 画面構成と共通ルール</li>
+          <li>1-3. データは「常に最新」（自動取得の仕組み）</li>
+        </ol>
+      </li>
+      <li><a href="#s2">2. 一般画面（ログイン不要）</a>
+        <ol>
+          <li>2-1. ダッシュボード／2-2. 📅 シフト／2-3. 月別シフト</li>
+          <li>2-4. 店舗検索／2-5. スタッフ一覧／2-6. 不具合管理</li>
+          <li>2-7. 店舗マスタ／2-8. 請求書／2-9. 測定／2-10. ダイヤグラム</li>
+        </ol>
+      </li>
+      <li><a href="#s3">3. 管理画面（🔧 管理）</a>
+        <ol>
+          <li>3-1. 請求書管理／3-2. スタッフ管理／3-3. データ管理</li>
+          <li>3-4. 突合せチェック／3-5. 荷主リスト突合</li>
+          <li>3-6. 請求書作成／3-7. 単価一覧／3-8. 店舗集計</li>
+          <li>3-9. 収支管理／3-10. 請求条件／3-11. 支払い明細</li>
+          <li>3-12. 社員管理／3-13. シフト編集／3-14. 測定データ</li>
+          <li>3-15. ダイヤグラム／3-16. マイマップURL／3-17. システム設定</li>
+        </ol>
+      </li>
+      <li><a href="#s4">4. 月次業務の流れ（おすすめ手順）</a></li>
+      <li><a href="#s5">5. 用語集・よくある質問</a></li>
+    </ol>
+  </div>
+</section>
+
+<!-- 1. はじめに -->
+<section class="page" id="s1">
+  <h2>1. はじめに・基本操作</h2>
+
+  <h3>1-1. ログインとログアウト</h3>
+  <p>一般画面（ダッシュボードやシフト確認など）はログインなしで閲覧できます。請求・収支・支払明細・シフト編集などの<b>管理機能を使うときだけログイン</b>します。</p>
+  <ol class="step">
+    <li>画面右上の <span class="tag">🔧 管理</span> ボタンを押します。</li>
+    <li>ログインID（スタッフ単価マスタに登録されたID）とパスワードを入力します。</li>
+    <li>ログインに成功すると、管理画面のタブ一覧が表示されます。</li>
+  </ol>
+  <ul>
+    <li>右上の <span class="tag">🔑 PW変更</span> から、自分のログインパスワードを変更できます。</li>
+    <li>作業が終わったら <span class="tag">ログアウト</span> を押してください（共用PCでは必須）。</li>
+  </ul>
+  <div class="note">権限は単価マスタの「表示権限」設定に従います。管理者アカウントのみ全タブが表示されます。</div>
+
+  <h3>1-2. 画面構成と共通ルール</h3>
+  <ul>
+    <li><b>上部ナビ</b>：一般画面（ダッシュボード／シフト／店舗検索 など）を切り替えます。</li>
+    <li><b>🔧 管理</b>：ログイン後、管理タブ（請求書作成・収支管理・支払明細 など）に入ります。</li>
+    <li><b>月の選択</b>：多くの画面で右上の「月」セレクタから対象月を選びます。</li>
+    <li><b>検索ボックス</b>：名前や店舗名を打つと自動で絞り込みます（入力の取りこぼし防止のため少し遅れて反映されます）。</li>
+  </ul>
+  <div class="note">日本語の表示が乱れる場合、ブラウザの「自動翻訳」がオンになっていないか確認してください（Edge等で日本語ページを翻訳してしまうことがあります）。</div>
+
+  <h3>1-3. データは「常に最新」（自動取得の仕組み）</h3>
+  <p>シフトや単価は <b>Google スプレッドシート</b> を正本としています。月別シフトや支払明細を開くと、</p>
+  <ol>
+    <li>まず手元のデータで<b>すぐに表示</b>し、</li>
+    <li>裏でスプレッドシートから<b>最新版を取得</b>して、取得でき次第<b>自動で再描画</b>します。</li>
+  </ol>
+  <p>サーバー側でも1日3回（朝・夕・夜）自動更新されます。手動で最新化したいときは、シフト編集タブの <span class="tag">🔄 シフト最新化</span> を押します。</p>
+  <div class="warn">スプレッドシートを直接書き換えた直後は、ツール側に反映されるまで数十秒かかることがあります。すぐ反映したいときは画面の「再読込」または「シフト最新化」を使ってください。</div>
+</section>
+
+<!-- 2. 一般画面 -->
+<section class="page" id="s2">
+  <h2>2. 一般画面（ログイン不要）</h2>
+
+  <h3>2-1. ダッシュボード</h3>
+  <p>トップ画面です。<b>今月の不具合状況</b>と<b>本日のコース担当</b>を一覧できます。営業所タブで拠点を切り替えられます。</p>
+
+  <h3>2-2. 📅 シフト（マイシフト）</h3>
+  <p>個人ごとの月間シフトを確認します。月を選ぶとカレンダー形式で朝刊・夕刊の担当が表示されます。管理者はスタッフを絞り込んで他のスタッフのシフトも確認できます。</p>
+
+  <h3>2-3. 月別シフト</h3>
+  <p>選んだ月の<b>全体シフト表</b>（コース×日付）を表示します。常に最新版が自動取得されます。閲覧専用です（編集は管理画面の「シフト編集」）。</p>
+
+  <h3>2-4. 店舗検索</h3>
+  <p>店舗名・住所・コースなどから店舗を検索します。地図リンクやナビへの導線があります。</p>
+
+  <h3>2-5. スタッフ一覧</h3>
+  <p>拠点・契約範囲・名前で絞り込み、スタッフの基本情報を一覧します。</p>
+
+  <h3>2-6. 不具合管理</h3>
+  <p>配送中の不具合・トラブルを記録します。月ごとのシート（Google スプレッドシート）に連携しています。閲覧・登録時にパスワードを求められる場合があります。</p>
+
+  <h3>2-7. 店舗マスタ</h3>
+  <p>店舗情報の登録・編集（CRUD）を行います。</p>
+  <ul>
+    <li><b>地図でピン調整</b>：Leaflet地図上で店舗の位置（緯度・経度）を微調整できます。</li>
+    <li><span class="tag">📝 住所を一括取得</span>／GPS一括取得：住所から座標を自動取得します。</li>
+    <li><span class="tag">🔍 ナビ位置検証</span>：登録座標がナビ目的地として妥当かまとめて検証します。</li>
+  </ul>
+
+  <h3>2-8. 請求書</h3>
+  <p>稼働記録の確認や給与計算に関する画面です。日々の稼働を登録・参照します（本格的な請求書作成は管理画面の「請求書作成」）。</p>
+
+  <h3>2-9. 測定</h3>
+  <p>配送の<b>GPS到着時刻</b>を記録します。店舗に近づくと自動で到着を記録し、精度が低い場合は警告を表示します。ダイヤ作成や所要時間分析の基礎データになります。</p>
+
+  <h3>2-10. ダイヤグラム</h3>
+  <p>コースごとの配送ダイヤ（時刻表）を表示します。公開用URLを使って外部共有することもできます。</p>
+</section>
+
+<!-- 3. 管理画面 -->
+<section class="page" id="s3">
+  <h2>3. 管理画面（🔧 管理）</h2>
+  <p>ログイン後、上部のタブで各管理機能に切り替えます。タブは左から次の順に並びます。</p>
+  <table>
+    <tr><th>タブ</th><th>主な用途</th></tr>
+    <tr><td>📄 請求書管理</td><td>稼働記録の登録・編集、給与計算の基礎</td></tr>
+    <tr><td>👥 スタッフ管理</td><td>スタッフ単価・ログイン情報・区分（社員/外注）の管理</td></tr>
+    <tr><td>📁 データ管理</td><td>データの確認・確定など</td></tr>
+    <tr><td>🔍 突合せチェック</td><td>名前・データの不一致チェック</td></tr>
+    <tr><td>📋 荷主リスト突合</td><td>閉店・新店の突合（新店候補／閉店候補／差異／一致）</td></tr>
+    <tr><td>📄 請求書作成</td><td>営業所別の請求書を作成・売上確定</td></tr>
+    <tr><td>💲 単価一覧</td><td>請求単価設定の編集・保存</td></tr>
+    <tr><td>📊 店舗集計</td><td>月初時点の営業中店舗数を集計</td></tr>
+    <tr><td>💰 収支管理</td><td>売上・管理費・外注費・社員給料から粗利を集計</td></tr>
+    <tr><td>📋 請求条件</td><td>休刊日・夕刊なし・競馬有りなど月別条件の設定</td></tr>
+    <tr><td>💴 支払い明細</td><td>ドライバー別の月次支払明細書を作成（PDF）</td></tr>
+    <tr><td>👤 社員管理</td><td>社員（月給制）の勤務・給料・粗利サマリー</td></tr>
+    <tr><td>📝 シフト編集</td><td>シフト表の直接編集・新規月作成・空き確認</td></tr>
+    <tr><td>⏱ 測定データ</td><td>GPS測定結果の確認</td></tr>
+    <tr><td>📐 ダイヤグラム</td><td>配送ダイヤの管理</td></tr>
+    <tr><td>🗺️ マイマップURL</td><td>Google マイマップの共有URL管理</td></tr>
+    <tr><td>⚙ システム設定</td><td>各種システム設定</td></tr>
+  </table>
+
+  <h3 class="pgbreak" id="t31">3-1. 📄 請求書管理</h3>
+  <p>日々の<b>稼働記録</b>を登録・編集します。スタッフ・日付・コース等を記録し、給与・請求計算の基礎データとします。</p>
+
+  <h3>3-2. 👥 スタッフ管理</h3>
+  <p>スタッフ単価マスタを編集します。</p>
+  <ul>
+    <li>朝刊（曜日別）・夕刊／競馬・庫内などの<b>単価</b>、<b>計算方式</b>（個建／個数）を設定します。</li>
+    <li><b>ログインID・パスワード</b>、<b>表示権限</b>、<b>所属会社</b>、<b>区分</b>を管理します。</li>
+    <li><b>区分＝社員</b>を選ぶと「月給（円）」入力欄が表示されます（社員は月給制）。</li>
+  </ul>
+
+  <h3>3-3. 📁 データ管理</h3>
+  <p>取り込み済みデータの確認や、必要に応じた確定処理を行う運用補助タブです。</p>
+
+  <h3>3-4. 🔍 突合せチェック</h3>
+  <p>単価マスタとシフトの<b>名前の表記揺れ</b>（全角/半角スペース違いなど）や、データの不一致を検出します。社員カウントや給与計算のズレを未然に防ぎます。</p>
+
+  <h3>3-5. 📋 荷主リスト突合</h3>
+  <p>荷主（取引先）の店舗リストと店舗マスタを突き合わせ、状態別にタブで確認します。</p>
+  <ul>
+    <li><span class="tag">🔥 閉店・新店シート</span>／<span class="tag">➕ 新店候補</span>／<span class="tag">➖ 閉店候補</span></li>
+    <li><span class="tag">⚠ 差異あり</span>／<span class="tag">✅ 一致</span></li>
+  </ul>
+</section>
+
+<section class="page">
+  <h3 id="t36">3-6. 📄 請求書作成</h3>
+  <p>営業所ごとの請求書を作成し、売上を確定します。</p>
+  <ol class="step">
+    <li>対象の<b>月</b>と<b>営業所</b>を選びます。</li>
+    <li>必要に応じて「請求条件」（次項）が反映されていることを確認します。</li>
+    <li><span class="tag">📋 営業所一括作成</span>で、1ページ目に<b>合計サマリー（税込）</b>、2ページ目以降に<b>コース明細</b>を出力します。</li>
+    <li>内容を確認し、<b>売上確定</b>を実行します（進捗が N/M で表示されます）。</li>
+  </ol>
+  <table>
+    <tr><th>項目</th><th>内容</th></tr>
+    <tr><td>総合計（税込）</td><td>小計 × 1.1（消費税10%）</td></tr>
+    <tr><td>立川の特殊ルール</td><td>庫内作業費（朝刊×6,000／競馬日×9,000）、返品新聞作業料</td></tr>
+    <tr><td>川崎高津の特殊ルール</td><td>優馬直送便（競馬日×7,000）、返品新聞作業料</td></tr>
+    <tr><td>川越の特殊単価</td><td>コース別×曜日別マスタを参照（旧／新パターン）</td></tr>
+    <tr><td>競馬日の定義</td><td>金・土（＋臨時開催日）。月〜木は夕刊扱い</td></tr>
+  </table>
+  <div class="note">売上を確定すると、収支管理・社員管理の集計に確定値が反映されます。</div>
+
+  <h3>3-7. 💲 単価一覧</h3>
+  <p>請求単価設定（請求側の単価）を一覧で編集・保存します。請求書作成・収支管理の計算に使われます。</p>
+
+  <h3>3-8. 📊 店舗集計</h3>
+  <p><b>月初時点で営業中</b>の店舗数を集計します。閉店・新店を加味した実数を確認できます。</p>
+
+  <h3 id="t39">3-9. 💰 収支管理</h3>
+  <p>月次の収支を「<b>外注売上（管理費抜）／社員売上（管理費抜）／粗利</b>」の3カードで表示します。</p>
+  <ul>
+    <li><b>支払い元の切替</b>：<code>シフト</code>（シフトから自動計算）／<code>稼働記録</code> を選べます。</li>
+    <li><b>粗利＝売上（税込）− 管理費 − 外注費 − 社員給料</b>。</li>
+    <li><b>表示切替</b>：営業所別／コース別／コース別日次。</li>
+    <li>社員の売上は、コースごとの売上を<b>社員/外注の比率で按分</b>して算出します。</li>
+  </ul>
+  <div class="note">「給料控除後 粗利」は、粗利から社員給料合計を差し引いた値です。</div>
+
+  <h3>3-10. 📋 請求条件</h3>
+  <p>請求計算に影響する月別条件を設定します。</p>
+  <ul>
+    <li>休刊日／朝刊なし／夕刊同梱の有無／夕刊なし／競馬有り を月ごとに設定。</li>
+    <li><span class="tag">🗾 祝日から自動設定</span>：月〜木の祝日を「夕刊なし」、その前日を「同梱なし」に自動反映します。</li>
+  </ul>
+  <div class="warn">請求書作成・支払明細の前に、必ず当月の請求条件を設定・確認してください。条件が誤っていると金額がずれます。</div>
+</section>
+
+<section class="page">
+  <h3 id="t311">3-11. 💴 支払い明細</h3>
+  <p>ドライバー別の月次支払明細書（アスクル仕様）を作成します。</p>
+  <ol class="step">
+    <li>対象<b>月</b>を選びます。</li>
+    <li>ドライバーを<b>1名</b>指定、または<b>営業所一括</b>を選びます（主稼働の営業所で自動判定）。</li>
+    <li>内容を確認し、PDFを出力します。<b>個別PDFをまとめてZIP保存</b>できます。
+      <ul><li>法人＝同一所属で1つのPDF＋サマリー、個人＝1人1PDF。</li></ul>
+    </li>
+  </ol>
+  <table>
+    <tr><th>区分・条件</th><th>計算の扱い</th></tr>
+    <tr><td>個建制（朝刊・夕刊/競馬）</td><td>店舗マスタ＋請求条件から自動算出</td></tr>
+    <tr><td>個数制</td><td>個数単価 × 店舗数で自動計算</td></tr>
+    <tr><td>川越パターン（旧/新）</td><td>コース別×曜日別マスタを参照</td></tr>
+    <tr><td>引継</td><td>通常コースの半額で支払対象</td></tr>
+    <tr><td>特別単価</td><td>日当＝置換／日当＋＝加算</td></tr>
+    <tr><td>ミーティング・研修・希望休等</td><td>支払対象外（引継は半額で対象）</td></tr>
+    <tr><td>区分＝社員</td><td>月給制のため一括作成から除外</td></tr>
+  </table>
+  <div class="note"><span class="tag">⚠️ 未作成スタッフ確認</span>で、単価マスタ未登録・社員除外・別営業所が主稼働、などを分類表示できます。作成漏れの確認に使ってください。</div>
+
+  <h3>3-12. 👤 社員管理</h3>
+  <p>区分＝社員（月給制）の月次サマリーを表示します。</p>
+  <ul>
+    <li>サマリーカード：朝刊勤務／夕刊・競馬勤務／社員担当売上／社員給料／粗利。</li>
+    <li>社員別テーブル：営業所別（城北・川越・立川・川崎高津）の勤務日数と給料配分。</li>
+    <li>売上は<b>日次のシフト担当ベースで正確に分配</b>。確定済み売上があれば、日次比率を保ったまま確定値にスケールします。</li>
+  </ul>
+
+  <h3 id="t313">3-13. 📝 シフト編集</h3>
+  <p>シフト表をスプレッドシートのように直接編集できます。</p>
+  <h4>3つの表示モード</h4>
+  <ul>
+    <li><b>📋 見やすい表</b>（既定）：Section 1（コース×日 朝/夕）＋ Section 2（営業所別ブロック）。</li>
+    <li><b>🔢 Raw グリッド</b>：A・B・C…の列ヘッダ付きで全行を編集。</li>
+    <li><b>👥 人員名簿</b>：「人員名簿」シート（拠点・契約範囲・氏名・電話・朝刊/夕刊の曜日）を直接編集。</li>
+  </ul>
+  <h4>基本操作</h4>
+  <ol class="step">
+    <li>編集したい<b>シート（◯月シフトYYYY）</b>を選びます。営業所やスタッフで絞り込めます。</li>
+    <li>セルをクリックして直接入力します（変更したセルは記録されます）。</li>
+    <li><span class="tag">💾 保存</span>でスプレッドシートへ反映 → 自動で最新化されます。</li>
+  </ol>
+  <h4>便利機能</h4>
+  <ul>
+    <li><span class="tag">🔍 空き確認</span>：マスタの必要フラグ（朝刊✔／夕刊✔／金土✔）から、担当が空いているセルを検出し赤くハイライトします。</li>
+    <li><span class="tag">➕ 新規月作成</span>：「曜日別コース人員早見表」をもとに、各曜日の担当者を自動入力した新しい月のシートを作成します。</li>
+    <li><span class="tag">🔄 シフト最新化</span>：サーバーのキャッシュを手動で更新します。</li>
+  </ul>
+  <div class="warn">保存は変更したセルのみ反映されます。大量に編集した場合は、保存後に「月別シフト」で表示を確認してください。</div>
+</section>
+
+<section class="page">
+  <h3>3-14. ⏱ 測定データ</h3>
+  <p>「測定」画面で記録したGPS到着時刻の結果を確認します。コース・店舗ごとの到着実績やダイヤ作成の根拠データになります。</p>
+
+  <h3>3-15. 📐 ダイヤグラム</h3>
+  <p>配送ダイヤ（時刻表）を管理します。コース単位での編集・公開URLの管理ができます。</p>
+
+  <h3>3-16. 🗺️ マイマップURL</h3>
+  <p>コースごとの Google マイマップ共有URLを登録・管理します。現場での経路確認に使います。</p>
+
+  <h3>3-17. ⚙ システム設定</h3>
+  <p>ツール全体に関わる各種設定を行います。設定変更は影響範囲が広いため、内容を理解したうえで操作してください。</p>
+
+  <h2 id="s4">4. 月次業務の流れ（おすすめ手順）</h2>
+  <p>毎月の締め業務は、次の順番で行うとスムーズです。</p>
+  <ol class="step">
+    <li><b>シフトの確定</b>：「📝 シフト編集」で当月シフトを確定し、保存します。</li>
+    <li><b>店舗マスタの整備</b>：閉店・新店を「店舗マスタ」「荷主リスト突合」で反映します。</li>
+    <li><b>請求条件の設定</b>：「📋 請求条件」で休刊日・夕刊なし・競馬有りを設定（祝日から自動設定を活用）。</li>
+    <li><b>単価の確認</b>：「💲 単価一覧」「👥 スタッフ管理」で当月の単価・区分を確認します。</li>
+    <li><b>請求書の作成・売上確定</b>：「📄 請求書作成」で営業所別に作成し、売上を確定します。</li>
+    <li><b>支払明細の作成</b>：「💴 支払い明細」で外注ドライバーの明細をPDF出力（ZIP保存）。未作成スタッフ確認で漏れをチェック。</li>
+    <li><b>収支・社員の確認</b>：「💰 収支管理」「👤 社員管理」で粗利と社員給料を確認します。</li>
+  </ol>
+  <div class="ok">月初に支払明細を作る運用に合わせ、月初の数日間は前月分も自動で最新化されます。</div>
+</section>
+
+<!-- 5. 用語集 -->
+<section class="page" id="s5">
+  <h2>5. 用語集・よくある質問</h2>
+
+  <h3>用語集</h3>
+  <table>
+    <tr><th>用語</th><th>意味</th></tr>
+    <tr><td>個建制</td><td>店舗（個）ごとに単価を積み上げて計算する方式</td></tr>
+    <tr><td>個数制</td><td>個数単価 × 店舗数で計算する方式</td></tr>
+    <tr><td>管理費</td><td>売上から差し引く管理コスト。粗利計算で控除</td></tr>
+    <tr><td>外注／社員</td><td>区分。社員は月給制、外注は単価ベースで支払明細を作成</td></tr>
+    <tr><td>引継</td><td>他コースの引き継ぎ稼働。支払は通常コースの半額</td></tr>
+    <tr><td>競馬日</td><td>金・土（＋臨時開催）。庫内作業費・優馬直送便の計算対象</td></tr>
+    <tr><td>川越パターン（旧/新）</td><td>川越のコース別×曜日別の特殊単価体系</td></tr>
+    <tr><td>売上確定</td><td>請求書作成後に売上を確定させる操作。収支・社員集計に反映</td></tr>
+    <tr><td>主稼働</td><td>そのスタッフが最も多く稼働した営業所。一括作成の振り分けに使用</td></tr>
+  </table>
+
+  <h3>よくある質問</h3>
+  <h4>Q. シフトを直したのに画面に反映されません。</h4>
+  <p>A. 反映に数十秒かかることがあります。「シフト編集」の <span class="tag">🔄 シフト最新化</span>、または各画面の「再読込」を押してください。</p>
+
+  <h4>Q. 支払明細で特定のスタッフが出てきません。</h4>
+  <p>A. 単価マスタ未登録、区分＝社員（月給制で除外）、別営業所が主稼働、のいずれかです。「⚠️ 未作成スタッフ確認」で原因を確認できます。</p>
+
+  <h4>Q. 名前は同じはずなのに集計が合いません。</h4>
+  <p>A. 氏名のスペース（全角/半角）違いが原因のことがあります。「🔍 突合せチェック」で表記揺れを確認してください。</p>
+
+  <h4>Q. 金額が思ったより少ない／多いです。</h4>
+  <p>A. まず「📋 請求条件」（休刊日・夕刊なし・競馬有り）が当月分で正しいか確認してください。条件設定が金額に直結します。</p>
+
+  <h4>Q. 文字が変な日本語に化けています。</h4>
+  <p>A. ブラウザの自動翻訳がオンになっている可能性があります。翻訳をオフにしてください。</p>
+
+  <h4>Q. ログインパスワードを変えたい。</h4>
+  <p>A. 右上の <span class="tag">🔑 PW変更</span> から自分で変更できます。他スタッフの単価・IDは「👥 スタッフ管理」で管理します。</p>
+
+  <div class="note" style="margin-top:30px;">不明点・不具合は、システム担当（NELTEC）までご連絡ください。本書の手順はツールの更新に合わせて改訂されます。</div>
+</section>
+
+</body>
+</html>

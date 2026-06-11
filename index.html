@@ -118,7 +118,8 @@ tbody tr:hover { background:var(--primary-light); }
     <button onclick="showView('invoice',this)">請求書</button>
     <button onclick="showView('measure',this)">測定</button>
     <button onclick="showView('diagram',this)">ダイヤグラム</button>
-    <button onclick="adminShowLogin()" style="margin-left:auto;background:rgba(255,255,255,.15);color:#fff;">🔧 管理</button>
+    <a href="manual.html" target="_blank" rel="noopener" style="margin-left:auto;background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);text-decoration:none;padding:6px 12px;border-radius:6px;font-size:12px;align-self:center;" title="管理者マニュアルを開く">📖 マニュアル</a>
+    <button onclick="adminShowLogin()" style="background:rgba(255,255,255,.15);color:#fff;">🔧 管理</button>
     <span id="sys-user-label" style="color:rgba(255,255,255,.7);font-size:12px;margin-left:8px;"></span>
     <button id="sys-changepw-btn" onclick="invShowChangePw()" style="display:none;background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;margin-left:4px;" title="自分のログインパスワードを変更">🔑 PW変更</button>
     <button onclick="sysLogout()" style="background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;margin-left:4px;">ログアウト</button>
