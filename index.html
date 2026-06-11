@@ -3821,6 +3821,15 @@ function invIsCorpOwner(){
   if(!me||me.biz_type!=='法人')return false;
   return (me.permissions||'').split(',').includes('owner');
 }
+// スタッフ管理の「編集(変更)」可否: 管理者PWログイン or ログイン本人が社員(区分=社員) のみ可
+// ※新規追加は別途可 (この判定は既存レコードの編集にのみ使用)
+function invCanEditStaff(){
+  if(invIsAdmin)return true;
+  if(!invStaffName)return false;
+  const norm=s=>(s||'').replace(/[\s　]+/g,' ').trim();
+  const me=invRates.find(r=>norm(r.name)===norm(invStaffName));
+  return !!(me&&me.biz_type==='社員');
+}
 // 法人オーナーから見た配下ドライバー名一覧 (自分含む)
 function invOwnerScopeNames(){
   if(!invIsCorpOwner())return [];
@@ -4481,6 +4490,8 @@ async function invSaveRate(){
   const name=document.getElementById('inv-re-name').value.trim();
   if(!name){alert('スタッフ名は必須です');return;}
   const rowNum=document.getElementById('inv-re-row').value;
+  // 既存レコードの変更(編集)は社員(または管理者)のみ。新規追加(rowNum空)は制限なし
+  if(rowNum&&!invCanEditStaff()){alert('スタッフ情報の編集は社員（または管理者）のみ可能です。');return;}
   // 重複チェック（新規追加時、または編集で名前を変えた場合）
   const existing=invRates.find((r,i)=>{
     if(rowNum&&(i+2)===parseInt(rowNum))return false;// 自分自身はスキップ
@@ -5586,6 +5597,7 @@ async function adminLoadStaff(){
 function adminRenderStaff(){
   const q=(document.getElementById('adm-staff-search')?.value||'').trim().toLowerCase();
   const rates=q?invRates.filter(r=>r.name.toLowerCase().includes(q)):invRates;
+  const canEdit=invCanEditStaff();
   if(!invRates.length){document.getElementById('adm-staff-list').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">スタッフが登録されていません</p>';return;}
   if(!rates.length){document.getElementById('adm-staff-list').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">該当なし</p>';return;}
   let h='<table><thead><tr><th>スタッフ名</th><th>区分</th><th>所属</th><th>ログインID</th><th>PW</th><th>朝刊(平)</th><th>朝(土)</th><th>朝(日)</th><th>夕刊(平)</th><th>夕(末)</th><th>夕(日)</th><th>計算</th><th>権限</th><th></th></tr></thead><tbody>';
@@ -5616,7 +5628,7 @@ function adminRenderStaff(){
       <td>${r.pm_sunday?'¥'+Number(r.pm_sunday).toLocaleString():'<span style="color:#94a3b8">-</span>'}</td>
       <td>${r.calc_type}${r.calc_type_pm&&r.calc_type_pm!==r.calc_type?' / 夕:'+r.calc_type_pm:''}</td>
       <td style="font-size:11px;">${permDisp}</td>
-      <td><button onclick="admEditRate(${origIdx})" style="background:var(--primary);color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">編集</button></td>
+      <td>${canEdit?`<button onclick="admEditRate(${origIdx})" style="background:var(--primary);color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">編集</button>`:`<span title="編集は社員のみ可能" style="color:#94a3b8;font-size:11px;">🔒 社員のみ</span>`}</td>
     </tr>`;
   });
   h+='</tbody></table>';
@@ -5630,6 +5642,7 @@ async function admStaffAdd(){
 
 function admEditRate(idx){
   const r=invRates[idx];if(!r)return;
+  if(!invCanEditStaff()){alert('スタッフ情報の編集は社員（または管理者）のみ可能です。\n新規追加はできます。');return;}
   invEditRate(idx+2);
 }
 
