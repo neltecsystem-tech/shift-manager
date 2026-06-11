@@ -451,7 +451,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="document.getElementById('inv-rate-edit').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;">✕</button>
         <h3 id="inv-re-title" style="color:#6366f1;margin-bottom:16px;">単価を編集</h3>
         <input type="hidden" id="inv-re-row">
-        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">スタッフ名 *</label><select id="inv-re-name" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">選択</option></select></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">スタッフ名 *</label><input id="inv-re-name" list="inv-re-name-list" autocomplete="off" placeholder="候補から選択 または 直接入力" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><datalist id="inv-re-name-list"></datalist></div>
         <!-- タブ -->
         <div style="display:flex;gap:6px;margin-bottom:12px;">
           <button type="button" onclick="invRateTab('normal')" id="inv-re-tab-normal" style="padding:6px 14px;border-radius:12px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#6366f1;color:#fff;">通常</button>
@@ -4365,25 +4365,17 @@ function invRateTab(t){
 }
 
 function invUpdateNameSelect(selectedName,excludeRegistered){
-  const sel=document.getElementById('inv-re-name');
+  const inp=document.getElementById('inv-re-name');
+  const dl=document.getElementById('inv-re-name-list');
   // スペース正規化（全角/半角スペース、連続スペースを1つに）で比較用のキーを作成
   const normKey=s=>(s||'').replace(/[\s　]+/g,' ').trim();
   const registeredKeys=new Set(invRates.map(r=>normKey(r.name)));
   const names=excludeRegistered?invStaffNames.filter(n=>!registeredKeys.has(normKey(n))):invStaffNames;
-  const selKey=normKey(selectedName);
-  // 選択名が人員名簿にない場合でも選択肢として先頭に追加（保存時の値は単価マスタの値を維持）
-  let opts='<option value="">選択</option>';
-  let matched=false;
-  names.forEach(n=>{
-    const isMatch=normKey(n)===selKey;
-    if(isMatch)matched=true;
-    opts+=`<option${isMatch?' selected':''}>${n}</option>`;
-  });
-  if(selectedName&&!matched){
-    // 単価マスタ側の名前を選択肢として追加
-    opts=`<option value="">選択</option><option selected>${selectedName}</option>`+names.map(n=>`<option>${n}</option>`).join('');
-  }
-  sel.innerHTML=opts;
+  // 候補(datalist)を更新。input なので候補に無い名前も自由入力できる
+  const esc=s=>(s||'').replace(/"/g,'&quot;');
+  dl.innerHTML=names.map(n=>`<option value="${esc(n)}"></option>`).join('');
+  // 編集時は単価マスタの名前を表示、新規時は空（直接入力可）
+  inp.value=selectedName||'';
 }
 
 function invAddRate(){
