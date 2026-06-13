@@ -2481,7 +2481,7 @@ function defectSetEdition(ed){
   // 店舗名が既に入力されていたらコース・ドライバーを再取得
   const shop=document.getElementById('dfe-shop').value;
   if(shop){
-    defectShowCourseSuggest(shop);
+    defectShowCourseSuggest(shop,document.getElementById('dfe-shopcode').value);
   }
 }
 
@@ -2495,9 +2495,10 @@ function defectShopSuggest(){
     return t.name.toLowerCase().includes(q);
   }).slice(0,15);
   if(!matches.length){box.style.display='none';return;}
-  box.innerHTML=matches.map(t=>
-    `<div onclick="defectShopSelect('${t.name.replace(/'/g,"\\'")}','${t.amCourse||''}','${t.area||''}','${t.code||''}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;display:flex;justify-content:space-between;" onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background='#fff'"><span>${t.name} <span style="color:#94a3b8;font-size:11px;">${t.code||''}</span></span><span style="color:var(--text-sub);font-size:11px;">${t.area} / コース${t.amCourse||'-'}</span></div>`
-  ).join('');
+  box.innerHTML=matches.map(t=>{
+    const dispCourse=defectEdition==='am'?t.amCourse:(t.pmCourse||t.keibaCourse);
+    return `<div onclick="defectShopSelect('${t.name.replace(/'/g,"\\'")}','${t.amCourse||''}','${t.area||''}','${t.code||''}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;display:flex;justify-content:space-between;" onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background='#fff'"><span>${t.name} <span style="color:#94a3b8;font-size:11px;">${t.code||''}</span></span><span style="color:var(--text-sub);font-size:11px;">${t.area} / コース${dispCourse||'-'}</span></div>`;
+  }).join('');
   box.style.display='block';
 }
 
@@ -2506,34 +2507,44 @@ function defectShopSelect(name,course,area,code){
   document.getElementById('dfe-shopcode').value=code||'';
   document.getElementById('dfe-shop-suggest').style.display='none';
   if(area&&!document.getElementById('dfe-area').value)document.getElementById('dfe-area').value=area;
-  // コース候補を表示
-  defectShowCourseSuggest(name);
+  // 別店舗を選び直したとき前店舗のコース／担当が残らないよう先にクリア
+  document.getElementById('dfe-course').value='';
+  document.getElementById('dfe-driver').value='';
+  // 店舗コードで一意にマスタを引いてコースを解決（同名取り違え・古い値の残留を防止）
+  defectShowCourseSuggest(name,code);
 }
 
-function defectShowCourseSuggest(shopName){
-  const matches=DB.tenpo.filter(t=>t.name===shopName);
-  if(!matches.length)return;
+function defectShowCourseSuggest(shopName,shopCode){
+  // 店舗コードがあれば一意に解決（同名店の取り違え防止）。無ければ店舗名で照合。
+  const matches=shopCode?DB.tenpo.filter(t=>t.code===shopCode):DB.tenpo.filter(t=>t.name===shopName);
+  const courseEl=document.getElementById('dfe-course');
+  const box=document.getElementById('dfe-course-suggest');
   // 朝刊/夕刊に応じたコースを取得（夕刊は競馬コースも含む）
-  let courses;
-  if(defectEdition==='am'){
-    courses=[...new Set(matches.map(t=>t.amCourse).filter(Boolean))];
-  }else{
-    courses=[...new Set(matches.map(t=>t.pmCourse).concat(matches.map(t=>t.keibaCourse)).filter(Boolean))];
+  let courses=[];
+  if(matches.length){
+    if(defectEdition==='am'){
+      courses=[...new Set(matches.map(t=>t.amCourse).filter(Boolean))];
+    }else{
+      courses=[...new Set(matches.map(t=>t.pmCourse).concat(matches.map(t=>t.keibaCourse)).filter(Boolean))];
+    }
   }
   if(courses.length===1){
-    document.getElementById('dfe-course').value=courses[0];
+    courseEl.value=courses[0];
+    box.style.display='none';
     defectAutoFillDriver();
     return;
   }
+  // 候補が0件 or 複数のときは前の値を残さずクリア（誤ったコースの混入を防止）
+  courseEl.value='';
+  document.getElementById('dfe-driver').value='';
   if(courses.length>1){
-    const box=document.getElementById('dfe-course-suggest');
-    const label=defectEdition==='am'?'朝刊':defectEdition==='pm'?'夕刊':'競馬';
+    const label=defectEdition==='am'?'朝刊':'夕刊';
     box.innerHTML=courses.map(c=>
       `<div onclick="defectCourseSelect('${c.replace(/'/g,"\\'")}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;display:flex;justify-content:space-between;" onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background='#fff'"><span>${c}</span><span style="color:var(--text-sub);font-size:11px;">${label}</span></div>`
     ).join('');
     box.style.display='block';
   } else {
-    document.getElementById('dfe-course').value='';
+    box.style.display='none';
   }
 }
 
