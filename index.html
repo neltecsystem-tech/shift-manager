@@ -11002,12 +11002,12 @@ async function admPaySaveToNexport(){
   }
   msg.textContent='保存中...';
   try{
-    const res=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/payment-summary',{
+    const res=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/save-payment-summary',{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({action:'save_summary',year_month:monthVal,summaries}),
+      body:JSON.stringify({year_month:monthVal,summaries,auth_token:invAuthToken}),
     });
     const j=await res.json();
-    if(j.error){msg.textContent='❌ 保存失敗: '+j.error;msg.style.color='var(--danger)';return;}
+    if(j.error||!j.ok){msg.textContent='❌ 保存失敗: '+(j.error||j.message||'不明');msg.style.color='var(--danger)';return;}
     const total=outsourceTotal+employeeTotal;
     const detail=summaries.map(s=>`${s.area}: 外注¥${s.outsource_amount.toLocaleString()} + 社員¥${Math.round(s.employee_amount).toLocaleString()} = ¥${Math.round(s.amount).toLocaleString()}`).join(' / ');
     msg.innerHTML=`✓ NexPort に反映完了 (${monthVal}): 合計 ¥${total.toLocaleString()} (外注${outsourceCount}名¥${outsourceTotal.toLocaleString()} + 社員${employeeCount}名¥${employeeTotal.toLocaleString()})${skipped?` / 主稼働不明スキップ ${skipped}名`:''}<br><span style="font-size:12px;color:var(--text-sub);">${detail}</span>`;
