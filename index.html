@@ -2737,7 +2737,8 @@ async function smLoad(force){
     smHeaders.forEach((h,i)=>{
       if(h.includes('営業所'))smColMap.area=i;
       if(h.includes('店舗コード'))smColMap.code=i;
-      if(h.includes('店舗名'))smColMap.name=i;
+      // 「正式店舗名」も includes('店舗名') にマッチして name 列を上書きするバグ修正: 正式店舗名は除外
+      if(h.includes('店舗名')&&h!=='正式店舗名')smColMap.name=i;
       if(h.includes('開店日'))smColMap.openDate=i;
       if(h.includes('朝刊コース'))smColMap.amCourse=i;
       if(h==='新夕刊コース')smColMap.pmCourseNew=i;
