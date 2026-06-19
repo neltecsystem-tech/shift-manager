@@ -11381,7 +11381,8 @@ async function admShopListEnsureMaster(){
     area:String(r.col_1||'').trim(),
     amCourse:String(r.col_5||'').trim(),    // F=朝刊
     asaCourse:String(r.col_8||'').trim(),   // I=朝出し
-    pmCourse:String(r.col_14||'').trim(),   // O=夕刊
+    pmCourse:String(r.col_14||'').trim(),   // O=夕刊(旧)
+    pmCourseNew:String(r.col_35||'').trim(),// AJ=新夕刊コース(6月以降の平日夕刊はこちらを参照)
     keibaCourse:String(r.col_19||'').trim(),// T=競馬
     lastDeliver:String(r.col_26||'').trim(),
     closed:String(r.col_1||'').includes('納品中止'),
@@ -11562,7 +11563,8 @@ function admShopListAnalyze(){
   // 各区分シート(J列○) と マスタ を照合: 営業所×区分ごとに「荷主のみ/マスタのみ」を出す
   const shipByCat=admSlData.shipperByCat||{};
   const normA2=a=>String(a||'').trim().replace(/^(川崎高津|川崎)$/,'高津').replace(/^池袋$/,'城北');
-  const SHEETCATS=[{key:'朝刊',mast:'amCourse'},{key:'平日',mast:'pmCourse'},{key:'競馬',mast:'keibaCourse'},{key:'朝出し',mast:'asaCourse'}];
+  // 平日(夕刊)は6月以降 AJ=新夕刊コース(pmCourseNew)を参照。AJ空欄なら旧O列(pmCourse)にフォールバック
+  const SHEETCATS=[{key:'朝刊',mast:'amCourse'},{key:'平日',mast:'pmCourseNew',fallback:'pmCourse'},{key:'競馬',mast:'keibaCourse'},{key:'朝出し',mast:'asaCourse'}];
   const codeName={};
   admSlMaster.forEach(m=>{codeName[m.code]=m.name;});
   moto.forEach(mt=>{if(!codeName[mt.code])codeName[mt.code]=mt.name;});
@@ -11577,7 +11579,7 @@ function admShopListAnalyze(){
   admSlMaster.forEach(m=>{
     if(m.closed)return;
     const areas=String(m.area).split(',').map(s=>normA2(s.trim())).filter(Boolean);
-    SHEETCATS.forEach(c=>{ if(!String(m[c.mast]||'').trim())return; areas.forEach(a=>{(masterByCat[a+'\t'+c.key]=masterByCat[a+'\t'+c.key]||new Set()).add(m.code);}); });
+    SHEETCATS.forEach(c=>{ const v=String(m[c.mast]||'').trim()||(c.fallback?String(m[c.fallback]||'').trim():''); if(!v)return; areas.forEach(a=>{(masterByCat[a+'\t'+c.key]=masterByCat[a+'\t'+c.key]||new Set()).add(m.code);}); });
   });
   const shipByCatN={};
   Object.keys(shipByCat).forEach(k=>{ const[off,cat]=k.split('\t'); const a=normA2(off); const set=shipByCatN[a+'\t'+cat]=shipByCatN[a+'\t'+cat]||new Set(); shipByCat[k].forEach(c=>set.add(c)); });
