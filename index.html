@@ -11680,26 +11680,36 @@ function admShopListRender(){
       });
       html+='</tbody></table>';
     }else{
-      // ── ピボット (営業所×区分) ──
+      // ── ピボット (営業所×区分): マスタ件数 / 荷主件数 / 食い違い数 ──
+      // present は catCompare 全キー(食い違い0でも件数を出すため)から作る。これで店舗集計と件数が突き合う
       const order=['城北','川越','立川','高津'];
-      const present=[...new Set(Object.keys(cs).map(k=>k.split('\t')[0]))];
+      const present=[...new Set(Object.keys(cc).map(k=>k.split('\t')[0]))];
       const areas=[...order.filter(a=>present.includes(a)),...present.filter(a=>!order.includes(a)).sort()];
-      if(areas.length===0)html='<p style="text-align:center;padding:30px;color:var(--text-sub);">区分別の差異なし 🎉</p>';
+      if(areas.length===0)html='<p style="text-align:center;padding:30px;color:var(--text-sub);">区分シートが読み込まれていません</p>';
       else{
-        const colTot={朝刊:0,平日:0,競馬:0,朝出し:0};let grand=0;
-        html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">各区分シート(J列○)とマスタを照合した食い違い店舗数（荷主のみ＝マスタ未登録 ＋ マスタのみ＝荷主シート未掲載）。平日=夕刊/朝出し=同梱。<b>数字をクリック</b>で該当店舗が出ます。</p>';
-        html+='<table style="border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px 18px;border:1px solid #cbd5e1;">営業所＼区分</th>'+cats.map(c=>`<th style="padding:8px 18px;border:1px solid #cbd5e1;">${c}</th>`).join('')+'<th style="padding:8px 18px;border:1px solid #cbd5e1;">計</th></tr></thead><tbody>';
+        const colMast={朝刊:0,平日:0,競馬:0,朝出し:0},colShip={朝刊:0,平日:0,競馬:0,朝出し:0},colDiff={朝刊:0,平日:0,競馬:0,朝出し:0};
+        let gMast=0,gShip=0,gDiff=0;
+        html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">各区分シート(J列○)とマスタを照合。各セル上段=<b>マスタ件数 / 荷主件数</b>(<span style="color:#dc2626;">赤=件数不一致</span>)、下段=食い違い店舗数(荷主のみ＝マスタ未登録＋マスタのみ＝荷主シート未掲載)。平日=夕刊/朝出し=同梱。<b>下段の数字をクリック</b>で該当店舗が出ます。件数が一致すれば店舗集計と突き合います。</p>';
+        html+='<table style="border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px 18px;border:1px solid #cbd5e1;">営業所＼区分</th>'+cats.map(c=>`<th style="padding:8px 18px;border:1px solid #cbd5e1;">${c}</th>`).join('')+'<th style="padding:8px 18px;border:1px solid #cbd5e1;">計(食い違い)</th></tr></thead><tbody>';
         areas.forEach(a=>{
-          let rt=0;
+          let rDiff=0;
           html+=`<tr><td style="padding:6px 18px;border:1px solid #cbd5e1;font-weight:600;">${esc(a)}</td>`;
           cats.forEach(c=>{
-            const n=(cs[a+'\t'+c]||[]).length;rt+=n;colTot[c]+=n;
-            html+=`<td style="padding:0;border:1px solid #cbd5e1;text-align:center;">${n?`<button onclick="admSlCatDrill='${a}\\t${c}';admShopListRender();" style="width:100%;padding:6px 18px;background:#fef3c7;color:#92400e;border:none;cursor:pointer;font-weight:700;font-size:13px;">${n}</button>`:'<span style="color:#cbd5e1;">-</span>'}</td>`;
+            const key=a+'\t'+c;
+            const cmp=cc[key]||{shipCount:0,mastCount:0};
+            const n=(cs[key]||[]).length;
+            rDiff+=n;colDiff[c]+=n;colMast[c]+=cmp.mastCount;colShip[c]+=cmp.shipCount;
+            const mismatch=cmp.mastCount!==cmp.shipCount;
+            const has=cmp.mastCount||cmp.shipCount||n;
+            const countLine=has?`<div style="font-size:11px;padding:2px 0;${mismatch?'color:#dc2626;font-weight:700;':'color:#475569;'}">${cmp.mastCount} / ${cmp.shipCount}</div>`:'';
+            const diffLine=n?`<button onclick="admSlCatDrill='${a}\\t${c}';admShopListRender();" style="width:100%;padding:3px 18px;background:#fef3c7;color:#92400e;border:none;cursor:pointer;font-weight:700;font-size:13px;">差${n}</button>`:(has?'<span style="color:#16a34a;font-size:11px;">差0 ✓</span>':'<span style="color:#cbd5e1;">-</span>');
+            html+=`<td style="padding:2px 0;border:1px solid #cbd5e1;text-align:center;${mismatch?'background:#fef2f2;':''}">${countLine}${diffLine}</td>`;
           });
-          grand+=rt;
-          html+=`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${rt}</td></tr>`;
+          gDiff+=rDiff;
+          html+=`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${rDiff}</td></tr>`;
         });
-        html+=`<tr style="background:#f8fafc;"><td style="padding:6px 18px;border:1px solid #cbd5e1;font-weight:700;">計</td>`+cats.map(c=>`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${colTot[c]}</td>`).join('')+`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${grand}</td></tr>`;
+        Object.keys(colMast).forEach(c=>{gMast+=colMast[c];gShip+=colShip[c];});
+        html+=`<tr style="background:#f8fafc;"><td style="padding:6px 18px;border:1px solid #cbd5e1;font-weight:700;">計</td>`+cats.map(c=>`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;"><div style="font-size:11px;${colMast[c]!==colShip[c]?'color:#dc2626;':'color:#475569;'}">${colMast[c]} / ${colShip[c]}</div>差${colDiff[c]}</td>`).join('')+`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;"><div style="font-size:11px;${gMast!==gShip?'color:#dc2626;':'color:#475569;'}">${gMast} / ${gShip}</div>差${gDiff}</td></tr>`;
         html+='</tbody></table>';
       }
     }
