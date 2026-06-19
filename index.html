@@ -11353,6 +11353,7 @@ let admSlData=null;
 let admSlMaster=null;
 let admSlResult=null;
 let admSlActiveTab='closeopen';
+let admSlCatDrill=null; // 区分集計のドリルダウン中キー (`営業所\t区分`)
 
 function admShopListInit(){
   document.getElementById('adm-sl-summary').innerHTML='<p style="color:var(--text-sub);">📁 上のボタンから荷主リスト xlsx をアップロードしてください</p>';
@@ -11495,23 +11496,32 @@ function admShopListAnalyze(){
     .replace(/店$/,'');
   // マスタは「川崎高津」, 荷主は「高津」表記なので揃える
   const normArea=a=>String(a||'').trim().replace(/^(川崎高津|川崎)$/,'高津');
-  const CATS=[{key:'朝刊',area:'amArea'},{key:'夕刊',area:'pmArea'},{key:'競馬',area:'keibaArea'}];
-  // 区分×営業所ごとの差異件数 (`${営業所}\t${区分}` -> 件数)
+  // 区分×営業所ごとの差異店舗 (`${営業所}\t${区分}` -> [moto,...]) ※区分集計タブ用
   const catSummary={};
+  // 区分(配送)別の参加判定: 荷主=配送フラグ非空, マスタ=該当コース非空
+  const CATS=[
+    {key:'朝刊',ship:'amDeliv',mast:'amCourse'},
+    {key:'夕刊',ship:'pmDeliv',mast:'pmCourse'},
+    {key:'競馬',ship:'keibaDeliv',mast:'keibaCourse'},
+  ];
   motoNeltec.forEach(mt=>{
     const m=masterMap.get(mt.code);
     if(!m||m.closed)return;
     const issues=[];
     if(normName(mt.name)!==normName(m.name))issues.push(`店舗名: マスタ「${m.name}」 → 荷主「${mt.name}」`);
+    // 営業所は「朝刊列(amArea)」が店の営業所。夕刊/競馬列はルート名なので営業所比較に使わない
     const masterAreas=m.area.split(',').map(s=>normArea(s)).filter(Boolean);
-    // 区分(朝刊/夕刊/競馬)ごとに、荷主営業所がマスタ営業所に含まれるか判定
+    const shipArea=normArea(mt.amArea);
+    if(shipArea&&masterAreas.length&&!masterAreas.includes(shipArea))
+      issues.push(`営業所: マスタ[${masterAreas.join(',')||'-'}] → 荷主[${mt.amArea}]`);
+    // 区分別の配送参加の食い違い (荷主は配送あり/マスタにコース無し 等)
+    const area=areaOfCourse(m.amCourse)||areaOfCourse(m.pmCourse)||areaOfCourse(m.keibaCourse)||shipArea||'その他';
     CATS.forEach(c=>{
-      const motoArea=normArea(mt[c.area]);
-      if(!motoArea)return; // この区分の荷主営業所が無い → 対象外
-      if(!masterAreas.includes(motoArea)){
-        issues.push(`${c.key}: マスタ営業所[${masterAreas.join(',')||'-'}] に荷主[${mt[c.area]}] が無い`);
-        const k=motoArea+'\t'+c.key;
-        catSummary[k]=(catSummary[k]||0)+1;
+      const shipHas=!!String(mt[c.ship]||'').trim();
+      const mastHas=!!String(m[c.mast]||'').trim();
+      if(shipHas!==mastHas){
+        const k=area+'\t'+c.key;
+        (catSummary[k]=catSummary[k]||[]).push({master:m,moto:mt,cat:c.key,shipHas,mastHas});
       }
     });
     if(issues.length>0)diffs.push({master:m,moto:mt,issues});
@@ -11539,6 +11549,7 @@ function admShopListAnalyze(){
 
 function admShopListSwitchTab(tab){
   admSlActiveTab=tab;
+  admSlCatDrill=null;
   document.querySelectorAll('.adm-sl-tab').forEach(b=>{b.style.background='#f1f5f9';b.style.color='var(--text-sub)';});
   const el=document.getElementById('adm-sl-tab-'+tab);
   if(el){el.style.background='var(--primary)';el.style.color='#fff';}
@@ -11606,21 +11617,39 @@ function admShopListRender(){
   }else if(tab==='catsummary'){
     const cs=admSlResult.catSummary||{};
     const cats=['朝刊','夕刊','競馬'];
-    const areas=[...new Set(Object.keys(cs).map(k=>k.split('\t')[0]))].sort();
-    if(areas.length===0)html='<p style="text-align:center;padding:30px;color:var(--text-sub);">区分別の差異なし 🎉</p>';
-    else{
-      const colTot={朝刊:0,夕刊:0,競馬:0};let grand=0;
-      html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">荷主リストの「区分×営業所」がマスタ営業所に無い件数（シートタブ単位の差異）。明細は「⚠ 差異あり」タブで各区分の差異行を確認できます。</p>';
-      html+='<table style="width:auto;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px 14px;border:1px solid #e2e8f0;">営業所＼区分</th>'+cats.map(c=>`<th style="padding:8px 14px;border:1px solid #e2e8f0;">${c}</th>`).join('')+'<th style="padding:8px 14px;border:1px solid #e2e8f0;">計</th></tr></thead><tbody>';
-      areas.forEach(a=>{
-        let rt=0;
-        html+=`<tr><td style="padding:6px 14px;border:1px solid #e2e8f0;font-weight:600;">${esc(a)}</td>`;
-        cats.forEach(c=>{const n=cs[a+'\t'+c]||0;rt+=n;colTot[c]+=n;html+=`<td style="padding:6px 14px;border:1px solid #e2e8f0;text-align:center;${n?'background:#fef3c7;font-weight:600;color:#92400e;':'color:#cbd5e1;'}">${n||'-'}</td>`;});
-        grand+=rt;
-        html+=`<td style="padding:6px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:700;">${rt}</td></tr>`;
+    if(admSlCatDrill&&cs[admSlCatDrill]){
+      // ── ドリルダウン明細 ──
+      const [da,dc]=admSlCatDrill.split('\t');
+      const list=cs[admSlCatDrill];
+      html=`<div style="margin-bottom:10px;"><button onclick="admSlCatDrill=null;admShopListRender();" style="background:#64748b;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">← 区分集計に戻る</button> <b style="margin-left:8px;">${esc(da)} ／ ${esc(dc)} の差異 (${list.length}件)</b></div>`;
+      html+='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタ営業所</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主 配送</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタ コース</th></tr></thead><tbody>';
+      list.forEach(({master,shipHas,mastHas})=>{
+        html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.area)}</td><td style="padding:6px;border:1px solid #e2e8f0;text-align:center;font-weight:600;color:${shipHas?'#16a34a':'#dc2626'};">${shipHas?'有':'無'}</td><td style="padding:6px;border:1px solid #e2e8f0;text-align:center;font-weight:600;color:${mastHas?'#16a34a':'#dc2626'};">${mastHas?'有':'無'}</td></tr>`;
       });
-      html+=`<tr style="background:#f8fafc;"><td style="padding:6px 14px;border:1px solid #e2e8f0;font-weight:700;">計</td>`+cats.map(c=>`<td style="padding:6px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:700;">${colTot[c]}</td>`).join('')+`<td style="padding:6px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:700;">${grand}</td></tr>`;
       html+='</tbody></table>';
+    }else{
+      // ── ピボット (営業所×区分) ──
+      const order=['城北','川越','立川','川崎高津'];
+      const present=[...new Set(Object.keys(cs).map(k=>k.split('\t')[0]))];
+      const areas=[...order.filter(a=>present.includes(a)),...present.filter(a=>!order.includes(a)).sort()];
+      if(areas.length===0)html='<p style="text-align:center;padding:30px;color:var(--text-sub);">区分別の差異なし 🎉</p>';
+      else{
+        const colTot={朝刊:0,夕刊:0,競馬:0};let grand=0;
+        html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">営業所×区分(配送)で、荷主リストの「配送あり/なし」とマスタの「コードあり/なし」が食い違う店舗数。<b>数字をクリック</b>すると該当店舗の明細が出ます。</p>';
+        html+='<table style="border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px 18px;border:1px solid #cbd5e1;">営業所＼区分</th>'+cats.map(c=>`<th style="padding:8px 18px;border:1px solid #cbd5e1;">${c}</th>`).join('')+'<th style="padding:8px 18px;border:1px solid #cbd5e1;">計</th></tr></thead><tbody>';
+        areas.forEach(a=>{
+          let rt=0;
+          html+=`<tr><td style="padding:6px 18px;border:1px solid #cbd5e1;font-weight:600;">${esc(a)}</td>`;
+          cats.forEach(c=>{
+            const n=(cs[a+'\t'+c]||[]).length;rt+=n;colTot[c]+=n;
+            html+=`<td style="padding:0;border:1px solid #cbd5e1;text-align:center;">${n?`<button onclick="admSlCatDrill='${a}\\t${c}';admShopListRender();" style="width:100%;padding:6px 18px;background:#fef3c7;color:#92400e;border:none;cursor:pointer;font-weight:700;font-size:13px;">${n}</button>`:'<span style="color:#cbd5e1;">-</span>'}</td>`;
+          });
+          grand+=rt;
+          html+=`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${rt}</td></tr>`;
+        });
+        html+=`<tr style="background:#f8fafc;"><td style="padding:6px 18px;border:1px solid #cbd5e1;font-weight:700;">計</td>`+cats.map(c=>`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${colTot[c]}</td>`).join('')+`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${grand}</td></tr>`;
+        html+='</tbody></table>';
+      }
     }
   }else if(tab==='match'){
     const rows=admSlResult.match;
