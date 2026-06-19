@@ -11490,11 +11490,19 @@ function admShopListAnalyze(){
   // 店舗名の正規化: 空白除去 / エンコード由来の「X]」接頭除去 / 全角英数→半角 /
   // 末尾「店」除去 (荷主リストは「〇〇店」, マスタは「〇〇」が多く瑣末差になるため)。
   // ※コード(STAND↔店舗コード)で既にマッチ済みのペア内の比較なので、店除去で別店と誤マッチする心配はない。
-  const normName=s=>String(s||'')
+  // 漢数字→算用数字 (一丁目↔1丁目, 十二↔12 等を吸収。0-99想定)
+  const k2n=str=>str.replace(/[〇零一二三四五六七八九十]+/g,seq=>{
+    const d={'〇':0,'零':0,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9};
+    if(seq.indexOf('十')<0){let r='';for(const c of seq)r+=d[c];return r;}
+    let total=0,cur=0;
+    for(const c of seq){if(c==='十'){total+=(cur||1)*10;cur=0;}else cur=d[c];}
+    return String(total+cur);
+  });
+  const normName=s=>k2n(String(s||'')
     .replace(/[\s　]/g,'')
     .replace(/^[A-Z]\]/,'')
     .replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
-    .replace(/店$/,'');
+    .replace(/店$/,''));
   // 営業所表記の揺れを吸収: 川崎高津↔高津 / 池袋は城北と同一営業所として扱う
   const normArea=a=>String(a||'').trim().replace(/^(川崎高津|川崎)$/,'高津').replace(/^池袋$/,'城北');
   // 差異店舗を 営業所×区分 で分類 (`${営業所}\t${区分}` -> [{master,moto,issues},...]) ※区分集計タブ用
