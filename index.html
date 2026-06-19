@@ -11448,6 +11448,7 @@ async function admShopListUpload(event){
     const SL_OFFICES=['立川','川越','高津','城北','池袋'];
     const SL_CATS=['朝刊','平日','競馬','朝出し'];
     const shipperByCat={}; // `${営業所}\t${区分}` -> Set(code)
+    const shipName={}; // code -> 区分シートC列の店舗名(荷主リスト上の正しい店名。コード付替の名前ズレ対策)
     wb.SheetNames.forEach(sn=>{
       const off=SL_OFFICES.find(o=>sn.startsWith(o));
       if(!off)return;
@@ -11458,12 +11459,14 @@ async function admShopListUpload(event){
       for(const r of rows){
         const code=String(r[1]||'').trim();
         if(!code||isNaN(Number(code)))continue;
+        const nm=String(r[2]||'').trim(); // C列: 店舗名
+        if(nm&&!shipName[code])shipName[code]=nm;
         const mark=String(r[9]||'').trim(); // J列: ○=該当 / 閉店 等
         if(mark==='○'||mark==='〇')set.add(code);
       }
       shipperByCat[off+'\t'+cat]=set;
     });
-    admSlData={moto,closeOpen,parsedDate,shipperByCat};
+    admSlData={moto,closeOpen,parsedDate,shipperByCat,shipName};
     await admShopListEnsureMaster();
     admShopListAnalyze();
   }catch(e){
@@ -11521,7 +11524,8 @@ function admShopListAnalyze(){
     .replace(/[\s　]/g,'')
     .replace(/^[A-Z]\]/,'')
     .replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
-    .replace(/店$/,''));
+    .replace(/店$/,''))
+    .replace(/丁目/g,'丁'); // 「1丁目」↔「1丁」を同一視 (例 幡ヶ谷一丁目店 ↔ 幡ヶ谷1丁)
   // 営業所表記の揺れを吸収: 川崎高津↔高津 / 池袋は城北と同一営業所として扱う
   const normArea=a=>String(a||'').trim().replace(/^(川崎高津|川崎)$/,'高津').replace(/^池袋$/,'城北');
   // 差異店舗を 営業所×区分 で分類 (`${営業所}\t${区分}` -> [{master,moto,issues},...]) ※区分集計タブ用
@@ -11562,6 +11566,13 @@ function admShopListAnalyze(){
   const codeName={};
   admSlMaster.forEach(m=>{codeName[m.code]=m.name;});
   moto.forEach(mt=>{if(!codeName[mt.code])codeName[mt.code]=mt.name;});
+  // 店名はソースを分ける: 荷主のみ=荷主側の名前 / マスタのみ=マスタの名前。
+  // コード付替(同コードで別店)時に逆側の名前が出る不具合を防ぐ。
+  const mastName={};admSlMaster.forEach(m=>{mastName[m.code]=m.name;});
+  const motoName={};moto.forEach(mt=>{if(mt.name&&!motoName[mt.code])motoName[mt.code]=mt.name;});
+  const shipNameMap=admSlData.shipName||{}; // 区分シートC列の店名(最優先)
+  const shipNameOf=c=>shipNameMap[c]||motoName[c]||codeName[c]||'';
+  const mastNameOf=c=>mastName[c]||codeName[c]||'';
   const masterByCat={};
   admSlMaster.forEach(m=>{
     if(m.closed)return;
@@ -11573,8 +11584,8 @@ function admShopListAnalyze(){
   const catCompare={};
   new Set([...Object.keys(shipByCatN),...Object.keys(masterByCat)]).forEach(k=>{
     const sh=shipByCatN[k]||new Set(), ma=masterByCat[k]||new Set();
-    let onlyShip=[...sh].filter(c=>!ma.has(c)).map(c=>({code:c,name:codeName[c]||''}));
-    let onlyMast=[...ma].filter(c=>!sh.has(c)).map(c=>({code:c,name:codeName[c]||''}));
+    let onlyShip=[...sh].filter(c=>!ma.has(c)).map(c=>({code:c,name:shipNameOf(c)}));
+    let onlyMast=[...ma].filter(c=>!sh.has(c)).map(c=>({code:c,name:mastNameOf(c)}));
     // 同一店なのに店舗コードが違うケース(例 LS江古田 751662 ↔ LS江古田店 751000)は
     // 正規化店名で 荷主のみ↔マスタのみ を突き合わせ「コード相違(同一店)」として差異から除外
     const codeChanged=[];
