@@ -11576,8 +11576,9 @@ function admShopListAnalyze(){
   // 各区分シート(J列○) と マスタ を照合: 営業所×区分ごとに「荷主のみ/マスタのみ」を出す
   const shipByCat=admSlData.shipperByCat||{};
   const normA2=a=>String(a||'').trim().replace(/^(川崎高津|川崎)$/,'高津').replace(/^池袋$/,'城北');
-  // 平日(夕刊)は6月以降 AJ=新夕刊コース(pmCourseNew)を厳密に参照(旧O列へのフォールバックはしない)
-  const SHEETCATS=[{key:'朝刊',mast:'amCourse'},{key:'平日',mast:'pmCourseNew'},{key:'競馬',mast:'keibaCourse'},{key:'朝出し',mast:'asaCourse'}];
+  // 平日(夕刊): AJ=新夕刊コース(pmCourseNew)があればそれ、無ければO列(pmCourse)を参照。
+  // 「新夕刊コースを反映」実行後はAJが空になりデータがO列へ移るため、フォールバックで自動切替。
+  const SHEETCATS=[{key:'朝刊',mast:'amCourse'},{key:'平日',mast:'pmCourseNew',fallback:'pmCourse'},{key:'競馬',mast:'keibaCourse'},{key:'朝出し',mast:'asaCourse'}];
   const codeName={};
   admSlMaster.forEach(m=>{codeName[m.code]=m.name;});
   moto.forEach(mt=>{if(!codeName[mt.code])codeName[mt.code]=mt.name;});
