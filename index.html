@@ -11518,7 +11518,7 @@ function admShopListAnalyze(){
     const m=masterMap.get(mt.code);
     if(!m||m.closed)return;
     const issues=[];
-    if(normName(mt.name)!==normName(m.name))issues.push(`店舗名: マスタ「${m.name}」 → 荷主「${mt.name}」`);
+    // 店舗名の違いは差異にしない (STAND↔店舗コードで一致=同じ店舗。名前は表記ゆれのみ)。営業所違いだけを差異とする
     // 営業所は「朝刊列(amArea)」が店の営業所。夕刊/競馬列はルート名なので営業所比較に使わない
     const masterAreas=m.area.split(',').map(s=>normArea(s)).filter(Boolean);
     const shipArea=normArea(mt.amArea);
