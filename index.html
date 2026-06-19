@@ -11592,16 +11592,23 @@ function admShopListAnalyze(){
   const shipNameMap=admSlData.shipName||{}; // 区分シートC列の店名(最優先)
   const shipNameOf=c=>shipNameMap[c]||motoName[c]||codeName[c]||'';
   const mastNameOf=c=>mastName[c]||codeName[c]||'';
+  // 営業所はコース名から判定する(請求=店舗集計と同じロジック)。
+  // 例: col_1が立川でも夕刊コースが「川崎高津X」なら高津の平日として数える。立川は夕刊コースが無いので平日0。
+  // 朝出しは自前のコースが無い(夕刊同梱チェック)ので朝刊コースの営業所を採用。
+  const CAT_AREA_COURSE={'朝刊':'amCourse','平日':'pmCourse','競馬':'keibaCourse','朝出し':'amCourse'};
   const masterByCat={};
   admSlMaster.forEach(m=>{
     if(m.closed)return;
-    const areas=String(m.area).split(',').map(s=>normA2(s.trim())).filter(Boolean);
     SHEETCATS.forEach(c=>{
       let inc;
       if(c.bool){ inc=String(m[c.mast]||'').trim().toUpperCase()==='TRUE'; } // チェックボックス列(夕刊同梱)はTRUEのみ
       else { const v=String(m[c.mast]||'').trim()||(c.fallback?String(m[c.fallback]||'').trim():''); inc=!!v; }
       if(!inc)return;
-      areas.forEach(a=>{(masterByCat[a+'\t'+c.key]=masterByCat[a+'\t'+c.key]||new Set()).add(m.code);});
+      // 区分のコース名 → areaOfCourse で営業所を決定(川崎高津→高津に正規化)。取れなければcol_1先頭にフォールバック
+      let a=normA2(areaOfCourse(String(m[CAT_AREA_COURSE[c.key]]||'').trim()));
+      if(!a)a=normA2(String(m.area).split(',')[0].trim());
+      if(!a)return;
+      (masterByCat[a+'\t'+c.key]=masterByCat[a+'\t'+c.key]||new Set()).add(m.code);
     });
   });
   const shipByCatN={};
