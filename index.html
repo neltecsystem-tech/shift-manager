@@ -11573,9 +11573,22 @@ function admShopListAnalyze(){
   const catCompare={};
   new Set([...Object.keys(shipByCatN),...Object.keys(masterByCat)]).forEach(k=>{
     const sh=shipByCatN[k]||new Set(), ma=masterByCat[k]||new Set();
-    const onlyShip=[...sh].filter(c=>!ma.has(c)).map(c=>({code:c,name:codeName[c]||''}));
-    const onlyMast=[...ma].filter(c=>!sh.has(c)).map(c=>({code:c,name:codeName[c]||''}));
-    catCompare[k]={onlyShip,onlyMast,shipCount:sh.size,mastCount:ma.size};
+    let onlyShip=[...sh].filter(c=>!ma.has(c)).map(c=>({code:c,name:codeName[c]||''}));
+    let onlyMast=[...ma].filter(c=>!sh.has(c)).map(c=>({code:c,name:codeName[c]||''}));
+    // 同一店なのに店舗コードが違うケース(例 LS江古田 751662 ↔ LS江古田店 751000)は
+    // 正規化店名で 荷主のみ↔マスタのみ を突き合わせ「コード相違(同一店)」として差異から除外
+    const codeChanged=[];
+    const mastByName=new Map();
+    onlyMast.forEach(m=>{const nn=normName(m.name);if(nn&&!mastByName.has(nn))mastByName.set(nn,m);});
+    const usedMast=new Set();
+    onlyShip=onlyShip.filter(s=>{
+      const nn=normName(s.name);
+      const m=nn?mastByName.get(nn):null;
+      if(m&&!usedMast.has(m.code)){usedMast.add(m.code);codeChanged.push({ship:s,master:m});return false;}
+      return true;
+    });
+    onlyMast=onlyMast.filter(m=>!usedMast.has(m.code));
+    catCompare[k]={onlyShip,onlyMast,codeChanged,shipCount:sh.size,mastCount:ma.size};
   });
   admSlResult={
     closeopen:coRes,newshop:newShops,closeshop:closedShops,diff:diffs,match:matches,catSummary,catCompare,
@@ -11673,12 +11686,23 @@ function admShopListRender(){
       // ── ドリルダウン明細 ──
       const [da,dc]=admSlCatDrill.split('\t');
       const list=cs[admSlCatDrill];
-      html=`<div style="margin-bottom:10px;"><button onclick="admSlCatDrill=null;admShopListRender();" style="background:#64748b;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">← 区分集計に戻る</button> <b style="margin-left:8px;">${esc(da)}${esc(dc)} の差異店舗 (${list.length}件)</b></div>`;
-      html+='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">区分</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th></tr></thead><tbody>';
-      list.forEach(s=>{
-        html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;font-weight:600;color:${s.color};">${esc(s.kind)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.name)}</td></tr>`;
-      });
-      html+='</tbody></table>';
+      const cch=(cc[admSlCatDrill]&&cc[admSlCatDrill].codeChanged)||[];
+      html=`<div style="margin-bottom:10px;"><button onclick="admSlCatDrill=null;admShopListRender();" style="background:#64748b;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">← 区分集計に戻る</button> <b style="margin-left:8px;">${esc(da)}${esc(dc)} の差異店舗 (${list.length}件)${cch.length?` ／ コード相違 ${cch.length}件`:''}</b></div>`;
+      if(list.length){
+        html+='<table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:14px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">区分</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th></tr></thead><tbody>';
+        list.forEach(s=>{
+          html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;font-weight:600;color:${s.color};">${esc(s.kind)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.name)}</td></tr>`;
+        });
+        html+='</tbody></table>';
+      }
+      if(cch.length){
+        html+='<div style="font-size:12px;color:#2563eb;font-weight:600;margin:4px 0;">🔵 コード相違(同一店・差異から除外) ＝ 店名は一致するが店舗コードが違う。マスタのコード更新を推奨。</div>';
+        html+='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#eff6ff;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主コード(新)</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタコード(現)</th></tr></thead><tbody>';
+        cch.forEach(p=>{
+          html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(p.ship.name||p.master.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;color:#15803d;font-weight:600;">${esc(p.ship.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;color:#dc2626;font-weight:600;">${esc(p.master.code)}</td></tr>`;
+        });
+        html+='</tbody></table>';
+      }
     }else{
       // ── ピボット (営業所×区分): マスタ件数 / 荷主件数 / 食い違い数 ──
       // present は catCompare 全キー(食い違い0でも件数を出すため)から作る。これで店舗集計と件数が突き合う
@@ -11689,7 +11713,7 @@ function admShopListRender(){
       else{
         const colMast={朝刊:0,平日:0,競馬:0,朝出し:0},colShip={朝刊:0,平日:0,競馬:0,朝出し:0},colDiff={朝刊:0,平日:0,競馬:0,朝出し:0};
         let gMast=0,gShip=0,gDiff=0;
-        html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">各区分シート(J列○)とマスタを照合。各セル上段=<b>マスタ件数 / 荷主件数</b>(<span style="color:#dc2626;">赤=件数不一致</span>)、下段=食い違い店舗数(荷主のみ＝マスタ未登録＋マスタのみ＝荷主シート未掲載)。平日=夕刊/朝出し=同梱。<b>下段の数字をクリック</b>で該当店舗が出ます。件数が一致すれば店舗集計と突き合います。</p>';
+        html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">各区分シート(J列○)とマスタを照合。各セル上段=<b>マスタ件数 / 荷主件数</b>(<span style="color:#dc2626;">赤=件数不一致</span>)、下段=<b>差N</b>=食い違い店舗数(荷主のみ＝マスタ未登録＋マスタのみ＝荷主シート未掲載)、<b style="color:#2563eb;">コN</b>=コード相違(同名で店舗コードのみ違う同一店。差異から除外)。平日=夕刊/朝出し=同梱。<b>下段をクリック</b>で該当店舗が出ます。件数が一致すれば店舗集計と突き合います。</p>';
         html+='<table style="border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px 18px;border:1px solid #cbd5e1;">営業所＼区分</th>'+cats.map(c=>`<th style="padding:8px 18px;border:1px solid #cbd5e1;">${c}</th>`).join('')+'<th style="padding:8px 18px;border:1px solid #cbd5e1;">計(食い違い)</th></tr></thead><tbody>';
         areas.forEach(a=>{
           let rDiff=0;
@@ -11698,11 +11722,13 @@ function admShopListRender(){
             const key=a+'\t'+c;
             const cmp=cc[key]||{shipCount:0,mastCount:0};
             const n=(cs[key]||[]).length;
+            const cch=(cmp.codeChanged||[]).length;
             rDiff+=n;colDiff[c]+=n;colMast[c]+=cmp.mastCount;colShip[c]+=cmp.shipCount;
             const mismatch=cmp.mastCount!==cmp.shipCount;
-            const has=cmp.mastCount||cmp.shipCount||n;
+            const has=cmp.mastCount||cmp.shipCount||n||cch;
             const countLine=has?`<div style="font-size:11px;padding:2px 0;${mismatch?'color:#dc2626;font-weight:700;':'color:#475569;'}">${cmp.mastCount} / ${cmp.shipCount}</div>`:'';
-            const diffLine=n?`<button onclick="admSlCatDrill='${a}\\t${c}';admShopListRender();" style="width:100%;padding:3px 18px;background:#fef3c7;color:#92400e;border:none;cursor:pointer;font-weight:700;font-size:13px;">差${n}</button>`:(has?'<span style="color:#16a34a;font-size:11px;">差0 ✓</span>':'<span style="color:#cbd5e1;">-</span>');
+            const inner=`${n?`差${n}`:'差0'}${cch?` <span style="color:#2563eb;">コ${cch}</span>`:''}`;
+            const diffLine=(n||cch)?`<button onclick="admSlCatDrill='${a}\\t${c}';admShopListRender();" style="width:100%;padding:3px 12px;background:${n?'#fef3c7':'#eff6ff'};color:${n?'#92400e':'#2563eb'};border:none;cursor:pointer;font-weight:700;font-size:13px;">${inner}</button>`:(has?'<span style="color:#16a34a;font-size:11px;">差0 ✓</span>':'<span style="color:#cbd5e1;">-</span>');
             html+=`<td style="padding:2px 0;border:1px solid #cbd5e1;text-align:center;${mismatch?'background:#fef2f2;':''}">${countLine}${diffLine}</td>`;
           });
           gDiff+=rDiff;
