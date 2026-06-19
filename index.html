@@ -11449,20 +11449,33 @@ async function admShopListUpload(event){
     const SL_OFFICES=['立川','川越','高津','城北','池袋'];
     const SL_CATS=['朝刊','平日','競馬','朝出し'];
     const shipperByCat={}; // `${営業所}\t${区分}` -> Set(code)
-    const shipName={}; // code -> 区分シートC列の店舗名(荷主リスト上の正しい店名。コード付替の名前ズレ対策)
+    const shipName={}; // code -> 区分シートの店舗名(荷主リスト上の正しい店名。コード付替の名前ズレ対策)
+    // シートごとに列レイアウトが違う(朝刊はSTAND=B/○=J、競馬はSTAND=A/○=L「競馬配送」等)ため
+    // ヘッダー行から コード列/店名列/区分の配送○列 を検出する。区分→○列の見出しキーワード:
+    const CAT_KEYS={'朝刊':['朝刊配','朝刊'],'平日':['夕刊配','夕刊','平日'],'競馬':['競馬配','競馬'],'朝出し':['朝出']};
     wb.SheetNames.forEach(sn=>{
       const off=SL_OFFICES.find(o=>sn.startsWith(o));
       if(!off)return;
       const cat=sn.slice(off.length);
       if(!SL_CATS.includes(cat))return;
       const rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''});
+      // ヘッダー行(STAND/店舗コード/売店名 を含む行)を検出
+      let hi=rows.findIndex(r=>Array.isArray(r)&&r.some(c=>{const s=String(c||'').trim();return s==='STAND'||s.includes('店舗コード')||s==='売店名';}));
+      if(hi<0)hi=1;
+      const hdr=(rows[hi]||[]).map(c=>String(c||'').trim());
+      let codeCol=hdr.findIndex(h=>h==='STAND'||h.includes('店舗コード')); if(codeCol<0)codeCol=1;
+      let nameCol=hdr.findIndex(h=>h==='売店名'||h.includes('店名'));      if(nameCol<0)nameCol=2;
+      let markCol=-1;
+      for(const kw of (CAT_KEYS[cat]||[])){markCol=hdr.findIndex(h=>h.includes(kw));if(markCol>=0)break;}
+      if(markCol<0)markCol=9; // 従来のJ列フォールバック
       const set=new Set();
-      for(const r of rows){
-        const code=String(r[1]||'').trim();
+      for(let i=hi+1;i<rows.length;i++){
+        const r=rows[i]; if(!Array.isArray(r))continue;
+        const code=String(r[codeCol]||'').trim();
         if(!code||isNaN(Number(code)))continue;
-        const nm=String(r[2]||'').trim(); // C列: 店舗名
+        const nm=String(r[nameCol]||'').trim();
         if(nm&&!shipName[code])shipName[code]=nm;
-        const mark=String(r[9]||'').trim(); // J列: ○=該当 / 閉店 等
+        const mark=String(r[markCol]||'').trim();
         if(mark==='○'||mark==='〇')set.add(code);
       }
       shipperByCat[off+'\t'+cat]=set;
