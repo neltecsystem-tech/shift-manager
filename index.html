@@ -11585,7 +11585,7 @@ function admShopListAnalyze(){
   new Set([...Object.keys(shipByCatN),...Object.keys(masterByCat)]).forEach(k=>{
     const sh=shipByCatN[k]||new Set(), ma=masterByCat[k]||new Set();
     let onlyShip=[...sh].filter(c=>!ma.has(c)).map(c=>({code:c,name:shipNameOf(c)}));
-    let onlyMast=[...ma].filter(c=>!sh.has(c)).map(c=>({code:c,name:mastNameOf(c)}));
+    let onlyMast=[...ma].filter(c=>!sh.has(c)).map(c=>({code:c,name:mastNameOf(c),row:(masterMap.get(c)||{}).row}));
     // 同一店なのに店舗コードが違うケース(例 LS江古田 751662 ↔ LS江古田店 751000)は
     // 正規化店名で 荷主のみ↔マスタのみ を突き合わせ「コード相違(同一店)」として差異から除外
     const codeChanged=[];
@@ -11707,12 +11707,19 @@ function admShopListRender(){
         html+='</tbody></table>';
       }
       if(cch.length){
-        html+='<div style="font-size:12px;color:#2563eb;font-weight:600;margin:4px 0;">🔵 コード相違(同一店・差異から除外) ＝ 店名は一致するが店舗コードが違う。マスタのコード更新を推奨。</div>';
-        html+='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#eff6ff;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主コード(新)</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタコード(現)</th></tr></thead><tbody>';
+        const allCodes=new Set((admSlMaster||[]).map(m=>m.code));
+        let nApplicable=0;
+        html+='<div style="font-size:12px;color:#2563eb;font-weight:600;margin:4px 0;">🔵 コード相違(同一店・差異から除外) ＝ 店名は一致するが店舗コードが違う。マスタの店舗コードを荷主の新コードに更新できます(コードのみ・重複は自動スキップ)。</div>';
+        html+='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#eff6ff;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主コード(新)</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタコード(現)</th><th style="padding:8px;border:1px solid #e2e8f0;">反映可否</th></tr></thead><tbody>';
         cch.forEach(p=>{
-          html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(p.ship.name||p.master.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;color:#15803d;font-weight:600;">${esc(p.ship.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;color:#dc2626;font-weight:600;">${esc(p.master.code)}</td></tr>`;
+          let st,stc;
+          if(allCodes.has(p.ship.code)){st='⚠ 新コードが既にマスタに存在→スキップ';stc='#b45309';}
+          else if(p.master.row==null){st='⚠ マスタ行不明→スキップ';stc='#b45309';}
+          else{st='✓ 反映可';stc='#15803d';nApplicable++;}
+          html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(p.ship.name||p.master.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;color:#15803d;font-weight:600;">${esc(p.ship.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;color:#dc2626;font-weight:600;">${esc(p.master.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;font-size:11px;color:${stc};">${st}</td></tr>`;
         });
         html+='</tbody></table>';
+        html+=`<div style="margin-top:10px;"><button onclick="admSlApplyCodeChange()" ${nApplicable?'':'disabled'} style="background:${nApplicable?'#2563eb':'#cbd5e1'};color:#fff;border:none;padding:8px 18px;border-radius:8px;cursor:${nApplicable?'pointer':'not-allowed'};font-weight:700;font-size:13px;">⬆ この区分のコード相違をマスタに反映 (${nApplicable}件)</button> <span style="font-size:11px;color:var(--text-sub);">マスタの店舗コードのみ更新。新コードが既にマスタにある行は安全のためスキップ。</span></div>`;
       }
     }else{
       // ── ピボット (営業所×区分): マスタ件数 / 荷主件数 / 食い違い数 ──
@@ -11763,6 +11770,46 @@ function admShopListRender(){
     }
   }
   cont.innerHTML=html;
+}
+
+// コード相違(同一店・コードのみ違う)を 区分ごと一括で マスタの店舗コードに反映。
+// 新コードが既にマスタの別行に存在する場合は重複回避のためスキップして警告。
+async function admSlApplyCodeChange(){
+  const key=admSlCatDrill;
+  if(!key||!admSlResult||!admSlResult.catCompare[key])return;
+  const pairs=admSlResult.catCompare[key].codeChanged||[];
+  if(!pairs.length)return;
+  const allCodes=new Set((admSlMaster||[]).map(m=>m.code));
+  const doable=[],skipDup=[],skipNoRow=[];
+  pairs.forEach(p=>{
+    if(allCodes.has(p.ship.code))skipDup.push(p);          // 新コードが既にマスタに存在
+    else if(p.master.row==null)skipNoRow.push(p);          // マスタ行が特定できない
+    else doable.push(p);
+  });
+  const [da,dc]=key.split('\t');
+  if(!doable.length){alert(`反映できる行がありません。\n重複でスキップ ${skipDup.length}件 / 行不明 ${skipNoRow.length}件`);return;}
+  let msg=`【${da}${dc}】コード相違 ${pairs.length}件のうち ${doable.length}件のマスタ店舗コードを荷主の新コードに更新します。\n\n`;
+  doable.slice(0,20).forEach(p=>{msg+=`・${p.ship.name||p.master.name}: ${p.master.code} → ${p.ship.code}\n`;});
+  if(doable.length>20)msg+=`…他 ${doable.length-20}件\n`;
+  if(skipDup.length)msg+=`\n⚠ 新コードが既にマスタに存在→スキップ: ${skipDup.length}件`;
+  if(skipNoRow.length)msg+=`\n⚠ マスタ行が特定できず→スキップ: ${skipNoRow.length}件`;
+  msg+='\n\nよろしいですか?';
+  if(!confirm(msg))return;
+  try{
+    const updates=doable.map(p=>({row_number:p.master.row,col_index:2,value:p.ship.code}));
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_cells',updates})});
+    const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
+    if(!resp.ok||json.error)throw new Error(json.error||`HTTP ${resp.status}`);
+    invalidateShopMasterCache();
+    alert(`✓ ${json.updated||doable.length}件 のマスタ店舗コードを更新しました。${skipDup.length?`\n(重複スキップ ${skipDup.length}件は手動確認)`:''}\n\nマスタを再取得して再照合します。`);
+    await new Promise(r=>setTimeout(r,800));
+    admSlMaster=null;
+    await admShopListEnsureMaster();
+    admSlCatDrill=null;
+    admShopListAnalyze();
+  }catch(e){
+    alert('❌ 反映エラー: '+e.message);
+  }
 }
 
 function admShopListExportCsv(){
