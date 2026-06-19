@@ -11484,13 +11484,19 @@ function admShopListAnalyze(){
   });
   const diffs=[];
   const matches=[];
+  // 店舗名の正規化: 空白除去 / エンコード由来の「X]」接頭除去 / 全角英数→半角 /
+  // 末尾「店」除去 (荷主リストは「〇〇店」, マスタは「〇〇」が多く瑣末差になるため)。
+  // ※コード(STAND↔店舗コード)で既にマッチ済みのペア内の比較なので、店除去で別店と誤マッチする心配はない。
+  const normName=s=>String(s||'')
+    .replace(/[\s　]/g,'')
+    .replace(/^[A-Z]\]/,'')
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+    .replace(/店$/,'');
   motoNeltec.forEach(mt=>{
     const m=masterMap.get(mt.code);
     if(!m||m.closed)return;
     const issues=[];
-    const nameMt=mt.name.replace(/[\s　]/g,'');
-    const nameM=m.name.replace(/[\s　]/g,'').replace(/^[A-Z]\]/,'');
-    if(nameMt!==nameM)issues.push(`店舗名: マスタ「${m.name}」 → 荷主「${mt.name}」`);
+    if(normName(mt.name)!==normName(m.name))issues.push(`店舗名: マスタ「${m.name}」 → 荷主「${mt.name}」`);
     const masterAreas=m.area.split(',').map(s=>s.trim()).filter(Boolean);
     const motoUniq=[...new Set([mt.amArea,mt.pmArea,mt.keibaArea].filter(Boolean))];
     const hasOverlap=motoUniq.some(a=>masterAreas.includes(a));
