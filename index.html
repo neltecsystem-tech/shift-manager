@@ -11444,7 +11444,26 @@ async function admShopListUpload(event){
         flag:cleanStr(r[9]),
       });
     }
-    admSlData={moto,closeOpen,parsedDate};
+    // 営業所×区分シート(立川朝刊/城北平日/川越競馬/川越朝出し 等)の J列=○ を該当店舗として読む
+    const SL_OFFICES=['立川','川越','高津','城北','池袋'];
+    const SL_CATS=['朝刊','平日','競馬','朝出し'];
+    const shipperByCat={}; // `${営業所}\t${区分}` -> Set(code)
+    wb.SheetNames.forEach(sn=>{
+      const off=SL_OFFICES.find(o=>sn.startsWith(o));
+      if(!off)return;
+      const cat=sn.slice(off.length);
+      if(!SL_CATS.includes(cat))return;
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''});
+      const set=new Set();
+      for(const r of rows){
+        const code=String(r[1]||'').trim();
+        if(!code||isNaN(Number(code)))continue;
+        const mark=String(r[9]||'').trim(); // J列: ○=該当 / 閉店 等
+        if(mark==='○'||mark==='〇')set.add(code);
+      }
+      shipperByCat[off+'\t'+cat]=set;
+    });
+    admSlData={moto,closeOpen,parsedDate,shipperByCat};
     await admShopListEnsureMaster();
     admShopListAnalyze();
   }catch(e){
@@ -11536,8 +11555,30 @@ function admShopListAnalyze(){
       });
     }else matches.push({master:m,moto:mt});
   });
+  // 各区分シート(J列○) と マスタ を照合: 営業所×区分ごとに「荷主のみ/マスタのみ」を出す
+  const shipByCat=admSlData.shipperByCat||{};
+  const normA2=a=>String(a||'').trim().replace(/^(川崎高津|川崎)$/,'高津').replace(/^池袋$/,'城北');
+  const SHEETCATS=[{key:'朝刊',mast:'amCourse'},{key:'平日',mast:'pmCourse'},{key:'競馬',mast:'keibaCourse'},{key:'朝出し',mast:'asaCourse'}];
+  const codeName={};
+  admSlMaster.forEach(m=>{codeName[m.code]=m.name;});
+  moto.forEach(mt=>{if(!codeName[mt.code])codeName[mt.code]=mt.name;});
+  const masterByCat={};
+  admSlMaster.forEach(m=>{
+    if(m.closed)return;
+    const areas=String(m.area).split(',').map(s=>normA2(s.trim())).filter(Boolean);
+    SHEETCATS.forEach(c=>{ if(!String(m[c.mast]||'').trim())return; areas.forEach(a=>{(masterByCat[a+'\t'+c.key]=masterByCat[a+'\t'+c.key]||new Set()).add(m.code);}); });
+  });
+  const shipByCatN={};
+  Object.keys(shipByCat).forEach(k=>{ const[off,cat]=k.split('\t'); const a=normA2(off); const set=shipByCatN[a+'\t'+cat]=shipByCatN[a+'\t'+cat]||new Set(); shipByCat[k].forEach(c=>set.add(c)); });
+  const catCompare={};
+  new Set([...Object.keys(shipByCatN),...Object.keys(masterByCat)]).forEach(k=>{
+    const sh=shipByCatN[k]||new Set(), ma=masterByCat[k]||new Set();
+    const onlyShip=[...sh].filter(c=>!ma.has(c)).map(c=>({code:c,name:codeName[c]||''}));
+    const onlyMast=[...ma].filter(c=>!sh.has(c)).map(c=>({code:c,name:codeName[c]||''}));
+    catCompare[k]={onlyShip,onlyMast,shipCount:sh.size,mastCount:ma.size};
+  });
   admSlResult={
-    closeopen:coRes,newshop:newShops,closeshop:closedShops,diff:diffs,match:matches,catSummary,
+    closeopen:coRes,newshop:newShops,closeshop:closedShops,diff:diffs,match:matches,catSummary,catCompare,
     stats:{
       motoTotal:moto.length,motoNeltec:motoNeltec.length,
       masterTotal:admSlMaster.length,masterActive:admSlMaster.filter(m=>!m.closed).length,
@@ -11624,27 +11665,29 @@ function admShopListRender(){
       html+='</tbody></table>';
     }
   }else if(tab==='catsummary'){
-    const cs=admSlResult.catSummary||{};
-    const cats=['朝刊','朝出し','夕刊','競馬'];
+    const cc=admSlResult.catCompare||{};
+    const cs={};
+    Object.keys(cc).forEach(k=>{const c=cc[k];cs[k]=[...c.onlyShip.map(s=>({kind:'荷主のみ(マスタ未登録)',color:'#15803d',code:s.code,name:s.name})),...c.onlyMast.map(s=>({kind:'マスタのみ(荷主シート未掲載)',color:'#dc2626',code:s.code,name:s.name}))];});
+    const cats=['朝刊','平日','競馬','朝出し'];
     if(admSlCatDrill&&cs[admSlCatDrill]){
       // ── ドリルダウン明細 ──
       const [da,dc]=admSlCatDrill.split('\t');
       const list=cs[admSlCatDrill];
-      html=`<div style="margin-bottom:10px;"><button onclick="admSlCatDrill=null;admShopListRender();" style="background:#64748b;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">← 区分集計に戻る</button> <b style="margin-left:8px;">${esc(da)} ／ ${esc(dc)} の差異店舗 (${list.length}件)</b></div>`;
-      html+='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタ店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタ営業所</th><th style="padding:8px;border:1px solid #e2e8f0;">差異</th></tr></thead><tbody>';
-      list.forEach(({master,moto,issues})=>{
-        html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(moto.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.area)}</td><td style="padding:6px;border:1px solid #e2e8f0;font-size:11px;color:#92400e;">${(issues||[]).map(esc).join('<br>')}</td></tr>`;
+      html=`<div style="margin-bottom:10px;"><button onclick="admSlCatDrill=null;admShopListRender();" style="background:#64748b;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">← 区分集計に戻る</button> <b style="margin-left:8px;">${esc(da)}${esc(dc)} の差異店舗 (${list.length}件)</b></div>`;
+      html+='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">区分</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th></tr></thead><tbody>';
+      list.forEach(s=>{
+        html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;font-weight:600;color:${s.color};">${esc(s.kind)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.name)}</td></tr>`;
       });
       html+='</tbody></table>';
     }else{
       // ── ピボット (営業所×区分) ──
-      const order=['城北','川越','立川','川崎高津'];
+      const order=['城北','川越','立川','高津'];
       const present=[...new Set(Object.keys(cs).map(k=>k.split('\t')[0]))];
       const areas=[...order.filter(a=>present.includes(a)),...present.filter(a=>!order.includes(a)).sort()];
       if(areas.length===0)html='<p style="text-align:center;padding:30px;color:var(--text-sub);">区分別の差異なし 🎉</p>';
       else{
-        const colTot={朝刊:0,朝出し:0,夕刊:0,競馬:0};let grand=0;
-        html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">差異のある店舗を 営業所×区分 で分類した件数（区分はマスタのコース列 F朝刊/I朝出し/O夕刊/T競馬 で判定。1店が複数区分に計上されることあり）。<b>数字をクリック</b>すると該当店舗の明細が出ます。</p>';
+        const colTot={朝刊:0,平日:0,競馬:0,朝出し:0};let grand=0;
+        html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">各区分シート(J列○)とマスタを照合した食い違い店舗数（荷主のみ＝マスタ未登録 ＋ マスタのみ＝荷主シート未掲載）。平日=夕刊/朝出し=同梱。<b>数字をクリック</b>で該当店舗が出ます。</p>';
         html+='<table style="border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px 18px;border:1px solid #cbd5e1;">営業所＼区分</th>'+cats.map(c=>`<th style="padding:8px 18px;border:1px solid #cbd5e1;">${c}</th>`).join('')+'<th style="padding:8px 18px;border:1px solid #cbd5e1;">計</th></tr></thead><tbody>';
         areas.forEach(a=>{
           let rt=0;
