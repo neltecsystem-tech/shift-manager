@@ -850,6 +850,7 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="admShopListSwitchTab('newshop')" id="adm-sl-tab-newshop" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">➕ 新店候補</button>
           <button onclick="admShopListSwitchTab('closeshop')" id="adm-sl-tab-closeshop" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">➖ 閉店候補</button>
           <button onclick="admShopListSwitchTab('diff')" id="adm-sl-tab-diff" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">⚠ 差異あり</button>
+          <button onclick="admShopListSwitchTab('catsummary')" id="adm-sl-tab-catsummary" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">📊 区分集計</button>
           <button onclick="admShopListSwitchTab('match')" id="adm-sl-tab-match" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">✅ 一致</button>
         </div>
         <div id="adm-sl-result" class="table-wrap"></div>
@@ -11492,20 +11493,32 @@ function admShopListAnalyze(){
     .replace(/^[A-Z]\]/,'')
     .replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
     .replace(/店$/,'');
+  // マスタは「川崎高津」, 荷主は「高津」表記なので揃える
+  const normArea=a=>String(a||'').trim().replace(/^(川崎高津|川崎)$/,'高津');
+  const CATS=[{key:'朝刊',area:'amArea'},{key:'夕刊',area:'pmArea'},{key:'競馬',area:'keibaArea'}];
+  // 区分×営業所ごとの差異件数 (`${営業所}\t${区分}` -> 件数)
+  const catSummary={};
   motoNeltec.forEach(mt=>{
     const m=masterMap.get(mt.code);
     if(!m||m.closed)return;
     const issues=[];
     if(normName(mt.name)!==normName(m.name))issues.push(`店舗名: マスタ「${m.name}」 → 荷主「${mt.name}」`);
-    const masterAreas=m.area.split(',').map(s=>s.trim()).filter(Boolean);
-    const motoUniq=[...new Set([mt.amArea,mt.pmArea,mt.keibaArea].filter(Boolean))];
-    const hasOverlap=motoUniq.some(a=>masterAreas.includes(a));
-    if(!hasOverlap)issues.push(`営業所: マスタ[${masterAreas.join(',')}] → 荷主[${motoUniq.join(',')}]`);
+    const masterAreas=m.area.split(',').map(s=>normArea(s)).filter(Boolean);
+    // 区分(朝刊/夕刊/競馬)ごとに、荷主営業所がマスタ営業所に含まれるか判定
+    CATS.forEach(c=>{
+      const motoArea=normArea(mt[c.area]);
+      if(!motoArea)return; // この区分の荷主営業所が無い → 対象外
+      if(!masterAreas.includes(motoArea)){
+        issues.push(`${c.key}: マスタ営業所[${masterAreas.join(',')||'-'}] に荷主[${mt[c.area]}] が無い`);
+        const k=motoArea+'\t'+c.key;
+        catSummary[k]=(catSummary[k]||0)+1;
+      }
+    });
     if(issues.length>0)diffs.push({master:m,moto:mt,issues});
     else matches.push({master:m,moto:mt});
   });
   admSlResult={
-    closeopen:coRes,newshop:newShops,closeshop:closedShops,diff:diffs,match:matches,
+    closeopen:coRes,newshop:newShops,closeshop:closedShops,diff:diffs,match:matches,catSummary,
     stats:{
       motoTotal:moto.length,motoNeltec:motoNeltec.length,
       masterTotal:admSlMaster.length,masterActive:admSlMaster.filter(m=>!m.closed).length,
@@ -11588,6 +11601,25 @@ function admShopListRender(){
         const motoArea=[moto.amArea,moto.pmArea,moto.keibaArea].map(a=>a||'-').join('/');
         html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(moto.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.area)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(motoArea)}</td><td style="padding:6px;border:1px solid #e2e8f0;font-size:11px;color:#92400e;">${issues.map(esc).join('<br>')}</td></tr>`;
       });
+      html+='</tbody></table>';
+    }
+  }else if(tab==='catsummary'){
+    const cs=admSlResult.catSummary||{};
+    const cats=['朝刊','夕刊','競馬'];
+    const areas=[...new Set(Object.keys(cs).map(k=>k.split('\t')[0]))].sort();
+    if(areas.length===0)html='<p style="text-align:center;padding:30px;color:var(--text-sub);">区分別の差異なし 🎉</p>';
+    else{
+      const colTot={朝刊:0,夕刊:0,競馬:0};let grand=0;
+      html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">荷主リストの「区分×営業所」がマスタ営業所に無い件数（シートタブ単位の差異）。明細は「⚠ 差異あり」タブで各区分の差異行を確認できます。</p>';
+      html+='<table style="width:auto;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px 14px;border:1px solid #e2e8f0;">営業所＼区分</th>'+cats.map(c=>`<th style="padding:8px 14px;border:1px solid #e2e8f0;">${c}</th>`).join('')+'<th style="padding:8px 14px;border:1px solid #e2e8f0;">計</th></tr></thead><tbody>';
+      areas.forEach(a=>{
+        let rt=0;
+        html+=`<tr><td style="padding:6px 14px;border:1px solid #e2e8f0;font-weight:600;">${esc(a)}</td>`;
+        cats.forEach(c=>{const n=cs[a+'\t'+c]||0;rt+=n;colTot[c]+=n;html+=`<td style="padding:6px 14px;border:1px solid #e2e8f0;text-align:center;${n?'background:#fef3c7;font-weight:600;color:#92400e;':'color:#cbd5e1;'}">${n||'-'}</td>`;});
+        grand+=rt;
+        html+=`<td style="padding:6px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:700;">${rt}</td></tr>`;
+      });
+      html+=`<tr style="background:#f8fafc;"><td style="padding:6px 14px;border:1px solid #e2e8f0;font-weight:700;">計</td>`+cats.map(c=>`<td style="padding:6px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:700;">${colTot[c]}</td>`).join('')+`<td style="padding:6px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:700;">${grand}</td></tr>`;
       html+='</tbody></table>';
     }
   }else if(tab==='match'){
