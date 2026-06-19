@@ -11495,8 +11495,8 @@ function admShopListAnalyze(){
     .replace(/^[A-Z]\]/,'')
     .replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
     .replace(/店$/,'');
-  // マスタは「川崎高津」, 荷主は「高津」表記なので揃える
-  const normArea=a=>String(a||'').trim().replace(/^(川崎高津|川崎)$/,'高津');
+  // 営業所表記の揺れを吸収: 川崎高津↔高津 / 池袋は城北と同一営業所として扱う
+  const normArea=a=>String(a||'').trim().replace(/^(川崎高津|川崎)$/,'高津').replace(/^池袋$/,'城北');
   // 差異店舗を 営業所×区分 で分類 (`${営業所}\t${区分}` -> [{master,moto,issues},...]) ※区分集計タブ用
   const catSummary={};
   // マスタのコース列で各区分の参加を判定: F=朝刊/I=朝出し/O=夕刊/T=競馬
