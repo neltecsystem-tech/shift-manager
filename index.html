@@ -6801,13 +6801,15 @@ function admSeBuildStaffList(){
 
 // マスタ R:U フラグからセル黒塗り判定 (admSeMasterReqs キャッシュ前提)
 // 朝刊✔がない → AM 黒 / 夕刊✔がない → 月-木 PM 黒 / 金土✔がない → 金土 PM 黒 / 日PM は常に黒
-function admSeIsBlackout(course,jsDay,isPm){
+// 金土以外の祝日(年始除く)は夕刊休刊 → PM 黒 (year/month/day を渡した場合のみ判定)
+function admSeIsBlackout(course,jsDay,isPm,year,month,day){
   const reqs=admSeMasterReqs;
   if(!reqs)return false;
   const req=reqs[course];
   if(!req)return false;
   if(!isPm)return !req.am;
   if(jsDay===0)return true;
+  if(isPmHolidayClosed(year,month,day,jsDay))return true;// 金土以外の祝日 = 夕刊休刊
   if(jsDay===5||jsDay===6)return !req.keiba;
   return !req.pm;
 }
@@ -6985,8 +6987,8 @@ function admSeRenderPretty(){
         const pm=admSeCellValue(rowIdx,d.col+1);
         const amDirty=admSeState.dirty.has(`${rowIdx},${d.col}`);
         const pmDirty=admSeState.dirty.has(`${rowIdx},${d.col+1}`);
-        const amBlack=admSeIsBlackout(course,d.dow,false);
-        const pmBlack=admSeIsBlackout(course,d.dow,true);
+        const amBlack=admSeIsBlackout(course,d.dow,false,year,d.month,d.day);
+        const pmBlack=admSeIsBlackout(course,d.dow,true,year,d.month,d.day);
         const amDup=dupCells.has(`${rowIdx},${d.col}`);
         const pmDup=dupCells.has(`${rowIdx},${d.col+1}`);
         h+=admSeStaffCellHtml(rowIdx,d.col,am,amDirty,100,amBlack,amDup);
@@ -8117,8 +8119,8 @@ function admSeFindGaps(reqs){
       if(req.am&&!am){
         gaps.push({row:i,col,course,month,day,dow:dows[dow],type:'AM'});
       }
-      // 夕刊チェック (月-木) — 夕刊フラグ ✔
-      if(req.pm&&!isSat&&!isFri&&!isSun&&!pm){
+      // 夕刊チェック (月-木) — 夕刊フラグ ✔ / 金土以外の祝日は夕刊休刊なので対象外
+      if(req.pm&&!isSat&&!isFri&&!isSun&&!isPmHolidayClosed(year,month,day,dow)&&!pm){
         gaps.push({row:i,col:col+1,course,month,day,dow:dows[dow],type:'PM(夕刊)'});
       }
       // 競馬チェック (金土) — 金土フラグ ✔
@@ -8332,6 +8334,7 @@ async function admSeNewMonth(){
         if(!req.am)blackCells.push({row:rowIdx,col:amCol});
         let pmActive=false;
         if(d.js===0)pmActive=false;// Sun = 休刊
+        else if(isPmHolidayClosed(year,month,d.day,d.js))pmActive=false;// 金土以外の祝日 = 夕刊休刊
         else if(d.js===5||d.js===6)pmActive=!!req.keiba;// Fri/Sat = 競馬日
         else pmActive=!!req.pm;// Mon-Thu = 通常夕刊
         if(!pmActive)blackCells.push({row:rowIdx,col:pmCol});
@@ -9140,6 +9143,14 @@ const JP_HOLIDAYS=new Set([
   '2028-07-17','2028-08-11','2028-09-18','2028-09-22',
   '2028-10-09','2028-11-03','2028-11-23',
 ]);
+
+// 夕刊休刊判定: 金土以外の祝日は夕刊休刊 (年始 1/1〜1/3 は別ルールのため除外)
+function isPmHolidayClosed(year,month,day,jsDay){
+  if(jsDay===5||jsDay===6)return false;// 金土は競馬日 (対象外)
+  if(month===1&&day>=1&&day<=3)return false;// 年始は別ルール
+  const key=`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  return JP_HOLIDAYS.has(key);
+}
 
 // 月-木の祝日 → 夕刊なし に追加、祝日+1日 → 同梱無し に追加 (未保存)
 function admBcAutoFillFromHolidays(){
