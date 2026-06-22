@@ -11532,6 +11532,8 @@ async function admShopListUpload(event){
     // ○列の見出しキーワード(複数列マッチ可・該当列のどれかに○なら採用)。
     // 競馬は K=夕刊配送 / L=競馬配送 の どちらかに○ があれば該当(城北競馬はこの2列構成)。
     const CAT_KEYS={'朝刊':['朝刊配'],'平日':['夕刊配'],'競馬':['競馬配','夕刊配'],'朝出し':['朝出']};
+    // 特別に朝刊扱いする店舗コード(朝刊配送○が無くても朝刊に含める)。例: LAtoks自由が丘下りH(601737)
+    const FORCE_AM_INCLUDE=new Set(['601737']);
     wb.SheetNames.forEach(sn=>{
       const off=SL_OFFICES.find(o=>sn.startsWith(o));
       if(!off)return;
@@ -11560,7 +11562,7 @@ async function admShopListUpload(event){
         if(!code||isNaN(Number(code)))continue;
         const nm=String(r[nameCol]||'').trim();
         if(nm&&!shipName[code])shipName[code]=nm;
-        const mark=allRow||markCols.some(ci=>{const v=String(r[ci]||'').trim();return v==='○'||v==='〇';});
+        const mark=allRow||(cat==='朝刊'&&FORCE_AM_INCLUDE.has(code))||markCols.some(ci=>{const v=String(r[ci]||'').trim();return v==='○'||v==='〇';});
         if(mark)set.add(code);
       }
       shipperByCat[off+'\t'+cat]=set;
