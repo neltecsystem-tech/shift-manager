@@ -11614,12 +11614,23 @@ function admShopListAnalyze(){
     for(const c of seq){if(c==='十'){total+=(cur||1)*10;cur=0;}else cur=d[c];}
     return String(total+cur);
   });
-  const normName=s=>k2n(String(s||'')
-    .replace(/[\s　]/g,'')
-    .replace(/^[A-Z]\]/,'')
-    .replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
-    .replace(/店$/,''))
-    .replace(/丁目/g,'丁'); // 「1丁目」↔「1丁」を同一視 (例 幡ヶ谷一丁目店 ↔ 幡ヶ谷1丁)
+  // 半角カナ→全角カナ (濁点/半濁点も合成)。荷主とマスタで半角/全角がズレるため (例 ｳｴﾙｼｱ↔ウェルシア)
+  const HKANA='｡｢｣､･ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝﾞﾟ';
+  const ZKANA='。「」、・ヲァィゥェォャュョッーアイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン゛゜';
+  const DAKU={'ｶﾞ':'ガ','ｷﾞ':'ギ','ｸﾞ':'グ','ｹﾞ':'ゲ','ｺﾞ':'ゴ','ｻﾞ':'ザ','ｼﾞ':'ジ','ｽﾞ':'ズ','ｾﾞ':'ゼ','ｿﾞ':'ゾ','ﾀﾞ':'ダ','ﾁﾞ':'ヂ','ﾂﾞ':'ヅ','ﾃﾞ':'デ','ﾄﾞ':'ド','ﾊﾞ':'バ','ﾋﾞ':'ビ','ﾌﾞ':'ブ','ﾍﾞ':'ベ','ﾎﾞ':'ボ','ﾊﾟ':'パ','ﾋﾟ':'ピ','ﾌﾟ':'プ','ﾍﾟ':'ペ','ﾎﾟ':'ポ','ｳﾞ':'ヴ'};
+  const h2zKana=str=>str.replace(/[ｶ-ﾄﾊ-ﾎｳ][ﾞﾟ]/g,m=>DAKU[m]||m).replace(/[｡-ﾟ]/g,c=>{const i=HKANA.indexOf(c);return i>=0?ZKANA[i]:c;});
+  // 小書きカナ→大書き (ウェルシア↔ウエルシア の ェ/エ 差を吸収)
+  const s2l={'ァ':'ア','ィ':'イ','ゥ':'ウ','ェ':'エ','ォ':'オ','ッ':'ツ','ャ':'ヤ','ュ':'ユ','ョ':'ヨ'};
+  const normName=s=>{
+    let t=h2zKana(String(s||''))
+      .replace(/[\s　]/g,'')
+      .replace(/^[A-Z]\]/,'')
+      .replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+      .replace(/店$/,'');
+    t=k2n(t).replace(/丁目/g,'丁') // 「1丁目」↔「1丁」を同一視
+      .replace(/[ァィゥェォッャュョ]/g,c=>s2l[c]); // 小書き→大書き
+    return t;
+  };
   // 営業所表記の揺れを吸収: 川崎高津↔高津 / 池袋は城北と同一営業所として扱う
   const normArea=a=>String(a||'').trim().replace(/^(川崎高津|川崎)$/,'高津').replace(/^池袋$/,'城北');
   // 差異店舗を 営業所×区分 で分類 (`${営業所}\t${区分}` -> [{master,moto,issues},...]) ※区分集計タブ用
