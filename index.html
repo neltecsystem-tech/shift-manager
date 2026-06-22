@@ -2864,7 +2864,8 @@ function smRender(){
     smColMap.area??1, smColMap.code??2, smColMap.name??3, smColMap.officialName, smColMap.openDate??4,
     smColMap.amCourse??5, smColMap.pmCourse, smColMap.keibaCourse, smColMap.addr, smColMap.verify, smColMap.note
   ].filter(c=>c!==undefined);
-  const showHeaders=showCols.map(i=>smHeaders[i]||`列${i}`);
+  // 夕刊コース列(現行=O)はシートのヘッダー名が「旧夕刊コース」等でも紛らわしいので常に「夕刊コース」と表示
+  const showHeaders=showCols.map(i=>i===smColMap.pmCourse?'夕刊コース':(smHeaders[i]||`列${i}`));
   const addrColIdx=showCols.indexOf(smColMap.addr);
   const verifyColIdx=showCols.indexOf(smColMap.verify);
 
