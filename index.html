@@ -2051,16 +2051,39 @@ function shExportPdf(){
   win.document.close();
 }
 
-let tpInit=false,tpEd='am';
-function renderTenpoView(){
+let tpInit=false,tpEd='am',tpShowAll=false;
+// 店舗検索はライブの店舗マスタ(shop-master EF)を使う。埋め込みDB.tenpoはスナップショットで
+// 古くなりコース(特に6月以降の夕刊コース変更)がマスタとズレるため。不具合登録と同方式。
+let liveTenpo=null;
+async function loadLiveTenpo(force){
+  try{
+    const json=await fetchShopMasterList(force?{force:true}:undefined);
+    if(!json||json.error||!json.records)return;
+    const H=json.headers||[];
+    const find=pred=>H.findIndex(pred);
+    const ci=find(h=>h.includes('店舗コード')),ni=find(h=>h.includes('店舗名')),ai=find(h=>h.includes('営業所'));
+    const amc=find(h=>h.includes('朝刊コース'));
+    const pmc=find(h=>h.includes('夕刊コース')&&h!=='新夕刊コース'); // 新夕刊コース列は除外し現行夕刊コースを使う
+    const kc=find(h=>h.includes('競馬コース'));
+    const noteI=find(h=>h.includes('備考'));
+    const g=(r,i)=>i>=0?String(r['col_'+i]||'').trim():'';
+    liveTenpo=json.records.map(r=>({
+      area:g(r,ai),code:g(r,ci),name:g(r,ni),
+      amCourse:g(r,amc),pmCourse:g(r,pmc),keibaCourse:g(r,kc),note:g(r,noteI),
+    })).filter(s=>s.name);
+  }catch(e){/* 取得失敗時は埋め込みDB.tenpoにフォールバック */}
+}
+function tenpoSrc(){return (liveTenpo&&liveTenpo.length)?liveTenpo:DB.tenpo;}
+async function renderTenpoView(){
   if(!tpInit){
-    const areas=[...new Set(DB.tenpo.map(t=>t.area).filter(Boolean))];
-    const sel=document.getElementById('tp-area');
-    areas.forEach(a=>sel.add(new Option(a,a)));
-    // Set date input to today
     const now=new Date();
     document.getElementById('tp-date').value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
     tpInit=true;
+    document.getElementById('tenpo-wrap').innerHTML='<p style="color:var(--text-sub)">店舗マスタ(最新)を読み込み中...</p>';
+    await loadLiveTenpo();
+    const areas=[...new Set(tenpoSrc().map(t=>t.area).filter(Boolean))];
+    const sel=document.getElementById('tp-area');
+    areas.forEach(a=>sel.add(new Option(a,a)));
   }
   renderTenpo();
 }
@@ -2107,13 +2130,15 @@ function renderTenpo(){
   const area=document.getElementById('tp-area').value;
   const course=document.getElementById('tp-course').value.trim();
   const dateStr=document.getElementById('tp-date').value;
-  let f=DB.tenpo;
+  const src=tenpoSrc();
+  let f=src;
   if(nm)f=f.filter(t=>t.name.includes(nm));
   if(area)f=f.filter(t=>t.area===area);
   const isAm=tpEd==='am';
-  if(course)f=f.filter(t=>t.amCourse.includes(course)||t.pmCourse.includes(course));
-  document.getElementById('tp-count').textContent=`${f.length}件 / ${DB.tenpo.length}件`;
-  const show=f.slice(0,500);
+  if(course)f=f.filter(t=>(t.amCourse||'').includes(course)||(t.pmCourse||'').includes(course)||(t.keibaCourse||'').includes(course));
+  document.getElementById('tp-count').textContent=`${f.length}件 / ${src.length}件`;
+  const LIMIT=500;
+  const show=tpShowAll?f:f.slice(0,LIMIT);
   const {amMap,pmMap}=getDriverMaps(dateStr);
   const d=new Date(dateStr);
   const dw=['日','月','火','水','木','金','土'];
@@ -2133,7 +2158,13 @@ function renderTenpo(){
     h+=`<td>${course?hl(pmCourseDisplay,course):pmCourseDisplay}</td><td>${pmName}</td><td>${pmPhone}</td><td>${t.note}</td></tr>`;
   });
   h+='</tbody></table>';
-  if(f.length>500)h+=`<p style="color:var(--text-sub);margin-top:8px">500件まで表示（残り${f.length-500}件）</p>`;
+  if(f.length>LIMIT){
+    if(tpShowAll){
+      h+=`<p style="margin-top:8px"><button onclick="tpShowAll=false;renderTenpo()" style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;">▲ 先頭${LIMIT}件に戻す</button> <span style="color:var(--text-sub);font-size:12px;">全${f.length}件表示中</span></p>`;
+    }else{
+      h+=`<p style="margin-top:8px"><button onclick="tpShowAll=true;renderTenpo()" style="background:var(--primary);color:#fff;border:none;border-radius:8px;padding:7px 16px;cursor:pointer;font-size:13px;font-weight:600;">▼ 残り${f.length-LIMIT}件をすべて表示</button> <span style="color:var(--text-sub);font-size:12px;">(${LIMIT}/${f.length}件)</span></p>`;
+    }
+  }
   document.getElementById('tenpo-wrap').innerHTML=h;
 }
 
