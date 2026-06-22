@@ -11548,6 +11548,8 @@ async function admShopListUpload(event){
       const markCols=[];
       for(const kw of (CAT_KEYS[cat]||[])){hdr.forEach((h,ci)=>{if(h.includes(kw)&&!markCols.includes(ci))markCols.push(ci);});}
       if(markCols.length===0)markCols.push(9); // 従来のJ列フォールバック
+      // 朝出しシートは「掲載=該当」(朝出し専用の○列が無く、列は夕刊配送/競馬配送のため○絞り込み不可)。全行採用。
+      const allRow=(cat==='朝出し');
       const set=new Set();
       // ヘッダーがあればその次行から、無ければ1行目(メタ行[TEE...])だけ飛ばして全データ行を読む。
       // 数値コードのみ採用するのでヘッダー/メタ行は自然に除外され、先頭データ行も取りこぼさない。
@@ -11558,7 +11560,7 @@ async function admShopListUpload(event){
         if(!code||isNaN(Number(code)))continue;
         const nm=String(r[nameCol]||'').trim();
         if(nm&&!shipName[code])shipName[code]=nm;
-        const mark=markCols.some(ci=>{const v=String(r[ci]||'').trim();return v==='○'||v==='〇';});
+        const mark=allRow||markCols.some(ci=>{const v=String(r[ci]||'').trim();return v==='○'||v==='〇';});
         if(mark)set.add(code);
       }
       shipperByCat[off+'\t'+cat]=set;
