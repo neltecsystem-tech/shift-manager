@@ -2819,6 +2819,7 @@ function smFilter(){
   smRender();
 }
 
+let smShowAll=false;
 function smRender(){
   document.getElementById('sm-count').textContent=`${smFiltered.length}件 / ${smData.length}件`;
   if(!smFiltered.length){
@@ -2870,7 +2871,7 @@ function smRender(){
   let h='<table><thead><tr>';
   showHeaders.forEach((hd,i)=>{h+=`<th>${hd}${i===addrColIdx?' <span style="font-size:10px;font-weight:normal;color:#94a3b8;">(精度)</span>':''}</th>`;});
   h+='<th></th></tr></thead><tbody>';
-  smFiltered.slice(0,500).forEach(r=>{
+  (smShowAll?smFiltered:smFiltered.slice(0,500)).forEach(r=>{
     const areaVal=r[`col_${smColMap.area??1}`]||'';
     const accVal=smColMap.accuracy!=null?(r[`col_${smColMap.accuracy}`]||''):'';
     h+='<tr>';
@@ -2891,7 +2892,13 @@ function smRender(){
     h+='</tr>';
   });
   h+='</tbody></table>';
-  if(smFiltered.length>500)h+=`<p style="color:var(--text-sub);margin-top:8px">500件まで表示</p>`;
+  if(smFiltered.length>500){
+    if(smShowAll){
+      h+=`<p style="margin-top:8px"><button onclick="smShowAll=false;smRender()" style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;">▲ 先頭500件に戻す</button> <span style="color:var(--text-sub);font-size:12px;">全${smFiltered.length}件表示中</span></p>`;
+    }else{
+      h+=`<p style="margin-top:8px"><button onclick="smShowAll=true;smRender()" style="background:var(--primary);color:#fff;border:none;border-radius:8px;padding:7px 16px;cursor:pointer;font-size:13px;font-weight:600;">▼ 残り${smFiltered.length-500}件をすべて表示</button> <span style="color:var(--text-sub);font-size:12px;">(500/${smFiltered.length}件)</span></p>`;
+    }
+  }
   document.getElementById('sm-table').innerHTML=h;
 }
 
