@@ -11538,10 +11538,10 @@ async function admShopListUpload(event){
       const cat=sn.slice(off.length);
       if(!SL_CATS.includes(cat))return;
       const rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''});
-      // ヘッダー行(STAND/店舗コード/売店名 を含む行)を検出
-      let hi=rows.findIndex(r=>Array.isArray(r)&&r.some(c=>{const s=String(c||'').trim();return s==='STAND'||s.includes('店舗コード')||s==='売店名';}));
-      if(hi<0)hi=1;
-      const hdr=(rows[hi]||[]).map(c=>String(c||'').trim());
+      // ヘッダー行(STAND/店舗コード/売店名 を含む行)を検出。
+      // ※列名ヘッダーが無く2行目からデータのシート(川越朝出し等)もあるため、見つからなければhdr空+デフォルト列。
+      const hi=rows.findIndex(r=>Array.isArray(r)&&r.some(c=>{const s=String(c||'').trim();return s==='STAND'||s.includes('店舗コード')||s==='売店名';}));
+      const hdr=hi>=0?(rows[hi]||[]).map(c=>String(c||'').trim()):[];
       let codeCol=hdr.findIndex(h=>h==='STAND'||h.includes('店舗コード')); if(codeCol<0)codeCol=1;
       let nameCol=hdr.findIndex(h=>h==='売店名'||h.includes('店名'));      if(nameCol<0)nameCol=2;
       // 該当区分の○列(複数)を収集
@@ -11549,7 +11549,10 @@ async function admShopListUpload(event){
       for(const kw of (CAT_KEYS[cat]||[])){hdr.forEach((h,ci)=>{if(h.includes(kw)&&!markCols.includes(ci))markCols.push(ci);});}
       if(markCols.length===0)markCols.push(9); // 従来のJ列フォールバック
       const set=new Set();
-      for(let i=hi+1;i<rows.length;i++){
+      // ヘッダーがあればその次行から、無ければ1行目(メタ行[TEE...])だけ飛ばして全データ行を読む。
+      // 数値コードのみ採用するのでヘッダー/メタ行は自然に除外され、先頭データ行も取りこぼさない。
+      const start=hi>=0?hi+1:1;
+      for(let i=start;i<rows.length;i++){
         const r=rows[i]; if(!Array.isArray(r))continue;
         const code=String(r[codeCol]||'').trim();
         if(!code||isNaN(Number(code)))continue;
