@@ -900,6 +900,7 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>スタッフ検索</label><input type="text" id="adm-se-search" placeholder="名前で絞り込み" oninput="dbInput('admSeRender',200)"></div>
           <div style="margin-left:auto;display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;">
             <button onclick="admSeNewMonth()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">➕ 新規月作成</button>
+            <button onclick="admSeGenSection2()" style="background:#14b8a6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="読込中シートに Section 2 (営業所別 個人別) を生成。引継など特殊シフト登録に必要">🧩 Section2生成</button>
             <button onclick="admSeReload()" style="background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="Google Sheets から再取得">🔄 再読込</button>
             <button onclick="admSeOpenVacation()" style="background:#8b5cf6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="休み希望を入力し、代わりのドライバーで上書き">🏖️ 休暇登録</button>
             <button onclick="admSeCheckGaps()" style="background:#dc2626;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="マスタ R:U の必要フラグに対してシフトの空きセルを検出">🔍 空き確認</button>
@@ -7222,6 +7223,45 @@ function admSeFindSection2CellsForStaff(staffName,startCol,endCol,edition){
   return matches;
 }
 
+// 引継が0件になった理由を具体的に診断 (Section 2 に行が無い / 日付外 / 時間帯外 を切り分け)
+function admSeDiagnoseHandover(staffName,startCol,endCol,edition){
+  const dateRow=admSeState.rows[0]||[];
+  const dateCols1=admSeVacationDateColRange(startCol,endCol);
+  const targetDates=[...new Set(dateCols1.map(c=>String(dateRow[c]||'').trim()).filter(Boolean))];
+  const blocks=admSeParseSection2();
+  const norm=invNormName(staffName);
+  const staffBlocks=blocks.filter(b=>b.staffRows.some(s=>invNormName(s.name)===norm));
+  if(!staffBlocks.length){
+    // 似た姓を探して候補表示 (漢字違い/表記揺れのヒント)
+    const key=norm.slice(0,2);
+    const names=new Set();
+    blocks.forEach(b=>b.staffRows.forEach(s=>{const n=String(s.name||'').trim();if(n&&key&&invNormName(n).startsWith(key))names.add(n);}));
+    const hint=names.size?`\n似た名前: ${[...names].slice(0,8).join(' / ')}`:'';
+    return `「${staffName}」は Section 2 (営業所別ブロック) に行がありません。\n引継は Section 2 の既存スタッフ行に書き込む機能です。先に Section 2 へ「${staffName}」の行を追加してください。${hint}`;
+  }
+  // 行はある → 日付/時間帯のカバレッジを調査
+  const coveredDates=new Set();
+  const edByDate={};
+  staffBlocks.forEach(b=>{
+    b.dateCols.forEach(d=>{
+      coveredDates.add(d.dateLabel);
+      const ed=b.editionPerCol[d.col]||'AM';
+      (edByDate[d.dateLabel]=edByDate[d.dateLabel]||new Set()).add(ed);
+    });
+  });
+  const targetInCovered=targetDates.filter(d=>coveredDates.has(d));
+  if(!targetInCovered.length){
+    const cov=[...coveredDates].slice(0,12).join(', ');
+    return `「${staffName}」の行はありますが、その営業所ブロックは選択した日付 (${targetDates.join(', ')||'(未選択)'}) を含みません。\nこのブロックがカバーする日付: ${cov||'(なし)'}`;
+  }
+  // 日付はカバー → 時間帯フィルタで全除外された
+  const availEds=new Set();
+  targetInCovered.forEach(d=>(edByDate[d]||new Set()).forEach(e=>availEds.add(e)));
+  const edJp=e=>e==='AM'?'朝刊':'夕刊';
+  const want=edition==='am'?'朝刊のみ':edition==='pm'?'夕刊のみ':'両方';
+  return `「${staffName}」は ${targetInCovered.join(', ')} に行がありますが、時間帯「${want}」に該当するセルがありません。\nこの期間に Section 2 に存在するのは ${[...availEds].map(edJp).join('・')} です。時間帯を変更してください。`;
+}
+
 function admSeHandoverPreview(){
   const startCol=document.getElementById('adm-se-vac-date3').value;
   const endCol=document.getElementById('adm-se-vac-date3-end').value;
@@ -7234,7 +7274,7 @@ function admSeHandoverPreview(){
   const matches=admSeFindSection2CellsForStaff(staff,startCol,endCol,edition);
   if(!matches.length){
     prev.style.display='block';prev.style.background='#fef2f2';prev.style.borderColor='#fecaca';prev.style.color='#991b1b';
-    prev.innerHTML=`⚠️ Section 2 に「${staff}」の該当行が見つかりません (営業所サブブロック内に存在しないか、日付範囲がカバーされていません)`;
+    prev.innerHTML=`⚠️ ${admSeDiagnoseHandover(staff,startCol,endCol,edition).replace(/\n/g,'<br>')}`;
     return;
   }
   prev.style.display='block';prev.style.background='#f0fdf4';prev.style.borderColor='#bbf7d0';prev.style.color='#166534';
@@ -7252,7 +7292,7 @@ async function admSeHandoverApply(){
   if(!startCol){alert('開始日を選択してください');return;}
   if(!staff){alert('対象スタッフを入力してください');return;}
   const matches=admSeFindSection2CellsForStaff(staff,startCol,endCol,edition);
-  if(!matches.length){alert(`Section 2 に「${staff}」の該当行が見つかりません`);return;}
+  if(!matches.length){alert(admSeDiagnoseHandover(staff,startCol,endCol,edition));return;}
   const summaryLines=matches.slice(0,15).map(m=>`${m.dateLabel} ${m.area} ${m.edition}: ${m.oldValue||'(空)'} → ${value}`);
   const more=matches.length>15?`\n... 他 ${matches.length-15}件`:'';
   if(!window.confirm(`${staff} さんの Section 2 セルに「${value}」を書き込みます (${matches.length}件、まだ保存されません):\n\n${summaryLines.join('\n')}${more}\n\n適用しますか?`))return;
@@ -8455,6 +8495,89 @@ async function admSeFetchDowRef(){
   return {orderedCourses,amMap,pmMap};
 }
 
+// Section 1 (コース×日) を転置して Section 2 (営業所別 個人別: 人×日で朝/夕コース) の行配列を生成
+// 列レイアウト: col0=名前, 以降 1日=2列(朝/夕)。ヘッダ行は朝/夕両列に日付を入れる
+// (parseShift / admSeParseSection2 が朝刊・夕刊どちらの特殊値も拾えるようにするため)。
+// 戻り値は Section 2 ブロックの行配列 (シート行121以降に配置する想定)。
+function admSeBuildSection2(rows1){
+  const dateRow=rows1[0]||[];
+  const dowRow=rows1[3]||[];
+  const days=[]; // {col, label, dow}
+  for(let c=1;c<dateRow.length;c++){
+    const v=String(dateRow[c]||'').trim();
+    if(/^\d{1,2}\/\d{1,2}$/.test(v))days.push({col:c,label:v,dow:String(dowRow[c]||'').trim()});
+  }
+  if(!days.length)return [];
+  const areas=['城北','川越','立川','川崎高津'];
+  const isBad=v=>!v||v==='0'||/^\d{1,2}$/.test(v);
+  const staff={}; // name -> {areaCount:{}, days:{label:{am,pm}}, order}
+  let ord=0;
+  const touch=(name,area)=>{ if(!staff[name])staff[name]={areaCount:{},days:{},order:ord++}; const s=staff[name]; if(area)s.areaCount[area]=(s.areaCount[area]||0)+1; return s; };
+  for(let i=6;i<Math.min(116,rows1.length);i++){
+    const r=rows1[i]||[]; const course=String(r[0]||'').trim();
+    if(!course||course==='重複')continue;
+    const area=areaOfCourse(course); if(!area)continue;
+    days.forEach(d=>{
+      const am=String(r[d.col]||'').trim();
+      const pm=String(r[d.col+1]||'').trim();
+      if(!isBad(am)){ const s=touch(am,area); (s.days[d.label]=s.days[d.label]||{am:'',pm:''}).am=course; }
+      if(!isBad(pm)){ const s=touch(pm,area); (s.days[d.label]=s.days[d.label]||{am:'',pm:''}).pm=course; }
+    });
+  }
+  // home area = 最多割当のエリア
+  const byArea={}; areas.forEach(a=>byArea[a]=[]);
+  Object.keys(staff).forEach(name=>{
+    const ac=staff[name].areaCount; let best='',bn=-1;
+    areas.forEach(a=>{ if((ac[a]||0)>bn){bn=ac[a]||0;best=a;} });
+    if(best)byArea[best].push(name);
+  });
+  areas.forEach(a=>byArea[a].sort((x,y)=>staff[x].order-staff[y].order));
+  const numCols=1+days.length*2;
+  const mk=()=>new Array(numCols).fill('');
+  const out=[];
+  areas.forEach(area=>{
+    const names=byArea[area]; if(!names.length)return;
+    const h=mk(); h[0]=area; days.forEach((d,i)=>{ h[1+i*2]=d.label; h[2+i*2]=d.label; }); out.push(h);
+    const dw=mk(); days.forEach((d,i)=>{ dw[1+i*2]=d.dow; dw[2+i*2]=d.dow; }); out.push(dw);
+    const ed=mk(); days.forEach((d,i)=>{ ed[1+i*2]='朝刊'; ed[2+i*2]='夕刊'; }); out.push(ed);
+    names.forEach(name=>{
+      const row=mk(); row[0]=name; const sd=staff[name].days;
+      days.forEach((d,i)=>{ const v=sd[d.label]||{am:'',pm:''}; row[1+i*2]=v.am||''; row[2+i*2]=v.pm||''; });
+      out.push(row);
+    });
+    out.push(mk()); // ブロック区切りの空行
+  });
+  return out;
+}
+
+// 読込中シートに Section 2 (営業所別 個人別) を生成して書き込む (引継などの特殊シフト登録を可能にする)
+async function admSeGenSection2(){
+  if(!admSeState.sheetName){alert('シートを選択してください');return;}
+  if(!admSeState.rows.length){alert('シートが読み込まれていません');return;}
+  if(admSeState.dirty.size&&!window.confirm('未保存の変更があります。先に保存することを推奨します。続行しますか?'))return;
+  // 既に Section 2 がある場合は警告
+  const existing=admSeParseSection2();
+  if(existing.length&&!window.confirm(`既に Section 2 が ${existing.length} ブロックあります。\n\n行121以降を上書き再生成します。続行しますか?`))return;
+  const s2=admSeBuildSection2(admSeState.rows);
+  if(!s2.length){alert('Section 1 から個人別データを生成できませんでした');return;}
+  const msg=document.getElementById('adm-se-msg');
+  const numCols=s2[0].length;
+  const colEnd=admSeColLabel(numCols-1);
+  const startRow=121; // 0-indexed 120
+  const range=`A${startRow}:${colEnd}${startRow+s2.length-1}`;
+  if(!window.confirm(`「${admSeState.sheetName}」の Section 2 (営業所別 個人別) を生成します。\n\n${s2.length}行を ${range} に書き込みます。\n(通常コース値は表示用。引継等の特殊マークはこの後「🤝引継」タブで登録できます)\n\n続行?`))return;
+  msg.textContent='Section 2 生成中...';msg.style.color='#3b82f6';
+  try{
+    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:admSeState.sheetName,range,values:s2})});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    msg.textContent=`✓ Section 2 生成完了 (${s2.length}行)。再読込します...`;msg.style.color='#16a34a';
+    await admSeReload();
+  }catch(e){
+    msg.innerHTML='<span style="color:var(--danger);">Section 2 生成失敗: '+e.message+'</span>';
+  }
+}
+
 async function admSeNewMonth(){
   const ym=window.prompt('新規作成する年月を入力 (例: 2026-06)','');
   if(!ym)return;
@@ -8512,6 +8635,18 @@ async function admSeNewMonth(){
       sheetRows.push(cr);
     });
 
+    // 3b. Section 2 (営業所別 個人別) を生成して行121以降に配置
+    // (引継など特殊シフト登録に必要。通常コース値は表示用で payroll には影響しない)
+    let section2Count=0;
+    {
+      const s2=admSeBuildSection2(sheetRows);
+      if(s2.length){
+        while(sheetRows.length<120)sheetRows.push(mkRow());// Section 1 と Section 2 の間を空けて行121開始
+        s2.forEach(r=>{ const row=mkRow(); for(let c=0;c<r.length&&c<numCols;c++)row[c]=r[c]; sheetRows.push(row); });
+        section2Count=s2.length;
+      }
+    }
+
     // 4. 空シート作成 → update_range で全部書き込み
     msg.textContent=`シート作成: ${sheetName}...`;
     const cr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create_sheet',sheet_name:sheetName})});
@@ -8533,7 +8668,7 @@ async function admSeNewMonth(){
       throw new Error(cj.error);
     }
 
-    msg.textContent=`日付 ${dates.length}日 + コース ${orderedCourses.length}件 + 担当者 ${filledCells}セル を書き込み中...`;
+    msg.textContent=`日付 ${dates.length}日 + コース ${orderedCourses.length}件 + 担当者 ${filledCells}セル + Section2 ${section2Count}行 を書き込み中...`;
     const colEnd=admSeColLabel(numCols-1);
     const range=`A1:${colEnd}${sheetRows.length}`;
     const ur=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:sheetName,range,values:sheetRows})});
@@ -8573,7 +8708,7 @@ async function admSeNewMonth(){
       await admSeWriteImportRangeForNewMonth(sheetName,orderedCourses,numCols);
     }catch(e){console.warn('IMPORTRANGE 反映失敗:',e);}
 
-    msg.textContent=`✓ ${sheetName} を作成しました (コース${orderedCourses.length}件 / ${lastDay}日 / 担当${filledCells}セル自動入力 / 黒塗り${blackCells.length}セル / 反映先 IMPORTRANGE 書込)`;msg.style.color='#16a34a';
+    msg.textContent=`✓ ${sheetName} を作成しました (コース${orderedCourses.length}件 / ${lastDay}日 / 担当${filledCells}セル自動入力 / Section2 ${section2Count}行 / 黒塗り${blackCells.length}セル / 反映先 IMPORTRANGE 書込)`;msg.style.color='#16a34a';
     setTimeout(()=>{const m2=document.getElementById('adm-se-msg');if(m2&&m2.textContent.includes(sheetName))m2.textContent='';},5000);
 
     // シート一覧を再ロード
