@@ -592,6 +592,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('paystatement')" id="adm-tab-paystatement" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💴 支払い明細</button>
         <button onclick="adminTab('employee')" id="adm-tab-employee" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">👤 社員管理</button>
         <button onclick="adminTab('shiftedit')" id="adm-tab-shiftedit" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📝 シフト編集</button>
+        <button onclick="adminTab('yobi')" id="adm-tab-yobi" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 早見表</button>
         <button onclick="adminTab('measure')" id="adm-tab-measure" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⏱ 測定データ</button>
         <button onclick="adminTab('diagram')" id="adm-tab-diagram" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📐 ダイヤグラム</button>
         <button onclick="adminTab('mymaps')" id="adm-tab-mymaps" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🗺️ マイマップURL</button>
@@ -873,6 +874,21 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="adm-pay-msg" style="margin-top:8px;font-size:13px;"></div>
         <div id="adm-pay-content" style="margin-top:12px;"></div>
+      </div>
+
+      <!-- 早見表 (曜日別コース人員早見表) -->
+      <div id="adm-yobi" class="adm-panel" style="display:none;">
+        <div class="filters">
+          <div style="font-size:13px;color:var(--text-sub);max-width:520px;">
+            「曜日別コース人員早見表」を直接編集します。<b>A列=朝刊コース / J列=夕刊コース</b> に書いたコースが「新規月作成」で生成されます。コースを追加したら新規作成し直すと反映されます。
+          </div>
+          <div style="margin-left:auto;display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;">
+            <button onclick="admYobiInit(true)" style="background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="Google Sheets から再取得">🔄 再読込</button>
+            <button onclick="admYobiSave()" id="adm-yobi-save" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" disabled>💾 保存 (<span id="adm-yobi-dirty">0</span>件)</button>
+          </div>
+        </div>
+        <div id="adm-yobi-msg" style="margin-top:8px;font-size:13px;color:var(--text-sub);"></div>
+        <div id="adm-yobi-content" style="margin-top:12px;overflow:auto;max-height:75vh;border:1px solid var(--border);border-radius:8px;background:#fff;"></div>
       </div>
 
       <!-- シフト編集 -->
@@ -4975,6 +4991,7 @@ function adminTab(t){
   if(t==='employee')admEmpInit().catch(()=>{});
   if(t==='settings')admFeatureVisRender();
   if(t==='shiftedit')admSeInit().catch(()=>{});
+  if(t==='yobi')admYobiInit().catch(()=>{});
   if(t==='data')adminShowDataInfo();
   if(t==='settings')adminShowSysInfo();
   if(t==='diagram')admDgInit();
@@ -8092,6 +8109,106 @@ async function admSeSave(){
     // 既存キャッシュも更新するため fresh fetch
     const parsed=parseMonthLabel(admSeState.sheetName);
     if(parsed)forceFreshShift(parsed.year,parsed.month).catch(()=>{});
+  }catch(e){
+    msg.innerHTML='<span style="color:var(--danger);">保存失敗: '+e.message+'</span>';
+  }
+}
+
+// --- 早見表 (曜日別コース人員早見表) エディタ ---
+const YOBI_SHEET_NAME='曜日別コース人員早見表';
+let admYobiState={rows:[],dirty:new Map(),loaded:false};
+
+async function admYobiInit(force){
+  if(admYobiState.loaded&&!force)return;
+  const msg=document.getElementById('adm-yobi-msg');
+  const cont=document.getElementById('adm-yobi-content');
+  if(admYobiState.dirty.size&&force&&!window.confirm('未保存の変更があります。破棄して再読込しますか?'))return;
+  msg.textContent='読み込み中...';msg.style.color='#3b82f6';
+  try{
+    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:YOBI_SHEET_NAME})});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    admYobiState={rows:(j.rows||[]).map(row=>row.slice()),dirty:new Map(),loaded:true};
+    msg.textContent=`✓ 読み込み完了 (${admYobiState.rows.length}行)`;msg.style.color='#16a34a';
+    setTimeout(()=>{const m=document.getElementById('adm-yobi-msg');if(m&&m.textContent.startsWith('✓'))m.textContent='';},2000);
+    admYobiUpdateBadge();
+    admYobiRender();
+  }catch(e){
+    msg.innerHTML='<span style="color:var(--danger);">読み込み失敗: '+e.message+'</span>';
+    cont.innerHTML='';
+  }
+}
+
+function admYobiRender(){
+  const cont=document.getElementById('adm-yobi-content');
+  const rows=admYobiState.rows;
+  if(!rows.length){cont.innerHTML='<p style="padding:14px;color:var(--text-sub);">データなし</p>';return;}
+  const maxCols=rows.reduce((mx,r)=>Math.max(mx,r.length),0);
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  let h='<table style="border-collapse:collapse;font-size:13px;white-space:nowrap;">';
+  rows.forEach((r,ri)=>{
+    const isHdr=ri===0;
+    h+='<tr>';
+    // 行番号 (シート行 = ri+1)
+    h+=`<td style="border:1px solid #e2e8f0;padding:2px 6px;background:#f8fafc;color:#94a3b8;font-size:11px;position:sticky;left:0;z-index:1;text-align:right;">${ri+1}</td>`;
+    for(let c=0;c<maxCols;c++){
+      const v=r[c]==null?'':r[c];
+      const dirty=admYobiState.dirty.has(`${ri},${c}`);
+      // A列(0)=朝刊コース / J列(9)=夕刊コース を強調
+      const isCourseCol=(c===0||c===9);
+      let bg=isHdr?'#fef3c7':isCourseCol?'#ecfccb':'#fff';
+      if(dirty)bg='#fde68a';
+      const fw=(isHdr||isCourseCol)?'600':'400';
+      h+=`<td contenteditable="true" data-r="${ri}" data-c="${c}" oninput="admYobiOnInput(event)" style="border:1px solid #e2e8f0;padding:3px 8px;min-width:80px;background:${bg};font-weight:${fw};outline:none;">${esc(v)}</td>`;
+    }
+    h+='</tr>';
+  });
+  h+='</table>';
+  cont.innerHTML=h;
+}
+
+function admYobiOnInput(ev){
+  const td=ev.target;
+  const ri=Number(td.dataset.r),c=Number(td.dataset.c);
+  const orig=(admYobiState.rows[ri]&&admYobiState.rows[ri][c]!=null)?String(admYobiState.rows[ri][c]):'';
+  const val=td.textContent;
+  if(val===orig){admYobiState.dirty.delete(`${ri},${c}`);}
+  else{admYobiState.dirty.set(`${ri},${c}`,val);}
+  td.style.background=admYobiState.dirty.has(`${ri},${c}`)?'#fde68a':(ri===0?'#fef3c7':(c===0||c===9)?'#ecfccb':'#fff');
+  admYobiUpdateBadge();
+}
+
+function admYobiUpdateBadge(){
+  const n=admYobiState.dirty.size;
+  const badge=document.getElementById('adm-yobi-dirty');
+  const btn=document.getElementById('adm-yobi-save');
+  if(badge)badge.textContent=n;
+  if(btn)btn.disabled=n===0;
+}
+
+async function admYobiSave(){
+  if(!admYobiState.dirty.size){alert('変更がありません');return;}
+  const msg=document.getElementById('adm-yobi-msg');
+  const updates=[];
+  admYobiState.dirty.forEach((value,k)=>{
+    const [row,col]=k.split(',').map(Number);
+    updates.push({row,col,value});
+  });
+  if(!window.confirm(`「${YOBI_SHEET_NAME}」に ${updates.length} 件の変更を保存します。続行?`))return;
+  msg.textContent=`保存中... (${updates.length}件)`;msg.style.color='#3b82f6';
+  try{
+    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:YOBI_SHEET_NAME,updates})});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    updates.forEach(u=>{
+      if(!admYobiState.rows[u.row])admYobiState.rows[u.row]=[];
+      admYobiState.rows[u.row][u.col]=u.value;
+    });
+    admYobiState.dirty.clear();
+    admYobiUpdateBadge();
+    msg.textContent=`✓ 保存完了 (${j.updated!=null?j.updated:updates.length}セル更新)`;msg.style.color='#16a34a';
+    setTimeout(()=>{const m=document.getElementById('adm-yobi-msg');if(m&&m.textContent.startsWith('✓'))m.textContent='';},3000);
+    admYobiRender();
   }catch(e){
     msg.innerHTML='<span style="color:var(--danger);">保存失敗: '+e.message+'</span>';
   }
