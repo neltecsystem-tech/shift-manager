@@ -8499,7 +8499,9 @@ async function admSeFetchDowRef(){
 // 列レイアウト: col0=名前, 以降 1日=2列(朝/夕)。ヘッダ行は朝/夕両列に日付を入れる
 // (parseShift / admSeParseSection2 が朝刊・夕刊どちらの特殊値も拾えるようにするため)。
 // 戻り値は Section 2 ブロックの行配列 (シート行121以降に配置する想定)。
-function admSeBuildSection2(rows1){
+// specials: {normName: {name, area, days:{label:{am,pm}}}} — 既存 Section 2 の引継等を保持して上書きするための情報 (任意)
+function admSeBuildSection2(rows1,specials){
+  specials=specials||{};
   const dateRow=rows1[0]||[];
   const dowRow=rows1[3]||[];
   const days=[]; // {col, label, dow}
@@ -8524,6 +8526,11 @@ function admSeBuildSection2(rows1){
       if(!isBad(pm)){ const s=touch(pm,area); (s.days[d.label]=s.days[d.label]||{am:'',pm:''}).pm=course; }
     });
   }
+  // 特殊マーク(引継等)だけ持ち Section 1 に居ないスタッフも行を確保 (マーク消失防止)
+  Object.keys(specials).forEach(nn=>{
+    const rec=specials[nn];
+    if(!Object.keys(staff).some(n=>invNormName(n)===nn))touch(rec.name||nn,rec.area);
+  });
   // home area = 最多割当のエリア
   const byArea={}; areas.forEach(a=>byArea[a]=[]);
   Object.keys(staff).forEach(name=>{
@@ -8542,10 +8549,37 @@ function admSeBuildSection2(rows1){
     const ed=mk(); days.forEach((d,i)=>{ ed[1+i*2]='朝刊'; ed[2+i*2]='夕刊'; }); out.push(ed);
     names.forEach(name=>{
       const row=mk(); row[0]=name; const sd=staff[name].days;
-      days.forEach((d,i)=>{ const v=sd[d.label]||{am:'',pm:''}; row[1+i*2]=v.am||''; row[2+i*2]=v.pm||''; });
+      const sp=specials[invNormName(name)];
+      days.forEach((d,i)=>{
+        const v=sd[d.label]||{am:'',pm:''};
+        let am=v.am||'',pm=v.pm||'';
+        // 引継等の特殊マークがあれば転置コースより優先 (保持)
+        const spd=sp&&sp.days[d.label];
+        if(spd){ if(spd.am)am=spd.am; if(spd.pm)pm=spd.pm; }
+        row[1+i*2]=am; row[2+i*2]=pm;
+      });
       out.push(row);
     });
     out.push(mk()); // ブロック区切りの空行
+  });
+  return out;
+}
+
+// 既存 Section 2 から引継等の特殊マークを抽出 (再生成時に保持するため)
+function admSeExtractSection2Specials(){
+  const pattern=/ミーティング|希望休|引継|研修|有給|欠勤|出張|五反田|目黒|渋谷|休刊/;
+  const out={}; // normName -> {name, area, days:{label:{am,pm}}}
+  admSeParseSection2().forEach(b=>{
+    b.staffRows.forEach(s=>{
+      const nn=invNormName(s.name);
+      b.dateCols.forEach(d=>{
+        const v=String(admSeCellValue(s.rowIdx,d.col)||'').trim();
+        if(!v||!pattern.test(v))return;
+        const ed=(b.editionPerCol[d.col]||'AM')==='PM'?'pm':'am';
+        const rec=out[nn]||(out[nn]={name:s.name,area:b.area,days:{}});
+        (rec.days[d.dateLabel]=rec.days[d.dateLabel]||{am:'',pm:''})[ed]=v;
+      });
+    });
   });
   return out;
 }
@@ -8555,23 +8589,27 @@ async function admSeGenSection2(){
   if(!admSeState.sheetName){alert('シートを選択してください');return;}
   if(!admSeState.rows.length){alert('シートが読み込まれていません');return;}
   if(admSeState.dirty.size&&!window.confirm('未保存の変更があります。先に保存することを推奨します。続行しますか?'))return;
-  // 既に Section 2 がある場合は警告
+  // 既存 Section 2 の引継等の特殊マークを抽出して保持 (再生成で消さない)
   const existing=admSeParseSection2();
-  if(existing.length&&!window.confirm(`既に Section 2 が ${existing.length} ブロックあります。\n\n行121以降を上書き再生成します。続行しますか?`))return;
-  const s2=admSeBuildSection2(admSeState.rows);
+  const specials=existing.length?admSeExtractSection2Specials():{};
+  const specialCount=Object.values(specials).reduce((n,r)=>n+Object.keys(r.days).length,0);
+  const s2=admSeBuildSection2(admSeState.rows,specials);
   if(!s2.length){alert('Section 1 から個人別データを生成できませんでした');return;}
   const msg=document.getElementById('adm-se-msg');
   const numCols=s2[0].length;
   const colEnd=admSeColLabel(numCols-1);
   const startRow=121; // 0-indexed 120
   const range=`A${startRow}:${colEnd}${startRow+s2.length-1}`;
-  if(!window.confirm(`「${admSeState.sheetName}」の Section 2 (営業所別 個人別) を生成します。\n\n${s2.length}行を ${range} に書き込みます。\n(通常コース値は表示用。引継等の特殊マークはこの後「🤝引継」タブで登録できます)\n\n続行?`))return;
+  const preserveNote=existing.length
+    ? `\n\n既存 Section 2 (${existing.length}ブロック) を最新シフトで再生成します。\n引継等の特殊マーク ${specialCount}件 は保持します。`
+    : `\n\n(通常コース値は表示用。引継等の特殊マークはこの後「🤝引継」タブで登録できます)`;
+  if(!window.confirm(`「${admSeState.sheetName}」の Section 2 (営業所別 個人別) を生成します。\n\n${s2.length}行を ${range} に書き込みます。${preserveNote}\n\n続行?`))return;
   msg.textContent='Section 2 生成中...';msg.style.color='#3b82f6';
   try{
     const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:admSeState.sheetName,range,values:s2})});
     const j=await r.json();
     if(j.error)throw new Error(j.error);
-    msg.textContent=`✓ Section 2 生成完了 (${s2.length}行)。再読込します...`;msg.style.color='#16a34a';
+    msg.textContent=`✓ Section 2 生成完了 (${s2.length}行${specialCount?` / 特殊マーク${specialCount}件保持`:''})。再読込します...`;msg.style.color='#16a34a';
     await admSeReload();
   }catch(e){
     msg.innerHTML='<span style="color:var(--danger);">Section 2 生成失敗: '+e.message+'</span>';
