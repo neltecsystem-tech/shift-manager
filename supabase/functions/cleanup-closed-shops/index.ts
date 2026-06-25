@@ -53,6 +53,29 @@ function getNextMonth15th(d: Date): Date {
   return new Date(year, month, 15);
 }
 
+// 区分ごとの列 (0-indexed, A起点) ※ shop-master EF の EDITION_COLS と一致
+//   朝刊 F=5(course)/M=12(order)/N=13(time)
+//   夕刊 O=14(course)/R=17(order)/S=18(time)
+//   競馬 T=19(course)/X=23(order)/Y=24(time)
+const EDITIONS = [
+  { courseCol: 5,  orderCol: 12, timeCol: 13 },
+  { courseCol: 14, orderCol: 17, timeCol: 18 },
+  { courseCol: 19, orderCol: 23, timeCol: 24 },
+];
+
+function colLetter(idx: number): string {
+  let s = ''; let n = idx;
+  while (n >= 0) { s = String.fromCharCode((n % 26) + 65) + s; n = Math.floor(n / 26) - 1; }
+  return s;
+}
+
+function timeToMin(s: string): number {
+  if (!s) return -1;
+  const m = String(s).match(/(\d{1,2}):(\d{2})/);
+  if (!m) return -1;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -99,6 +122,16 @@ Deno.serve(async (req: Request) => {
       updates.push(rowNum);
     });
 
+    // 閉店する店舗が属していたコースを区分ごとに収集 (クリア後に順番を詰め直すため)
+    const affected = EDITIONS.map(() => new Set<string>());
+    for (const rowNum of updates) {
+      const row = rows[rowNum - 3] || [];
+      EDITIONS.forEach((ed, ei) => {
+        const c = (row[ed.courseCol] ?? '').trim();
+        if (c) affected[ei].add(c);
+      });
+    }
+
     for (const rowNum of updates) {
       const rowResp = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A${rowNum}:AD${rowNum}`,
@@ -127,11 +160,60 @@ Deno.serve(async (req: Request) => {
       cleared++;
     }
 
+    // 影響を受けたコースの順番を店着時間順で 1..N に詰め直す (閉店で空いた欠番を解消)
+    let reordered = 0;
+    if (affected.some(s => s.size > 0)) {
+      // クリア後の最新データを取得 (閉店店舗はコース名が消えているので自然に除外される)
+      const freshResp = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A3:AD3000`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      const freshRows = ((await freshResp.json()).values ?? []) as string[][];
+      const data: { range: string; values: string[][] }[] = [];
+
+      EDITIONS.forEach((ed, ei) => {
+        for (const course of affected[ei]) {
+          const members: { rowNum: number; mins: number }[] = [];
+          freshRows.forEach((row, i) => {
+            if ((row[ed.courseCol] ?? '').trim() === course) {
+              members.push({ rowNum: i + 3, mins: timeToMin(row[ed.timeCol] ?? '') });
+            }
+          });
+          // 店着時間昇順 (時間なしは末尾)、同時刻は行番号順
+          members.sort((a, b) => {
+            if (a.mins < 0 && b.mins < 0) return a.rowNum - b.rowNum;
+            if (a.mins < 0) return 1;
+            if (b.mins < 0) return -1;
+            if (a.mins !== b.mins) return a.mins - b.mins;
+            return a.rowNum - b.rowNum;
+          });
+          const letter = colLetter(ed.orderCol);
+          members.forEach((mem, idx) => {
+            const newOrder = String(idx + 1);
+            const cur = (freshRows[mem.rowNum - 3]?.[ed.orderCol] ?? '').trim();
+            if (cur !== newOrder) {
+              data.push({ range: `'${SHEET_NAME}'!${letter}${mem.rowNum}:${letter}${mem.rowNum}`, values: [[newOrder]] });
+            }
+          });
+        }
+      });
+
+      if (data.length) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data }),
+        });
+        reordered = data.length;
+      }
+    }
+
     return new Response(JSON.stringify({
       success: true,
-      message: `${cleared}件の店舗を処理（コース名クリア + B列に納品中止追加）`,
+      message: `${cleared}件の店舗を処理（コース名クリア + B列に納品中止追加）／順番 ${reordered}セルを詰め直し`,
       total_checked: rows.length,
       cleared,
+      reordered,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

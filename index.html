@@ -2755,7 +2755,7 @@ function smSearchName(record){
 }
 let smInited=false;
 let smEditRow=null;
-let smPendingRenumber=null;// 新店追加時の「間に挿入」採番情報 {orderColIdx,courseVal,pos}
+let smPendingTimeShift=null;// 「間に挿入」の後続シフト情報 {timeCol,courseCol,courseVal,fromMin,deltaMin}
 let smMasterAreas=[];
 let smMasterCourses=[];
 
@@ -3517,13 +3517,19 @@ function smBuildForm(record){
         <input type="checkbox" id="sme-${i}" ${val==='TRUE'?'checked':''}>
         <label style="font-size:12px;color:var(--text-sub)">${h}</label></div>`;
     }else if(h.includes('順番')){
-      // 順番列(追加・編集とも): 入力 + 「○番と○番の間に挿入」ボタンで自動採番
+      // 順番列(追加・編集とも): 「間に挿入」で位置を選ぶと店着時間を自動算出。順番自体はEFが時間順で自動採番
       html+=`<div style="margin-bottom:8px;">
         <label style="font-size:12px;color:var(--text-sub)">${h}</label>
         <div style="display:flex;gap:6px;">
-          <input type="text" id="sme-${i}" value="${val.replace(/"/g,'&quot;')}" oninput="smPendingRenumber=null;" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;" placeholder="数字 または「間に挿入」で自動">
+          <input type="text" id="sme-${i}" value="${val.replace(/"/g,'&quot;')}" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:#f8fafc;" placeholder="店着時間順で自動">
           <button type="button" onclick="smInsertOrder(${i})" style="background:#0891b2;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;">↕ 間に挿入</button>
         </div>
+      </div>`;
+    }else if([13,18,24].includes(i)&&h.includes('店着時間')){
+      // 店着時間列: 手入力すると「間に挿入」の後続シフト保留をクリア (手入力優先)
+      html+=`<div style="margin-bottom:8px;">
+        <label style="font-size:12px;color:var(--text-sub)">${h}</label>
+        <input type="text" id="sme-${i}" value="${val.replace(/"/g,'&quot;')}" oninput="smPendingTimeShift=null;" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;" placeholder="HH:MM">
       </div>`;
     }else{
       html+=`<div style="margin-bottom:8px;">
@@ -3535,97 +3541,151 @@ function smBuildForm(record){
   return html;
 }
 
-// ── 新店追加: 「○番と○番の間に挿入」して同コースを連番ふり直し ──
-// 順番列(朝刊/夕刊/競馬)に対応するコース列のインデックスを返す
-function smOrderCourseCol(orderColIdx){
-  const h=smHeaders[orderColIdx]||'';
-  if(h.includes('朝刊'))return smColMap.amCourse;
-  if(h.includes('夕刊'))return smColMap.pmCourse;
-  if(h.includes('競馬'))return smColMap.keibaCourse;
-  return null;
+// ── 新店追加/編集: 「○番と○番の間に挿入」して店着時間を自動算出 ──
+// 順番は shop-master EF が店着時間順で自動採番するため、ここでは店着時間を決める。
+// 区分ごとの固定列 (course/order/time) ※ EF の EDITION_COLS と一致
+const SM_EDITIONS=[
+  {key:'am',    label:'朝刊', course:5,  order:12, time:13},
+  {key:'pm',    label:'夕刊', course:14, order:17, time:18},
+  {key:'keiba', label:'競馬', course:19, order:23, time:24},
+];
+function smEditionByOrder(orderColIdx){return SM_EDITIONS.find(e=>e.order===orderColIdx)||null;}
+
+// "HH:MM" / "H時M分" / "HHMM" → 分。空/不正は -1
+function smTimeToMin(v){
+  if(v==null)return -1;
+  const s=String(v).trim();if(!s)return -1;
+  let m=s.match(/(\d{1,2}):(\d{2})/);if(m)return (+m[1])*60+(+m[2]);
+  m=s.match(/(\d{1,2})時(\d{1,2})分?/);if(m)return (+m[1])*60+(+m[2]);
+  m=s.match(/^(\d{3,4})$/);if(m){const v4=m[1].padStart(4,'0');return (+v4.slice(0,2))*60+(+v4.slice(2,4));}
+  return -1;
+}
+function smMinToTime(min){
+  let x=Math.round(min);if(x<0)x=0;x=x%1440;
+  return `${String(Math.floor(x/60)).padStart(2,'0')}:${String(x%60).padStart(2,'0')}`;
 }
 
-// 指定コースの既存店舗を順番でソートして取得
-function smCourseSorted(courseCol,courseVal,orderColIdx){
-  const codeIdx=smColMap.code??2, nameIdx=smColMap.name??3;
+// 指定コースの既存店舗を店着時間順で取得 (時間あり店舗のみ・編集中の自店は除外)
+function smCourseByTime(courseCol,courseVal,timeCol){
+  const latI=smColMap.lat, lngI=smColMap.lng, nameI=smColMap.name??3, codeI=smColMap.code??2;
   return smData
-    .filter(r=>(r[`col_${courseCol}`]||'').trim()===courseVal)
+    .filter(r=>(r[`col_${courseCol}`]||'').trim()===courseVal && r.row_number!==smEditRow)
     .map(r=>({
       row_number:r.row_number,
-      name:(r[`col_${nameIdx}`]||'').trim(),
-      code:(r[`col_${codeIdx}`]||'').trim(),
-      order:parseFloat(r[`col_${orderColIdx}`]),
-      cur:(r[`col_${orderColIdx}`]||'').trim(),
+      name:(r[`col_${nameI}`]||'').trim(),
+      code:(r[`col_${codeI}`]||'').trim(),
+      tmin:smTimeToMin(r[`col_${timeCol}`]),
+      tstr:(r[`col_${timeCol}`]||'').trim(),
+      lat:parseFloat(r[`col_${latI}`]),
+      lng:parseFloat(r[`col_${lngI}`]),
     }))
-    .filter(s=>!isNaN(s.order))
-    .sort((a,b)=>(a.order-b.order)||a.code.localeCompare(b.code));
+    .filter(s=>s.tmin>=0)
+    .sort((a,b)=>(a.tmin-b.tmin)||a.code.localeCompare(b.code));
 }
 
-// 「間に挿入」ボタン: 挿入位置ピッカーを開く
+// ルートの実効速度 (m/分) を既存の連続区間から自己校正
+function smRouteAvgSpeed(list){
+  let dist=0,time=0;
+  for(let i=1;i<list.length;i++){
+    const a=list[i-1],b=list[i];
+    if(isNaN(a.lat)||isNaN(a.lng)||isNaN(b.lat)||isNaN(b.lng))continue;
+    const t=b.tmin-a.tmin;
+    if(t>0){dist+=msrCalcDist(a.lat,a.lng,b.lat,b.lng);time+=t;}
+  }
+  return time>0?dist/time:0;
+}
+
+// 「間に挿入」ボタン: 店着時間の挿入位置ピッカーを開く
 function smInsertOrder(orderColIdx){
-  const courseCol=smOrderCourseCol(orderColIdx);
-  if(courseCol==null){alert('対応するコース列が見つかりません');return;}
-  const courseEl=document.getElementById(`sme-${courseCol}`);
+  const ed=smEditionByOrder(orderColIdx);
+  if(!ed){alert('対応する区分が見つかりません');return;}
+  const courseEl=document.getElementById(`sme-${ed.course}`);
   const courseVal=courseEl?(courseEl.value||'').trim():'';
-  if(!courseVal){alert('先に「'+(smHeaders[courseCol]||'コース')+'」を入力してください');return;}
-  // 編集中の店舗自身は一覧から除外 (自分を基準に挿入位置を選ばないように)
-  const sorted=smCourseSorted(courseCol,courseVal,orderColIdx).filter(s=>s.row_number!==smEditRow);
-  if(!sorted.length){
-    const inp=document.getElementById(`sme-${orderColIdx}`);
-    if(inp)inp.value='1';
-    smPendingRenumber={orderColIdx,courseVal,pos:0};
-    alert(`コース「${courseVal}」には既存店舗がありません。1番として登録します。`);
+  if(!courseVal){alert('先に「'+(smHeaders[ed.course]||'コース')+'」を入力してください');return;}
+  const list=smCourseByTime(ed.course,courseVal,ed.time);
+  if(!list.length){
+    alert(`コース「${courseVal}」に店着時間付きの既存店舗がありません。\n${ed.label}の店着時間を直接入力してください。`);
     return;
   }
-  // pos=0:先頭 / pos=k: k番目の店舗の後 (=末尾は pos=len)
-  let h=`<div style="font-size:13px;color:var(--text-sub);margin-bottom:10px;">コース <b>${courseVal}</b> ／ 既存 ${sorted.length} 店舗<br>新店を入れる位置を選択（以降の順番は自動で繰り下げ）</div>`;
-  h+=`<button onclick="smPickInsertSlot(${orderColIdx},0)" style="display:block;width:100%;text-align:left;background:#ecfeff;border:1px solid #67e8f9;border-radius:6px;padding:8px 12px;margin-bottom:6px;cursor:pointer;font-size:13px;font-weight:600;color:#0e7490;">⬆ 先頭（1番）に挿入</button>`;
-  sorted.forEach((s,k)=>{
-    h+=`<div style="display:flex;align-items:center;gap:8px;padding:2px 4px;font-size:13px;"><span style="color:#94a3b8;min-width:30px;text-align:right;">${k+1}.</span><span style="flex:1;">${s.name||s.code}</span></div>`;
-    const label=(k===sorted.length-1)?`↳ 末尾（${k+2}番）に追加`:`↳ ここに挿入（${k+1}番の後＝${k+2}番）`;
+  const nlat=parseFloat((document.getElementById(`sme-${smColMap.lat}`)||{}).value);
+  const nlng=parseFloat((document.getElementById(`sme-${smColMap.lng}`)||{}).value);
+  const hasCoord=!isNaN(nlat)&&!isNaN(nlng);
+  let h=`<div style="font-size:13px;color:var(--text-sub);margin-bottom:10px;">コース <b>${courseVal}</b> ／ ${list.length}店舗<br>${hasCoord?'座標から区間移動時間を算出して店着時間を決めます':'<span style="color:#dc2626;">⚠ 新店の緯度経度が未入力 → 両隣の中間時刻で概算（先に座標を入れると正確）</span>'}</div>`;
+  h+=`<button onclick="smPickInsertSlot(${orderColIdx},0)" style="display:block;width:100%;text-align:left;background:#ecfeff;border:1px solid #67e8f9;border-radius:6px;padding:8px 12px;margin-bottom:6px;cursor:pointer;font-size:13px;font-weight:600;color:#0e7490;">⬆ 先頭（${list[0].tstr} より前）に挿入</button>`;
+  list.forEach((s,k)=>{
+    h+=`<div style="display:flex;align-items:center;gap:8px;padding:2px 4px;font-size:13px;"><span style="color:#94a3b8;min-width:30px;text-align:right;">${k+1}.</span><span style="flex:1;">${s.name||s.code}</span><span style="color:#0891b2;font-weight:600;">${s.tstr}</span></div>`;
+    const label=(k===list.length-1)?`↳ 末尾（${s.tstr} の後）に追加`:`↳ ここに挿入（${s.tstr} と ${list[k+1].tstr} の間）`;
     h+=`<button onclick="smPickInsertSlot(${orderColIdx},${k+1})" style="display:block;width:100%;text-align:left;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:6px;padding:5px 12px;margin-bottom:6px;cursor:pointer;font-size:12px;color:#0891b2;">${label}</button>`;
   });
-  smOpenPicker(`${smHeaders[orderColIdx]} の挿入位置`,h);
+  smOpenPicker(`${ed.label} 店着時間の挿入位置`,h);
 }
 
-// ピッカーで位置を選択 → 順番欄に新番号をセット + 採番情報を保留
+// ピッカーで位置選択 → 店着時間を算出してフォームに反映 + 後続シフトを保留
 function smPickInsertSlot(orderColIdx,pos){
-  const courseCol=smOrderCourseCol(orderColIdx);
-  const courseEl=courseCol!=null?document.getElementById(`sme-${courseCol}`):null;
+  const ed=smEditionByOrder(orderColIdx);
+  const courseEl=document.getElementById(`sme-${ed.course}`);
   const courseVal=courseEl?(courseEl.value||'').trim():'';
-  const inp=document.getElementById(`sme-${orderColIdx}`);
-  if(inp)inp.value=String(pos+1);// programmatic設定なので oninput は発火せず保留は残る
-  smPendingRenumber={orderColIdx,courseVal,pos};
+  const list=smCourseByTime(ed.course,courseVal,ed.time);
+  const nlat=parseFloat((document.getElementById(`sme-${smColMap.lat}`)||{}).value);
+  const nlng=parseFloat((document.getElementById(`sme-${smColMap.lng}`)||{}).value);
+  const hasCoord=!isNaN(nlat)&&!isNaN(nlng);
+  const prev=pos>0?list[pos-1]:null;
+  const next=pos<list.length?list[pos]:null;
+  let newMin, deltaMin=0;
+  if(prev&&next){
+    const G=next.tmin-prev.tmin;
+    const coordOk=hasCoord&&!isNaN(prev.lat)&&!isNaN(prev.lng)&&!isNaN(next.lat)&&!isNaN(next.lng);
+    if(coordOk&&G>0){
+      const dPN=msrCalcDist(prev.lat,prev.lng,nlat,nlng);              // 前→新店
+      const dNN=msrCalcDist(nlat,nlng,next.lat,next.lng);             // 新店→次
+      const dPNx=msrCalcDist(prev.lat,prev.lng,next.lat,next.lng)||1; // 前→次
+      newMin=prev.tmin+G*dPN/dPNx;                                    // 前→新店の移動時間ぶん
+      deltaMin=Math.max(0,Math.round(G*(dPN+dNN)/dPNx-G));            // 迂回で増えた分
+    }else{
+      newMin=(prev.tmin+next.tmin)/2;                                 // 座標なし→中間で概算
+    }
+    newMin=Math.min(Math.max(newMin,prev.tmin),next.tmin);            // 両隣の範囲にクランプ
+  }else if(!prev&&next){       // 先頭
+    newMin=smEndEstimate(list,'head',next,nlat,nlng,hasCoord);
+  }else if(prev&&!next){       // 末尾
+    newMin=smEndEstimate(list,'tail',prev,nlat,nlng,hasCoord);
+  }else{ smClosePicker(); return; }
+  const tInp=document.getElementById(`sme-${ed.time}`);
+  if(tInp)tInp.value=smMinToTime(newMin);
+  // 後続(=next以降)の店着時間を deltaMin 後ろ倒し
+  smPendingTimeShift=(deltaMin>0&&next)?{timeCol:ed.time,courseCol:ed.course,courseVal,fromMin:next.tmin,deltaMin}:null;
   smClosePicker();
+  let msg=`${ed.label}の店着時間を ${smMinToTime(newMin)} に設定しました。`;
+  if(smPendingTimeShift){
+    const cnt=smData.filter(r=>(r[`col_${ed.course}`]||'').trim()===courseVal&&r.row_number!==smEditRow&&smTimeToMin(r[`col_${ed.time}`])>=next.tmin).length;
+    msg+=`\n保存時に、以降 ${cnt} 店舗の店着時間を +${deltaMin}分 後ろ倒しします。`;
+  }
+  alert(msg);
 }
 
-// 保存成功後: 順番を整数連番に正規化し、変化した行だけ一括更新。
-// 追加・編集の両対応。編集でコース変更時は旧コースの穴も詰める。
-async function smApplyRenumber(){
-  if(!smPendingRenumber)return;
-  const {orderColIdx,courseVal,pos}=smPendingRenumber;
-  const courseCol=smOrderCourseCol(orderColIdx);
-  if(courseCol==null)return;
-  const editRow=smEditRow;// 追加時は null
-  const updates=[];
-  // 新コース: 編集中の自店を除外してソート → pos に挿入し 1..N+1
-  const newList=smCourseSorted(courseCol,courseVal,orderColIdx).filter(s=>s.row_number!==editRow);
-  newList.forEach((s,idx)=>{
-    const no=(idx<pos)?(idx+1):(idx+2);// pos以降は挿入ぶん +1
-    if(String(no)!==s.cur)updates.push({row_number:s.row_number,col_index:orderColIdx,value:String(no)});
-  });
-  // 旧コース: 編集でコースが変わった場合のみ、抜けた穴を詰めて 1..M に
-  if(editRow!=null){
-    const orig=smData.find(r=>r.row_number===editRow);
-    const oldCourseVal=orig?(orig[`col_${courseCol}`]||'').trim():'';
-    if(oldCourseVal&&oldCourseVal!==courseVal){
-      const oldList=smCourseSorted(courseCol,oldCourseVal,orderColIdx).filter(s=>s.row_number!==editRow);
-      oldList.forEach((s,idx)=>{
-        const no=idx+1;
-        if(String(no)!==s.cur)updates.push({row_number:s.row_number,col_index:orderColIdx,value:String(no)});
-      });
+// 先頭/末尾: ルート平均速度 × 隣店との距離で前後にずらす (座標/速度なしは ±2分)
+function smEndEstimate(list,which,neighbor,nlat,nlng,hasCoord){
+  if(hasCoord&&!isNaN(neighbor.lat)&&!isNaN(neighbor.lng)){
+    const sp=smRouteAvgSpeed(list);
+    if(sp>0){
+      const tt=Math.round(msrCalcDist(neighbor.lat,neighbor.lng,nlat,nlng)/sp);
+      return which==='head'?neighbor.tmin-tt:neighbor.tmin+tt;
     }
   }
+  return which==='head'?neighbor.tmin-2:neighbor.tmin+2;
+}
+
+// 保存成功後: 後続店舗の店着時間を deltaMin 後ろ倒し (順番はEFが時間順で自動採番)
+async function smApplyTimeShift(){
+  if(!smPendingTimeShift)return;
+  const {timeCol,courseCol,courseVal,fromMin,deltaMin}=smPendingTimeShift;
+  const updates=[];
+  smData
+    .filter(r=>(r[`col_${courseCol}`]||'').trim()===courseVal && r.row_number!==smEditRow)
+    .forEach(r=>{
+      const tm=smTimeToMin(r[`col_${timeCol}`]);
+      if(tm>=0 && tm>=fromMin)updates.push({row_number:r.row_number,col_index:timeCol,value:smMinToTime(tm+deltaMin)});
+    });
   if(!updates.length)return;
   await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_cells',updates})});
 }
@@ -3649,7 +3709,7 @@ function smClosePicker(){const m=document.getElementById('sm-pick-modal');if(m)m
 
 function smShowAdd(){
   smEditRow=null;
-  smPendingRenumber=null;
+  smPendingTimeShift=null;
   document.getElementById('sm-modal-title').textContent='店舗を追加';
   document.getElementById('sm-form').innerHTML=smBuildForm(null);
   document.getElementById('sm-submit').textContent='追加する';
@@ -3661,7 +3721,7 @@ function smEdit(rowNum){
   const record=smData.find(r=>r.row_number===rowNum);
   if(!record)return;
   smEditRow=rowNum;
-  smPendingRenumber=null;
+  smPendingTimeShift=null;
   document.getElementById('sm-modal-title').textContent='店舗を編集';
   document.getElementById('sm-form').innerHTML=smBuildForm(record);
   document.getElementById('sm-submit').textContent='更新する';
@@ -3828,9 +3888,9 @@ async function smSave(){
     if(!resp.ok||json.error){
       throw new Error(`${action} 失敗 (${resp.status}): ${json.error||'不明なエラー'}`);
     }
-    // 「間に挿入」が指定されていれば連番ふり直し (追加=新コース繰り下げ / 編集=新コース繰り下げ+旧コース穴詰め)
-    try{await smApplyRenumber();}catch(e){console.warn('[smApplyRenumber] 失敗',e);}
-    smPendingRenumber=null;
+    // 「間に挿入」で迂回遅延が出ていれば、後続店舗の店着時間を後ろ倒し (順番はEFが時間順で自動採番)
+    try{await smApplyTimeShift();}catch(e){console.warn('[smApplyTimeShift] 失敗',e);}
+    smPendingTimeShift=null;
     document.getElementById('sm-modal').style.display='none';
     // Sheets の書込→読出の伝播待ち + キャッシュ無効化
     invalidateShopMasterCache();
