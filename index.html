@@ -13531,6 +13531,53 @@ async function admMmDelete(course,type){
 }
 
 // コース毎の地図プレビュー (Leaflet + OpenStreetMap、 マイマップURL登録あれば優先)
+// ダイヤグラム地図モーダル用 GPS 状態 (測定画面とは独立)
+let diagMap=null, diagMapWatchId=null, diagMeMarker=null, diagMapFollow=true;
+
+function diagToggleGps(){
+  if(diagMapWatchId!==null){diagStopGps();return;}
+  if(!navigator.geolocation){alert('このブラウザはGPSに対応していません');return;}
+  const btn=document.getElementById('diag-gps-btn');
+  if(btn){btn.textContent='📍 GPS停止';btn.style.background='#dc2626';}
+  diagMapWatchId=navigator.geolocation.watchPosition(pos=>{
+    if(!diagMap)return;
+    const ll=[pos.coords.latitude,pos.coords.longitude];
+    if(!diagMeMarker){
+      const icon=L.divIcon({
+        html:'<div style="width:18px;height:18px;background:#1a56db;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 4px rgba(26,86,219,.3),0 1px 4px rgba(0,0,0,.5);"></div>',
+        className:'', iconSize:[18,18], iconAnchor:[9,9],
+      });
+      diagMeMarker=L.marker(ll,{icon,zIndexOffset:1000}).addTo(diagMap);
+    }else{
+      diagMeMarker.setLatLng(ll);
+    }
+    if(diagMapFollow)diagMap.panTo(ll,{animate:true,duration:.5});
+  },err=>{
+    alert('位置取得失敗: '+err.message);
+    diagStopGps();
+  },{enableHighAccuracy:true,maximumAge:5000,timeout:10000});
+}
+
+function diagStopGps(){
+  if(diagMapWatchId!==null){navigator.geolocation.clearWatch(diagMapWatchId);diagMapWatchId=null;}
+  if(diagMeMarker&&diagMap){diagMap.removeLayer(diagMeMarker);diagMeMarker=null;}
+  const btn=document.getElementById('diag-gps-btn');
+  if(btn){btn.textContent='📍 GPS開始';btn.style.background='rgba(255,255,255,.2)';}
+}
+
+function diagMapToggleFollow(){
+  diagMapFollow=!diagMapFollow;
+  const b=document.getElementById('diag-follow-btn');
+  if(b){b.textContent=diagMapFollow?'📍 追従ON':'📍 追従OFF';b.style.background=diagMapFollow?'#1a56db':'rgba(255,255,255,.25)';}
+}
+
+function diagCloseMap(){
+  diagStopGps();
+  diagMap=null;
+  const m=document.getElementById('diag-map-modal');
+  if(m)m.remove();
+}
+
 async function diagShowMap(courseKey){
   const shops=(window.__diagCourseStops||{})[courseKey];
   if(!shops||!shops.length){alert('コースデータが見つかりません');return;}
@@ -13552,14 +13599,20 @@ async function diagShowMap(courseKey){
   modal.innerHTML=`<div style="background:#fff;border-radius:12px;width:100%;max-width:900px;height:92vh;display:flex;flex-direction:column;overflow:hidden;">
     <div style="padding:10px 16px;background:var(--primary);color:#fff;display:flex;justify-content:space-between;align-items:center;">
       <div><b>🗺️ ${cn}</b> ／ ${typeLabel} ／ ${pts.length}/${shops.length}地点 (座標あり)</div>
-      <button onclick="document.getElementById('diag-map-modal').remove()" style="background:rgba(255,255,255,.2);color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">✕ 閉じる</button>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button onclick="diagToggleGps()" id="diag-gps-btn" style="background:rgba(255,255,255,.2);color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">📍 GPS開始</button>
+        <button onclick="diagMapToggleFollow()" id="diag-follow-btn" style="background:#1a56db;color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">📍 追従ON</button>
+        <button onclick="diagCloseMap()" style="background:rgba(255,255,255,.2);color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">✕ 閉じる</button>
+      </div>
     </div>
     <div id="diag-map-canvas" style="flex:1;"></div>
   </div>`;
   document.body.appendChild(modal);
+  diagMapFollow=true;// モーダルを開く度に追従ONで初期化
   // Leaflet 初期化 (DOM 反映を待つ)
   setTimeout(()=>{
     const map=L.map('diag-map-canvas');
+    diagMap=map;// GPSハンドラから参照するためモジュール変数へ
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:19}).addTo(map);
     const latlngs=[];
     pts.forEach(s=>{
