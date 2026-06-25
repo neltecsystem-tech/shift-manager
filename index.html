@@ -531,6 +531,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div><label>コース</label><select id="msr-course" onchange="msrRender()"><option value="">選択してください</option></select></div>
         <div style="margin-left:auto;display:flex;gap:6px;align-items:flex-end;">
           <button onclick="msrToggleGps()" id="msr-gps-btn" style="background:#3498DB;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">📍 GPS開始</button>
+          <button onclick="msrToggleMap()" id="msr-map-btn" style="background:#10b981;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">🗺 地図ナビ</button>
           <button onclick="msrSendProgress()" id="msr-progress-btn" style="background:#f59e0b;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">📤 途中送信</button>
           <button onclick="msrFinish()" style="background:#6366f1;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">🏁 終了</button>
           <button onclick="msrResetAll()" style="background:var(--danger);color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">全リセット</button>
@@ -540,6 +541,10 @@ tbody tr:hover { background:var(--primary-light); }
         📍 GPS追跡中... <span id="msr-gps-info"></span>
       </div>
       <div id="msr-nearest" style="display:none;margin-bottom:8px;padding:10px;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;font-size:13px;"></div>
+      <div id="msr-map-wrap" style="display:none;margin-bottom:8px;position:relative;">
+        <div id="msr-map" style="height:320px;border-radius:10px;border:1px solid var(--border);z-index:1;"></div>
+        <button onclick="msrToggleFollow()" id="msr-follow-btn" style="position:absolute;top:8px;right:8px;z-index:500;background:#1a56db;color:#fff;border:none;padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.3);">📍 追従ON</button>
+      </div>
       <div id="msr-table" style="margin-top:8px;"></div>
     </div>
   </div>
@@ -12844,6 +12849,7 @@ function msrRender(){
   const doneCount=shops.filter(s=>msrTimes[`${course}|${s[`col_${codeCol}`]}`]).length;
   h+=`<p style="text-align:right;font-size:13px;color:var(--text-sub);margin-top:8px;">完了: ${doneCount}/${shops.length}</p>`;
   document.getElementById('msr-table').innerHTML=h;
+  msrSyncMap();// 地図を開いていればコース/到着状況に合わせて順路を同期
 }
 
 function msrArrive(key){
@@ -12881,6 +12887,7 @@ function msrToggleGps(){
     document.getElementById('msr-gps-info').innerHTML=`精度: ${acc}m${accWarn}`;
     msrCheckAutoArrive();
     msrRender();
+    msrUpdateMe();
   },err=>{
     document.getElementById('msr-gps-info').textContent='位置取得失敗: '+err.message;
   },{enableHighAccuracy:true,maximumAge:5000,timeout:10000});
@@ -12893,7 +12900,141 @@ function msrStopGps(){
   document.getElementById('msr-gps-btn').style.background='#3498DB';
   document.getElementById('msr-nearest').style.display='none';
   document.getElementById('msr-gps-status').style.display='none';
+  if(msrMeMarker&&msrMap){msrMap.removeLayer(msrMeMarker);msrMeMarker=null;}
   msrRender();
+}
+
+// ──────────────────────────────────────────────────────────────
+// 地図ナビ (測定と同じ watchPosition を共有 = GPS監視は1本のまま)
+// 描画パターンはダイヤグラム地図 (diag map) に準拠
+// ──────────────────────────────────────────────────────────────
+let msrMap=null;            // Leaflet マップ本体 (遅延生成)
+let msrMapShown=false;      // 地図パネルの開閉
+let msrFollow=true;         // 現在地への追従ON/OFF
+let msrMeMarker=null;       // 現在地マーカー
+let msrRouteMarkers=[];     // 店舗(順路)マーカー
+let msrRouteLine=null;      // 順路ライン
+let msrLastRouteKey='';     // 再描画判定: コース等が変わった時だけ作り直す
+let msrLastDoneSig='';      // 再描画判定: 到着状況が変わった時だけ色を更新
+
+// 現在選択中コースの店舗を訪問順 (msrRender と同一のソート) で返し、座標ありのみ抽出。
+// seq は座標なし店舗も含めた通し番号なので、測定テーブルの # と一致する。
+function msrCurrentRouteShops(){
+  const area=document.getElementById('msr-area').value;
+  const type=document.getElementById('msr-type').value;
+  const course=document.getElementById('msr-course').value;
+  if(!course)return {course:'',shops:[]};
+  const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
+  const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
+  const timeCol=type==='am'?msrColMap.amTime:type==='keiba'?msrColMap.keibaTime:msrColMap.pmTime;
+  const codeCol=msrColMap.code??2;
+  const nameCol=msrColMap.name??3;
+  const latCol=msrColMap.lat, lngCol=msrColMap.lng;
+  let shops=msrData.filter(r=>msrAreaMatch(r[`col_${msrColMap.area??1}`],area)&&r[`col_${courseCol}`]===course);
+  const pt=t=>{
+    if(t==null)return null;const s=String(t).trim();if(!s)return null;
+    let m=s.match(/(\d{1,2}):(\d{2})/);if(m)return parseInt(m[1],10)*60+parseInt(m[2],10);
+    m=s.match(/(\d{1,2})時(\d{1,2})分?/);if(m)return parseInt(m[1],10)*60+parseInt(m[2],10);
+    m=s.match(/^(\d{3,4})$/);if(m){const v=m[1].padStart(4,'0');return parseInt(v.slice(0,2),10)*60+parseInt(v.slice(2,4),10);}
+    return null;
+  };
+  shops.sort((a,b)=>{
+    const ta=timeCol!==undefined?pt(a[`col_${timeCol}`]):null;
+    const tb=timeCol!==undefined?pt(b[`col_${timeCol}`]):null;
+    const va=ta!=null?ta:Infinity, vb=tb!=null?tb:Infinity;
+    if(va!==vb)return va-vb;
+    if(orderCol!==undefined){
+      const oa=parseFloat(a[`col_${orderCol}`]), ob=parseFloat(b[`col_${orderCol}`]);
+      const xa=isFinite(oa)?oa:99999, xb=isFinite(ob)?ob:99999;
+      if(xa!==xb)return xa-xb;
+    }
+    return (a[`col_${codeCol}`]||'').toString().localeCompare((b[`col_${codeCol}`]||'').toString());
+  });
+  const out=shops.map((s,i)=>({
+    seq:i+1, code:s[`col_${codeCol}`]||'', name:s[`col_${nameCol}`]||'',
+    lat:parseFloat(s[`col_${latCol}`]), lng:parseFloat(s[`col_${lngCol}`])
+  })).filter(s=>!isNaN(s.lat)&&!isNaN(s.lng));
+  return {course, shops:out};
+}
+
+function msrInitMap(){
+  if(msrMap)return;
+  msrMap=L.map('msr-map').setView([35.68,139.76],13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:19}).addTo(msrMap);
+}
+
+function msrToggleMap(){
+  msrMapShown=!msrMapShown;
+  const wrap=document.getElementById('msr-map-wrap');
+  const btn=document.getElementById('msr-map-btn');
+  wrap.style.display=msrMapShown?'block':'none';
+  btn.style.background=msrMapShown?'#ef4444':'#10b981';
+  btn.textContent=msrMapShown?'🗺 地図を閉じる':'🗺 地図ナビ';
+  if(!msrMapShown)return;
+  msrInitMap();
+  // 非表示→表示で Leaflet がタイルサイズを誤認するため invalidateSize 必須
+  setTimeout(()=>{
+    msrMap.invalidateSize();
+    msrLastRouteKey='';        // 強制再描画
+    msrSyncMap();
+    msrUpdateMe();
+  },80);
+}
+
+function msrToggleFollow(){
+  msrFollow=!msrFollow;
+  const b=document.getElementById('msr-follow-btn');
+  b.textContent=msrFollow?'📍 追従ON':'📍 追従OFF';
+  b.style.background=msrFollow?'#1a56db':'#94a3b8';
+  if(msrFollow&&msrGpsPos&&msrMap)msrMap.panTo([msrGpsPos.lat,msrGpsPos.lng]);
+}
+
+// 現在地マーカー更新。GPSコールバック毎に呼ばれるが setLatLng/panTo のみで軽量。
+function msrUpdateMe(){
+  if(!msrMap||!msrGpsPos)return;
+  const ll=[msrGpsPos.lat,msrGpsPos.lng];
+  if(!msrMeMarker){
+    const icon=L.divIcon({
+      html:'<div style="width:18px;height:18px;background:#1a56db;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 4px rgba(26,86,219,.3),0 1px 4px rgba(0,0,0,.5);"></div>',
+      className:'', iconSize:[18,18], iconAnchor:[9,9],
+    });
+    msrMeMarker=L.marker(ll,{icon,zIndexOffset:1000}).addTo(msrMap);
+  }else{
+    msrMeMarker.setLatLng(ll);
+  }
+  if(msrFollow)msrMap.panTo(ll,{animate:true,duration:.5});
+}
+
+// 順路マーカー/ラインを同期。コースや到着状況が変わった時だけ作り直す (GPSティック毎の無駄な再描画を防ぐ)。
+function msrSyncMap(){
+  if(!msrMapShown||!msrMap)return;
+  const {course,shops}=msrCurrentRouteShops();
+  const routeKey=`${document.getElementById('msr-area').value}|${document.getElementById('msr-type').value}|${course}`;
+  const doneSig=shops.map(s=>msrTimes[`${course}|${s.code}`]?'1':'0').join('');
+  if(routeKey===msrLastRouteKey&&doneSig===msrLastDoneSig)return; // 変化なし → 何もしない
+  const newRoute=routeKey!==msrLastRouteKey;
+  msrLastRouteKey=routeKey; msrLastDoneSig=doneSig;
+  msrRouteMarkers.forEach(m=>msrMap.removeLayer(m)); msrRouteMarkers=[];
+  if(msrRouteLine){msrMap.removeLayer(msrRouteLine);msrRouteLine=null;}
+  if(!shops.length)return;
+  const latlngs=[];
+  shops.forEach(s=>{
+    const ll=[s.lat,s.lng]; latlngs.push(ll);
+    const t=msrTimes[`${course}|${s.code}`];
+    const bg=t?'#22c55e':'#94a3b8';
+    const icon=L.divIcon({
+      html:`<div style="background:${bg};color:#fff;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);">${s.seq}</div>`,
+      className:'', iconSize:[26,26], iconAnchor:[13,13],
+    });
+    msrRouteMarkers.push(L.marker(ll,{icon}).addTo(msrMap)
+      .bindPopup(`<b>${s.seq}. ${s.name}</b><br>${t?'✅ 到着 '+t:'未到着'}`));
+  });
+  if(latlngs.length>1)msrRouteLine=L.polyline(latlngs,{color:'#3b82f6',weight:3,opacity:.6}).addTo(msrMap);
+  // 新コース読込時のみ画面合わせ (運転中に毎回ズームが飛ばないよう doneSig変化では動かさない)
+  if(newRoute){
+    if(msrFollow&&msrGpsPos)msrMap.panTo([msrGpsPos.lat,msrGpsPos.lng]);
+    else msrMap.fitBounds(latlngs,{padding:[40,40]});
+  }
 }
 
 function msrCheckAutoArrive(){
