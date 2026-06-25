@@ -3516,8 +3516,8 @@ function smBuildForm(record){
       html+=`<div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;">
         <input type="checkbox" id="sme-${i}" ${val==='TRUE'?'checked':''}>
         <label style="font-size:12px;color:var(--text-sub)">${h}</label></div>`;
-    }else if(!record&&h.includes('順番')){
-      // 順番列(新店追加時のみ): 入力 + 「○番と○番の間に挿入」ボタンで自動採番
+    }else if(h.includes('順番')){
+      // 順番列(追加・編集とも): 入力 + 「○番と○番の間に挿入」ボタンで自動採番
       html+=`<div style="margin-bottom:8px;">
         <label style="font-size:12px;color:var(--text-sub)">${h}</label>
         <div style="display:flex;gap:6px;">
@@ -3568,7 +3568,8 @@ function smInsertOrder(orderColIdx){
   const courseEl=document.getElementById(`sme-${courseCol}`);
   const courseVal=courseEl?(courseEl.value||'').trim():'';
   if(!courseVal){alert('先に「'+(smHeaders[courseCol]||'コース')+'」を入力してください');return;}
-  const sorted=smCourseSorted(courseCol,courseVal,orderColIdx);
+  // 編集中の店舗自身は一覧から除外 (自分を基準に挿入位置を選ばないように)
+  const sorted=smCourseSorted(courseCol,courseVal,orderColIdx).filter(s=>s.row_number!==smEditRow);
   if(!sorted.length){
     const inp=document.getElementById(`sme-${orderColIdx}`);
     if(inp)inp.value='1';
@@ -3598,18 +3599,33 @@ function smPickInsertSlot(orderColIdx,pos){
   smClosePicker();
 }
 
-// 追加成功後: 同コースを 1..N+1 に正規化し、変化した行だけ一括更新
+// 保存成功後: 順番を整数連番に正規化し、変化した行だけ一括更新。
+// 追加・編集の両対応。編集でコース変更時は旧コースの穴も詰める。
 async function smApplyRenumber(){
   if(!smPendingRenumber)return;
   const {orderColIdx,courseVal,pos}=smPendingRenumber;
   const courseCol=smOrderCourseCol(orderColIdx);
   if(courseCol==null)return;
-  const sorted=smCourseSorted(courseCol,courseVal,orderColIdx);// 追加前スナップショット
+  const editRow=smEditRow;// 追加時は null
   const updates=[];
-  sorted.forEach((s,idx)=>{
-    const newOrder=(idx<pos)?(idx+1):(idx+2);// pos以降は新店ぶん +1
-    if(String(newOrder)!==s.cur)updates.push({row_number:s.row_number,col_index:orderColIdx,value:String(newOrder)});
+  // 新コース: 編集中の自店を除外してソート → pos に挿入し 1..N+1
+  const newList=smCourseSorted(courseCol,courseVal,orderColIdx).filter(s=>s.row_number!==editRow);
+  newList.forEach((s,idx)=>{
+    const no=(idx<pos)?(idx+1):(idx+2);// pos以降は挿入ぶん +1
+    if(String(no)!==s.cur)updates.push({row_number:s.row_number,col_index:orderColIdx,value:String(no)});
   });
+  // 旧コース: 編集でコースが変わった場合のみ、抜けた穴を詰めて 1..M に
+  if(editRow!=null){
+    const orig=smData.find(r=>r.row_number===editRow);
+    const oldCourseVal=orig?(orig[`col_${courseCol}`]||'').trim():'';
+    if(oldCourseVal&&oldCourseVal!==courseVal){
+      const oldList=smCourseSorted(courseCol,oldCourseVal,orderColIdx).filter(s=>s.row_number!==editRow);
+      oldList.forEach((s,idx)=>{
+        const no=idx+1;
+        if(String(no)!==s.cur)updates.push({row_number:s.row_number,col_index:orderColIdx,value:String(no)});
+      });
+    }
+  }
   if(!updates.length)return;
   await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_cells',updates})});
 }
@@ -3645,6 +3661,7 @@ function smEdit(rowNum){
   const record=smData.find(r=>r.row_number===rowNum);
   if(!record)return;
   smEditRow=rowNum;
+  smPendingRenumber=null;
   document.getElementById('sm-modal-title').textContent='店舗を編集';
   document.getElementById('sm-form').innerHTML=smBuildForm(record);
   document.getElementById('sm-submit').textContent='更新する';
@@ -3811,8 +3828,8 @@ async function smSave(){
     if(!resp.ok||json.error){
       throw new Error(`${action} 失敗 (${resp.status}): ${json.error||'不明なエラー'}`);
     }
-    // 新店追加で「間に挿入」が指定されていれば、同コースの後続店舗を連番ふり直し
-    if(!smEditRow){try{await smApplyRenumber();}catch(e){console.warn('[smApplyRenumber] 失敗',e);}}
+    // 「間に挿入」が指定されていれば連番ふり直し (追加=新コース繰り下げ / 編集=新コース繰り下げ+旧コース穴詰め)
+    try{await smApplyRenumber();}catch(e){console.warn('[smApplyRenumber] 失敗',e);}
     smPendingRenumber=null;
     document.getElementById('sm-modal').style.display='none';
     // Sheets の書込→読出の伝播待ち + キャッシュ無効化
