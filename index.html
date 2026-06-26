@@ -1038,9 +1038,15 @@ tbody tr:hover { background:var(--primary-light); }
 
       <div id="adm-measure" class="adm-panel" style="display:none;">
         <div class="filters">
-          <div><label>日付</label><input type="date" id="adm-msr-date" onchange="admMsrLoad()"></div>
+          <div><label>日付</label>
+            <div style="display:flex;gap:4px;">
+              <input type="date" id="adm-msr-date" onchange="admMsrRender()">
+              <button onclick="admMsrAllPeriod()" id="adm-msr-allbtn" style="background:#6366f1;color:#fff;border:none;padding:0 12px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;">🗓 全期間</button>
+            </div>
+          </div>
           <div><label>コース</label><select id="adm-msr-course" onchange="admMsrRender()"><option value="">すべて</option></select></div>
           <div><label>担当者</label><select id="adm-msr-staff" onchange="admMsrRender()"><option value="">すべて</option></select></div>
+          <div style="margin-left:auto;display:flex;align-items:flex-end;"><button onclick="admMsrExport()" style="background:#16a34a;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;">⬇ CSV出力</button></div>
         </div>
         <div id="adm-msr-summary" style="margin-bottom:8px;"></div>
         <div class="table-wrap" id="adm-msr-table"></div>
@@ -11830,6 +11836,32 @@ function admPayPrint(){
 
 // --- 測定データ ---
 let admMsrData=[];
+let admMsrGroups=[];// admMsrRender が作る現在の絞り込み結果 (CSV出力用)
+
+// 日付を空にして全期間表示 (担当者で履歴を出す用)
+function admMsrAllPeriod(){
+  document.getElementById('adm-msr-date').value='';
+  admMsrRender();
+}
+
+// 現在の絞り込み結果を CSV ダウンロード (店舗ごと1行)
+function admMsrExport(){
+  if(!admMsrGroups.length){alert('出力するデータがありません');return;}
+  const rows=[['日付','コース','区分','担当者','開始','終了','#','店舗名','到着時刻','状態']];
+  admMsrGroups.forEach(g=>{
+    g.shops.forEach((s,i)=>{
+      rows.push([g.date,g.course,g.type||'',g.staff||'',(g.start_time||'').replace('(途中)',''),(g.end_time||'').replace('(途中)',''),i+1,s.name||'',s.time||'',g.isProgress?'途中':'確定']);
+    });
+  });
+  const csv='﻿'+rows.map(r=>r.map(c=>{const v=String(c==null?'':c);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}).join(',')).join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  const staff=document.getElementById('adm-msr-staff').value||'全員';
+  const date=document.getElementById('adm-msr-date').value||'全期間';
+  a.href=url;a.download=`測定履歴_${staff}_${date}.csv`;
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+}
 
 function admMsrInit(){
   const dateInput=document.getElementById('adm-msr-date');
@@ -11874,11 +11906,13 @@ function admMsrRender(){
     if(r.end_time&&!groups[key].end_time)groups[key].end_time=r.end_time;
   });
   const gList=Object.values(groups).sort((a,b)=>(b.date+b.start_time).localeCompare(a.date+a.start_time));
+  admMsrGroups=gList;// CSV出力用に保持
 
   // サマリー
   const totalGroups=gList.length;
   const finalGroups=gList.filter(g=>!g.isProgress).length;
-  document.getElementById('adm-msr-summary').innerHTML=`<span style="font-size:13px;color:var(--text-sub);">検索結果: ${totalGroups}件（確定${finalGroups}件 / 途中${totalGroups-finalGroups}件）</span>`;
+  const scope=[];scope.push(dateVal?dateVal:'🗓 全期間');if(staffVal)scope.push('👤 '+staffVal);if(courseVal)scope.push(courseVal);
+  document.getElementById('adm-msr-summary').innerHTML=`<span style="font-size:13px;color:var(--text-sub);"><b style="color:var(--text);">${scope.join(' ／ ')}</b> ｜ ${totalGroups}件（確定${finalGroups}件 / 途中${totalGroups-finalGroups}件）</span>`;
 
   if(!gList.length){document.getElementById('adm-msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">測定データがありません</p>';return;}
 
