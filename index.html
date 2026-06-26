@@ -118,6 +118,7 @@ tbody tr:hover { background:var(--primary-light); }
     <button onclick="showView('invoice',this)">請求書</button>
     <button onclick="showView('measure',this)">測定</button>
     <button onclick="showView('diagram',this)">ダイヤグラム</button>
+    <button onclick="showView('changelog',this)">📢 更新履歴</button>
     <a href="manual.html" target="_blank" rel="noopener" style="margin-left:auto;background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);text-decoration:none;padding:6px 12px;border-radius:6px;font-size:12px;align-self:center;" title="管理者マニュアルを開く">📖 マニュアル</a>
     <button onclick="adminShowLogin()" style="background:rgba(255,255,255,.15);color:#fff;">🔧 管理</button>
     <span id="sys-user-label" style="color:rgba(255,255,255,.7);font-size:12px;margin-left:8px;"></span>
@@ -546,6 +547,14 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="msrToggleFollow()" id="msr-follow-btn" style="position:absolute;top:8px;right:8px;z-index:500;background:#1a56db;color:#fff;border:none;padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.3);">📍 追従ON</button>
       </div>
       <div id="msr-table" style="margin-top:8px;"></div>
+    </div>
+  </div>
+
+  <!-- 更新履歴 (新機能・修正一覧) -->
+  <div id="view-changelog" class="hidden">
+    <div class="card">
+      <h2 style="margin-bottom:4px;">📢 更新履歴 <span style="font-size:13px;color:var(--text-sub);font-weight:normal;">新聞管理ツールの新機能・改善・修正のお知らせ</span></h2>
+      <div id="changelog-body" style="margin-top:12px;"></div>
     </div>
   </div>
 
@@ -1452,13 +1461,61 @@ function parseShift(key){
 }
 function parseShiftEv(key){parseShift(key);}
 
+// ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
+// 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
+const CHANGELOG=[
+  {date:'2026-06-26', tag:'新機能', title:'測定データを担当者ごとに全期間表示＋CSV出力',
+   desc:'管理→測定データで「🗓 全期間」を押すと日付を外して全履歴を表示。担当者を選べばその人の測定履歴をまとめて確認でき、「⬇ CSV出力」でダウンロードできます。'},
+  {date:'2026-06-25', tag:'新機能', title:'測定中に動く「地図ナビ」を追加',
+   desc:'測定画面の「🗺 地図ナビ」で、コースの順路（番号付き）と自分の現在地が地図に表示され、移動に追従します。到着済みは緑、未到着は灰のピンで一目で分かります。'},
+  {date:'2026-06-25', tag:'新機能', title:'ダイヤグラム地図に現在地GPS追従を追加',
+   desc:'ダイヤグラムの地図モーダルに「📍 GPS開始/追従」ボタンを追加。配達中に自分の位置を地図上で確認できます。閉じるとGPSは自動停止します。'},
+  {date:'2026-06-25', tag:'新機能', title:'店舗マスタ：新店を「○番と○番の間に挿入」で店着時間を自動算出',
+   desc:'新店登録・編集で「↕ 間に挿入」を押し位置を選ぶと、両隣の店着時間と座標から区間移動時間を計算して店着時間を自動入力。迂回で増えた分は以降の店舗の店着時間に自動で繰り下げます（順番は店着時間順で自動採番）。'},
+  {date:'2026-06-25', tag:'改善', title:'店舗マスタ：閉店時に順番の欠番を自動で詰める',
+   desc:'閉店でコース名がクリアされる際、そのコースの残り店舗の順番を店着時間順で1から振り直し、欠番が残らないようにしました。'},
+  {date:'2026-06-22', tag:'新機能', title:'シフト編集：営業所別・個人別シート(Section2)の自動生成',
+   desc:'シフト編集でSection2（営業所別・個人別）を自動生成。引継が0件のときは原因を診断表示。再生成時も引継などの特殊マークは保持されます。'},
+  {date:'2026-06-20', tag:'新機能', title:'管理画面に「📋 早見表」タブを追加',
+   desc:'曜日別・コース別の人員早見表を管理画面から直接編集できるようにしました。'},
+  {date:'2026-06-18', tag:'改善', title:'店舗検索・店舗マスタをライブの店舗マスタに統一',
+   desc:'古い内蔵データではなく最新の店舗マスタ(shop-master)を参照し、コース・ドライバーのズレを解消。500件上限には「すべて表示」ページングを追加しました。'},
+  {date:'2026-06-15', tag:'改善', title:'荷主リスト突合・区分照合の精度を多数改善',
+   desc:'夕刊コース(O列/新夕刊コースAJ)の参照ルール統一、ヘッダー無しシートの先頭行取りこぼし修正、半角カナ正規化、特殊請求店舗の競馬集計除外など、突合の精度を底上げしました。'},
+  {date:'2026-06-10', tag:'改善', title:'シフト編集：祝日の夕刊休刊ルールを自動反映',
+   desc:'金土以外の祝日は夕刊を休刊に（年始1/1〜3は別ルールで除外）。既存シートに後から反映するボタンも追加しました。'},
+];
+const CL_TAG_STYLE={'新機能':'background:#dbeafe;color:#1d4ed8;', '改善':'background:#cffafe;color:#0e7490;', '修正':'background:#fef3c7;color:#b45309;'};
+function renderChangelog(){
+  const body=document.getElementById('changelog-body');
+  if(!body)return;
+  let h='';
+  let lastDate='';
+  CHANGELOG.forEach(c=>{
+    if(c.date!==lastDate){
+      h+=`<div style="margin:18px 0 8px;font-size:13px;font-weight:700;color:var(--text-sub);border-bottom:1px solid var(--border);padding-bottom:4px;">${c.date}</div>`;
+      lastDate=c.date;
+    }
+    const ts=CL_TAG_STYLE[c.tag]||'background:#f1f5f9;color:#475569;';
+    h+=`<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+        <span style="${ts}padding:1px 10px;border-radius:10px;font-size:11px;font-weight:700;">${c.tag}</span>
+        <b style="font-size:14px;">${c.title}</b>
+      </div>
+      <div style="font-size:13px;color:var(--text-sub);line-height:1.6;">${c.desc}</div>
+    </div>`;
+  });
+  h+=`<p style="text-align:center;color:var(--text-sub);font-size:12px;margin-top:16px;">これより前の更新は省略しています。要望・不具合は管理者までご連絡ください。</p>`;
+  body.innerHTML=h;
+}
+
 function showView(v,btn){
   currentView=v;
   document.querySelectorAll('[id^="view-"]').forEach(e=>e.classList.add('hidden'));
   const e=document.getElementById('view-'+v);if(e)e.classList.remove('hidden');
   document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
   if(btn)btn.classList.add('active');
-  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit,invoice:invInit,myshift:initMyShift}[v]||function(){})();
+  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit,invoice:invInit,myshift:initMyShift,changelog:renderChangelog}[v]||function(){})();
 }
 
 // ---- マイシフト (本人 / 管理者は任意切替・カレンダー表記) ----
@@ -14361,6 +14418,7 @@ function sysApplyPermissions(perms){
     'invoice':{always:true, tier:'public'},
     'measure':{always:true, tier:'public'},
     'diagram':{always:true, tier:'public'},
+    'changelog':{always:true, tier:'public'},
     // 月別シフト = 管理者 / プランナー(shiftedit) / 法人オーナー のみ → 緑
     'shift':{perms:['admin','shiftedit','owner'], tier:'owner'},
     // 管理者のみ → 黒
