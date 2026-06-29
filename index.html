@@ -4183,6 +4183,17 @@ function invIsCorpOwner(){
   if(!me||me.biz_type!=='法人')return false;
   return (me.permissions||'').split(',').includes('owner');
 }
+// 「金額表示ON」の配下スタッフ (法人・非オーナーで本人 show_money) か判定
+// → オーナーと同じく配下全員分の請求書作成・稼働管理を許可する
+function invIsShowMoneySub(){
+  if(invIsAdmin||!invStaffName)return false;
+  const me=invRates.find(r=>r.name===invStaffName);
+  if(!me||me.biz_type!=='法人')return false;
+  if((me.permissions||'').split(',').includes('owner'))return false;
+  return !!invCompanyShowsMoney; // login応答: 本人 show_money
+}
+// 配下全員分を扱える権限 (法人オーナー or 金額表示ON配下)
+function invCanManageCompany(){ return invIsCorpOwner()||invIsShowMoneySub(); }
 // スタッフ管理の「編集(変更)」可否: 管理者PWログイン or ログイン本人が社員(区分=社員) のみ可
 // ※新規追加は別途可 (この判定は既存レコードの編集にのみ使用)
 function invCanEditStaff(){
@@ -4192,9 +4203,9 @@ function invCanEditStaff(){
   const me=invRates.find(r=>norm(r.name)===norm(invStaffName));
   return !!(me&&me.biz_type==='社員');
 }
-// 法人オーナーから見た配下ドライバー名一覧 (自分含む)
+// 配下ドライバー名一覧 (自分含む) — オーナー / 金額表示ON配下が同社全員を取得
 function invOwnerScopeNames(){
-  if(!invIsCorpOwner())return [];
+  if(!invCanManageCompany())return [];
   const me=invRates.find(r=>r.name===invStaffName);
   const comp=me?.company||'';
   if(!comp)return [invStaffName];
@@ -4351,8 +4362,14 @@ function invApplyUI(){
   // UI制御: 管理者 / 法人オーナーが触れる要素 (.inv-admin-only)
   const isOwner=invIsCorpOwner();
   const canManage=invIsAdmin||isOwner;
+  const canScope=invIsAdmin||invCanManageCompany(); // 配下選択セレクタを出せる範囲 (金額表示ON配下も含む)
   const adminEls=document.querySelectorAll('.inv-admin-only');
   adminEls.forEach(el=>{el.style.display=canManage?'':'none';});
+  // 金額表示ON の配下スタッフにも「配下選択セレクタ」だけは表示 (⚙単価設定等の管理機能は出さない)
+  ['inv-gen-staff','inv-staff-filter'].forEach(id=>{
+    const sel=document.getElementById(id);
+    if(sel&&sel.parentElement)sel.parentElement.style.display=canScope?'':'none';
+  });
   // 法人サブスタッフ (オーナー以外) は請求書作成タブを非表示
   const isCorpSub=invIsCorpSubStaff();
   const genTab=document.getElementById('inv-tab-generate');
@@ -4376,14 +4393,14 @@ function invApplyUI(){
   const genLabel=document.getElementById('inv-gen-staff-label');
   const genName=document.getElementById('inv-gen-staff-name');
   if(genLabel&&genName){
-    if(!invIsAdmin&&!isOwner&&invStaffName){genLabel.style.display='block';genName.textContent=invStaffName;}
+    if(!canScope&&invStaffName){genLabel.style.display='block';genName.textContent=invStaffName;}
     else{genLabel.style.display='none';}
   }
-  // スタッフセレクタ更新: 管理者=全名簿、 オーナー=配下スコープ、 一般スタッフ=自分のみ
+  // スタッフセレクタ更新: 管理者=全名簿、 オーナー/金額表示ON配下=配下スコープ、 一般スタッフ=自分のみ
   let names;
   if(invIsAdmin){
     names=invStaffNames.length?invStaffNames:invRates.map(r=>r.name);
-  }else if(isOwner){
+  }else if(invCanManageCompany()){
     names=invOwnerScopeNames();
   }else{
     names=invStaffName?[invStaffName]:[];
@@ -4391,10 +4408,10 @@ function invApplyUI(){
   if(!invIsAdmin&&invStaffName&&!names.includes(invStaffName))names.unshift(invStaffName);
   ['inve-staff','inv-staff-filter','inv-gen-staff'].forEach(id=>{
     const sel=document.getElementById(id);if(!sel)return;
-    const defaultVal=(!canManage&&invStaffName&&id==='inve-staff')?invStaffName:'';
+    const defaultVal=(!canScope&&invStaffName&&id==='inve-staff')?invStaffName:'';
     const val=sel.value||defaultVal;
     sel.innerHTML=(id==='inve-staff'||id==='inv-gen-staff'?'<option value="">選択</option>':'<option value="">すべて</option>')+names.map(n=>`<option${n===val?' selected':''}>${n}</option>`).join('');
-    if(!canManage&&invStaffName&&id==='inve-staff'){sel.value=invStaffName;sel.disabled=true;}
+    if(!canScope&&invStaffName&&id==='inve-staff'){sel.value=invStaffName;sel.disabled=true;}
     else{sel.disabled=false;}
   });
 }
@@ -4996,7 +5013,7 @@ async function invSaveRate(){
 
 // 請求書生成
 function invGenerate(){
-  const staff=invIsAdmin?document.getElementById('inv-gen-staff').value:invStaffName;
+  const staff=(invIsAdmin||invCanManageCompany())?document.getElementById('inv-gen-staff').value:invStaffName;
   const from=document.getElementById('inv-gen-from').value;
   const to=document.getElementById('inv-gen-to').value;
   if(!staff||!from||!to){alert('スタッフと期間を指定してください');return;}

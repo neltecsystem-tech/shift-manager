@@ -215,7 +215,8 @@ Deno.serve(async(req:Request)=>{
         myWork = allWork;
       } else {
         const scopeNames = new Set<string>([name]);
-        if (is_owner) {
+        // オーナー or 金額表示ON配下 → 同company全員を配下スコープに含める
+        if (is_owner || (is_corp_sub && company_shows_money)) {
           allRates.filter((r:any)=>r.biz_type==='法人' && r.company===company).forEach((r:any)=>scopeNames.add(r.name));
         }
         myWork = allWork.filter((w:any)=>scopeNames.has(w.staff));
@@ -238,6 +239,8 @@ Deno.serve(async(req:Request)=>{
     const admin = isAdmin(claims);
     const corpSub = isCorpSub(claims);
     const corpOwner = isCorpOwner(claims);
+    // 金額表示ON の配下スタッフは、オーナー同様に同company全員を扱える
+    const corpSubManager = corpSub && claims.company_shows_money === true;
     const callerName = claims.name || '';
     const callerCompany = claims.company || '';
 
@@ -249,7 +252,7 @@ Deno.serve(async(req:Request)=>{
     async function getScopeNames(): Promise<Set<string>> {
       if (scopeNames) return scopeNames;
       const s = new Set<string>([callerName]);
-      if (corpOwner && callerCompany) {
+      if ((corpOwner || corpSubManager) && callerCompany) {
         const subs = await fetchCompanyNames(sheetsToken, callerCompany);
         subs.forEach(n => s.add(n));
       }
