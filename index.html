@@ -5346,7 +5346,7 @@ async function invSaveRate(){
 function invTaxInfo(staffName, subtotal){
   const rate=invRates.find(r=>r.name===staffName);
   const invno=((rate&&rate.invoice_number)||'').trim();
-  if(invno){ const tax=Math.floor(subtotal*0.1); return {registered:true,invno,subtotal,tax,total:subtotal+tax}; }
+  if(invno){ const tax=Math.floor(subtotal/10); return {registered:true,invno,subtotal,tax,total:subtotal+tax}; }
   return {registered:false,invno:'',subtotal,tax:0,total:subtotal,inclTax:Math.floor(subtotal*10/110)};
 }
 function invGenerate(){
@@ -5408,10 +5408,22 @@ function invGenerateAll(){
   }).filter(g=>g.recs.length>0);
   if(!groups.length){alert('該当期間に稼働データがあるスタッフがいません');return;}
   groups.forEach(g=>{ g.t=invTaxInfo(g.name,g.total); });
+  // 消費税は「請求書全体の合計」に対して一度だけ計算する。
+  // (スタッフ/取引先ごとの小計×10%を切り捨ててから合算すると端数の誤差が出るため)
+  // 登録済(外税)分の小計合計に10%を掛け、端数差分は最終登録行に寄せて
+  // 表内の各行の数字が総合計とピタリ一致するように調整する。
+  const regGroups=groups.filter(g=>g.t.registered);
+  const grandSubReg=regGroups.reduce((s,g)=>s+g.total,0);
+  const grandTax=Math.floor(grandSubReg/10);
+  const taxDiff=grandTax-regGroups.reduce((s,g)=>s+g.t.tax,0);
+  if(regGroups.length&&taxDiff!==0){
+    const last=regGroups[regGroups.length-1];
+    last.t.tax+=taxDiff;
+    last.t.total=last.total+last.t.tax;
+  }
   invBulkLast={from,to,groups};
   const grandSub=groups.reduce((s,g)=>s+g.total,0);
-  const grandTax=groups.reduce((s,g)=>s+g.t.tax,0);
-  const grand=groups.reduce((s,g)=>s+g.t.total,0);
+  const grand=grandSub+grandTax;
   const fromFmt=from.replace(/-/g,'/'),toFmt=to.replace(/-/g,'/');
   const me=invRates.find(r=>r.name===invStaffName);
   const biller=(me&&me.company)?me.company:(invStaffName||'');
