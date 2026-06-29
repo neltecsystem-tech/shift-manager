@@ -406,7 +406,7 @@ tbody tr:hover { background:var(--primary-light); }
           <div id="inv-gen-staff-label" style="display:none;"><label style="font-size:12px;color:var(--text-sub)">スタッフ</label><p style="font-weight:bold;font-size:14px;margin-top:4px;" id="inv-gen-staff-name"></p></div>
           <div><label>開始日</label><input type="date" id="inv-gen-from"></div>
           <div><label>終了日</label><input type="date" id="inv-gen-to"></div>
-          <div><button onclick="invGenerate()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">作成</button></div>
+          <div style="display:flex;gap:8px;"><button onclick="invGenerate()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">作成</button><button onclick="invGenerateAll()" id="inv-gen-all-btn" title="スコープ内の全スタッフ分をまとめて作成（サマリー＋個別明細）" style="background:#0d9488;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;display:none;">📑 一括作成</button></div>
         </div>
         <div id="inv-preview" style="display:none;"></div>
       </div>
@@ -4537,6 +4537,9 @@ function invApplyUI(){
   const isCorpSub=invIsCorpSubStaff();
   const genTab=document.getElementById('inv-tab-generate');
   if(genTab)genTab.style.display=isCorpSub?'none':'';
+  // 一括作成ボタン: 管理者 or 配下を扱える人(法人オーナー/金額表示ON配下)のみ
+  const genAllBtn=document.getElementById('inv-gen-all-btn');
+  if(genAllBtn)genAllBtn.style.display=canScope?'':'none';
   if(isCorpSub){
     // 開かれていたら稼働記録に強制切替
     const genView=document.getElementById('inv-gen-view');
@@ -4597,7 +4600,8 @@ async function invLoadAll(){
   if(kwRes.old)kwCoursePrices.old=kwRes.old;
   if(kwRes.new)kwCoursePrices.new=kwRes.new;
   invStaffNames=namesRes.names||[];
-  if(!invIsAdmin&&invStaffName){
+  if(!invIsAdmin&&invStaffName&&!invCanManageCompany()){
+    // 一般スタッフのみ自分の稼働に限定。オーナー/金額表示ON配下は配下スコープ(サーバが返す同社全員)を保持
     invWork=invWork.filter(w=>w.staff===invStaffName);
   }
   invApplyUI();
@@ -5208,6 +5212,94 @@ function invGenerate(){
   document.getElementById('inv-preview').style.display='block';
 }
 
+// ── 一括作成: スコープ内の全スタッフ分を サマリー + 個別明細 で生成 ──
+let invBulkLast=null;
+function invGenerateAll(){
+  const from=document.getElementById('inv-gen-from').value;
+  const to=document.getElementById('inv-gen-to').value;
+  if(!from||!to){alert('期間を指定してください');return;}
+  const inP=w=>w.date&&w.date.replace(/\//g,'-')>=from&&w.date.replace(/\//g,'-')<=to;
+  let names;
+  if(invIsAdmin){ names=[...new Set(invWork.filter(inP).map(w=>w.staff).filter(Boolean))]; }
+  else if(invCanManageCompany()){ names=invOwnerScopeNames(); }
+  else { names=invStaffName?[invStaffName]:[]; }
+  const cmpDate=(a,b)=>(a.date||'').replace(/\//g,'-').localeCompare((b.date||'').replace(/\//g,'-'));
+  const groups=names.map(name=>{
+    const recs=invWork.filter(w=>w.staff===name&&inP(w)).slice().sort(cmpDate);
+    return {name,recs,total:recs.reduce((s,w)=>s+Number(w.amount||0),0)};
+  }).filter(g=>g.recs.length>0);
+  if(!groups.length){alert('該当期間に稼働データがあるスタッフがいません');return;}
+  invBulkLast={from,to,groups};
+  const grand=groups.reduce((s,g)=>s+g.total,0);
+  const fromFmt=from.replace(/-/g,'/'),toFmt=to.replace(/-/g,'/');
+  const me=invRates.find(r=>r.name===invStaffName);
+  const biller=(me&&me.company)?me.company:(invStaffName||'');
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const today=new Date().toLocaleDateString('ja-JP');
+
+  let h=`<div id="inv-print-area" style="background:#fff;padding:32px;border:1px solid var(--border);border-radius:12px;margin-top:16px;max-width:820px;">`;
+  // ===== サマリー =====
+  h+=`<div style="text-align:center;margin-bottom:20px;"><h2 style="font-size:22px;margin:0;border-bottom:3px double #1e293b;display:inline-block;padding-bottom:4px;">請求書 サマリー</h2></div>`;
+  h+=`<div style="display:flex;justify-content:space-between;margin-bottom:16px;">`;
+  h+=`<div><p style="font-size:18px;font-weight:bold;border-bottom:1px solid #1e293b;padding-bottom:2px;">株式会社NELTEC 御中</p></div>`;
+  h+=`<div style="text-align:right;font-size:13px;">${biller?`<p style="font-size:15px;font-weight:bold;">${esc(biller)}</p>`:''}<p style="color:var(--text-sub);">請求日: ${today}</p><p style="color:var(--text-sub);">請求期間: ${fromFmt} ～ ${toFmt}</p></div>`;
+  h+=`</div>`;
+  h+=`<div style="background:#f1f5f9;border-radius:8px;padding:16px;text-align:center;margin-bottom:18px;"><p style="font-size:14px;color:var(--text-sub);">ご請求金額 合計（${groups.length}名）</p><p style="font-size:28px;font-weight:bold;color:var(--primary);">¥${grand.toLocaleString()}</p></div>`;
+  h+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #dde1e8;width:42px;">No.</th><th style="padding:8px;border:1px solid #dde1e8;text-align:left;">スタッフ</th><th style="padding:8px;border:1px solid #dde1e8;width:80px;">件数</th><th style="padding:8px;border:1px solid #dde1e8;text-align:right;width:150px;">金額</th></tr></thead><tbody>`;
+  groups.forEach((g,i)=>{
+    h+=`<tr><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:center;">${i+1}</td><td style="padding:6px 8px;border:1px solid #dde1e8;">${esc(g.name)}</td><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:center;">${g.recs.length}</td><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:right;font-weight:bold;">¥${g.total.toLocaleString()}</td></tr>`;
+  });
+  h+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="3" style="padding:8px;border:1px solid #dde1e8;text-align:right;">合計</td><td style="padding:8px;border:1px solid #dde1e8;text-align:right;font-size:15px;">¥${grand.toLocaleString()}</td></tr>`;
+  h+=`</tbody></table>`;
+  // ===== 個別明細 (各ページ改ページ) =====
+  groups.forEach((g,i)=>{
+    h+=`<div class="pgbreak" style="margin-top:28px;border-top:2px dashed #cbd5e1;padding-top:18px;">`;
+    h+=`<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px;"><div><span style="font-size:12px;color:var(--text-sub);">個別明細 ${i+1}/${groups.length}</span><br><span style="font-size:17px;font-weight:bold;">${esc(g.name)}</span></div><div style="text-align:right;font-size:12px;color:var(--text-sub);">${esc(biller)}<br>期間: ${fromFmt} ～ ${toFmt}<br><span style="font-size:16px;font-weight:bold;color:var(--primary);">¥${g.total.toLocaleString()}</span></div></div>`;
+    h+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="padding:6px;border:1px solid #dde1e8;text-align:left;">日付</th><th style="padding:6px;border:1px solid #dde1e8;">コース</th><th style="padding:6px;border:1px solid #dde1e8;">区分</th><th style="padding:6px;border:1px solid #dde1e8;">個数</th><th style="padding:6px;border:1px solid #dde1e8;text-align:right;">単価</th><th style="padding:6px;border:1px solid #dde1e8;text-align:right;">金額</th></tr></thead><tbody>`;
+    g.recs.forEach(w=>{
+      h+=`<tr><td style="padding:5px 6px;border:1px solid #dde1e8;">${esc(w.date)}</td><td style="padding:5px 6px;border:1px solid #dde1e8;text-align:center;">${esc(w.course)}</td><td style="padding:5px 6px;border:1px solid #dde1e8;text-align:center;">${esc(w.category)}</td><td style="padding:5px 6px;border:1px solid #dde1e8;text-align:center;">${esc(w.quantity||'')}</td><td style="padding:5px 6px;border:1px solid #dde1e8;text-align:right;">${w.unit_price?'¥'+Number(w.unit_price).toLocaleString():''}</td><td style="padding:5px 6px;border:1px solid #dde1e8;text-align:right;font-weight:bold;">${w.amount?'¥'+Number(w.amount).toLocaleString():''}</td></tr>`;
+    });
+    h+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="5" style="padding:6px;border:1px solid #dde1e8;text-align:right;">合計</td><td style="padding:6px;border:1px solid #dde1e8;text-align:right;">¥${g.total.toLocaleString()}</td></tr>`;
+    h+=`</tbody></table></div>`;
+  });
+  h+=`</div>`;
+  h+=`<div style="margin-top:12px;display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;">`;
+  h+=`<button onclick="invPrintPDF()" style="background:#64748b;color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">🖨 PDF印刷（サマリー＋全明細）</button>`;
+  h+=`<button onclick="invConfirmSaveAll()" id="inv-bulk-save-btn" style="background:var(--danger);color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">✅ 全員分を確定・保存</button>`;
+  h+=`</div>`;
+  document.getElementById('inv-preview').innerHTML=h;
+  document.getElementById('inv-preview').style.display='block';
+}
+
+async function invConfirmSaveAll(){
+  if(!invBulkLast||!invBulkLast.groups.length){alert('先に「一括作成」してください');return;}
+  const {from,to,groups}=invBulkLast;
+  const grand=groups.reduce((s,g)=>s+g.total,0);
+  if(!confirm(`${groups.length}名分の請求書を確定・保存しますか？（合計 ¥${grand.toLocaleString()}）`))return;
+  const btn=document.getElementById('inv-bulk-save-btn');
+  btn.disabled=true;
+  const results=[];
+  for(let i=0;i<groups.length;i++){
+    const g=groups[i];
+    btn.textContent=`保存中... (${i+1}/${groups.length})`;
+    try{
+      const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/save-invoice-pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({staff:g.name,from,to,records:g.recs,total:g.total})});
+      const json=await resp.json();
+      if(json.success){
+        const rowNums=g.recs.map(w=>w.row_number).filter(Boolean);
+        if(rowNums.length){ await invApi({action:'confirm_records',row_numbers:rowNums}).catch(()=>{}); g.recs.forEach(w=>{w.confirmed=new Date().toISOString().split('T')[0];}); }
+        results.push({name:g.name,url:json.url});
+      }else{ results.push({name:g.name,error:json.error||'保存失敗'}); }
+    }catch(e){ results.push({name:g.name,error:e.message}); }
+  }
+  const okN=results.filter(r=>r.url).length;
+  btn.textContent=`✅ ${okN}/${results.length} 保存済み`;btn.style.background='#22c55e';
+  const div=document.createElement('div');
+  div.style.cssText='margin-top:12px;font-size:13px;line-height:1.7;';
+  div.innerHTML=results.map(r=>r.url?`<div>📄 <a href="${r.url}" target="_blank" style="color:#1a56db;">${r.name} の請求書を開く</a></div>`:`<div style="color:#dc2626;">⚠ ${r.name}: ${r.error}</div>`).join('');
+  btn.parentNode.appendChild(div);
+}
+
 async function invConfirmSave(staff,from,to,total){
   if(!confirm(`${staff}の請求書（¥${total.toLocaleString()}）を確定・保存しますか？`))return;
   const btn=document.getElementById('inv-confirm-btn');
@@ -5246,7 +5338,7 @@ async function invConfirmSave(staff,from,to,total){
 function invPrintPDF(){
   const content=document.getElementById('inv-print-area').innerHTML;
   const win=window.open('','_blank');
-  win.document.write(`<!DOCTYPE html><html><head><title>請求書</title><style>body{font-family:'Meiryo',sans-serif;padding:20px;color:#1e293b;}table{width:100%;border-collapse:collapse;}th,td{padding:6px 8px;border:1px solid #ccc;}@media print{button{display:none !important;}}</style></head><body>${content}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
+  win.document.write(`<!DOCTYPE html><html><head><title>請求書</title><style>body{font-family:'Meiryo',sans-serif;padding:20px;color:#1e293b;}table{width:100%;border-collapse:collapse;}th,td{padding:6px 8px;border:1px solid #ccc;}.pgbreak{page-break-before:always;}@media print{button{display:none !important;}}</style></head><body>${content}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
   win.document.close();
 }
 
