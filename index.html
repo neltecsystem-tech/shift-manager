@@ -116,6 +116,7 @@ tbody tr:hover { background:var(--primary-light); }
     <button onclick="showView('defects',this)">不具合管理</button>
     <button onclick="showView('shopmaster',this)">店舗マスタ</button>
     <button onclick="showView('invoice',this)">請求書</button>
+    <button onclick="showView('ownermembers',this)">👥 自社管理</button>
     <button onclick="showView('measure',this)">測定</button>
     <button onclick="showView('diagram',this)">ダイヤグラム</button>
     <button onclick="showView('changelog',this)">📢 更新履歴</button>
@@ -520,6 +521,9 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
       </div>
     </div>
+
+  <!-- 自社管理 (法人オーナー専用。invOwnerRenderView が中身を生成) -->
+  <div id="view-ownermembers" class="hidden"></div>
 
   <!-- 測定画面 -->
   <div id="view-measure" class="hidden">
@@ -1517,7 +1521,7 @@ function showView(v,btn){
   const e=document.getElementById('view-'+v);if(e)e.classList.remove('hidden');
   document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
   if(btn)btn.classList.add('active');
-  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit,invoice:invInit,myshift:initMyShift,changelog:renderChangelog}[v]||function(){})();
+  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit,invoice:invInit,myshift:initMyShift,changelog:renderChangelog,ownermembers:invOwnerRenderView}[v]||function(){})();
 }
 
 // ---- マイシフト (本人 / 管理者は任意切替・カレンダー表記) ----
@@ -4206,38 +4210,41 @@ function invOwnerMembers(){
   const comp=me?.company||'';
   return invRates.filter(r=>r.biz_type==='法人'&&r.company===comp);
 }
-async function invOwnerOpenMembers(){
-  try{ invOwnerRenderMembers(); }catch(e){ alert('表示エラー: '+e.message); return; } // まず手元データで即表示
-  try{ await invOwnerRefresh(); invOwnerRenderMembers(); }catch(_){} // 裏で最新化(失敗しても開いたまま)
+function invOwnerOpenMembers(){ showView('ownermembers'); } // 請求書ボタン → 自社管理ビューへ
+// トップナビ「自社管理」ビューの描画 (showView のフックから呼ばれる)
+function invOwnerRenderView(){
+  const cont=document.getElementById('view-ownermembers'); if(!cont)return;
+  if(!invIsCorpOwner()){ cont.innerHTML='<div class="card"><p style="padding:24px;color:var(--text-sub);text-align:center;">この画面は法人オーナー専用です。</p></div>'; return; }
+  invOwnerDrawView(cont); // 手元データで即描画
+  invOwnerRefresh().then(()=>{ if(typeof currentView!=='undefined'&&currentView==='ownermembers')invOwnerDrawView(cont); }).catch(()=>{}); // 裏で最新化
 }
-function invOwnerRenderMembers(){
-  document.getElementById('inv-owner-modal')?.remove();
+function invOwnerDrawView(cont){
+  const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const me=invRates.find(r=>r.name===invStaffName);
   const showMoney=(me?.permissions||'').split(',').includes('show_money');
-  const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const rows=invOwnerMembers().map(m=>{
     const isOwnerRow=(m.permissions||'').split(',').includes('owner');
-    return `<div style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;">
-      <div style="flex:1;"><b>${esc(m.name)}</b> ${isOwnerRow?'<span style="color:#16a34a;font-size:12px;">👑代表</span>':''}<div style="font-size:11px;color:var(--text-sub);">ID: ${esc(m.login_id)||'-'}</div></div>
-      <button onclick="invOwnerEdit(${m.row_number})" style="background:#6366f1;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;">編集</button>
-      ${isOwnerRow?'':`<button onclick="invOwnerDelete(${m.row_number},'${esc(m.name).replace(/'/g,'')}')" style="background:var(--danger);color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;">削除</button>`}
+    return `<div style="display:flex;align-items:center;gap:8px;padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;">
+      <div style="flex:1;"><b style="font-size:15px;">${esc(m.name)}</b> ${isOwnerRow?'<span style="color:#16a34a;font-size:12px;margin-left:6px;">👑 代表(オーナー)</span>':''}<div style="font-size:12px;color:var(--text-sub);margin-top:2px;">ログインID: ${esc(m.login_id)||'-'}</div></div>
+      <button onclick="invOwnerEdit(${m.row_number})" style="background:#6366f1;color:#fff;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;">編集</button>
+      ${isOwnerRow?'':`<button onclick="invOwnerDelete(${m.row_number},'${esc(m.name).replace(/'/g,'')}')" style="background:var(--danger);color:#fff;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;">削除</button>`}
     </div>`;
   }).join('');
-  const html=`<div id="inv-owner-modal" style="position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;">
-    <div style="background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:90vh;overflow:auto;padding:20px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><h3 style="margin:0;">👥 自社メンバー管理</h3><button onclick="document.getElementById('inv-owner-modal').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;">×</button></div>
-      <label style="display:flex;align-items:center;gap:8px;background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:10px 12px;margin-bottom:14px;cursor:pointer;"><input type="checkbox" id="inv-owner-showmoney" ${showMoney?'checked':''} onchange="invOwnerToggleShowMoney(this.checked)"> 💰 配下メンバーに金額(単価・請求額)を表示する</label>
-      <div style="margin-bottom:10px;"><button onclick="invOwnerEdit(0)" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ メンバー追加</button></div>
-      ${rows||'<p style="color:var(--text-sub);text-align:center;padding:20px;">メンバーがいません</p>'}
-      <p style="font-size:11px;color:var(--text-sub);margin-top:10px;">※ 単価(金額)の設定は管理者が行います。ここでは氏名・ログイン情報・金額表示の切替を管理できます。</p>
-    </div></div>`;
-  document.body.insertAdjacentHTML('beforeend',html);
+  cont.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+      <h2 style="margin:0;">👥 自社メンバー管理 <span style="font-size:13px;color:var(--text-sub);font-weight:normal;">${esc(me?.company||'')}</span></h2>
+      <button onclick="invOwnerEdit(0)" style="background:var(--primary);color:#fff;border:none;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:600;">＋ メンバー追加</button>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:12px 14px;margin-bottom:16px;cursor:pointer;"><input type="checkbox" ${showMoney?'checked':''} onchange="invOwnerToggleShowMoney(this.checked)"> <span style="font-weight:600;">💰 配下メンバーに金額(単価・請求額)を表示する</span></label>
+    ${rows||'<p style="color:var(--text-sub);text-align:center;padding:30px;">メンバーがいません。「＋メンバー追加」から登録してください。</p>'}
+    <p style="font-size:12px;color:var(--text-sub);margin-top:14px;">※ 単価(金額)の設定は管理者が行います。ここでは氏名・ログイン情報の管理と、配下への金額表示の切替ができます。</p>
+  </div>`;
 }
 async function invOwnerToggleShowMoney(on){
   const me=invRates.find(r=>r.name===invStaffName); if(!me)return;
   const r=await invApi({action:'owner_save_member',record:{name:me.name,login_id:me.login_id,show_money:on},row_number:me.row_number});
-  if(r&&r.success){ await invOwnerRefresh(); invApplyUI(); invOwnerRenderMembers(); }
-  else { alert('切替に失敗: '+(r&&r.error||'')); invOwnerRenderMembers(); }
+  if(r&&r.success){ await invOwnerRefresh(); invApplyUI(); invOwnerRenderView(); }
+  else { alert('切替に失敗: '+(r&&r.error||'')); invOwnerRenderView(); }
 }
 function invOwnerEdit(rowNum){
   const m = rowNum? invOwnerMembers().find(x=>x.row_number===rowNum) : {name:'',login_id:'',row_number:0};
@@ -4265,13 +4272,13 @@ async function invOwnerSave(rowNum){
   const me=invRates.find(r=>r.name===invStaffName);
   if(rowNum&&me&&me.row_number===rowNum)rec.show_money=(me.permissions||'').split(',').includes('show_money');// 自分編集時はshow_money保全
   const r=await invApi({action:'owner_save_member',record:rec,row_number:rowNum||undefined});
-  if(r&&r.success){ document.getElementById('inv-owner-edit')?.remove(); await invOwnerRefresh(); invOwnerRenderMembers(); }
+  if(r&&r.success){ document.getElementById('inv-owner-edit')?.remove(); await invOwnerRefresh(); invOwnerRenderView(); }
   else alert('保存に失敗: '+(r&&r.error||''));
 }
 async function invOwnerDelete(rowNum,name){
   if(!confirm('「'+name+'」を削除しますか？'))return;
   const r=await invApi({action:'owner_delete_member',row_number:rowNum});
-  if(r&&r.success){ await invOwnerRefresh(); invOwnerRenderMembers(); }
+  if(r&&r.success){ await invOwnerRefresh(); invOwnerRenderView(); }
   else alert('削除に失敗: '+(r&&r.error||''));
 }
 
@@ -14515,6 +14522,8 @@ function sysApplyPermissions(perms){
     'changelog':{always:true, tier:'public'},
     // 月別シフト = 管理者 / プランナー(shiftedit) / 法人オーナー のみ → 緑
     'shift':{perms:['admin','shiftedit','owner'], tier:'owner'},
+    // 自社管理 = 法人オーナーのみ → 緑
+    'ownermembers':{perms:['owner'], tier:'owner'},
     // 管理者のみ → 黒
     'tenpo':{perm:'admin', tier:'admin'},
     'search':{perm:'admin', tier:'admin'},
