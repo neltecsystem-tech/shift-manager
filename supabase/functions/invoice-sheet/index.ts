@@ -26,6 +26,7 @@ const RATE_HEADERS = ['スタッフ名','朝刊(月-金)','朝刊(土)','夕刊/
 const SERVICE_ACCOUNT = JSON.parse(Deno.env.get('GOOGLE_SERVICE_ACCOUNT_KEY')!);
 const SESSION_SECRET = Deno.env.get('SHIFT_SESSION_SECRET') || '';
 const ADMIN_PASSWORD = Deno.env.get('SHIFT_ADMIN_PASSWORD') || 'neltec2026';
+const SYNC_SECRET = Deno.env.get('SYNC_SECRET') || ''; // 会計同期cron用の秘密ヘッダ
 const TOKEN_EXPIRY_MS = 12 * 60 * 60 * 1000; // 12時間
 
 // ---- セッショントークン (HMAC-SHA256 署名) ----
@@ -91,6 +92,13 @@ function memberShowsMoney(rates: any[], name: string): boolean {
   if (!name) return false;
   const r = rates.find((x: any) => x.name === name);
   return !!(r && (r.permissions || '').split(',').includes('show_money'));
+}
+// 取引先名/会社名の正規化 (法人格・記号・空白を除去して突合用キーに)
+function normPartner(s: string): string {
+  return String(s || '')
+    .replace(/株式会社|合同会社|有限会社|（株）|\(株\)|㈱|（合）|\(合\)|（有）|\(有\)/g, '')
+    .replace(/[\s　・,，\.。\-－―ー]/g, '')
+    .toLowerCase().trim();
 }
 // 同じ company の名前リスト (オーナー含む) を取得 (法人オーナー権限スコープ用)
 async function fetchCompanyNames(sheetsToken: string, company: string): Promise<string[]> {
@@ -231,6 +239,73 @@ Deno.serve(async(req:Request)=>{
       if(!admin_password || admin_password !== ADMIN_PASSWORD) return jsonResp({success:false,error:'管理者パスワードが正しくありません'},401);
       const sessionToken = await createToken({ role: 'admin', name: 'admin' });
       return jsonResp({success:true, auth_token: sessionToken});
+    }
+
+    // ── 会計ツール連携: 単価マスタの T番号(invoice_number) を Supabase テーブルへ同期 ──
+    //   admin_password または cron秘密ヘッダ(x-sync-secret)でゲート。会計側は acc_shift_invoice_numbers を読むだけ。
+    if(action==='sync_invoice_numbers'){
+      const cronSecret = req.headers.get('x-sync-secret') || '';
+      const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
+      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+      const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if(!SB_URL || !SRK) return jsonResp({error:'supabase env missing'},500);
+      const token = await getAccessToken();
+      const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${token}`}});
+      const rates = parseRates((await resp.json()).values||[]);
+      const seen = new Set<string>();
+      const recs = rates.filter((r:any)=>r.name && (r.invoice_number||'').trim()).map((r:any)=>({
+        name: String(r.name).trim(),
+        invoice_number: String(r.invoice_number).trim(),
+        company: (r.company||'').trim() || null,
+        updated_at: new Date().toISOString(),
+      })).filter((r:any)=>{ if(seen.has(r.name))return false; seen.add(r.name); return true; });
+      if(recs.length){
+        const up = await fetch(`${SB_URL}/rest/v1/acc_shift_invoice_numbers`,{
+          method:'POST',
+          headers:{'apikey':SRK,'Authorization':`Bearer ${SRK}`,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=minimal'},
+          body: JSON.stringify(recs),
+        });
+        if(!up.ok){ const t=await up.text(); return jsonResp({error:'db upsert failed: '+up.status+' '+t.slice(0,300)},500); }
+      }
+      return jsonResp({success:true, synced:recs.length});
+    }
+
+    // ── 会計→現場 反映: acc_invoice_partners の T番号 を 単価マスタ(invoice_number) へ書き戻す ──
+    //   会計が正。正規化名で 単価マスタの name または company に一致する行へセット。dry_run でプレビューのみ。
+    if(action==='reflect_invoice_numbers'){
+      const cronSecret = req.headers.get('x-sync-secret') || '';
+      const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
+      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      const dryRun = !!body.dry_run;
+      const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+      const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if(!SB_URL || !SRK) return jsonResp({error:'supabase env missing'},500);
+      const pr = await fetch(`${SB_URL}/rest/v1/acc_invoice_partners?select=name,invoice_number`,{headers:{'apikey':SRK,'Authorization':`Bearer ${SRK}`}});
+      const partners = (await pr.json()) as any[];
+      const pmap = new Map<string,string>();
+      partners.forEach((p:any)=>{ const t=(p.invoice_number||'').trim(); if(t) pmap.set(normPartner(p.name), t); });
+      const token = await getAccessToken();
+      const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${token}`}});
+      const rates = parseRates((await resp.json()).values||[]);
+      const data:any[] = [];
+      const changes:any[] = [];
+      for(const r of rates){
+        if(!r.name) continue;
+        const tno = pmap.get(normPartner(r.name)) || (r.company ? pmap.get(normPartner(r.company)) : undefined);
+        if(!tno) continue;
+        if((r.invoice_number||'').trim() === tno) continue; // 既に同値
+        changes.push({ row: r.row_number, name: r.name, company: r.company||'', invoice_number: tno });
+        data.push({ range: `'単価マスタ'!V${r.row_number}`, values: [[tno]] });
+      }
+      if(!dryRun && data.length){
+        const up = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{
+          method:'POST', headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},
+          body: JSON.stringify({ valueInputOption:'USER_ENTERED', data }),
+        });
+        if(!up.ok){ const t=await up.text(); return jsonResp({error:'sheet update failed: '+up.status+' '+t.slice(0,300)},500); }
+      }
+      return jsonResp({success:true, dry_run:dryRun, updated:data.length, changes});
     }
 
     // ---- 以下はトークン必須 ----
