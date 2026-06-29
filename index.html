@@ -5320,6 +5320,13 @@ async function invSaveRate(){
 }
 
 // 請求書生成
+// インボイス登録番号の有無で 外税(消費税10%上乗せ)/内税(税込) を判定
+function invTaxInfo(staffName, subtotal){
+  const rate=invRates.find(r=>r.name===staffName);
+  const invno=((rate&&rate.invoice_number)||'').trim();
+  if(invno){ const tax=Math.floor(subtotal*0.1); return {registered:true,invno,subtotal,tax,total:subtotal+tax}; }
+  return {registered:false,invno:'',subtotal,tax:0,total:subtotal,inclTax:Math.floor(subtotal*10/110)};
+}
 function invGenerate(){
   const staff=(invIsAdmin||invCanManageCompany())?document.getElementById('inv-gen-staff').value:invStaffName;
   const from=document.getElementById('inv-gen-from').value;
@@ -5328,25 +5335,33 @@ function invGenerate(){
   const filtered=invWork.filter(w=>w.staff===staff&&w.date&&w.date.replace(/\//g,'-')>=from&&w.date.replace(/\//g,'-')<=to);
   if(!filtered.length){alert('該当する稼働データがありません');return;}
   const total=filtered.reduce((s,w)=>s+Number(w.amount||0),0);
+  const t=invTaxInfo(staff,total);
   const fromFmt=from.replace(/-/g,'/');const toFmt=to.replace(/-/g,'/');
 
   let h=`<div id="inv-print-area" style="background:#fff;padding:32px;border:1px solid var(--border);border-radius:12px;margin-top:16px;max-width:800px;">`;
   h+=`<div style="text-align:center;margin-bottom:24px;"><h2 style="font-size:24px;margin-bottom:4px;border-bottom:3px double #1e293b;display:inline-block;padding-bottom:4px;">請 求 書</h2></div>`;
   h+=`<div style="display:flex;justify-content:space-between;margin-bottom:20px;">`;
   h+=`<div><p style="font-size:18px;font-weight:bold;border-bottom:1px solid #1e293b;padding-bottom:2px;">株式会社NELTEC 御中</p></div>`;
-  h+=`<div style="text-align:right;font-size:13px;"><p style="font-size:16px;font-weight:bold;color:#1e293b;margin-bottom:4px;">${staff}</p><p style="color:var(--text-sub);">請求日: ${new Date().toLocaleDateString('ja-JP')}</p><p style="color:var(--text-sub);">請求期間: ${fromFmt} ～ ${toFmt}</p></div>`;
+  h+=`<div style="text-align:right;font-size:13px;"><p style="font-size:16px;font-weight:bold;color:#1e293b;margin-bottom:4px;">${staff}</p>${t.registered?`<p style="color:var(--text-sub);">登録番号: ${t.invno}</p>`:''}<p style="color:var(--text-sub);">請求日: ${new Date().toLocaleDateString('ja-JP')}</p><p style="color:var(--text-sub);">請求期間: ${fromFmt} ～ ${toFmt}</p></div>`;
   h+=`</div>`;
-  h+=`<div style="background:#f1f5f9;border-radius:8px;padding:16px;text-align:center;margin-bottom:20px;"><p style="font-size:14px;color:var(--text-sub);">ご請求金額</p><p style="font-size:28px;font-weight:bold;color:var(--primary);">¥${total.toLocaleString()}</p></div>`;
+  h+=`<div style="background:#f1f5f9;border-radius:8px;padding:16px;text-align:center;margin-bottom:20px;"><p style="font-size:14px;color:var(--text-sub);">ご請求金額（税込）${t.registered?' <span style="color:#0d9488;font-size:11px;">適格・外税</span>':' <span style="color:var(--text-sub);font-size:11px;">内税</span>'}</p><p style="font-size:28px;font-weight:bold;color:var(--primary);">¥${t.total.toLocaleString()}</p></div>`;
   h+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #dde1e8;text-align:left;">日付</th><th style="padding:8px;border:1px solid #dde1e8;">コース</th><th style="padding:8px;border:1px solid #dde1e8;">区分</th><th style="padding:8px;border:1px solid #dde1e8;">個数</th><th style="padding:8px;border:1px solid #dde1e8;text-align:right;">単価</th><th style="padding:8px;border:1px solid #dde1e8;text-align:right;">金額</th></tr></thead><tbody>`;
   filtered.forEach(w=>{
     h+=`<tr><td style="padding:6px 8px;border:1px solid #dde1e8;">${w.date}</td><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:center;">${w.course}</td><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:center;">${w.category}</td><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:center;">${w.quantity||''}</td><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:right;">${w.unit_price?'¥'+Number(w.unit_price).toLocaleString():''}</td><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:right;font-weight:bold;">${w.amount?'¥'+Number(w.amount).toLocaleString():''}</td></tr>`;
   });
-  h+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="5" style="padding:8px;border:1px solid #dde1e8;text-align:right;">合計</td><td style="padding:8px;border:1px solid #dde1e8;text-align:right;font-size:16px;">¥${total.toLocaleString()}</td></tr>`;
+  h+=`<tr style="font-weight:bold;"><td colspan="5" style="padding:7px 8px;border:1px solid #dde1e8;text-align:right;">小計（税抜）</td><td style="padding:7px 8px;border:1px solid #dde1e8;text-align:right;">¥${t.subtotal.toLocaleString()}</td></tr>`;
+  if(t.registered){
+    h+=`<tr><td colspan="5" style="padding:7px 8px;border:1px solid #dde1e8;text-align:right;">消費税（10%）</td><td style="padding:7px 8px;border:1px solid #dde1e8;text-align:right;">¥${t.tax.toLocaleString()}</td></tr>`;
+  }
+  h+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="5" style="padding:8px;border:1px solid #dde1e8;text-align:right;">合計（税込）</td><td style="padding:8px;border:1px solid #dde1e8;text-align:right;font-size:16px;">¥${t.total.toLocaleString()}</td></tr>`;
+  if(!t.registered){
+    h+=`<tr><td colspan="6" style="padding:5px 8px;border:1px solid #dde1e8;text-align:right;font-size:11px;color:var(--text-sub);">※ 内税（消費税 ¥${t.inclTax.toLocaleString()} を含む）</td></tr>`;
+  }
   h+=`</tbody></table>`;
   h+=`</div>`;
   h+=`<div style="margin-top:12px;display:flex;justify-content:flex-end;gap:10px;">`;
   h+=`<button onclick="invPrintPDF()" style="background:#64748b;color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">🖨 PDF印刷</button>`;
-  h+=`<button onclick="invConfirmSave('${staff}','${from}','${to}',${total})" id="inv-confirm-btn" style="background:var(--danger);color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">✅ 確定・保存</button>`;
+  h+=`<button onclick="invConfirmSave('${staff}','${from}','${to}',${t.total})" id="inv-confirm-btn" style="background:var(--danger);color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">✅ 確定・保存</button>`;
   h+=`</div>`;
 
   document.getElementById('inv-preview').innerHTML=h;
@@ -5370,8 +5385,11 @@ function invGenerateAll(){
     return {name,recs,total:recs.reduce((s,w)=>s+Number(w.amount||0),0)};
   }).filter(g=>g.recs.length>0);
   if(!groups.length){alert('該当期間に稼働データがあるスタッフがいません');return;}
+  groups.forEach(g=>{ g.t=invTaxInfo(g.name,g.total); });
   invBulkLast={from,to,groups};
-  const grand=groups.reduce((s,g)=>s+g.total,0);
+  const grandSub=groups.reduce((s,g)=>s+g.total,0);
+  const grandTax=groups.reduce((s,g)=>s+g.t.tax,0);
+  const grand=groups.reduce((s,g)=>s+g.t.total,0);
   const fromFmt=from.replace(/-/g,'/'),toFmt=to.replace(/-/g,'/');
   const me=invRates.find(r=>r.name===invStaffName);
   const biller=(me&&me.company)?me.company:(invStaffName||'');
@@ -5385,22 +5403,29 @@ function invGenerateAll(){
   h+=`<div><p style="font-size:18px;font-weight:bold;border-bottom:1px solid #1e293b;padding-bottom:2px;">株式会社NELTEC 御中</p></div>`;
   h+=`<div style="text-align:right;font-size:13px;">${biller?`<p style="font-size:15px;font-weight:bold;">${esc(biller)}</p>`:''}<p style="color:var(--text-sub);">請求日: ${today}</p><p style="color:var(--text-sub);">請求期間: ${fromFmt} ～ ${toFmt}</p></div>`;
   h+=`</div>`;
-  h+=`<div style="background:#f1f5f9;border-radius:8px;padding:16px;text-align:center;margin-bottom:18px;"><p style="font-size:14px;color:var(--text-sub);">ご請求金額 合計（${groups.length}名）</p><p style="font-size:28px;font-weight:bold;color:var(--primary);">¥${grand.toLocaleString()}</p></div>`;
-  h+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #dde1e8;width:42px;">No.</th><th style="padding:8px;border:1px solid #dde1e8;text-align:left;">スタッフ</th><th style="padding:8px;border:1px solid #dde1e8;width:80px;">件数</th><th style="padding:8px;border:1px solid #dde1e8;text-align:right;width:150px;">金額</th></tr></thead><tbody>`;
+  h+=`<div style="background:#f1f5f9;border-radius:8px;padding:16px;text-align:center;margin-bottom:18px;"><p style="font-size:14px;color:var(--text-sub);">ご請求金額 合計（税込・${groups.length}名）</p><p style="font-size:28px;font-weight:bold;color:var(--primary);">¥${grand.toLocaleString()}</p><p style="font-size:11px;color:var(--text-sub);margin-top:2px;">小計 ¥${grandSub.toLocaleString()} ＋ 消費税 ¥${grandTax.toLocaleString()}</p></div>`;
+  h+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #dde1e8;width:38px;">No.</th><th style="padding:8px;border:1px solid #dde1e8;text-align:left;">スタッフ</th><th style="padding:8px;border:1px solid #dde1e8;width:50px;">件数</th><th style="padding:8px;border:1px solid #dde1e8;text-align:right;width:110px;">小計(税抜)</th><th style="padding:8px;border:1px solid #dde1e8;text-align:right;width:100px;">消費税</th><th style="padding:8px;border:1px solid #dde1e8;text-align:right;width:120px;">合計(税込)</th></tr></thead><tbody>`;
   groups.forEach((g,i)=>{
-    h+=`<tr><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:center;">${i+1}</td><td style="padding:6px 8px;border:1px solid #dde1e8;">${esc(g.name)}</td><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:center;">${g.recs.length}</td><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:right;font-weight:bold;">¥${g.total.toLocaleString()}</td></tr>`;
+    h+=`<tr><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:center;">${i+1}</td><td style="padding:6px 8px;border:1px solid #dde1e8;">${esc(g.name)}${g.t.registered?'':' <span style="font-size:10px;color:#94a3b8;">(内税)</span>'}</td><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:center;">${g.recs.length}</td><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:right;">¥${g.total.toLocaleString()}</td><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:right;">${g.t.registered?'¥'+g.t.tax.toLocaleString():'—'}</td><td style="padding:6px 8px;border:1px solid #dde1e8;text-align:right;font-weight:bold;">¥${g.t.total.toLocaleString()}</td></tr>`;
   });
-  h+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="3" style="padding:8px;border:1px solid #dde1e8;text-align:right;">合計</td><td style="padding:8px;border:1px solid #dde1e8;text-align:right;font-size:15px;">¥${grand.toLocaleString()}</td></tr>`;
+  h+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="3" style="padding:8px;border:1px solid #dde1e8;text-align:right;">合計</td><td style="padding:8px;border:1px solid #dde1e8;text-align:right;">¥${grandSub.toLocaleString()}</td><td style="padding:8px;border:1px solid #dde1e8;text-align:right;">¥${grandTax.toLocaleString()}</td><td style="padding:8px;border:1px solid #dde1e8;text-align:right;font-size:15px;">¥${grand.toLocaleString()}</td></tr>`;
   h+=`</tbody></table>`;
   // ===== 個別明細 (各ページ改ページ) =====
   groups.forEach((g,i)=>{
     h+=`<div class="pgbreak" style="margin-top:28px;border-top:2px dashed #cbd5e1;padding-top:18px;">`;
-    h+=`<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px;"><div><span style="font-size:12px;color:var(--text-sub);">個別明細 ${i+1}/${groups.length}</span><br><span style="font-size:17px;font-weight:bold;">${esc(g.name)}</span></div><div style="text-align:right;font-size:12px;color:var(--text-sub);">${esc(biller)}<br>期間: ${fromFmt} ～ ${toFmt}<br><span style="font-size:16px;font-weight:bold;color:var(--primary);">¥${g.total.toLocaleString()}</span></div></div>`;
+    h+=`<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px;"><div><span style="font-size:12px;color:var(--text-sub);">個別明細 ${i+1}/${groups.length}</span><br><span style="font-size:17px;font-weight:bold;">${esc(g.name)}</span>${g.t.registered?`<br><span style="font-size:11px;color:var(--text-sub);">登録番号: ${g.t.invno}</span>`:''}</div><div style="text-align:right;font-size:12px;color:var(--text-sub);">${esc(biller)}<br>期間: ${fromFmt} ～ ${toFmt}<br><span style="font-size:16px;font-weight:bold;color:var(--primary);">¥${g.t.total.toLocaleString()}</span>（税込）</div></div>`;
     h+=`<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#f1f5f9;"><th style="padding:6px;border:1px solid #dde1e8;text-align:left;">日付</th><th style="padding:6px;border:1px solid #dde1e8;">コース</th><th style="padding:6px;border:1px solid #dde1e8;">区分</th><th style="padding:6px;border:1px solid #dde1e8;">個数</th><th style="padding:6px;border:1px solid #dde1e8;text-align:right;">単価</th><th style="padding:6px;border:1px solid #dde1e8;text-align:right;">金額</th></tr></thead><tbody>`;
     g.recs.forEach(w=>{
       h+=`<tr><td style="padding:5px 6px;border:1px solid #dde1e8;">${esc(w.date)}</td><td style="padding:5px 6px;border:1px solid #dde1e8;text-align:center;">${esc(w.course)}</td><td style="padding:5px 6px;border:1px solid #dde1e8;text-align:center;">${esc(w.category)}</td><td style="padding:5px 6px;border:1px solid #dde1e8;text-align:center;">${esc(w.quantity||'')}</td><td style="padding:5px 6px;border:1px solid #dde1e8;text-align:right;">${w.unit_price?'¥'+Number(w.unit_price).toLocaleString():''}</td><td style="padding:5px 6px;border:1px solid #dde1e8;text-align:right;font-weight:bold;">${w.amount?'¥'+Number(w.amount).toLocaleString():''}</td></tr>`;
     });
-    h+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="5" style="padding:6px;border:1px solid #dde1e8;text-align:right;">合計</td><td style="padding:6px;border:1px solid #dde1e8;text-align:right;">¥${g.total.toLocaleString()}</td></tr>`;
+    h+=`<tr style="font-weight:bold;"><td colspan="5" style="padding:6px;border:1px solid #dde1e8;text-align:right;">小計（税抜）</td><td style="padding:6px;border:1px solid #dde1e8;text-align:right;">¥${g.total.toLocaleString()}</td></tr>`;
+    if(g.t.registered){
+      h+=`<tr><td colspan="5" style="padding:6px;border:1px solid #dde1e8;text-align:right;">消費税（10%）</td><td style="padding:6px;border:1px solid #dde1e8;text-align:right;">¥${g.t.tax.toLocaleString()}</td></tr>`;
+    }
+    h+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="5" style="padding:6px;border:1px solid #dde1e8;text-align:right;">合計（税込）</td><td style="padding:6px;border:1px solid #dde1e8;text-align:right;">¥${g.t.total.toLocaleString()}</td></tr>`;
+    if(!g.t.registered){
+      h+=`<tr><td colspan="6" style="padding:4px 6px;border:1px solid #dde1e8;text-align:right;font-size:10px;color:var(--text-sub);">※ 内税（消費税 ¥${g.t.inclTax.toLocaleString()} を含む）</td></tr>`;
+    }
     h+=`</tbody></table></div>`;
   });
   h+=`</div>`;
@@ -5415,8 +5440,8 @@ function invGenerateAll(){
 async function invConfirmSaveAll(){
   if(!invBulkLast||!invBulkLast.groups.length){alert('先に「一括作成」してください');return;}
   const {from,to,groups}=invBulkLast;
-  const grand=groups.reduce((s,g)=>s+g.total,0);
-  if(!confirm(`${groups.length}名分の請求書を確定・保存しますか？（合計 ¥${grand.toLocaleString()}）`))return;
+  const grand=groups.reduce((s,g)=>s+((g.t&&g.t.total)||g.total),0);
+  if(!confirm(`${groups.length}名分の請求書を確定・保存しますか？（合計 税込 ¥${grand.toLocaleString()}）`))return;
   const btn=document.getElementById('inv-bulk-save-btn');
   btn.disabled=true;
   const results=[];
@@ -5424,7 +5449,7 @@ async function invConfirmSaveAll(){
     const g=groups[i];
     btn.textContent=`保存中... (${i+1}/${groups.length})`;
     try{
-      const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/save-invoice-pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({staff:g.name,from,to,records:g.recs,total:g.total})});
+      const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/save-invoice-pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({staff:g.name,from,to,records:g.recs,total:((g.t&&g.t.total)||g.total),subtotal:g.total,tax:((g.t&&g.t.tax)||0),invoice_number:((g.t&&g.t.invno)||'')})});
       const json=await resp.json();
       if(json.success){
         const rowNums=g.recs.map(w=>w.row_number).filter(Boolean);
@@ -5447,10 +5472,12 @@ async function invConfirmSave(staff,from,to,total){
   btn.textContent='保存中...';btn.disabled=true;
   // 該当期間のデータを取得
   const filtered=invWork.filter(w=>w.staff===staff&&w.date&&w.date.replace(/\//g,'-')>=from&&w.date.replace(/\//g,'-')<=to);
+  const subtotal=filtered.reduce((s,w)=>s+Number(w.amount||0),0);
+  const tx=invTaxInfo(staff,subtotal);
   try{
     const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/save-invoice-pdf',{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({staff,from,to,records:filtered,total})
+      body:JSON.stringify({staff,from,to,records:filtered,total:tx.total,subtotal,tax:tx.tax,invoice_number:tx.invno})
     });
     const json=await resp.json();
     if(json.success){
