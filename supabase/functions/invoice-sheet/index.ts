@@ -86,11 +86,11 @@ function stripStaffPrivate(r: any) {
 function stripPrices(r: any) {
   return { ...r, unit_price: '', amount: '', am_weekday: '', am_weekend: '', pm_weekday: '', pm_weekend: '', warehouse_am: '', warehouse_pm: '', unit_price_pm: '', am_sunday: '', pm_sunday: '', monthly_salary: '' };
 }
-// 同じ company の法人オーナーが permissions に 'show_money' (配下に金額表示) を持つか
-function companyShowsMoney(rates: any[], company: string): boolean {
-  if (!company) return false;
-  const owner = rates.find((r: any) => r.biz_type === '法人' && r.company === company && (r.permissions || '').split(',').includes('owner'));
-  return !!(owner && (owner.permissions || '').split(',').includes('show_money'));
+// 指定メンバー(name)自身の行が permissions に 'show_money' (=本人に金額表示) を持つか
+function memberShowsMoney(rates: any[], name: string): boolean {
+  if (!name) return false;
+  const r = rates.find((x: any) => x.name === name);
+  return !!(r && (r.permissions || '').split(',').includes('show_money'));
 }
 // 同じ company の名前リスト (オーナー含む) を取得 (法人オーナー権限スコープ用)
 async function fetchCompanyNames(sheetsToken: string, company: string): Promise<string[]> {
@@ -204,8 +204,8 @@ Deno.serve(async(req:Request)=>{
       // permissions に 'admin' があれば EF レベルでも admin 扱い
       const tokenRole = has_admin ? 'admin' : 'staff';
       const allRates = parseRates(rateRows);
-      // 自社オーナーが「配下に金額表示(show_money)」ONなら corp-sub でも金額を見せる
-      const company_shows_money = is_corp_sub ? companyShowsMoney(allRates, company) : true;
+      // 本人(corp-sub)の行に show_money があれば金額を見せる (メンバー個別制御)
+      const company_shows_money = is_corp_sub ? permList.includes('show_money') : true;
       const sessionToken = await createToken({ role: tokenRole, name, biz_type, company, permissions, is_corp_sub, is_owner, company_shows_money });
       // 単価 + 稼働のスコープ: admin=全件 / corp-owner=同company全員 / それ以外=自分のみ
       const allWork = parseWork((await workResp.json()).values||[]);
@@ -279,7 +279,7 @@ Deno.serve(async(req:Request)=>{
       const all = parseRates((await resp.json()).values||[]);
       if (admin) return jsonResp({rates: all});
       // staff/owner: scopeNames に含まれる行のみ。corp-sub は金額系も剥がす (自社オーナーが show_money ON なら剥がさない=ライブ判定)
-      const csm = !corpSub || companyShowsMoney(all, callerCompany);
+      const csm = !corpSub || memberShowsMoney(all, callerName);
       const scope = await getScopeNames();
       const out = all.filter((r:any)=>scope.has(r.name)).map((r:any)=> (corpSub && !csm) ? stripPrices(stripStaffPrivate(r)) : stripStaffPrivate(r));
       return jsonResp({rates: out, company_shows_money: csm});
@@ -324,8 +324,11 @@ Deno.serve(async(req:Request)=>{
       m.login_pw = record.login_pw ? record.login_pw : (base.login_pw||''); // 空欄は現状維持(編集時PW消さない)
       m.biz_type = '法人';
       m.company = callerCompany;
-      if(isSelf){ const p=['owner']; if(record.show_money) p.push('show_money'); m.permissions=p.join(','); }
-      else { m.permissions=''; } // 配下ドライバーは権限なし
+      // show_money: record で明示されればそれ、無ければ現状(base)維持 (氏名編集で消さない)
+      const baseShow = (base.permissions||'').split(',').includes('show_money');
+      const wantShow = (record.show_money !== undefined) ? !!record.show_money : baseShow;
+      if(isSelf){ const p=['owner']; if(wantShow) p.push('show_money'); m.permissions=p.join(','); }
+      else { m.permissions = wantShow ? 'show_money' : ''; } // 配下: 本人に金額表示するかを個別保存
       const row=[m.name,m.am_weekday||'',m.am_weekend||'',m.pm_weekday||'',m.pm_weekend||'',m.warehouse_am||'',m.warehouse_pm||'',m.calc_type||'固定',m.unit_price||'',m.login_id||'',m.login_pw||'',m.biz_type||'',m.company||'',m.calc_type_pm||'固定',m.unit_price_pm||'',m.am_sunday||'',m.pm_sunday||'',m.permissions||'',m.kw_am_daily||'',m.kw_pattern||'',m.monthly_salary||'',m.invoice_number||''];
       if(row_number){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A${row_number}:V${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
       else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:V1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
@@ -353,7 +356,7 @@ Deno.serve(async(req:Request)=>{
       let csm = true;
       if (corpSub) {
         const rr = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-        csm = companyShowsMoney(parseRates((await rr.json()).values||[]), callerCompany);
+        csm = memberShowsMoney(parseRates((await rr.json()).values||[]), callerName);
       }
       const scope = await getScopeNames();
       const mine = all.filter((r:any)=>scope.has(r.staff)).map((r:any)=> (corpSub && !csm) ? { ...r, unit_price:'', amount:'' } : r);

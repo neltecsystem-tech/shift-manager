@@ -4221,13 +4221,19 @@ function invOwnerRenderView(){
 function invOwnerDrawView(cont){
   const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const me=invRates.find(r=>r.name===invStaffName);
-  const showMoney=(me?.permissions||'').split(',').includes('show_money');
   const rows=invOwnerMembers().map(m=>{
-    const isOwnerRow=(m.permissions||'').split(',').includes('owner');
-    return `<div style="display:flex;align-items:center;gap:8px;padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;">
-      <div style="flex:1;"><b style="font-size:15px;">${esc(m.name)}</b> ${isOwnerRow?'<span style="color:#16a34a;font-size:12px;margin-left:6px;">👑 代表(オーナー)</span>':''}<div style="font-size:12px;color:var(--text-sub);margin-top:2px;">ログインID: ${esc(m.login_id)||'-'}</div></div>
+    const perms=(m.permissions||'').split(',');
+    const isOwnerRow=perms.includes('owner');
+    const memberShow=perms.includes('show_money');
+    const q=esc(m.name).replace(/'/g,'');
+    const moneyCtl=isOwnerRow
+      ? '<span style="font-size:12px;color:var(--text-sub);">金額: 常に表示</span>'
+      : `<label style="display:flex;align-items:center;gap:5px;font-size:13px;background:${memberShow?'#dcfce7':'#f1f5f9'};border:1px solid ${memberShow?'#22c55e':'var(--border)'};border-radius:8px;padding:7px 10px;cursor:pointer;white-space:nowrap;"><input type="checkbox" ${memberShow?'checked':''} onchange="invOwnerSetMemberMoney(${m.row_number},this.checked)"> 💰 金額表示</label>`;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:160px;"><b style="font-size:15px;">${esc(m.name)}</b> ${isOwnerRow?'<span style="color:#16a34a;font-size:12px;margin-left:6px;">👑 代表(オーナー)</span>':''}<div style="font-size:12px;color:var(--text-sub);margin-top:2px;">ログインID: ${esc(m.login_id)||'-'}</div></div>
+      ${moneyCtl}
       <button onclick="invOwnerEdit(${m.row_number})" style="background:#6366f1;color:#fff;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;">編集</button>
-      ${isOwnerRow?'':`<button onclick="invOwnerDelete(${m.row_number},'${esc(m.name).replace(/'/g,'')}')" style="background:var(--danger);color:#fff;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;">削除</button>`}
+      ${isOwnerRow?'':`<button onclick="invOwnerDelete(${m.row_number},'${q}')" style="background:var(--danger);color:#fff;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;">削除</button>`}
     </div>`;
   }).join('');
   cont.innerHTML=`<div class="card">
@@ -4235,15 +4241,16 @@ function invOwnerDrawView(cont){
       <h2 style="margin:0;">👥 自社メンバー管理 <span style="font-size:13px;color:var(--text-sub);font-weight:normal;">${esc(me?.company||'')}</span></h2>
       <button onclick="invOwnerEdit(0)" style="background:var(--primary);color:#fff;border:none;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:600;">＋ メンバー追加</button>
     </div>
-    <label style="display:flex;align-items:center;gap:8px;background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:12px 14px;margin-bottom:16px;cursor:pointer;"><input type="checkbox" ${showMoney?'checked':''} onchange="invOwnerToggleShowMoney(this.checked)"> <span style="font-weight:600;">💰 配下メンバーに金額(単価・請求額)を表示する</span></label>
+    <p style="font-size:12px;color:var(--text-sub);margin:0 0 14px;">各メンバーの「💰 金額表示」を <b>個別に</b> ON にすると、その人だけ単価・請求額が見えるようになります（既定OFF）。本人は再ログイン不要・画面更新で反映。</p>
     ${rows||'<p style="color:var(--text-sub);text-align:center;padding:30px;">メンバーがいません。「＋メンバー追加」から登録してください。</p>'}
-    <p style="font-size:12px;color:var(--text-sub);margin-top:14px;">※ 単価(金額)の設定は管理者が行います。ここでは氏名・ログイン情報の管理と、配下への金額表示の切替ができます。</p>
+    <p style="font-size:12px;color:var(--text-sub);margin-top:14px;">※ 単価(金額)の設定は管理者が行います。</p>
   </div>`;
 }
-async function invOwnerToggleShowMoney(on){
-  const me=invRates.find(r=>r.name===invStaffName); if(!me)return;
-  const r=await invApi({action:'owner_save_member',record:{name:me.name,login_id:me.login_id,show_money:on},row_number:me.row_number});
-  if(r&&r.success){ await invOwnerRefresh(); invApplyUI(); invOwnerRenderView(); }
+async function invOwnerSetMemberMoney(rowNum,on){
+  const m=invRates.find(r=>r.row_number===rowNum);
+  if(!m){alert('対象メンバーが見つかりません');return;}
+  const r=await invApi({action:'owner_save_member',record:{name:m.name,login_id:m.login_id,show_money:on},row_number:rowNum});
+  if(r&&r.success){ await invOwnerRefresh(); invOwnerRenderView(); }
   else { alert('切替に失敗: '+(r&&r.error||'')); invOwnerRenderView(); }
 }
 function invOwnerEdit(rowNum){
