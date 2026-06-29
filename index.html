@@ -276,8 +276,7 @@ tbody tr:hover { background:var(--primary-light); }
         <h2 style="margin-bottom:0">店舗マスタ</h2>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button onclick="smBatchAddrUnified()" id="sm-addr-btn" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📝 住所を一括取得</button>
-          <button onclick="smBatchLatLngFromAddr()" id="sm-gps-btn" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 GPSを一括取得</button>
-          <button onclick="smVerifyNavLocation()" id="sm-verify-btn" style="background:#a855f7;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔍 ナビ位置検証</button>
+          <button onclick="smBatchGpsAndVerify()" id="sm-gps-btn" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 GPS取得＆ナビ検証</button>
           <button onclick="smAddCourse()" style="background:#14b8a6;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">➕ 新コース追加</button>
           <button onclick="smShowReplace()" style="background:#f59e0b;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔄 コース一括置換</button>
           <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
@@ -3429,6 +3428,125 @@ async function smVerifyNavLocation(){
   smVerifyFilter='all';
   smRenderVerifyResult();
   btn.disabled=false;btn.style.opacity='1';
+}
+
+// ── GPS取得 ＆ ナビ位置検証 統合 (精度優先) ──
+//  各店舗: ①住所から順ジオコーディングでGPS取得(高精度・店舗名フォールバック)
+//          ②その座標を逆ジオコーディング→住所列と照合してナビ判定(✕△◎)
+//  対象=現在の絞り込み。🔒修正済み と 納品中止 は全モードで除外。
+async function smBatchGpsAndVerify(){
+  if(!smFiltered||smFiltered.length===0){alert('対象店舗がありません。フィルタを絞ってから実行してください');return;}
+  let nameIdx=-1,addrIdx=-1,areaIdx=-1,latIdx=-1,lngIdx=-1;
+  smHeaders.forEach((h,i)=>{
+    if(h==='店舗名')nameIdx=i;
+    if(h==='住所精度')return;
+    if(h==='住所'||h.includes('住所'))addrIdx=i;
+    if(h==='営業所')areaIdx=i;
+    if(h==='緯度')latIdx=i;
+    if(h==='経度')lngIdx=i;
+  });
+  if(nameIdx<0||latIdx<0||lngIdx<0){alert('店舗名/緯度/経度 列が見つかりません');return;}
+
+  let lockedSkipped=0;
+  const valid=smFiltered.filter(r=>{
+    const area=areaIdx>=0?((r[`col_${areaIdx}`]||'')):'';
+    if(area.includes('納品中止'))return false;
+    if(smIsLocked(r)){lockedSkipped++;return false;} // 🔒修正済みは除外
+    return !!((r[`col_${nameIdx}`]||'').trim());
+  });
+  if(valid.length===0){alert('対象店舗がありません'+(lockedSkipped?`（🔒修正済み ${lockedSkipped}件は除外）`:''));return;}
+
+  const llOf=r=>{const ln=parseFloat(r[`col_${latIdx}`]),gn=parseFloat(r[`col_${lngIdx}`]);return isFinite(ln)&&isFinite(gn)&&ln!==0&&gn!==0;};
+  const emptyLL=valid.filter(r=>!llOf(r)).length;
+  const choice=prompt(`📍 GPS取得＆ナビ検証（絞り込み ${valid.length}件${lockedSkipped?` / 🔒${lockedSkipped}件除外`:''}）\n\n住所からGPS取得(高精度)→座標を逆ジオで住所照合→ナビ判定(✕△◎)を同時更新。\n\n0: GPS全件 再取得＋検証（既存座標も上書き）\n1: GPS未取得 ${emptyLL}件のみ取得＋全件検証（既存座標は保持）\n空欄: キャンセル\n\n0 か 1 を入力:`);
+  if(choice!=='0'&&choice!=='1')return;
+  const overwrite=choice==='0';
+
+  const btn=document.getElementById('sm-gps-btn');
+  if(btn){btn.disabled=true;btn.style.opacity='0.6';}
+  const prog=document.getElementById('sm-geocode-progress');
+  prog.style.display='block';
+
+  const AREA_HINT={'立川':'東京都立川市','城北':'東京都','池袋':'東京都豊島区','川越':'埼玉県川越市','川崎高津':'神奈川県川崎市高津区'};
+  const cleanAddr=s=>(s||'').replace(/^日本、?\s*/,'').replace(/^〒\d{3}-?\d{4}\s*/,'').trim();
+  const sleep=ms=>new Promise(res=>setTimeout(res,ms));
+  const geocode=async q=>await (await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`)).json();
+  const reverse=async(lat,lng)=>await (await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&language=ja&region=jp&key=${GEOCODING_API_KEY}`)).json();
+
+  const llUpdates=[];
+  const results=[];
+  let gotFromAddr=0,gotFromName=0,gpsFail=0;
+
+  for(let i=0;i<valid.length;i++){
+    const r=valid[i];
+    const name=(r[`col_${nameIdx}`]||'').trim();
+    const stored=(r[`col_${addrIdx}`]||'').trim();
+    const area=areaIdx>=0?((r[`col_${areaIdx}`]||'').split(',')[0].trim()):'';
+    const areaHint=AREA_HINT[area]||'';
+    prog.innerHTML=`🔍 <b>${i+1}/${valid.length}</b> ${name}<div style="margin-top:4px;height:6px;background:#e5e7eb;border-radius:3px;"><div style="width:${(i/valid.length*100).toFixed(1)}%;height:100%;background:#0ea5e9;border-radius:3px;"></div></div>`;
+
+    let lat=parseFloat(r[`col_${latIdx}`]), lng=parseFloat(r[`col_${lngIdx}`]);
+    let curHasLL=isFinite(lat)&&isFinite(lng)&&lat!==0&&lng!==0;
+
+    // ① GPS取得 (全件再取得 or 未取得のみ) — 住所優先, 店舗名+地域フォールバック
+    let acc='';
+    if(overwrite||!curHasLL){
+      try{
+        let j=null,viaAddr=false;
+        if(stored){ j=await geocode(stored); viaAddr=j.status==='OK'&&j.results&&!!j.results[0]; }
+        if(!viaAddr){ await sleep(120); const q=areaHint?(areaHint+' '+smSearchName(r)):smSearchName(r); j=await geocode(q); }
+        if(j&&j.status==='OK'&&j.results&&j.results[0]){
+          const loc=j.results[0].geometry.location;
+          acc=j.results[0].geometry.location_type||'';
+          lat=loc.lat;lng=loc.lng;curHasLL=true;
+          llUpdates.push({row_number:r.row_number,lat,lng,accuracy:accuracyToIcon(acc)});
+          if(viaAddr)gotFromAddr++;else gotFromName++;
+        }else{gpsFail++;}
+      }catch(e){gpsFail++;}
+      await sleep(120);
+    }
+
+    // ② 検証: 取得後の座標を逆ジオして住所列と照合
+    let verdict={kind:'mismatch',score:0}, resolved='';
+    if(curHasLL&&stored){
+      try{
+        const jr=await reverse(lat,lng);
+        if(jr.status==='OK'&&jr.results&&jr.results[0]) resolved=cleanAddr(jr.results[0].formatted_address);
+      }catch(_){}
+      verdict=smCompareAddr(stored,resolved);
+      await sleep(80);
+    }
+    results.push({row_number:r.row_number,name,area:areaIdx>=0?(r[`col_${areaIdx}`]||''):'',stored,resolved,verdict,lat,lng,_skip:!(curHasLL&&stored)});
+  }
+
+  // 保存: 緯度経度(取得分) + ナビ判定(住所/座標が揃って検証できた分)
+  prog.innerHTML=`💾 保存中... GPS ${llUpdates.length}件 / ナビ判定 ${results.filter(r=>!r._skip).length}件`;
+  if(llUpdates.length){
+    try{await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_latlng',updates:llUpdates})});}catch(e){console.warn('GPS保存エラー',e);}
+  }
+  const verifyUpdates=results.filter(r=>!r._skip).map(r=>({row_number:r.row_number,verdict:verdictToIcon(r.verdict.kind)}));
+  if(verifyUpdates.length){
+    try{await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_verify',updates:verifyUpdates})});}catch(e){console.warn('判定保存エラー',e);}
+  }
+  invalidateShopMasterCache();
+  // ローカル smData を即時反映 (再リロードせずテーブル/地図に反映)
+  llUpdates.forEach(u=>{const t=smData.find(x=>x.row_number===u.row_number);if(t){t[`col_${latIdx}`]=u.lat;t[`col_${lngIdx}`]=u.lng;if(smColMap.accuracy!=null)t[`col_${smColMap.accuracy}`]=u.accuracy;}});
+  if(smColMap.verify!=null)verifyUpdates.forEach(u=>{const t=smData.find(x=>x.row_number===u.row_number);if(t)t[`col_${smColMap.verify}`]=u.verdict;});
+
+  // 結果UI (不一致を上位に)
+  const orderMap={mismatch:0,partial:1,match:2};
+  const shown=results.filter(r=>!r._skip);
+  shown.sort((a,b)=>{const o=orderMap[a.verdict.kind]-orderMap[b.verdict.kind];return o!==0?o:b.verdict.score-a.verdict.score;});
+  smVerifyResults=shown;
+  smVerifyFilter='all';
+  smRenderVerifyResult();
+  // サマリを結果パネル冒頭に追記
+  const summary=document.createElement('div');
+  summary.style.cssText='margin-bottom:8px;font-size:12px;color:#475569;';
+  summary.innerHTML=`<b style="color:#16a34a;">✅ 完了</b> GPS取得: 住所から ${gotFromAddr}件 / 店舗名から ${gotFromName}件 / 失敗 ${gpsFail}件　検証: ${shown.length}件${lockedSkipped?`　🔒除外 ${lockedSkipped}件`:''}`;
+  if(prog.firstChild)prog.insertBefore(summary,prog.firstChild);
+  if(btn){btn.disabled=false;btn.style.opacity='1';}
+  smRender();
 }
 
 function smSetVerifyFilter(f){
