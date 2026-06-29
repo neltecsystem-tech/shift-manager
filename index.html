@@ -5463,11 +5463,12 @@ function invGenerateAll(){
     h+=`</tbody></table></div>`;
   });
   h+=`</div>`;
-  h+=`<div style="margin-top:12px;display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;">`;
-  h+=`<button onclick="invPrintPDF()" style="background:#64748b;color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">🖨 PDF印刷（サマリー＋全明細）</button>`;
-  h+=`<button onclick="invConfirmSaveAll()" id="inv-bulk-save-btn" style="background:var(--danger);color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">✅ 全員分を確定・保存</button>`;
-  h+=`</div>`;
-  document.getElementById('inv-preview').innerHTML=h;
+  // 操作ボタンは印刷対象(inv-print-area)の外・上に配置 (スクロール不要ですぐ押せる)
+  let btns=`<div style="margin-bottom:12px;display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;">`;
+  btns+=`<button onclick="invPrintPDF()" style="background:#64748b;color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">🖨 PDF印刷（サマリー＋全明細）</button>`;
+  btns+=`<button onclick="invConfirmSaveAll()" id="inv-bulk-save-btn" style="background:var(--danger);color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">✅ 全員分を確定・保存</button>`;
+  btns+=`</div>`;
+  document.getElementById('inv-preview').innerHTML=btns+h;
   document.getElementById('inv-preview').style.display='block';
 }
 
