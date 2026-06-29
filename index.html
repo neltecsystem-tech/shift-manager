@@ -494,9 +494,10 @@ tbody tr:hover { background:var(--primary-light); }
             <p style="font-size:12px;color:#c2410c;margin:0;background:#fff7ed;padding:6px 8px;border-radius:4px;">⚠ <b>夕刊/競馬は自動適用されません。</b>通常タブの夕刊単価を必ず設定してください。</p>
           </div>
         </div>
-        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-owner-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-salary-wrap').style.display=this.value==='社員'?'block':'none';document.getElementById('inv-re-admin-auto').style.display=this.value==='社員'?'block':'none';" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人</option><option value="社員">社員</option></select></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-owner-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-showmoney-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-salary-wrap').style.display=this.value==='社員'?'block':'none';document.getElementById('inv-re-admin-auto').style.display=this.value==='社員'?'block':'none';" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人</option><option value="社員">社員</option></select></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-company-wrap"><label style="font-size:12px;color:var(--text-sub)">所属会社名</label><input type="text" id="inv-re-company" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="株式会社○○"></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-owner-wrap"><label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;background:#fef9c3;border:1px solid #facc15;border-radius:8px;padding:8px 12px;"><input type="checkbox" id="inv-re-owner"> 👑 オーナー (法人代表者)</label><div style="font-size:11px;color:var(--text-sub);margin-top:3px;padding-left:4px;">チェックなしの法人メンバーは稼働登録・請求書で金額が非表示になります</div></div>
+        <div style="margin-bottom:10px;display:none;" id="inv-re-showmoney-wrap"><label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:8px 12px;"><input type="checkbox" id="inv-re-showmoney"> 💰 配下メンバーにも金額を表示する</label><div style="font-size:11px;color:var(--text-sub);margin-top:3px;padding-left:4px;">オーナーがONにすると、同じ所属会社の法人メンバーにも単価・金額が表示されます（既定OFF＝非表示）。オーナー行のみ有効。</div></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-salary-wrap"><label style="font-size:12px;color:var(--text-sub)">月給 (円)</label><input type="number" id="inv-re-salary" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 280000" min="0" step="1000"><div style="font-size:11px;color:var(--text-sub);margin-top:3px;">収支管理画面で「社員の給料」として集計されます</div></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">インボイス登録番号</label><input type="text" id="inv-re-invoice" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: T1234567890123 (適格請求書発行事業者)"><div style="font-size:11px;color:var(--text-sub);margin-top:3px;">登録あり=外税表記、なし=内税表記で請求書を生成</div></div>
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">ログイン情報</label></div>
@@ -4116,6 +4117,7 @@ let invAuthed=false;
 let invIsAdmin=false;
 let invStaffName='';
 let invAuthToken='';// サーバ発行セッショントークン (HMAC署名)。空なら未認証
+let invCompanyShowsMoney=false;// 自社オーナーが「配下に金額表示」ONか (login応答の company_shows_money)
 let invStaffPerms='';// ログイン中スタッフの permissions 文字列 (権限ゲート用)
 let invRates=[];
 let invWork=[];
@@ -4163,7 +4165,9 @@ function invIsCorpSubStaff(){
   if(invIsAdmin||!invStaffName)return false;
   const me=invRates.find(r=>r.name===invStaffName);
   if(!me||me.biz_type!=='法人')return false;
-  return !(me.permissions||'').split(',').includes('owner');
+  if((me.permissions||'').split(',').includes('owner'))return false;
+  if(invCompanyShowsMoney)return false;// 自社オーナーが「配下に金額表示」ONなら非表示にしない
+  return true;
 }
 // ログイン中ユーザーが「法人オーナー (=配下ドライバーの稼働登録権限あり)」か判定
 function invIsCorpOwner(){
@@ -4222,7 +4226,7 @@ async function invDoLogin(){
   if(btn)btn.textContent='ログイン中...';
   const res=await invServerLogin(id,pw);
   if(res.success){
-    invAuthed=true;invIsAdmin=false;invStaffName=res.staff_name;
+    invAuthed=true;invIsAdmin=false;invStaffName=res.staff_name;invCompanyShowsMoney=!!res.company_shows_money;
     if(res.rates)invRates=res.rates;
     if(res.work)invWork=res.work;// EF側で自分のレコードのみ
     document.getElementById('inv-login-modal').remove();
@@ -4747,6 +4751,8 @@ function invAddRate(){
   document.getElementById('inv-re-company-wrap').style.display='none';
   document.getElementById('inv-re-owner').checked=false;
   document.getElementById('inv-re-owner-wrap').style.display='none';
+  document.getElementById('inv-re-showmoney').checked=false;
+  document.getElementById('inv-re-showmoney-wrap').style.display='none';
   document.getElementById('inv-re-salary').value='';
   document.getElementById('inv-re-salary-wrap').style.display='none';
   document.getElementById('inv-re-admin-auto').style.display='none';
@@ -4793,8 +4799,10 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-biztype').value=r.biz_type||'';
   document.getElementById('inv-re-company').value=r.company||'';
   document.getElementById('inv-re-company-wrap').style.display=r.biz_type==='法人'?'block':'none';
-  document.getElementById('inv-re-owner').checked=(r.permissions||'').includes('owner');
+  document.getElementById('inv-re-owner').checked=(r.permissions||'').split(',').includes('owner');
   document.getElementById('inv-re-owner-wrap').style.display=r.biz_type==='法人'?'block':'none';
+  document.getElementById('inv-re-showmoney').checked=(r.permissions||'').split(',').includes('show_money');
+  document.getElementById('inv-re-showmoney-wrap').style.display=r.biz_type==='法人'?'block':'none';
   document.getElementById('inv-re-salary').value=r.monthly_salary||'';
   document.getElementById('inv-re-salary-wrap').style.display=r.biz_type==='社員'?'block':'none';
   document.getElementById('inv-re-admin-auto').style.display=r.biz_type==='社員'?'block':'none';
@@ -4855,7 +4863,9 @@ async function invSaveRate(){
   if(document.getElementById('inv-re-perm-shopmaster').checked)permArr.push('shopmaster');
   if(document.getElementById('inv-re-perm-shiftedit').checked)permArr.push('shiftedit');
   // 法人オーナーフラグ (法人区分の時のみ意味を持つ)
-  if(document.getElementById('inv-re-biztype').value==='法人'&&document.getElementById('inv-re-owner').checked)permArr.push('owner');
+  if(document.getElementById('inv-re-biztype').value==='法人'&&document.getElementById('inv-re-owner').checked){permArr.push('owner');
+    // show_money はオーナー行のみ有効（配下に金額表示）
+    if(document.getElementById('inv-re-showmoney').checked)permArr.push('show_money');}
   const perms=permArr.join(',');
   const kwAmDaily=['mon','tue','wed','thu','fri','sat','sun'].map(d=>document.getElementById('inv-re-kw-'+d).value).join(',');
   const kwPattern=document.getElementById('inv-re-kw-pattern').value;

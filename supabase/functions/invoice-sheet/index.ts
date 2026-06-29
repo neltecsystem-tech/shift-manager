@@ -1,0 +1,494 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
+const SPREADSHEET_ID = '1fxzGdAE64wcFLL0_mZI-eFk6U5jxqCh7DtAIzinoymQ';
+const RATE_SHEET_ID = 101300522;
+const ROSTER_SHEET_ID = '1yVKQLSmdc9RZ2U5m4CIPqAl4JqP9siiSeSRP0z3SEEM';
+const ROSTER_SHEET_NAME = '人員名簿';
+const SPECIAL_SHEET_ID = '1Owv83TGxSl15pqO0MaaF4AaLeslye0frfKAuo62TlGY';
+const SPECIAL_SHEET_NAME = 'フォームの回答 1';
+const MEASURE_SHEET = '測定記録';
+const BILL_PRICE_SHEET = '請求単価設定';
+const CONFIRMED_SALES_SHEET = '売上確定';
+const SETTINGS_SHEET = 'システム設定';
+const BILL_PRICE_KEYS = ['am_shop','am_dokkon','am_tokushu','am_zasshi','am_kanri','pm_normal','pm_special','pm_tokushu','pm_kanri','keiba_also_pm','keiba_only','keiba_special','keiba_tokushu','keiba_kanri','kw_am_shop','kw_am_dokkon','kw_am_tokushu','kw_am_zasshi','kw_am_kanri','kw_kyori','kw_pm','kw_pm_tokushu','kw_pm_kanri'];
+const BILL_PRICE_HEADERS = ['朝刊店舗','朝刊同梱','朝刊特殊','朝刊雑誌','朝刊管理費','夕刊通常','夕刊特別','夕刊特殊','夕刊管理費','競馬併用','競馬のみ','競馬特別','競馬特殊','競馬管理費','川越朝刊店舗','川越朝刊同梱','川越朝刊特殊','川越朝刊雑誌','川越朝刊管理費','川越距離増','川越夕刊/競馬','川越夕刊特殊','川越夕刊管理費'];
+const CONFIRMED_SALES_HEADERS = ['年月','営業所','コース','合計金額','朝刊小計','夕刊小計','確定日時'];
+const KAWAGOE_MASTER_SHEET_ID = '1Owv83TGxSl15pqO0MaaF4AaLeslye0frfKAuo62TlGY';
+const KAWAGOE_MASTER_SHEET_NAME = 'マスタ2';
+
+const RATE_HEADERS = ['スタッフ名','朝刊(月-金)','朝刊(土)','夕刊/競馬(月-木)','夕刊/競馬(金-土)','庫内朝刊','庫内夕刊','計算方式','個数単価','ログインID','パスワード','区分','所属会社','夕刊計算方式','夕刊個数単価','朝刊(日)','夕刊(日)','表示権限','川越朝刊曜日別','川越パターン','月給','インボイス番号'];
+
+const SERVICE_ACCOUNT = JSON.parse(Deno.env.get('GOOGLE_SERVICE_ACCOUNT_KEY')!);
+const SESSION_SECRET = Deno.env.get('SHIFT_SESSION_SECRET') || '';
+const ADMIN_PASSWORD = Deno.env.get('SHIFT_ADMIN_PASSWORD') || 'neltec2026';
+const TOKEN_EXPIRY_MS = 12 * 60 * 60 * 1000; // 12時間
+
+// ---- セッショントークン (HMAC-SHA256 署名) ----
+// btoa は Latin1 のみ受け付けるので UTF-8 を経由
+function b64urlEncode(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin=''; for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function b64urlDecode(s: string): string {
+  const bin = atob(s.replace(/-/g,'+').replace(/_/g,'/'));
+  const bytes = new Uint8Array(bin.length);
+  for (let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+async function hmacSign(payload: string): Promise<string> {
+  if (!SESSION_SECRET) throw new Error('SHIFT_SESSION_SECRET not set');
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(SESSION_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  return btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+async function createToken(claims: any): Promise<string> {
+  const payload = b64urlEncode(JSON.stringify({ ...claims, exp: Date.now() + TOKEN_EXPIRY_MS }));
+  const sig = await hmacSign(payload);
+  return `${payload}.${sig}`;
+}
+async function verifyToken(token: string | undefined | null): Promise<any | null> {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
+  try {
+    const expected = await hmacSign(payload);
+    // 定数時間比較（短いので簡易）
+    if (sig.length !== expected.length) return null;
+    let diff = 0; for (let i=0;i<sig.length;i++) diff |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
+    if (diff !== 0) return null;
+    const claims = JSON.parse(b64urlDecode(payload));
+    if (claims.exp && claims.exp < Date.now()) return null;
+    return claims;
+  } catch { return null; }
+}
+function jsonResp(body: any, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}
+function authErr(msg = 'auth required'): Response { return jsonResp({ error: msg, code: 'AUTH_REQUIRED' }, 401); }
+function forbid(msg = 'forbidden'): Response { return jsonResp({ error: msg, code: 'FORBIDDEN' }, 403); }
+
+// claims.role: 'admin' | 'staff'  / staff の場合 claims.name = スタッフ名 / claims.biz_type / claims.is_corp_sub / claims.is_owner / claims.company
+function isAdmin(c: any): boolean { return c?.role === 'admin'; }
+function isCorpSub(c: any): boolean { return c?.is_corp_sub === true; }
+function isCorpOwner(c: any): boolean { return c?.is_owner === true && c?.biz_type === '法人'; }
+function stripStaffPrivate(r: any) {
+  const { login_pw, monthly_salary, ...rest } = r;
+  return rest;
+}
+function stripPrices(r: any) {
+  return { ...r, unit_price: '', amount: '', am_weekday: '', am_weekend: '', pm_weekday: '', pm_weekend: '', warehouse_am: '', warehouse_pm: '', unit_price_pm: '', am_sunday: '', pm_sunday: '', monthly_salary: '' };
+}
+// 同じ company の法人オーナーが permissions に 'show_money' (配下に金額表示) を持つか
+function companyShowsMoney(rates: any[], company: string): boolean {
+  if (!company) return false;
+  const owner = rates.find((r: any) => r.biz_type === '法人' && r.company === company && (r.permissions || '').split(',').includes('owner'));
+  return !!(owner && (owner.permissions || '').split(',').includes('show_money'));
+}
+// 同じ company の名前リスト (オーナー含む) を取得 (法人オーナー権限スコープ用)
+async function fetchCompanyNames(sheetsToken: string, company: string): Promise<string[]> {
+  if (!company) return [];
+  const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`, { headers: { 'Authorization': `Bearer ${sheetsToken}` } });
+  const rows = (await resp.json()).values || [];
+  const list = parseRates(rows).filter((r: any) => r.biz_type === '法人' && r.company === company);
+  return list.map((r: any) => r.name);
+}
+
+// ---- 既存ユーティリティ ----
+function b64url(data: string): string { return btoa(data).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+async function getAccessToken(): Promise<string> {
+  const now=Math.floor(Date.now()/1000);
+  const header=b64url(JSON.stringify({alg:'RS256',typ:'JWT'}));
+  const payload=b64url(JSON.stringify({iss:SERVICE_ACCOUNT.client_email,scope:'https://www.googleapis.com/auth/spreadsheets',aud:SERVICE_ACCOUNT.token_uri,iat:now,exp:now+3600}));
+  const pemBody=SERVICE_ACCOUNT.private_key.replace(/-----BEGIN PRIVATE KEY-----/,'').replace(/-----END PRIVATE KEY-----/,'').replace(/\n/g,'');
+  const binaryDer=Uint8Array.from(atob(pemBody),c=>c.charCodeAt(0));
+  const key=await crypto.subtle.importKey('pkcs8',binaryDer,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['sign']);
+  const sig=await crypto.subtle.sign('RSASSA-PKCS1-v1_5',key,new TextEncoder().encode(`${header}.${payload}`));
+  const signature=btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  const jwt=`${header}.${payload}.${signature}`;
+  const resp=await fetch(SERVICE_ACCOUNT.token_uri,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:`grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`});
+  return (await resp.json()).access_token;
+}
+function parseRates(rows: string[][]) {
+  return rows.filter((r:string[])=>r[0]).map((r:string[])=>({name:r[0]||'',am_weekday:r[1]||'',am_weekend:r[2]||'',pm_weekday:r[3]||'',pm_weekend:r[4]||'',warehouse_am:r[5]||'',warehouse_pm:r[6]||'',calc_type:r[7]||'固定',unit_price:r[8]||'',login_id:r[9]||'',login_pw:r[10]||'',biz_type:r[11]||'',company:r[12]||'',calc_type_pm:r[13]||'',unit_price_pm:r[14]||'',am_sunday:r[15]||'',pm_sunday:r[16]||'',permissions:r[17]||'',kw_am_daily:r[18]||'',kw_pattern:r[19]||'',monthly_salary:r[20]||'',invoice_number:r[21]||''}));
+}
+function parseWork(rows: string[][]) {
+  return rows.map((r:string[],i:number)=>({row_number:i+2,date:r[0]||'',staff:r[1]||'',course:r[2]||'',category:r[3]||'',start_time:r[4]||'',end_time:r[5]||'',quantity:r[6]||'',unit_price:r[7]||'',amount:r[8]||'',confirmed:r[9]||''})).filter((r:any)=>r.date||r.staff);
+}
+
+function normalizeYM(v: any): string {
+  if (v == null || v === '') return '';
+  const s = String(v).trim();
+  if (/^\d{4}-\d{1,2}$/.test(s)) { const [y, m] = s.split('-'); return `${y}-${String(parseInt(m, 10)).padStart(2, '0')}`; }
+  if (/^\d+(\.\d+)?$/.test(s)) { const serial = parseFloat(s); const ms = Date.UTC(1899, 11, 30) + Math.floor(serial) * 86400000; const d = new Date(ms); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; }
+  return s;
+}
+function parseAtMs(s: string): number { if (!s) return 0; const d = new Date(String(s).replace(' ', 'T') + 'Z'); return isNaN(d.getTime()) ? 0 : d.getTime(); }
+
+async function ensureSheets(token:string){
+  const metaResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties`,{headers:{'Authorization':`Bearer ${token}`}});
+  const existing=((await metaResp.json()).sheets||[]).map((s:any)=>s.properties.title);
+  const requests:any[]=[];
+  if(!existing.includes('単価マスタ'))requests.push({addSheet:{properties:{title:'単価マスタ'}}});
+  if(!existing.includes('稼働記録'))requests.push({addSheet:{properties:{title:'稼働記録'}}});
+  if(!existing.includes(MEASURE_SHEET))requests.push({addSheet:{properties:{title:MEASURE_SHEET}}});
+  if(!existing.includes(BILL_PRICE_SHEET))requests.push({addSheet:{properties:{title:BILL_PRICE_SHEET}}});
+  if(!existing.includes(CONFIRMED_SALES_SHEET))requests.push({addSheet:{properties:{title:CONFIRMED_SALES_SHEET}}});
+  if(!existing.includes(SETTINGS_SHEET))requests.push({addSheet:{properties:{title:SETTINGS_SHEET}}});
+  if(requests.length>0)await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({requests})});
+  const hr=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:V1`,{headers:{'Authorization':`Bearer ${token}`}});
+  const ch=(await hr.json()).values?.[0]||[];
+  if(ch.length<RATE_HEADERS.length||!ch.includes('インボイス番号')){
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:V1?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({values:[RATE_HEADERS]})});
+  }
+  const wr=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A1:J1`,{headers:{'Authorization':`Bearer ${token}`}});
+  const wh=(await wr.json()).values?.[0]||[];
+  if(wh.length<10||!wh.includes('確定')){
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A1:J1?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({values:[['日付','スタッフ名','コース名','区分','開始時間','終了時間','配送個数','単価','金額','確定']]})});
+  }
+  const mr=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MEASURE_SHEET)}!A1:H1`,{headers:{'Authorization':`Bearer ${token}`}});
+  const mh=(await mr.json()).values?.[0]||[];
+  if(mh.length<8||!mh.includes('担当者')){
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MEASURE_SHEET)}!A1:H1?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({values:[['日付','コース','区分','開始時刻','終了時刻','店舗名','到着時刻','担当者']]})});
+  }
+  const bpr=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(BILL_PRICE_SHEET)}!A1:W1`,{headers:{'Authorization':`Bearer ${token}`}});
+  const bph=(await bpr.json()).values?.[0]||[];
+  if(bph.length<BILL_PRICE_KEYS.length){
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(BILL_PRICE_SHEET)}!A1:W1?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({values:[BILL_PRICE_HEADERS]})});
+    const defaults=[270,50,20,130,20,230,700,20,20,230,250,700,20,20,260,50,20,80,20,13,280,20,20];
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(BILL_PRICE_SHEET)}!A2:W2?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({values:[defaults]})});
+  }
+  const csr=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A1:G1`,{headers:{'Authorization':`Bearer ${token}`}});
+  const csh=(await csr.json()).values?.[0]||[];
+  if(csh.length<7){
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A1:G1?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({values:[CONFIRMED_SALES_HEADERS]})});
+  }
+}
+
+function parseYenValue(s: string): number { if(!s) return 0; return Number(s.replace(/[¥¥,]/g, '')) || 0; }
+
+Deno.serve(async(req:Request)=>{
+  if(req.method==='OPTIONS')return new Response('ok',{headers:corsHeaders});
+  try{
+    const body = await req.json();
+    const { action, record, row_number, row_numbers, login_id, login_pw, measure_data, bill_prices, confirmed_sale, year_month, area, course, admin_password, auth_token } = body;
+
+    // ---- 認証不要のアクション: login / admin_login ----
+    if(action==='login'){
+      const token=await getAccessToken();
+      await ensureSheets(token);
+      const [rateResp, workResp] = await Promise.all([
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${token}`}}),
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${token}`}}),
+      ]);
+      const rateRows=(await rateResp.json()).values||[];
+      const match=rateRows.find((r:string[])=>(r[9]||'').trim()===login_id&&(r[10]||'').trim()===login_pw);
+      if(!match) return jsonResp({success:false,error:'IDまたはパスワードが正しくありません'});
+      // claims 構築
+      const name = match[0];
+      const biz_type = match[11] || '';
+      const company = match[12] || '';
+      const permissions = match[17] || '';
+      const permList = permissions.split(',');
+      // 管理者 = 社員 (biz_type='社員' は自動で admin)。 旧データ互換で permissions='admin' も認める
+      const has_admin = biz_type === '社員' || permList.includes('admin');
+      const is_owner = biz_type === '法人' && permList.includes('owner');
+      const is_corp_sub = biz_type === '法人' && !is_owner;
+      // permissions に 'admin' があれば EF レベルでも admin 扱い
+      const tokenRole = has_admin ? 'admin' : 'staff';
+      const allRates = parseRates(rateRows);
+      // 自社オーナーが「配下に金額表示(show_money)」ONなら corp-sub でも金額を見せる
+      const company_shows_money = is_corp_sub ? companyShowsMoney(allRates, company) : true;
+      const sessionToken = await createToken({ role: tokenRole, name, biz_type, company, permissions, is_corp_sub, is_owner, company_shows_money });
+      // 単価 + 稼働のスコープ: admin=全件 / corp-owner=同company全員 / それ以外=自分のみ
+      const allWork = parseWork((await workResp.json()).values||[]);
+      let ratesScoped, myWork;
+      if (has_admin) {
+        ratesScoped = allRates;
+        myWork = allWork;
+      } else {
+        const scopeNames = new Set<string>([name]);
+        if (is_owner) {
+          allRates.filter((r:any)=>r.biz_type==='法人' && r.company===company).forEach((r:any)=>scopeNames.add(r.name));
+        }
+        myWork = allWork.filter((w:any)=>scopeNames.has(w.staff));
+        ratesScoped = allRates.filter((r:any)=>scopeNames.has(r.name)).map((r:any)=>{
+          if (is_corp_sub && !company_shows_money) return stripPrices(stripStaffPrivate(r));
+          return stripStaffPrivate(r);
+        });
+      }
+      return jsonResp({success:true, staff_name:name, rates:ratesScoped, work:myWork, permissions, auth_token:sessionToken, is_owner, company, has_admin, company_shows_money});
+    }
+    if(action==='admin_login'){
+      if(!admin_password || admin_password !== ADMIN_PASSWORD) return jsonResp({success:false,error:'管理者パスワードが正しくありません'},401);
+      const sessionToken = await createToken({ role: 'admin', name: 'admin' });
+      return jsonResp({success:true, auth_token: sessionToken});
+    }
+
+    // ---- 以下はトークン必須 ----
+    const claims = await verifyToken(auth_token);
+    if (!claims) return authErr();
+    const admin = isAdmin(claims);
+    const corpSub = isCorpSub(claims);
+    const corpOwner = isCorpOwner(claims);
+    const callerName = claims.name || '';
+    const callerCompany = claims.company || '';
+
+    const sheetsToken = await getAccessToken();
+    await ensureSheets(sheetsToken);
+
+    // 法人オーナーが操作できる配下スタッフ名集合 (キャッシュ的に1リクエスト内で1回だけ取得)
+    let scopeNames: Set<string> | null = null;
+    async function getScopeNames(): Promise<Set<string>> {
+      if (scopeNames) return scopeNames;
+      const s = new Set<string>([callerName]);
+      if (corpOwner && callerCompany) {
+        const subs = await fetchCompanyNames(sheetsToken, callerCompany);
+        subs.forEach(n => s.add(n));
+      }
+      scopeNames = s;
+      return s;
+    }
+
+    if(action==='get_staff_names'){
+      if (admin) {
+        const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${ROSTER_SHEET_ID}/values/${encodeURIComponent(ROSTER_SHEET_NAME)}!C2:C500`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+        const names=[...new Set(((await resp.json()).values||[]).map((r:string[])=>(r[0]||'').trim()).filter(Boolean))];
+        return jsonResp({names});
+      }
+      // 非admin: 自分 (+ owner なら配下) のみ
+      const scope = await getScopeNames();
+      return jsonResp({ names: [...scope] });
+    }
+    if(action==='get_special_rates'){
+      if(!admin) return forbid();
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const rows=((await resp.json()).values||[]).filter((r:string[])=>r[1]&&r[2]);
+      const records=rows.map((r:string[])=>({timestamp:r[0]||'',date:r[1]||'',name:r[2]||'',amount:r[3]||'',reason:r[4]||'',applicant:r[5]||'',category:r[6]||'',type:r[7]||'',office:r[8]||''}));
+      return jsonResp({records});
+    }
+    if(action==='get_rates'){
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const all = parseRates((await resp.json()).values||[]);
+      if (admin) return jsonResp({rates: all});
+      // staff/owner: scopeNames に含まれる行のみ、login_pw/monthly_salary を剥がす。corp-sub は金額系も剥がす
+      const scope = await getScopeNames();
+      const out = all.filter((r:any)=>scope.has(r.name)).map((r:any)=> (corpSub && !claims.company_shows_money) ? stripPrices(stripStaffPrivate(r)) : stripStaffPrivate(r));
+      return jsonResp({rates: out});
+    }
+    if(action==='save_rate'){
+      if(!admin) return forbid();
+      if(!record?.name) return jsonResp({error:'name required'}, 400);
+      const row=[record.name,record.am_weekday||'',record.am_weekend||'',record.pm_weekday||'',record.pm_weekend||'',record.warehouse_am||'',record.warehouse_pm||'',record.calc_type||'固定',record.unit_price||'',record.login_id||'',record.login_pw||'',record.biz_type||'',record.company||'',record.calc_type_pm||'固定',record.unit_price_pm||'',record.am_sunday||'',record.pm_sunday||'',record.permissions||'',record.kw_am_daily||'',record.kw_pattern||'',record.monthly_salary||'',record.invoice_number||''];
+      if(row_number){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A${row_number}:V${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
+      else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:V1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
+      return jsonResp({success:true});
+    }
+    if(action==='delete_rate'){
+      if(!admin) return forbid();
+      if(!row_number) return jsonResp({error:'row_number required'}, 400);
+      const rowIdx=Number(row_number)-1;
+      if(rowIdx<1) return jsonResp({error:'cannot delete header'}, 400);
+      const delResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({requests:[{deleteDimension:{range:{sheetId:RATE_SHEET_ID,dimension:'ROWS',startIndex:rowIdx,endIndex:rowIdx+1}}}]})});
+      if(!delResp.ok){
+        const errText=await delResp.text();
+        return jsonResp({error:'deleteDimension failed: '+delResp.status+' '+errText.slice(0,200)}, 500);
+      }
+      return jsonResp({success:true});
+    }
+    if(action==='list_work'){
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const all = parseWork((await resp.json()).values||[]);
+      if (admin) return jsonResp({records: all});
+      const scope = await getScopeNames();
+      const mine = all.filter((r:any)=>scope.has(r.staff)).map((r:any)=> (corpSub && !claims.company_shows_money) ? { ...r, unit_price:'', amount:'' } : r);
+      return jsonResp({records: mine});
+    }
+    if(action==='add_work'){
+      if(!record) return jsonResp({error:'record required'}, 400);
+      if(!admin){
+        const scope = await getScopeNames();
+        if(!scope.has(record.staff||'')) return forbid('権限のないスタッフの稼働は追加できません');
+      }
+      const row=[record.date||'',record.staff||'',record.course||'',record.category||'',record.start_time||'',record.end_time||'',record.quantity||'',record.unit_price||'',record.amount||'',''];
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A1:J1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});
+      return jsonResp({success:true});
+    }
+    if(action==='update_work'){
+      if(!record||!row_number) return jsonResp({error:'record and row_number required'}, 400);
+      // 行のオーナー確認 (staff/owner のみ・admin はスキップ)
+      if(!admin){
+        const scope = await getScopeNames();
+        const chk=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A${row_number}:J${row_number}`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+        const cv=(await chk.json()).values?.[0]||[];
+        const existingStaff = cv[1] || '';
+        if(!scope.has(existingStaff)) return forbid('権限のないスタッフの稼働は編集できません');
+        if(cv[9]) return jsonResp({error:'確定済みの記録は編集できません'}, 403);
+        // 書き換え後の staff も scope 内に限る (オーナーが配下↔配下/自分↔配下 への移動はOK)
+        if(record.staff && !scope.has(record.staff)) return forbid('権限のないスタッフへ変更できません');
+      }
+      const row=[record.date||'',record.staff||callerName,record.course||'',record.category||'',record.start_time||'',record.end_time||'',record.quantity||'',record.unit_price||'',record.amount||''];
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A${row_number}:I${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});
+      return jsonResp({success:true});
+    }
+    if(action==='delete_work'){
+      if(!row_number) return jsonResp({error:'row_number required'}, 400);
+      if(!admin){
+        const scope = await getScopeNames();
+        const chk=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A${row_number}:J${row_number}`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+        const cv=(await chk.json()).values?.[0]||[];
+        const existingStaff = cv[1] || '';
+        if(!scope.has(existingStaff)) return forbid('権限のないスタッフの稼働は削除できません');
+        if(cv[9]) return jsonResp({error:'確定済みの記録は削除できません'}, 403);
+      }
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A${row_number}:J${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[Array(10).fill('')]})});
+      return jsonResp({success:true});
+    }
+    if(action==='confirm_records'){
+      if(!admin) return forbid();
+      if(!row_numbers||!row_numbers.length) return jsonResp({error:'row_numbers required'}, 400);
+      const data:any[]=[];const today=new Date().toISOString().split('T')[0];
+      for(const rn of row_numbers){data.push({range:`${encodeURIComponent('稼働記録')}!J${rn}`,values:[[today]]});}
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'USER_ENTERED',data})});
+      return jsonResp({success:true,confirmed:row_numbers.length});
+    }
+    if(action==='unconfirm_records'){
+      if(!admin) return forbid();
+      if(!row_numbers||!row_numbers.length) return jsonResp({error:'row_numbers required'}, 400);
+      const data:any[]=[];
+      for(const rn of row_numbers){data.push({range:`${encodeURIComponent('稼働記録')}!J${rn}`,values:[['']]});}
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'USER_ENTERED',data})});
+      return jsonResp({success:true,unconfirmed:row_numbers.length});
+    }
+    if(action==='list_measure'){
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MEASURE_SHEET)}!A2:H10000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const rows=((await resp.json()).values||[]).filter((r:string[])=>r[0]||r[1]);
+      const records=rows.map((r:string[])=>({date:r[0]||'',course:r[1]||'',type:r[2]||'',start_time:r[3]||'',end_time:r[4]||'',shop_name:r[5]||'',arrival_time:r[6]||'',staff:r[7]||''}));
+      return jsonResp({records});
+    }
+    if(action==='save_measure'){
+      if(!measure_data) return jsonResp({error:'measure_data required'}, 400);
+      const{date,course,type,start_time,end_time,staff,shops}=measure_data;
+      // staff は自分の名前のみ
+      const staffName = admin ? (staff || '') : callerName;
+      const rows=(shops||[]).map((s:any)=>[date||'',course||'',type||'',start_time||'',end_time||'',s.name||'',s.time||'',staffName]);
+      if(rows.length){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MEASURE_SHEET)}!A1:H1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:rows})});}
+      return jsonResp({success:true,saved:rows.length});
+    }
+    if(action==='get_bill_prices'){
+      if(!admin) return forbid();
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(BILL_PRICE_SHEET)}!A2:W2`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const row=(await resp.json()).values?.[0]||[];
+      const prices:any={};
+      BILL_PRICE_KEYS.forEach((k,i)=>{prices[k]=Number(row[i])||0;});
+      return jsonResp({prices});
+    }
+    if(action==='save_bill_prices'){
+      if(!admin) return forbid();
+      if(!bill_prices) return jsonResp({error:'bill_prices required'}, 400);
+      const row=BILL_PRICE_KEYS.map(k=>bill_prices[k]??0);
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(BILL_PRICE_SHEET)}!A2:W2?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});
+      return jsonResp({success:true});
+    }
+    if(action==='get_kawagoe_course_prices'){
+      // 川越コース単価マスタ — 請求側の参照に使う。staff には不要なので admin のみ
+      if(!admin) return forbid();
+      const [oldResp, newResp] = await Promise.all([
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${KAWAGOE_MASTER_SHEET_ID}/values/${encodeURIComponent(KAWAGOE_MASTER_SHEET_NAME)}!AN2:AV20`,{headers:{'Authorization':`Bearer ${sheetsToken}`}}),
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${KAWAGOE_MASTER_SHEET_ID}/values/${encodeURIComponent(KAWAGOE_MASTER_SHEET_NAME)}!AN22:AV34`,{headers:{'Authorization':`Bearer ${sheetsToken}`}}),
+      ]);
+      const parseCourseRows = (rows: string[][]) => rows.filter((r:string[])=>r[0]).map((r:string[])=>({course:r[0]||'',mon:parseYenValue(r[2]),tue:parseYenValue(r[3]),wed:parseYenValue(r[4]),thu:parseYenValue(r[5]),fri:parseYenValue(r[6]),sat:parseYenValue(r[7]),sun:parseYenValue(r[8])}));
+      const oldData = parseCourseRows((await oldResp.json()).values||[]);
+      const newData = parseCourseRows((await newResp.json()).values||[]);
+      return jsonResp({old:oldData,new:newData});
+    }
+    if(action==='get_confirmed_sales'){
+      if(!admin) return forbid();
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A2:G5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const rows=(await resp.json()).values||[];
+      const all=rows.map((r:string[],i:number)=>{
+        const ym = normalizeYM(r[0]);
+        return {row_number:i+2,year_month:ym,area:r[1]||'',course:r[2]||'',grand_total:Number(r[3])||0,am_total:Number(r[4])||0,pm_total:Number(r[5])||0,confirmed_at:r[6]||'',_atMs:parseAtMs(r[6]||'')};
+      }).filter((r:any)=>r.year_month&&r.area&&r.course);
+      const dedup=new Map<string,any>();
+      all.forEach((r:any)=>{
+        const k=`${r.year_month}|${r.area}|${r.course}`;
+        const ex=dedup.get(k);
+        if(!ex||r._atMs>ex._atMs||(r._atMs===ex._atMs&&r.row_number>ex.row_number))dedup.set(k,r);
+      });
+      let records=[...dedup.values()].map(({_atMs,...rest})=>rest);
+      if(year_month){
+        const ymNorm=normalizeYM(year_month);
+        records=records.filter((r:any)=>r.year_month===ymNorm);
+      }
+      return jsonResp({records});
+    }
+    if(action==='save_confirmed_sale'){
+      if(!admin) return forbid();
+      if(!confirmed_sale) return jsonResp({error:'confirmed_sale required'}, 400);
+      const{year_month:ymRaw,area:ar,course:cs,grand_total,am_total,pm_total}=confirmed_sale;
+      const ym = normalizeYM(ymRaw);
+      if(!ym||!ar||!cs) return jsonResp({error:'year_month, area, course required'}, 400);
+      const now=new Date().toISOString().replace('T',' ').slice(0,19);
+      const newRow=[ym,ar,cs,grand_total||0,am_total||0,pm_total||0,now];
+      const existResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A2:G5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const existRows=(await existResp.json()).values||[];
+      const matchIdx=existRows.findIndex((r:string[])=>normalizeYM(r[0])===ym&&r[1]===ar&&r[2]===cs);
+      if(matchIdx>=0){
+        const rn=matchIdx+2;
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A${rn}:G${rn}?valueInputOption=RAW`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[newRow]})});
+      }else{
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A1:G1:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[newRow]})});
+      }
+      return jsonResp({success:true});
+    }
+    if(action==='unconfirm_sale'){
+      if(!admin) return forbid();
+      if(!year_month||!area||!course) return jsonResp({error:'year_month, area, course required'}, 400);
+      const ymNorm = normalizeYM(year_month);
+      const existResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A2:G5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const existRows=(await existResp.json()).values||[];
+      const matches:number[]=[];
+      existRows.forEach((r:string[],i:number)=>{
+        if(normalizeYM(r[0])===ymNorm&&r[1]===area&&r[2]===course)matches.push(i+2);
+      });
+      if(matches.length>0){
+        const data=matches.map(rn=>({range:`${CONFIRMED_SALES_SHEET}!A${rn}:G${rn}`,values:[Array(7).fill('')]}));
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'RAW',data})});
+      }
+      return jsonResp({success:true,cleared:matches.length});
+    }
+    // ----- システム設定 (機能表示制御 等) -----
+    if(action==='get_feature_visibility'){
+      // 全員が読める (ログインしたユーザのナビ反映用)
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SETTINGS_SHEET)}!A1:B1`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const row=(await resp.json()).values?.[0]||[];
+      let config = {};
+      if(row[0]==='feature_visibility' && row[1]){
+        try{ config = JSON.parse(row[1]); }catch(_){}
+      }
+      return jsonResp({ feature_visibility: config });
+    }
+    if(action==='save_feature_visibility'){
+      if(!admin) return forbid();
+      const cfg = body.feature_visibility || {};
+      // sanitize: 値は boolean のみ許可
+      const clean: Record<string,boolean> = {};
+      for(const k of Object.keys(cfg)){
+        if(typeof cfg[k] === 'boolean') clean[k] = cfg[k];
+      }
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SETTINGS_SHEET)}!A1:B1?valueInputOption=RAW`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[['feature_visibility', JSON.stringify(clean)]]})});
+      return jsonResp({success:true, feature_visibility: clean});
+    }
+    return jsonResp({error:'Unknown action'});
+  }catch(e:any){
+    return jsonResp({error:e.message}, 500);
+  }
+});
