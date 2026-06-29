@@ -5541,24 +5541,16 @@ async function invDoChangePw(){
   if(newPw!==confirmPw){errEl.textContent='新しいパスワードが一致しません';errEl.style.display='block';return;}
   if(newPw.length<3){errEl.textContent='パスワードは3文字以上にしてください';errEl.style.display='block';return;}
 
-  // 現在のパスワードを検証
-  const rate=invRates.find(r=>r.name===invStaffName);
-  if(!rate){errEl.textContent='単価マスタにユーザーが見つかりません';errEl.style.display='block';return;}
-  if(rate.login_pw!==oldPw){errEl.textContent='現在のパスワードが正しくありません';errEl.style.display='block';return;}
-
-  // 行番号を特定
-  const rowIdx=invRates.indexOf(rate);
-  const rowNum=rowIdx+2;
-
   const btn=document.getElementById('inv-pw-submit');
   btn.textContent='変更中...';btn.disabled=true;
+  errEl.style.display='none';
 
   try{
-    const updatedRecord={...rate,login_pw:newPw,biz_type:rate.biz_type||'',company:rate.company||''};
-    await invApi({action:'save_rate',record:updatedRecord,row_number:rowNum});
+    // 現在PWの照合と更新はサーバ側で実施 (login_pw はクライアントに渡されないため)
+    const res=await invApi({action:'change_password',old_pw:oldPw,new_pw:newPw});
+    if(res&&res.error){errEl.textContent=res.error;errEl.style.display='block';btn.textContent='変更する';btn.disabled=false;return;}
     document.getElementById('inv-pw-modal').remove();
     alert('パスワードを変更しました');
-    await invLoadAll();
   }catch(e){
     errEl.textContent='エラーが発生しました';errEl.style.display='block';
   }

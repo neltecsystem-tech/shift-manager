@@ -478,6 +478,27 @@ Deno.serve(async(req:Request)=>{
       else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:W1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
       return jsonResp({success:true});
     }
+    if(action==='change_password'){
+      // 本人のログインパスワード変更 (現在PWをサーバ側で照合)。adminは login_id 指定で任意ユーザー可。
+      const oldPw = String(body.old_pw ?? '').trim();
+      const newPw = String(body.new_pw ?? '').trim();
+      if(newPw.length < 3) return jsonResp({error:'新しいパスワードは3文字以上にしてください'}, 400);
+      const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:W200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const rates = parseRates((await resp.json()).values||[]);
+      let target:any;
+      if(admin && body.login_id){ target = rates.find((r:any)=>(r.login_id||'').trim()===String(body.login_id).trim()); }
+      else { target = rates.find((r:any)=>r.name===callerName); }
+      if(!target) return jsonResp({error:'ユーザーが見つかりません'}, 404);
+      if(!admin){
+        if((target.login_pw||'').trim() !== oldPw) return jsonResp({error:'現在のパスワードが正しくありません', code:'BAD_OLD_PW'}, 403);
+      }
+      // login_pw = K列(index10)。該当行のみ更新。
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!K${target.row_number}?valueInputOption=USER_ENTERED`,{
+        method:'PUT', headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},
+        body: JSON.stringify({ values:[[newPw]] }),
+      });
+      return jsonResp({success:true});
+    }
     if(action==='delete_rate'){
       if(!admin) return forbid();
       if(!row_number) return jsonResp({error:'row_number required'}, 400);
