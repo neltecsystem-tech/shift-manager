@@ -8277,8 +8277,11 @@ function admJinAddRow(){
       <datalist id="ajn-range-list">${ranges.map(a=>`<option value="${esc(a)}">`).join('')}</datalist></div>
     <div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-sub)">氏名 <span style="color:#dc2626;">*</span></label>
       <input id="ajn-name" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
-    <div style="margin-bottom:16px;"><label style="font-size:12px;color:var(--text-sub)">電話番号</label>
+    <div style="margin-bottom:14px;"><label style="font-size:12px;color:var(--text-sub)">電話番号</label>
       <input id="ajn-phone" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 090-1234-5678"></div>
+    ${(typeof invIsAdmin!=='undefined'&&invIsAdmin)?`<div style="margin-bottom:14px;display:flex;align-items:flex-start;gap:8px;padding:8px 10px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;">
+      <input type="checkbox" id="ajn-addrate" checked style="margin-top:2px;">
+      <label for="ajn-addrate" style="font-size:12px;color:#0f766e;line-height:1.4;">請求書の<b>単価マスタにも追加</b><br><span style="font-size:11px;color:#0d9488;">単価・区分・ログインは後で「単価一覧」で設定</span></label></div>`:''}
     <div id="ajn-msg" style="font-size:12px;min-height:16px;margin-bottom:8px;"></div>
     <button onclick="admJinAddRowSave()" id="ajn-submit" style="width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">追加する</button>
   </div>`;
@@ -8293,15 +8296,31 @@ async function admJinAddRowSave(){
   const phone=(document.getElementById('ajn-phone').value||'').trim();
   const msg=document.getElementById('ajn-msg');
   if(!name){msg.innerHTML='<span style="color:#dc2626;">氏名を入力してください</span>';return;}
+  const addRate=(typeof invIsAdmin!=='undefined'&&invIsAdmin)&&!!((document.getElementById('ajn-addrate')||{}).checked);
   // 同名チェック (警告のみ・同姓同名はありうるので続行可)
   const exists=admJinState.rows.slice(2).some(r=>String(r[2]||'').trim()===name);
   if(exists&&!confirm(`「${name}」は既に人員名簿にあります。\n同姓同名として追加しますか?`))return;
   const btn=document.getElementById('ajn-submit');
   btn.textContent='追加中...';btn.disabled=true;
   try{
+    // ① 人員名簿シートに追加
     const resp=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:'人員名簿',values:[area,range,name,phone]})});
     const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
     if(json.error)throw new Error(json.error);
+    // ② 請求書の単価マスタにも追加 (admin時・チェックON。氏名のみ。単価等は後で単価一覧で設定)
+    let rateMsg='';
+    if(addRate){
+      try{
+        const rr=await invApi({action:'get_rates'});
+        const norm=(typeof invNormName==='function')?invNormName(name):name;
+        const dup=(rr.rates||[]).some(x=>((typeof invNormName==='function')?invNormName(String(x.name||'')):String(x.name||''))===norm);
+        if(dup){rateMsg='（単価マスタは既存のためスキップ）';}
+        else{
+          const sr=await invApi({action:'save_rate',record:{name}});
+          rateMsg=(sr&&sr.error)?`（単価マスタ追加失敗: ${sr.error}）`:' ＋単価マスタにも追加';
+        }
+      }catch(e){rateMsg='（単価マスタ追加失敗）';}
+    }
     const modal=document.getElementById('adm-jin-add-modal');if(modal)modal.remove();
     // 絞り込みが新規行を隠さないようにクリアしてから再読込
     const sEl=document.getElementById('adm-se-search'),aEl=document.getElementById('adm-se-area');
@@ -8309,7 +8328,7 @@ async function admJinAddRowSave(){
     admJinState.loaded=false;
     await admJinLoad();
     const m=document.getElementById('adm-se-msg');
-    if(m){m.textContent=`✓ 「${name}」を人員名簿に追加しました。朝刊/夕刊コースはグリッドで入力→💾保存してください`;m.style.color='#16a34a';}
+    if(m){m.textContent=`✓ 「${name}」を人員名簿に追加しました${rateMsg}。朝刊/夕刊コースはグリッドで入力→💾保存してください`;m.style.color='#16a34a';}
   }catch(e){
     msg.innerHTML='<span style="color:#dc2626;">追加失敗: '+e.message+'</span>';
     btn.textContent='追加する';btn.disabled=false;
