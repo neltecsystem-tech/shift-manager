@@ -96,6 +96,7 @@ function memberShowsMoney(rates: any[], name: string): boolean {
 // 取引先名/会社名の正規化 (法人格・記号・空白を除去して突合用キーに)
 function normPartner(s: string): string {
   return String(s || '')
+    .normalize('NFKC') // 半角カナ→全角・㈱→(株)・全角英数→半角 を吸収
     .replace(/株式会社|合同会社|有限会社|（株）|\(株\)|㈱|（合）|\(合\)|（有）|\(有\)/g, '')
     .replace(/[\s　・,，\.。\-－―ー]/g, '')
     .toLowerCase().trim();
