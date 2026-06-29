@@ -278,6 +278,7 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="smBatchAddrUnified()" id="sm-addr-btn" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📝 住所を一括取得</button>
           <button onclick="smBatchLatLngFromAddr()" id="sm-gps-btn" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 GPSを一括取得</button>
           <button onclick="smVerifyNavLocation()" id="sm-verify-btn" style="background:#a855f7;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔍 ナビ位置検証</button>
+          <button onclick="smAddCourse()" style="background:#14b8a6;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">➕ 新コース追加</button>
           <button onclick="smShowReplace()" style="background:#f59e0b;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔄 コース一括置換</button>
           <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
           <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 新店登録</button>
@@ -3970,6 +3971,23 @@ async function smSave(){
 }
 
 // ── コース一括置換 ──
+// 新コースをマスタ2(コース候補)へ追加。以後、新店登録/編集 のコース入力候補に出る。
+async function smAddCourse(){
+  const name=(prompt('追加する新コース名を入力してください。\n（朝刊・夕刊・競馬 共通のコース候補に追加されます）')||'').trim();
+  if(!name)return;
+  if((smMasterCourses||[]).includes(name)){alert(`「${name}」は既にコース候補に登録されています`);return;}
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add_course',record:{course:name}})});
+    const json=await resp.json();
+    if(json.success){
+      smMasterCourses=json.courses||[...(smMasterCourses||[]),name];
+      if(json.duplicate){alert(`「${name}」は既に登録されていました`);return;}
+      alert(`「${name}」をコース候補に追加しました。\n\n店舗にこのコースを割り当てる（🏪新店登録 または ✏️編集 で区分の「コース」欄に入力）と、ダイヤグラム・測定・店舗マスタに表示されます。`);
+    }else{
+      alert('追加に失敗しました: '+(json.error||'不明なエラー'));
+    }
+  }catch(e){alert('エラー: '+e.message);}
+}
 function smShowReplace(){
   // 営業所セレクト初期化
   const areaSel=document.getElementById('smr-area');

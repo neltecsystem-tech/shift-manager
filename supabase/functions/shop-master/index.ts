@@ -163,6 +163,45 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    if (action === 'add_course') {
+      // マスタ2 A列(コース候補)へ新コースを追記。朝刊/夕刊/競馬 共通の候補リスト。
+      const course = ((record?.course ?? reqBody.course) || '').toString().trim();
+      if (!course) {
+        return new Response(JSON.stringify({ error: 'course required' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const curResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!A3:A150`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const curRows = ((await curResp.json()).values || []) as string[][];
+      const existing = curRows.map((r: string[]) => (r[0] || '').trim());
+      if (existing.some((c: string) => c === course)) {
+        return new Response(JSON.stringify({ success: true, duplicate: true, courses: existing.filter(Boolean) }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const targetRow = 3 + existing.length; // 既存の末尾の次の行へ
+      if (targetRow > 150) {
+        return new Response(JSON.stringify({ error: 'コース候補が上限(148件)に達しています' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const putRange = encodeURIComponent(`'${MASTER2_SHEET}'!A${targetRow}`);
+      const putResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${putRange}?valueInputOption=USER_ENTERED`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [[course]] }),
+      });
+      if (!putResp.ok) {
+        const errText = await putResp.text();
+        return new Response(JSON.stringify({ error: 'add_course failed (' + putResp.status + '): ' + errText.slice(0, 300) }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ success: true, course, courses: [...existing.filter(Boolean), course] }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     if (action === 'list') {
       await ensureExtraHeaders(token);
       const resp = await fetch(
