@@ -305,7 +305,36 @@ Deno.serve(async(req:Request)=>{
         });
         if(!up.ok){ const t=await up.text(); return jsonResp({error:'sheet update failed: '+up.status+' '+t.slice(0,300)},500); }
       }
-      return jsonResp({success:true, dry_run:dryRun, updated:data.length, changes});
+      // ── アスクル/配送 profiles へも反映 (別プロジェクト。service_role キーを env から) ──
+      const profileTargets = [
+        { name:'askul',    url: Deno.env.get('ASKUL_URL')||'',    key: Deno.env.get('ASKUL_SERVICE_KEY')||'' },
+        { name:'delivery', url: Deno.env.get('DELIVERY_URL')||'', key: Deno.env.get('DELIVERY_SERVICE_KEY')||'' },
+      ];
+      const profiles:any = {};
+      for(const t of profileTargets){
+        if(!t.url || !t.key){ profiles[t.name] = { skipped:true }; continue; }
+        try{
+          const pres = await fetch(`${t.url}/rest/v1/profiles?select=id,full_name,company_name,invoice_number`,{headers:{'apikey':t.key,'Authorization':`Bearer ${t.key}`}});
+          if(!pres.ok){ profiles[t.name] = { error: 'fetch '+pres.status }; continue; }
+          const profs = (await pres.json()) as any[];
+          let updated = 0; const pchanges:any[] = [];
+          for(const m of profs){
+            const tno = pmap.get(normPartner(m.full_name)) || (m.company_name ? pmap.get(normPartner(m.company_name)) : undefined);
+            if(!tno) continue;
+            if((m.invoice_number||'').trim() === tno) continue;
+            pchanges.push({ name: m.full_name||m.company_name||'', invoice_number: tno });
+            if(!dryRun){
+              const pu = await fetch(`${t.url}/rest/v1/profiles?id=eq.${encodeURIComponent(m.id)}`,{
+                method:'PATCH', headers:{'apikey':t.key,'Authorization':`Bearer ${t.key}`,'Content-Type':'application/json','Prefer':'return=minimal'},
+                body: JSON.stringify({ invoice_number: tno }),
+              });
+              if(pu.ok) updated++;
+            } else updated++;
+          }
+          profiles[t.name] = { updated, changes: pchanges };
+        }catch(e){ profiles[t.name] = { error: String((e as any)?.message||e) }; }
+      }
+      return jsonResp({success:true, dry_run:dryRun, shift_updated:data.length, changes, profiles});
     }
 
     // ---- 以下はトークン必須 ----
