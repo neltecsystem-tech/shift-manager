@@ -21,7 +21,7 @@ const CONFIRMED_SALES_HEADERS = ['年月','営業所','コース','合計金額'
 const KAWAGOE_MASTER_SHEET_ID = '1Owv83TGxSl15pqO0MaaF4AaLeslye0frfKAuo62TlGY';
 const KAWAGOE_MASTER_SHEET_NAME = 'マスタ2';
 
-const RATE_HEADERS = ['スタッフ名','朝刊(月-金)','朝刊(土)','夕刊/競馬(月-木)','夕刊/競馬(金-土)','庫内朝刊','庫内夕刊','計算方式','個数単価','ログインID','パスワード','区分','所属会社','夕刊計算方式','夕刊個数単価','朝刊(日)','夕刊(日)','表示権限','川越朝刊曜日別','川越パターン','月給','インボイス番号'];
+const RATE_HEADERS = ['スタッフ名','朝刊(月-金)','朝刊(土)','夕刊/競馬(月-木)','夕刊/競馬(金-土)','庫内朝刊','庫内夕刊','計算方式','個数単価','ログインID','パスワード','区分','所属会社','夕刊計算方式','夕刊個数単価','朝刊(日)','夕刊(日)','表示権限','川越朝刊曜日別','川越パターン','月給','インボイス番号','単価適用日'];
 
 const SERVICE_ACCOUNT = JSON.parse(Deno.env.get('GOOGLE_SERVICE_ACCOUNT_KEY')!);
 const SESSION_SECRET = Deno.env.get('SHIFT_SESSION_SECRET') || '';
@@ -104,7 +104,7 @@ function normPartner(s: string): string {
 // 同じ company の名前リスト (オーナー含む) を取得 (法人オーナー権限スコープ用)
 async function fetchCompanyNames(sheetsToken: string, company: string): Promise<string[]> {
   if (!company) return [];
-  const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`, { headers: { 'Authorization': `Bearer ${sheetsToken}` } });
+  const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:W200`, { headers: { 'Authorization': `Bearer ${sheetsToken}` } });
   const rows = (await resp.json()).values || [];
   const list = parseRates(rows).filter((r: any) => r.biz_type === '法人' && r.company === company);
   return list.map((r: any) => r.name);
@@ -126,7 +126,7 @@ async function getAccessToken(): Promise<string> {
   return (await resp.json()).access_token;
 }
 function parseRates(rows: string[][]) {
-  return rows.map((r:string[],i:number)=>({row_number:i+2,name:r[0]||'',am_weekday:r[1]||'',am_weekend:r[2]||'',pm_weekday:r[3]||'',pm_weekend:r[4]||'',warehouse_am:r[5]||'',warehouse_pm:r[6]||'',calc_type:r[7]||'固定',unit_price:r[8]||'',login_id:r[9]||'',login_pw:r[10]||'',biz_type:r[11]||'',company:r[12]||'',calc_type_pm:r[13]||'',unit_price_pm:r[14]||'',am_sunday:r[15]||'',pm_sunday:r[16]||'',permissions:r[17]||'',kw_am_daily:r[18]||'',kw_pattern:r[19]||'',monthly_salary:r[20]||'',invoice_number:r[21]||''})).filter((o:any)=>o.name);
+  return rows.map((r:string[],i:number)=>({row_number:i+2,name:r[0]||'',am_weekday:r[1]||'',am_weekend:r[2]||'',pm_weekday:r[3]||'',pm_weekend:r[4]||'',warehouse_am:r[5]||'',warehouse_pm:r[6]||'',calc_type:r[7]||'固定',unit_price:r[8]||'',login_id:r[9]||'',login_pw:r[10]||'',biz_type:r[11]||'',company:r[12]||'',calc_type_pm:r[13]||'',unit_price_pm:r[14]||'',am_sunday:r[15]||'',pm_sunday:r[16]||'',permissions:r[17]||'',kw_am_daily:r[18]||'',kw_pattern:r[19]||'',monthly_salary:r[20]||'',invoice_number:r[21]||'',rate_effective_from:r[22]||''})).filter((o:any)=>o.name);
 }
 function parseWork(rows: string[][]) {
   return rows.map((r:string[],i:number)=>({row_number:i+2,date:r[0]||'',staff:r[1]||'',course:r[2]||'',category:r[3]||'',start_time:r[4]||'',end_time:r[5]||'',quantity:r[6]||'',unit_price:r[7]||'',amount:r[8]||'',confirmed:r[9]||''})).filter((r:any)=>r.date||r.staff);
@@ -152,10 +152,10 @@ async function ensureSheets(token:string){
   if(!existing.includes(CONFIRMED_SALES_SHEET))requests.push({addSheet:{properties:{title:CONFIRMED_SALES_SHEET}}});
   if(!existing.includes(SETTINGS_SHEET))requests.push({addSheet:{properties:{title:SETTINGS_SHEET}}});
   if(requests.length>0)await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({requests})});
-  const hr=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:V1`,{headers:{'Authorization':`Bearer ${token}`}});
+  const hr=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:W1`,{headers:{'Authorization':`Bearer ${token}`}});
   const ch=(await hr.json()).values?.[0]||[];
-  if(ch.length<RATE_HEADERS.length||!ch.includes('インボイス番号')){
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:V1?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({values:[RATE_HEADERS]})});
+  if(ch.length<RATE_HEADERS.length||!ch.includes('単価適用日')){
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:W1?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({values:[RATE_HEADERS]})});
   }
   const wr=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A1:J1`,{headers:{'Authorization':`Bearer ${token}`}});
   const wh=(await wr.json()).values?.[0]||[];
@@ -194,7 +194,7 @@ Deno.serve(async(req:Request)=>{
       const token=await getAccessToken();
       await ensureSheets(token);
       const [rateResp, workResp] = await Promise.all([
-        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${token}`}}),
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:W200`,{headers:{'Authorization':`Bearer ${token}`}}),
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${token}`}}),
       ]);
       const rateRows=(await rateResp.json()).values||[];
@@ -252,7 +252,7 @@ Deno.serve(async(req:Request)=>{
       const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
       if(!SB_URL || !SRK) return jsonResp({error:'supabase env missing'},500);
       const token = await getAccessToken();
-      const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${token}`}});
+      const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:W200`,{headers:{'Authorization':`Bearer ${token}`}});
       const rates = parseRates((await resp.json()).values||[]);
       const seen = new Set<string>();
       const recs = rates.filter((r:any)=>r.name && (r.invoice_number||'').trim()).map((r:any)=>({
@@ -287,7 +287,7 @@ Deno.serve(async(req:Request)=>{
       const pmap = new Map<string,string>();
       partners.forEach((p:any)=>{ const t=(p.invoice_number||'').trim(); if(t) pmap.set(normPartner(p.name), t); });
       const token = await getAccessToken();
-      const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${token}`}});
+      const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:W200`,{headers:{'Authorization':`Bearer ${token}`}});
       const rates = parseRates((await resp.json()).values||[]);
       const data:any[] = [];
       const changes:any[] = [];
@@ -383,7 +383,7 @@ Deno.serve(async(req:Request)=>{
       return jsonResp({records});
     }
     if(action==='get_rates'){
-      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:W200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
       const all = parseRates((await resp.json()).values||[]);
       if (admin) return jsonResp({rates: all});
       // staff/owner: scopeNames に含まれる行のみ。corp-sub は金額系も剥がす (自社オーナーが show_money ON なら剥がさない=ライブ判定)
@@ -395,9 +395,9 @@ Deno.serve(async(req:Request)=>{
     if(action==='save_rate'){
       if(!admin) return forbid();
       if(!record?.name) return jsonResp({error:'name required'}, 400);
-      const row=[record.name,record.am_weekday||'',record.am_weekend||'',record.pm_weekday||'',record.pm_weekend||'',record.warehouse_am||'',record.warehouse_pm||'',record.calc_type||'固定',record.unit_price||'',record.login_id||'',record.login_pw||'',record.biz_type||'',record.company||'',record.calc_type_pm||'固定',record.unit_price_pm||'',record.am_sunday||'',record.pm_sunday||'',record.permissions||'',record.kw_am_daily||'',record.kw_pattern||'',record.monthly_salary||'',record.invoice_number||''];
-      if(row_number){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A${row_number}:V${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
-      else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:V1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
+      const row=[record.name,record.am_weekday||'',record.am_weekend||'',record.pm_weekday||'',record.pm_weekend||'',record.warehouse_am||'',record.warehouse_pm||'',record.calc_type||'固定',record.unit_price||'',record.login_id||'',record.login_pw||'',record.biz_type||'',record.company||'',record.calc_type_pm||'固定',record.unit_price_pm||'',record.am_sunday||'',record.pm_sunday||'',record.permissions||'',record.kw_am_daily||'',record.kw_pattern||'',record.monthly_salary||'',record.invoice_number||'',record.rate_effective_from||''];
+      if(row_number){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A${row_number}:W${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
+      else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:W1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
       return jsonResp({success:true});
     }
     if(action==='delete_rate'){
@@ -417,7 +417,7 @@ Deno.serve(async(req:Request)=>{
       if(!corpOwner) return forbid();
       if(!callerCompany) return forbid('会社情報がありません');
       if(!record?.name) return jsonResp({error:'name required'}, 400);
-      const cur = parseRates((await (await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}})).json()).values||[]);
+      const cur = parseRates((await (await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:W200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}})).json()).values||[]);
       let base: any = {};
       if(row_number){
         base = cur.find((r:any)=>r.row_number===Number(row_number));
@@ -445,7 +445,7 @@ Deno.serve(async(req:Request)=>{
     if(action==='owner_delete_member'){
       if(!corpOwner) return forbid();
       if(!row_number) return jsonResp({error:'row_number required'}, 400);
-      const cur = parseRates((await (await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}})).json()).values||[]);
+      const cur = parseRates((await (await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:W200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}})).json()).values||[]);
       const tgt = cur.find((r:any)=>r.row_number===Number(row_number));
       if(!tgt) return jsonResp({error:'row not found'}, 404);
       if(tgt.company!==callerCompany) return forbid('自社メンバーのみ削除できます');
@@ -463,7 +463,7 @@ Deno.serve(async(req:Request)=>{
       // corp-sub の金額表示はライブ判定 (自社オーナーの show_money を都度参照)
       let csm = true;
       if (corpSub) {
-        const rr = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+        const rr = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:W200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
         csm = memberShowsMoney(parseRates((await rr.json()).values||[]), callerName);
       }
       const scope = await getScopeNames();
