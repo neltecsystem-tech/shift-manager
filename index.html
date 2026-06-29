@@ -278,6 +278,7 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="smBatchAddrUnified()" id="sm-addr-btn" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📝 住所を一括取得</button>
           <button onclick="smBatchGpsAndVerify()" id="sm-gps-btn" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 GPS取得＆ナビ検証</button>
           <button onclick="smAddCourse()" style="background:#14b8a6;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">➕ 新コース追加</button>
+          <button onclick="smBulkLockGps()" style="background:#475569;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 GPSあり一括ロック</button>
           <button onclick="smShowReplace()" style="background:#f59e0b;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔄 コース一括置換</button>
           <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
           <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 新店登録</button>
@@ -4102,6 +4103,19 @@ async function smSave(){
 }
 
 // ── コース一括置換 ──
+// 緯度経度が入っている全行を 🔒修正済み にする一括ロック (一括処理での上書き防止)
+async function smBulkLockGps(){
+  if(!window.confirm('緯度経度が入っている店舗をすべて 🔒修正済み にします。\n以後、住所/GPS一括取得・ナビ検証で上書きされなくなります。\n続行しますか?'))return;
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'bulk_lock_gps'})});
+    const json=await resp.json();
+    if(json.success){
+      alert(`✅ GPSあり ${json.gps_rows}件のうち、新たに ${json.locked}件を🔒修正済みにしました。`);
+      invalidateShopMasterCache();
+      await smLoad(true);
+    }else{alert('失敗: '+(json.error||'不明なエラー'));}
+  }catch(e){alert('エラー: '+e.message);}
+}
 // 新コースをマスタ2(コース候補)へ追加。以後、新店登録/編集 のコース入力候補に出る。
 async function smAddCourse(){
   const name=(prompt('追加する新コース名を入力してください。\n（朝刊・夕刊・競馬 共通のコース候補に追加されます）')||'').trim();

@@ -164,6 +164,43 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    if (action === 'bulk_lock_gps') {
+      // 緯度経度が入っている全行を 修正済み(AL=TRUE) にする一括ロック。既にTRUEはスキップ。
+      await ensureExtraHeaders(token);
+      // AD=緯度(29), AE=経度(30) ... AL=修正済み(37)。AD3:AL10000 を取得 (index 0=AD)
+      const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AD3:AL10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const rows = ((await resp.json()).values || []) as string[][];
+      const data: any[] = [];
+      let scanned = 0;
+      rows.forEach((row: string[], i: number) => {
+        const lat = parseFloat((row[0] || '').toString());
+        const lng = parseFloat((row[1] || '').toString());
+        const hasLL = isFinite(lat) && isFinite(lng) && lat !== 0 && lng !== 0;
+        if (!hasLL) return;
+        scanned++;
+        const curLock = (row[8] || '').toString().trim().toUpperCase();
+        if (curLock === 'TRUE') return; // 既にロック済み
+        const rowNum = i + 3;
+        data.push({ range: `'${SHEET_NAME}'!AL${rowNum}`, values: [['TRUE']] });
+      });
+      if (data.length > 0) {
+        const up = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data }),
+        });
+        if (!up.ok) {
+          const errText = await up.text();
+          return new Response(JSON.stringify({ error: 'bulk_lock_gps failed (' + up.status + '): ' + errText.slice(0, 300) }), {
+            status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+      return new Response(JSON.stringify({ success: true, locked: data.length, gps_rows: scanned }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     if (action === 'add_course') {
       // マスタ2 A列(コース候補)へ新コースを追記。朝刊/夕刊/競馬 共通の候補リスト。
       const course = ((record?.course ?? reqBody.course) || '').toString().trim();
