@@ -379,9 +379,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <h2 style="margin-bottom:0">📄 請求書</h2>
         <div style="display:flex;gap:8px;">
-          <button onclick="invShowChangePw()" id="inv-changepw-btn" style="background:#94a3b8;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;display:none;">🔑 PW変更</button>
-          <button onclick="invOwnerOpenMembers()" id="inv-owner-members-btn" style="display:none;background:#0d9488;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">👥 自社メンバー</button>
-          <button onclick="invShowRates()" class="inv-admin-only" style="display:none;background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">⚙ 単価設定</button>
+          <!-- PW変更=ナビ右上 / 自社メンバー=ナビ「自社管理」 / 単価設定=管理画面 から利用するため、この画面のヘッダーからは非表示 -->
           <button onclick="invShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ 稼働入力</button>
         </div>
       </div>
