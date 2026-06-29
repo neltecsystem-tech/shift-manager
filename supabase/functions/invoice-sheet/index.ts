@@ -338,6 +338,84 @@ Deno.serve(async(req:Request)=>{
       return jsonResp({success:true, dry_run:dryRun, shift_updated:data.length, changes, profiles});
     }
 
+    // ── 稼働記録の金額を単価マスタで一括再計算 (夜間cron用) ──
+    //   固定/個数/曜日別朝刊/夕刊/庫内 + 特別単価 + 引継半額 + 単価適用日 を入力時(invSaveWork)と同一ロジックで計算。
+    //   個建(店舗マスタ依存)・川越コース別(コースマスタ依存) は自動対象外(入力時の値を維持)。確定済みは触らない。
+    if(action==='recompute_amounts'){
+      const cronSecret = req.headers.get('x-sync-secret') || '';
+      const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
+      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      const dryRun = !!body.dry_run;
+      const onlyZero = body.only_zero !== false; // 既定true: 金額0の未計算行のみ補完(既存の非0金額は触らない=履歴保護)
+      const token = await getAccessToken();
+      const [rRes, wRes, sRes] = await Promise.all([
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:W200`,{headers:{'Authorization':`Bearer ${token}`}}),
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${token}`}}),
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A2:J5000`,{headers:{'Authorization':`Bearer ${token}`}}),
+      ]);
+      const rates = parseRates((await rRes.json()).values||[]);
+      const work = parseWork((await wRes.json()).values||[]);
+      const rateByName = new Map<string,any>(rates.map((r:any)=>[r.name, r]));
+      const nn = (s:string)=>String(s||'').replace(/[\s　]+/g,'').trim();
+      // 特別単価を (日付|氏名) でインデックス化 (O(1)照合)
+      const specIndex = new Map<string, any[]>();
+      (((await sRes.json()).values||[]) as string[][]).filter(r=>r[1]&&r[2]).forEach(r=>{
+        const k=`${(r[1]||'').replace(/-/g,'/')}|${nn(r[2]||'')}`;
+        const o={amount:r[3]||'',category:r[6]||'',type:r[7]||''};
+        const arr=specIndex.get(k); if(arr)arr.push(o); else specIndex.set(k,[o]);
+      });
+      const INV_CATS = ['朝刊','夕刊/競馬','庫内朝刊','庫内夕刊'];
+      const mapCat = (c:string)=>{ c=String(c||''); if(INV_CATS.includes(c))return c; if(c.includes('庫内')&&c.includes('夕'))return '庫内夕刊'; if(c.includes('庫内'))return '庫内朝刊'; if(c.includes('夕')||c.includes('競馬'))return '夕刊/競馬'; return '朝刊'; };
+      const data:any[] = []; const sample:any[] = [];
+      let skipKodate=0, skipKw=0, skipConf=0, skipEff=0, noRate=0, skipNonzero=0;
+      for(const w of work){
+        if(!w.staff) continue;
+        const rate = rateByName.get(w.staff); if(!rate){ noRate++; continue; }
+        if((w.confirmed||'').toString().trim()){ skipConf++; continue; }
+        const eff = (rate.rate_effective_from||'').replace(/\//g,'-');
+        if(eff && (w.date||'').replace(/\//g,'-') < eff){ skipEff++; continue; }
+        const cat = mapCat(w.category);
+        const courseV = w.course||'';
+        const isPm = cat==='夕刊/競馬'||cat==='庫内夕刊';
+        const cType = isPm ? (rate.calc_type_pm||rate.calc_type) : rate.calc_type;
+        if(cType==='個建'){ skipKodate++; continue; }
+        if((rate.kw_pattern||'') && courseV.startsWith('川越')){ skipKw++; continue; }
+        const d = new Date((w.date||'').replace(/\//g,'-')); const dow = d.getDay();
+        let price = 0;
+        if(cat==='朝刊'){
+          const kwD=(rate.kw_am_daily||'').split(','); const kwM=[6,0,1,2,3,4,5];
+          const kwP=kwD[kwM[dow]];
+          if(kwP) price=Number(kwP)||0;
+          else if(dow===0 && rate.am_sunday) price=Number(rate.am_sunday)||0;
+          else price=Number((dow>=1&&dow<=5)?rate.am_weekday:rate.am_weekend)||0;
+        } else if(cat==='夕刊/競馬'){ if(dow===0 && rate.pm_sunday) price=Number(rate.pm_sunday)||0; else price=Number((dow>=1&&dow<=4)?rate.pm_weekday:rate.pm_weekend)||0; }
+        else if(cat==='庫内朝刊') price=Number(rate.warehouse_am)||0;
+        else if(cat==='庫内夕刊') price=Number(rate.warehouse_pm)||0;
+        const uPrice = isPm ? (Number(rate.unit_price_pm)||Number(rate.unit_price)||0) : (Number(rate.unit_price)||0);
+        let amount = 0;
+        if(cType==='個数'){ const q=Number(w.quantity)||0; price=uPrice; amount=uPrice*q; } else amount=price;
+        if(courseV.includes('引継')) amount=Math.floor(amount/2);
+        const specCat = cat.includes('朝')?'朝刊':'夕刊';
+        const sp = (specIndex.get(`${(w.date||'').replace(/-/g,'/')}|${nn(w.staff)}`)||[]).filter(s=>(s.category||'').includes(specCat));
+        let add=0, rep=0; sp.forEach(s=>{ const a=Number((s.amount||'').replace(/,/g,''))||0; if(s.type==='日当')rep+=a; else if(s.type==='日当+')add+=a; });
+        if(rep) amount=rep; amount+=add;
+        if(Number(w.amount||0)!==Number(amount||0) || Number(w.unit_price||0)!==Number(price||0)){
+          if(onlyZero && Number(w.amount||0)!==0){ skipNonzero++; continue; } // 既存の非0金額は保護(履歴・適用日)
+          if(onlyZero && Number(amount||0)===0){ continue; } // 0→0は無視
+          if(sample.length<10) sample.push({row:w.row_number,staff:w.staff,date:w.date,from:Number(w.amount||0),to:amount});
+          data.push({ range: `'稼働記録'!H${w.row_number}:I${w.row_number}`, values: [[ String(price), String(amount) ]] });
+        }
+      }
+      if(!dryRun && data.length){
+        for(let i=0;i<data.length;i+=400){
+          const chunk=data.slice(i,i+400);
+          const up=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'USER_ENTERED',data:chunk})});
+          if(!up.ok){ const t=await up.text(); return jsonResp({error:'recompute batch failed: '+up.status+' '+t.slice(0,300)},500); }
+        }
+      }
+      return jsonResp({success:true, dry_run:dryRun, only_zero:onlyZero, updated:data.length, skipped:{kodate:skipKodate,kawagoe:skipKw,confirmed:skipConf,effective:skipEff,noRate,nonzero:skipNonzero}, sample});
+    }
+
     // ---- 以下はトークン必須 ----
     const claims = await verifyToken(auth_token);
     if (!claims) return authErr();
