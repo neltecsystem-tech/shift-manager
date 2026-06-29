@@ -1337,13 +1337,17 @@ function parseShift(key){
   // Row 5: edition (col2=朝刊, col3=夕刊, col4=朝刊, col5=夕刊, ...)
   // Row 6+: course name in col0, staff names in col2+ (am=col, pm=col+1)
   const dateRow=R[0],dowRow=R[3];
+  const DOW=['日','月','火','水','木','金','土'];
   const dates=[];
   for(let c=1;c<dateRow.length;c++){
     const v=(dateRow[c]||'').trim();
     if(isDateVal(v)){
       const parts=v.split('/').map(Number);
       const m=parts[parts.length-2],d=parts[parts.length-1];
-      const dow=(dowRow[c]||'').trim().replace(/\(.*?\)/g,'');
+      // シート上の曜日行(R[3])があればそれを使い、空ならば日付から算出
+      // (新フォーマットのシートは曜日が別行にあり R[3] が空のため曜日が出ないバグの対策)
+      const sheetDow=(dowRow&&dowRow[c]||'').trim().replace(/\(.*?\)/g,'');
+      const dow=sheetDow||DOW[new Date(y,m-1,d).getDay()];
       dates.push({col:c,d:`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`,dow,dn:d});
     }
   }
