@@ -3459,7 +3459,7 @@ async function smBatchGpsAndVerify(){
 
   const llOf=r=>{const ln=parseFloat(r[`col_${latIdx}`]),gn=parseFloat(r[`col_${lngIdx}`]);return isFinite(ln)&&isFinite(gn)&&ln!==0&&gn!==0;};
   const emptyLL=valid.filter(r=>!llOf(r)).length;
-  const choice=prompt(`📍 GPS取得＆ナビ検証（絞り込み ${valid.length}件${lockedSkipped?` / 🔒${lockedSkipped}件除外`:''}）\n\n住所からGPS取得(高精度)→座標を逆ジオで住所照合→ナビ判定(✕△◎)を同時更新。\n\n0: GPS全件 再取得＋検証（既存座標も上書き）\n1: GPS未取得 ${emptyLL}件のみ取得＋全件検証（既存座標は保持）\n空欄: キャンセル\n\n0 か 1 を入力:`);
+  const choice=prompt(`📍 GPS取得＆ナビ検証\n対象 ${valid.length}件${lockedSkipped?`（🔒修正済み ${lockedSkipped}件は常に対象外＝上書きされません）`:''}\n\n住所からGPS取得(高精度)→座標を逆ジオで住所照合→ナビ判定(✕△◎)を同時更新。\n※どちらを選んでも 🔒修正済み の行は触りません。\n\n0: 対象を全件 再取得＋検証（GPSが既にある行も上書き／🔒は除く）\n1: GPS未取得 ${emptyLL}件のみ取得＋全件検証（既存座標は保持）★通常はこちら\n空欄: キャンセル\n\n0 か 1 を入力:`);
   if(choice!=='0'&&choice!=='1')return;
   const overwrite=choice==='0';
 
