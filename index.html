@@ -4133,6 +4133,8 @@ async function invApi(body){
   const payload = invAuthToken && !('auth_token' in body) ? {...body, auth_token: invAuthToken} : body;
   const resp=await fetch(INV_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   const data = await resp.json();
+  // 金額表示可否はサーバが応答ごとにライブ判定 → 受け取る度に同期 (再ログイン不要)
+  if(data&&typeof data.company_shows_money==='boolean')invCompanyShowsMoney=data.company_shows_money;
   if(resp.status===401 && data?.code==='AUTH_REQUIRED' && invAuthToken){
     // トークン期限切れ等で失効した場合は強制ログアウト
     invAuthToken='';invAuthed=false;invIsAdmin=false;invStaffName='';

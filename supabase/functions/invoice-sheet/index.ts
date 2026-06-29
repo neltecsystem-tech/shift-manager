@@ -278,10 +278,11 @@ Deno.serve(async(req:Request)=>{
       const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
       const all = parseRates((await resp.json()).values||[]);
       if (admin) return jsonResp({rates: all});
-      // staff/owner: scopeNames に含まれる行のみ、login_pw/monthly_salary を剥がす。corp-sub は金額系も剥がす
+      // staff/owner: scopeNames に含まれる行のみ。corp-sub は金額系も剥がす (自社オーナーが show_money ON なら剥がさない=ライブ判定)
+      const csm = !corpSub || companyShowsMoney(all, callerCompany);
       const scope = await getScopeNames();
-      const out = all.filter((r:any)=>scope.has(r.name)).map((r:any)=> (corpSub && !claims.company_shows_money) ? stripPrices(stripStaffPrivate(r)) : stripStaffPrivate(r));
-      return jsonResp({rates: out});
+      const out = all.filter((r:any)=>scope.has(r.name)).map((r:any)=> (corpSub && !csm) ? stripPrices(stripStaffPrivate(r)) : stripStaffPrivate(r));
+      return jsonResp({rates: out, company_shows_money: csm});
     }
     if(action==='save_rate'){
       if(!admin) return forbid();
@@ -307,9 +308,15 @@ Deno.serve(async(req:Request)=>{
       const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
       const all = parseWork((await resp.json()).values||[]);
       if (admin) return jsonResp({records: all});
+      // corp-sub の金額表示はライブ判定 (自社オーナーの show_money を都度参照)
+      let csm = true;
+      if (corpSub) {
+        const rr = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+        csm = companyShowsMoney(parseRates((await rr.json()).values||[]), callerCompany);
+      }
       const scope = await getScopeNames();
-      const mine = all.filter((r:any)=>scope.has(r.staff)).map((r:any)=> (corpSub && !claims.company_shows_money) ? { ...r, unit_price:'', amount:'' } : r);
-      return jsonResp({records: mine});
+      const mine = all.filter((r:any)=>scope.has(r.staff)).map((r:any)=> (corpSub && !csm) ? { ...r, unit_price:'', amount:'' } : r);
+      return jsonResp({records: mine, company_shows_money: csm});
     }
     if(action==='add_work'){
       if(!record) return jsonResp({error:'record required'}, 400);
