@@ -395,6 +395,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div class="filters">
           <div><label>月</label><input type="month" id="inv-month" onchange="invFilterWork()"></div>
           <div class="inv-admin-only" style="display:none;"><label>スタッフ</label><select id="inv-staff-filter" onchange="invFilterWork()"><option value="">すべて</option></select></div>
+          <div><button onclick="invRecalcAmounts()" id="inv-recalc-btn" title="単価マスタを当てて稼働記録の金額を再計算（期間指定可・確定済みは除外）" style="background:#0ea5e9;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;display:none;">🔄 金額を再計算</button></div>
         </div>
         <div id="inv-work-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
         <div class="table-wrap" id="inv-work-table"></div>
@@ -4540,6 +4541,8 @@ function invApplyUI(){
   // 一括作成ボタン: 管理者 or 配下を扱える人(法人オーナー/金額表示ON配下)のみ
   const genAllBtn=document.getElementById('inv-gen-all-btn');
   if(genAllBtn)genAllBtn.style.display=canScope?'':'none';
+  const recalcBtn=document.getElementById('inv-recalc-btn');
+  if(recalcBtn)recalcBtn.style.display=canScope?'':'none';
   if(isCorpSub){
     // 開かれていたら稼働記録に強制切替
     const genView=document.getElementById('inv-gen-view');
@@ -4729,6 +4732,104 @@ function invFindSpecial(date,staff){
     const sDate=(s.date||'').replace(/-/g,'/');
     return sDate===normDate&&invNormName(s.name)===normName;
   });
+}
+
+// 稼働記録の category → 計算区分(INV_CATS) にマップ
+function invMapCat(cat){
+  const c=String(cat||'');
+  if(INV_CATS.includes(c))return c;
+  if(c.includes('庫内')&&c.includes('夕'))return '庫内夕刊';
+  if(c.includes('庫内'))return '庫内朝刊';
+  if(c.includes('夕')||c.includes('競馬'))return '夕刊/競馬';
+  return '朝刊';
+}
+// 入力時(invSaveWork)と同一ロジックで単価・金額を算出する純粋関数 (再計算で使用)
+function invComputeRow(staff,dateStr,course,category,qty){
+  const rate=invRates.find(r=>r.name===staff);
+  if(!rate)return {price:0,amount:0,noRate:true};
+  const cat=invMapCat(category);
+  const d=new Date((dateStr||'').replace(/\//g,'-'));const dow=d.getDay();
+  const courseV=course||'';
+  let price=0;
+  const kwD=(rate.kw_am_daily||'').split(',');const kwM=[6,0,1,2,3,4,5];
+  const kwPat=rate.kw_pattern||'';const DK=['sun','mon','tue','wed','thu','fri','sat'];
+  if(cat==='朝刊'){
+    let kwCP=0;
+    if(kwPat&&courseV.startsWith('川越')){const ml=kwPat==='旧'?kwCoursePrices.old:kwCoursePrices.new;const fd=ml.find(m=>m.course===courseV);if(fd)kwCP=fd[DK[dow]]||0;}
+    if(kwCP){price=kwCP;}
+    else{const kwP=kwD[kwM[dow]];if(kwP)price=Number(kwP)||0;else if(dow===0&&rate.am_sunday)price=Number(rate.am_sunday)||0;else price=Number((dow>=1&&dow<=5)?rate.am_weekday:rate.am_weekend)||0;}
+  }else if(cat==='夕刊/競馬'){if(dow===0&&rate.pm_sunday)price=Number(rate.pm_sunday)||0;else price=Number((dow>=1&&dow<=4)?rate.pm_weekday:rate.pm_weekend)||0;}
+  else if(cat==='庫内朝刊')price=Number(rate.warehouse_am)||0;
+  else if(cat==='庫内夕刊')price=Number(rate.warehouse_pm)||0;
+  const isPm=cat==='夕刊/競馬'||cat==='庫内夕刊';
+  const cType=isPm?(rate.calc_type_pm||rate.calc_type):rate.calc_type;
+  const uPrice=isPm?(Number(rate.unit_price_pm)||Number(rate.unit_price)||0):(Number(rate.unit_price)||0);
+  let amount=0;
+  if(cType==='個建'){const koR=invCalcKodate(courseV,cat);price=koR.amount;amount=koR.amount;}
+  else if(cType==='個数'){const q=Number(qty)||0;price=uPrice;amount=uPrice*q;}
+  else{amount=price;}
+  if(courseV.includes('引継'))amount=Math.floor(amount/2);
+  const specCat=cat.includes('朝')?'朝刊':'夕刊';
+  const specials=invFindSpecial(dateStr,staff).filter(s=>(s.category||'').includes(specCat));
+  let spAdd=0,spReplace=0;
+  specials.forEach(s=>{const a=Number((s.amount||'').replace(/,/g,''))||0;if(s.type==='日当')spReplace+=a;else if(s.type==='日当+')spAdd+=a;});
+  if(spReplace)amount=spReplace;
+  amount+=spAdd;
+  return {price,amount};
+}
+
+// 金額を再計算: 期間指定で稼働記録に単価マスタを当て直す (途中単価変更に対応)
+function invRecalcAmounts(){
+  const month=document.getElementById('inv-month').value;
+  let defFrom='',defTo='';
+  if(month){defFrom=month+'-01';const [y,m]=month.split('-').map(Number);const last=new Date(y,m,0).getDate();defTo=`${month}-${String(last).padStart(2,'0')}`;}
+  const sfEl=document.getElementById('inv-staff-filter');
+  const staffF=sfEl?sfEl.value:'';
+  document.getElementById('inv-recalc-modal')?.remove();
+  const html=`<div id="inv-recalc-modal" style="position:fixed;inset:0;background:rgba(15,23,42,.6);z-index:300;display:flex;justify-content:center;align-items:center;padding:20px;">
+    <div style="background:#fff;border-radius:14px;padding:24px;width:100%;max-width:440px;position:relative;">
+      <button onclick="document.getElementById('inv-recalc-modal').remove()" style="position:absolute;top:12px;right:14px;background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;">✕</button>
+      <h3 style="color:var(--primary);margin:0 0 4px;">🔄 金額を再計算</h3>
+      <p style="font-size:11px;color:var(--text-sub);margin-bottom:14px;">指定期間の稼働記録に、現在の単価マスタを当てて単価・金額を計算し直します。<b>確定済みは除外</b>。途中で単価が変わる場合は、単価を変更しながら期間を分けて実行してください。</p>
+      <div style="display:flex;gap:10px;margin-bottom:10px;">
+        <div style="flex:1;"><label style="font-size:12px;color:var(--text-sub)">開始日</label><input type="date" id="inv-rc-from" value="${defFrom}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+        <div style="flex:1;"><label style="font-size:12px;color:var(--text-sub)">終了日</label><input type="date" id="inv-rc-to" value="${defTo}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+      </div>
+      <p style="font-size:12px;color:var(--text-sub);margin-bottom:14px;">対象スタッフ: <b>${staffF||'スコープ内すべて'}</b>（稼働記録タブのスタッフ絞り込みに従います）</p>
+      <div id="inv-rc-msg" style="font-size:12px;min-height:16px;margin-bottom:8px;"></div>
+      <button onclick="invRecalcRun()" id="inv-rc-run" style="width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">プレビューして実行</button>
+    </div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+async function invRecalcRun(){
+  const from=document.getElementById('inv-rc-from').value;
+  const to=document.getElementById('inv-rc-to').value;
+  const sfEl=document.getElementById('inv-staff-filter');
+  const staffF=sfEl?sfEl.value:'';
+  const msg=document.getElementById('inv-rc-msg');
+  const inRange=w=>{const d=(w.date||'').replace(/\//g,'-');return (!from||d>=from)&&(!to||d<=to);};
+  await invLoadShopMaster();// 個建用 店舗マスタ
+  const targets=invWork.filter(w=>(!staffF||w.staff===staffF)&&inRange(w));
+  const changes=[];let confirmedSkip=0,noRateSkip=0;
+  targets.forEach(w=>{
+    if((w.confirmed||'').toString().trim()){confirmedSkip++;return;}
+    const r=invComputeRow(w.staff,w.date,w.course,w.category,w.quantity);
+    if(r.noRate){noRateSkip++;return;}
+    const oldA=Number(w.amount||0),newA=Number(r.amount||0),oldP=Number(w.unit_price||0),newP=Number(r.price||0);
+    if(oldA!==newA||oldP!==newP)changes.push({row_number:w.row_number,staff:w.staff,date:w.date,course:w.course,oldA,newA,unit_price:r.price,amount:r.amount});
+  });
+  if(!changes.length){msg.innerHTML=`<span style="color:#475569;">変更が必要な記録はありません（対象${targets.length}件 / 確定済み除外${confirmedSkip}件 / 単価未設定${noRateSkip}件）</span>`;return;}
+  const sample=changes.slice(0,8).map(c=>`・${c.date} ${c.staff} ${c.course}: ¥${c.oldA.toLocaleString()} → ¥${c.newA.toLocaleString()}`).join('\n');
+  if(!confirm(`${changes.length}件の金額を再計算して保存します。\n確定済み除外: ${confirmedSkip}件 / 単価未設定: ${noRateSkip}件\n\n${sample}${changes.length>8?`\n…他 ${changes.length-8}件`:''}\n\n実行しますか?`))return;
+  const btn=document.getElementById('inv-rc-run');btn.textContent='保存中...';btn.disabled=true;
+  try{
+    const resp=await invApi({action:'batch_recalc_amounts',updates:changes.map(c=>({row_number:c.row_number,unit_price:c.unit_price,amount:c.amount}))});
+    if(resp.error)throw new Error(resp.error);
+    changes.forEach(c=>{const w=invWork.find(x=>x.row_number===c.row_number);if(w){w.unit_price=String(c.unit_price);w.amount=String(c.amount);}});
+    document.getElementById('inv-recalc-modal')?.remove();
+    invFilterWork();
+    alert(`✅ ${resp.updated}件を再計算・保存しました${resp.skipped?`（${resp.skipped}件はスキップ）`:''}`);
+  }catch(e){msg.innerHTML=`<span style="color:#dc2626;">失敗: ${e.message}</span>`;btn.textContent='プレビューして実行';btn.disabled=false;}
 }
 
 // 個建制: 店舗マスタから自動計算 (共通キャッシュ経由)

@@ -187,7 +187,7 @@ Deno.serve(async(req:Request)=>{
   if(req.method==='OPTIONS')return new Response('ok',{headers:corsHeaders});
   try{
     const body = await req.json();
-    const { action, record, row_number, row_numbers, login_id, login_pw, measure_data, bill_prices, confirmed_sale, year_month, area, course, admin_password, auth_token } = body;
+    const { action, record, row_number, row_numbers, updates, login_id, login_pw, measure_data, bill_prices, confirmed_sale, year_month, area, course, admin_password, auth_token } = body;
 
     // ---- 認証不要のアクション: login / admin_login ----
     if(action==='login'){
@@ -509,6 +509,35 @@ Deno.serve(async(req:Request)=>{
       }
       await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A${row_number}:J${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[Array(10).fill('')]})});
       return jsonResp({success:true});
+    }
+    if(action==='batch_recalc_amounts'){
+      // updates=[{row_number, unit_price, amount}] を 稼働記録 H:I へ一括反映。
+      // 確定済み行・スコープ外行はスキップ。クライアントが単価マスタで再計算した値を渡す。
+      if(!Array.isArray(row_numbers) && !Array.isArray(updates)) return jsonResp({error:'updates required'},400);
+      const ups = (updates || []) as any[];
+      if(!ups.length) return jsonResp({success:true, updated:0, skipped:0});
+      const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const all = parseWork((await resp.json()).values||[]);
+      const byRow = new Map<number, any>(all.map((w:any)=>[w.row_number, w]));
+      let scope: Set<string> | null = null;
+      if(!admin) scope = await getScopeNames();
+      const data:any[] = []; let skipped = 0;
+      for(const u of ups){
+        const rn = Number(u.row_number);
+        const w = byRow.get(rn);
+        if(!w){ skipped++; continue; }
+        if(!admin && scope && !scope.has(w.staff)){ skipped++; continue; }
+        if((w.confirmed||'').toString().trim()){ skipped++; continue; } // 確定済みは触らない
+        data.push({ range: `'稼働記録'!H${rn}:I${rn}`, values: [[ String(u.unit_price ?? ''), String(u.amount ?? '') ]] });
+      }
+      if(data.length){
+        const up = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{
+          method:'POST', headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},
+          body: JSON.stringify({ valueInputOption:'USER_ENTERED', data }),
+        });
+        if(!up.ok){ const t=await up.text(); return jsonResp({error:'batch update failed: '+up.status+' '+t.slice(0,300)},500); }
+      }
+      return jsonResp({success:true, updated:data.length, skipped});
     }
     if(action==='confirm_records'){
       if(!admin) return forbid();
