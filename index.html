@@ -2872,6 +2872,7 @@ async function smLoad(force){
       if(h.includes('備考'))smColMap.note=i;
       if(h==='住所精度')smColMap.accuracy=i;
       else if(h==='ナビ判定')smColMap.verify=i;
+      else if(h==='修正済み')smColMap.locked=i;
       else if(h==='正式店舗名')smColMap.officialName=i;
       else if(h==='住所'||h.includes('住所'))smColMap.addr=i;
       if(h==='緯度')smColMap.lat=i;
@@ -2972,7 +2973,7 @@ function smRender(){
     showCols.forEach((ci,idx)=>{
       let val=r[`col_${ci}`]||'';
       if(idx===0&&areaVal)val=`<span class="badge ${bc(areaVal)}">${areaVal}</span>`;
-      if(idx===2)val=`<b>${val}</b>`;
+      if(idx===2)val=`${smIsLocked(r)?'<span title="修正済み（一括処理で触らない）">🔒</span> ':''}<b>${val}</b>`;
       if(idx===addrColIdx&&addrColIdx>=0){
         const display=val.length>40?`<span title="${val.replace(/"/g,'&quot;')}">${val.slice(0,40)}…</span>`:val;
         val=`${accBadge(accVal)} ${display}`;
@@ -3001,6 +3002,12 @@ const GEOCODING_API_KEY='AIzaSyBWWZHRXPfqCc62boKSRbsEG4ihO2mYl2A';
 
 
 // 統合: Yahoo!ローカルサーチ優先 + Google Geocoding フォールバック
+// 🔒修正済み(手動でロックした行)か判定。一括処理(住所/GPS/ナビ検証)は全モードでこの行を触らない。
+function smIsLocked(r){
+  const li=smColMap.locked;
+  if(li==null)return false;
+  return (r[`col_${li}`]||'').toString().trim().toUpperCase()==='TRUE';
+}
 async function smBatchAddrUnified(){
   if(!smData||smData.length===0){alert('店舗データがまだ読み込まれていません');return;}
   let nameIdx=-1,addrIdx=-1,areaIdx=-1,latIdx=-1,lngIdx=-1;
@@ -3014,13 +3021,15 @@ async function smBatchAddrUnified(){
   });
   if(nameIdx<0||addrIdx<0){alert('店舗名/住所 列が見つかりません');return;}
 
+  let lockedSkipped=0;
   const validShops=smData.filter(r=>{
     const area=areaIdx>=0?((r[`col_${areaIdx}`]||'')):'';
     if(area.includes('納品中止'))return false;
+    if(smIsLocked(r)){lockedSkipped++;return false;} // 🔒修正済みは除外
     return !!((r[`col_${nameIdx}`]||'').trim());
   });
 
-  const choice=prompt(`📊 住所一括取得 (Yahoo!→Google フォールバック)\n対象候補: ${validShops.length}件\n\n0: すべて再取得（既存住所も上書き）\n1: 住所未取得のみ\n2: ナビ判定 ✕不一致 のみ\n空欄: キャンセル`);
+  const choice=prompt(`📊 住所一括取得 (Yahoo!→Google フォールバック)\n対象候補: ${validShops.length}件${lockedSkipped?`（🔒修正済み ${lockedSkipped}件は除外）`:''}\n\n0: すべて再取得（既存住所も上書き）\n1: 住所未取得のみ\n2: ナビ判定 ✕不一致 のみ\n空欄: キャンセル`);
   if(!['0','1','2'].includes(choice))return;
 
   let targets;
@@ -3204,18 +3213,20 @@ async function smBatchLatLngFromAddr(){
 
   const hasAddr=r=>addrIdx>=0&&((r[`col_${addrIdx}`]||'').toString().trim().length>0);
 
-  // 納品中止・店舗名なしを除外
+  // 納品中止・店舗名なし・🔒修正済みを除外
+  let lockedSkipped=0;
   const validShops=smData.filter(r=>{
     const name=(r[`col_${nameIdx}`]||'').trim();
     const area=areaIdx>=0?((r[`col_${areaIdx}`]||'')):'';
     if(area.includes('納品中止'))return false;
+    if(smIsLocked(r)){lockedSkipped++;return false;} // 🔒修正済みは除外
     return !!name;
   });
   if(validShops.length===0){alert('対象店舗がありません');return;}
 
   const withAddr=validShops.filter(hasAddr).length;
   const withoutAddr=validShops.length-withAddr;
-  const choice=prompt(`📊 対象店舗 ${validShops.length}件\n  ・住所あり: ${withAddr}件 → 住所からGPS取得（高精度）\n  ・住所なし: ${withoutAddr}件 → 店舗名+営業所でフォールバック\n\n0: すべて再取得（既存の緯度経度を上書き）\n1: 緯度経度が空の店舗のみ取得\n空欄: キャンセル\n\n0 か 1 を入力:`);
+  const choice=prompt(`📊 対象店舗 ${validShops.length}件${lockedSkipped?`（🔒修正済み ${lockedSkipped}件は除外）`:''}\n  ・住所あり: ${withAddr}件 → 住所からGPS取得（高精度）\n  ・住所なし: ${withoutAddr}件 → 店舗名+営業所でフォールバック\n\n0: すべて再取得（既存の緯度経度を上書き）\n1: 緯度経度が空の店舗のみ取得\n空欄: キャンセル\n\n0 か 1 を入力:`);
   if(choice!=='0'&&choice!=='1')return;
   const overwrite=choice==='0';
 
@@ -3335,9 +3346,11 @@ async function smVerifyNavLocation(){
   });
   if(addrIdx<0||latIdx<0||lngIdx<0){alert('住所/緯度/経度の列が見つかりません');return;}
 
+  let lockedSkipped=0;
   const targets=smFiltered.filter(r=>{
     const area=areaIdx>=0?((r[`col_${areaIdx}`]||'')):'';
     if(area.includes('納品中止'))return false;
+    if(smIsLocked(r)){lockedSkipped++;return false;} // 🔒修正済みは検証しない(✕判定→誤上書きの連鎖を防ぐ)
     const lat=parseFloat(r[`col_${latIdx}`]);
     const lng=parseFloat(r[`col_${lngIdx}`]);
     const addr=(r[`col_${addrIdx}`]||'').trim();
@@ -3345,8 +3358,8 @@ async function smVerifyNavLocation(){
     if(!addr)return false;
     return true;
   });
-  if(targets.length===0){alert('住所と緯度経度の両方が入った店舗がありません');return;}
-  if(!window.confirm(`📊 検証対象: ${targets.length}件 (現在の絞り込み内)\n\n各店舗の緯度経度を逆ジオコーディングして住所列と比較します。\n約 ${Math.ceil(targets.length*0.1)} 秒かかります。続行?`))return;
+  if(targets.length===0){alert('住所と緯度経度の両方が入った店舗がありません'+(lockedSkipped?`（🔒修正済み ${lockedSkipped}件は除外）`:''));return;}
+  if(!window.confirm(`📊 検証対象: ${targets.length}件 (現在の絞り込み内)${lockedSkipped?`\n🔒修正済み ${lockedSkipped}件は除外`:''}\n\n各店舗の緯度経度を逆ジオコーディングして住所列と比較します。\n約 ${Math.ceil(targets.length*0.1)} 秒かかります。続行?`))return;
 
   const btn=document.getElementById('sm-verify-btn');
   btn.disabled=true;btn.style.opacity='0.6';
@@ -3555,7 +3568,7 @@ function smBuildForm(record){
     html+='<div style="font-size:11px;color:var(--text-sub);margin-bottom:12px;">📍 地図をクリック または ピンをドラッグで位置を微調整できます (緯度・経度欄が自動更新されます)</div>';
   }
   // チェックボックス列: 値がTRUE/FALSEか、ヘッダー名に特定キーワードを含む
-  const checkHeaders=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝'];
+  const checkHeaders=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝','修正済み'];
   const isCheckCol=i=>{
     const h=smHeaders[i]||'';
     if(checkHeaders.some(k=>h.includes(k)))return true;
@@ -3933,7 +3946,7 @@ async function smSave(){
   }
   btn.textContent='保存中...';btn.disabled=true;
   const record={};
-  const checkHeaders2=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝'];
+  const checkHeaders2=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝','修正済み'];
   const isCheck2=i=>{
     const hh=smHeaders[i]||'';
     if(checkHeaders2.some(k=>hh.includes(k)))return true;
