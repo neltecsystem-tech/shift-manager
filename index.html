@@ -4206,7 +4206,10 @@ function invOwnerMembers(){
   const comp=me?.company||'';
   return invRates.filter(r=>r.biz_type==='法人'&&r.company===comp);
 }
-async function invOwnerOpenMembers(){ await invOwnerRefresh(); invOwnerRenderMembers(); }
+async function invOwnerOpenMembers(){
+  try{ invOwnerRenderMembers(); }catch(e){ alert('表示エラー: '+e.message); return; } // まず手元データで即表示
+  try{ await invOwnerRefresh(); invOwnerRenderMembers(); }catch(_){} // 裏で最新化(失敗しても開いたまま)
+}
 function invOwnerRenderMembers(){
   document.getElementById('inv-owner-modal')?.remove();
   const me=invRates.find(r=>r.name===invStaffName);
