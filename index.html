@@ -395,7 +395,6 @@ tbody tr:hover { background:var(--primary-light); }
         <div class="filters">
           <div><label>月</label><input type="month" id="inv-month" onchange="invFilterWork()"></div>
           <div class="inv-admin-only" style="display:none;"><label>スタッフ</label><select id="inv-staff-filter" onchange="invFilterWork()"><option value="">すべて</option></select></div>
-          <div><button onclick="invRecalcAmounts()" id="inv-recalc-btn" title="単価マスタを当てて稼働記録の金額を再計算（期間指定可・確定済みは除外）" style="background:#0ea5e9;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;display:none;">🔄 金額を再計算</button></div>
         </div>
         <div id="inv-work-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
         <div class="table-wrap" id="inv-work-table"></div>
@@ -4542,8 +4541,6 @@ function invApplyUI(){
   // 一括作成ボタン: 管理者 or 配下を扱える人(法人オーナー/金額表示ON配下)のみ
   const genAllBtn=document.getElementById('inv-gen-all-btn');
   if(genAllBtn)genAllBtn.style.display=canScope?'':'none';
-  const recalcBtn=document.getElementById('inv-recalc-btn');
-  if(recalcBtn)recalcBtn.style.display=canScope?'':'none';
   if(isCorpSub){
     // 開かれていたら稼働記録に強制切替
     const genView=document.getElementById('inv-gen-view');
