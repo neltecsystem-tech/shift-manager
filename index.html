@@ -1857,8 +1857,45 @@ async function loadDashDefects(){
 }
 
 let si=false;
-function renderStaffView(){if(!si){const a=[...new Set(DB.staff.map(s=>s.area).filter(Boolean))],c=[...new Set(DB.staff.map(s=>s.contract).filter(Boolean))];
-  a.forEach(x=>document.getElementById('sf-area').add(new Option(x,x)));c.forEach(x=>document.getElementById('sf-contract').add(new Option(x,x)));si=true;}renderStaff();}
+function renderStaffView(){if(!si){staffRefreshFilters();si=true;}renderStaff();
+  // 人員名簿シートから live 取得して差し替え (静的 data.js は初期表示用)
+  loadLiveStaff();}
+// 拠点/契約 ドロップダウンを現データから再構築 (選択値は保持)
+function staffRefreshFilters(){
+  const aSel=document.getElementById('sf-area'),cSel=document.getElementById('sf-contract');
+  if(!aSel||!cSel)return;
+  const aVal=aSel.value,cVal=cSel.value;
+  const a=[...new Set(DB.staff.map(s=>s.area).filter(Boolean))],c=[...new Set(DB.staff.map(s=>s.contract).filter(Boolean))];
+  aSel.innerHTML='<option value="">すべて</option>'+a.map(x=>`<option>${x}</option>`).join('');
+  cSel.innerHTML='<option value="">すべて</option>'+c.map(x=>`<option>${x}</option>`).join('');
+  aSel.value=aVal;cSel.value=cVal;
+}
+let staffLiveLoading=false;
+// 人員名簿は開くたびに常に live 取得 (シフト系は live 必須ルール)。
+// 既存データを即表示しつつ裏で最新化する stale-while-revalidate。
+async function loadLiveStaff(){
+  if(staffLiveLoading)return;
+  staffLiveLoading=true;
+  const wrap=document.getElementById('staff-wrap');
+  // 既に表が出ている場合は控えめに更新中表示
+  let ind=null;
+  if(wrap&&DB.staff.length){ind=document.createElement('div');ind.id='staff-live-ind';ind.style.cssText='color:#94a3b8;font-size:12px;margin-bottom:6px;';ind.textContent='最新の人員名簿を取得中…';wrap.parentElement.insertBefore(ind,wrap);}
+  try{
+    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'人員名簿'})});
+    const j=await r.json();
+    if(j.error||!Array.isArray(j.rows)||j.rows.length<3)throw new Error(j.error||'rows不足');
+    DB.raw.course_staff_table=j.rows;
+    DB.staff.length=0;
+    parseStaff();
+    staffRefreshFilters();
+    if(currentView==='staff')renderStaff();
+  }catch(e){
+    console.warn('人員名簿 live 取得失敗 (静的データを表示):',e&&e.message);
+  }finally{
+    staffLiveLoading=false;
+    const i2=document.getElementById('staff-live-ind');if(i2)i2.remove();
+  }
+}
 function renderStaff(){
   const a=document.getElementById('sf-area').value,c=document.getElementById('sf-contract').value,n=document.getElementById('sf-name').value.trim();
   const D=['月','火','水','木','金','土','日'],f=DB.staff.filter(s=>(!a||s.area===a)&&(!c||s.contract===c)&&(!n||s.name.includes(n)));
