@@ -8253,6 +8253,69 @@ function admJinCellValue(r,c){
   return (admJinState.rows[r]||[])[c]||'';
 }
 
+// ── 新規ドライバー追加 (人員名簿シートに1行 append) ──
+function admJinAddRow(){
+  if(!admJinState.loaded){alert('人員名簿の読み込み完了後に追加できます');return;}
+  // 既存の拠点/契約範囲を候補に
+  const data=admJinState.rows.slice(2);
+  const areas=[...new Set(data.map(r=>String(r[0]||'').trim()).filter(Boolean))].sort();
+  const ranges=[...new Set(data.map(r=>String(r[1]||'').trim()).filter(Boolean))].sort();
+  const esc=s=>String(s).replace(/"/g,'&quot;');
+  const old=document.getElementById('adm-jin-add-modal');if(old)old.remove();
+  const wrap=document.createElement('div');
+  wrap.id='adm-jin-add-modal';
+  wrap.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.6);z-index:300;display:flex;justify-content:center;align-items:center;padding:20px;';
+  wrap.innerHTML=`<div style="background:#fff;border-radius:14px;padding:24px;width:100%;max-width:420px;position:relative;">
+    <button onclick="document.getElementById('adm-jin-add-modal').remove()" style="position:absolute;top:12px;right:14px;background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;">✕</button>
+    <h3 style="color:var(--primary);margin-bottom:4px;">➕ 新規ドライバー追加</h3>
+    <p style="font-size:11px;color:var(--text-sub);margin-bottom:14px;">人員名簿に1名追加します。コース(朝刊/夕刊)は追加後にグリッドで入力してください。</p>
+    <div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-sub)">拠点</label>
+      <input id="ajn-area" list="ajn-area-list" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 立川 / 城北 / 川越 ...">
+      <datalist id="ajn-area-list">${areas.map(a=>`<option value="${esc(a)}">`).join('')}</datalist></div>
+    <div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-sub)">契約範囲</label>
+      <input id="ajn-range" list="ajn-range-list" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 朝刊 / 朝刊,競馬 / 朝刊,プランナー ...">
+      <datalist id="ajn-range-list">${ranges.map(a=>`<option value="${esc(a)}">`).join('')}</datalist></div>
+    <div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-sub)">氏名 <span style="color:#dc2626;">*</span></label>
+      <input id="ajn-name" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+    <div style="margin-bottom:16px;"><label style="font-size:12px;color:var(--text-sub)">電話番号</label>
+      <input id="ajn-phone" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 090-1234-5678"></div>
+    <div id="ajn-msg" style="font-size:12px;min-height:16px;margin-bottom:8px;"></div>
+    <button onclick="admJinAddRowSave()" id="ajn-submit" style="width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">追加する</button>
+  </div>`;
+  document.body.appendChild(wrap);
+  setTimeout(()=>{const n=document.getElementById('ajn-name');if(n)n.focus();},50);
+}
+
+async function admJinAddRowSave(){
+  const area=(document.getElementById('ajn-area').value||'').trim();
+  const range=(document.getElementById('ajn-range').value||'').trim();
+  const name=(document.getElementById('ajn-name').value||'').trim();
+  const phone=(document.getElementById('ajn-phone').value||'').trim();
+  const msg=document.getElementById('ajn-msg');
+  if(!name){msg.innerHTML='<span style="color:#dc2626;">氏名を入力してください</span>';return;}
+  // 同名チェック (警告のみ・同姓同名はありうるので続行可)
+  const exists=admJinState.rows.slice(2).some(r=>String(r[2]||'').trim()===name);
+  if(exists&&!confirm(`「${name}」は既に人員名簿にあります。\n同姓同名として追加しますか?`))return;
+  const btn=document.getElementById('ajn-submit');
+  btn.textContent='追加中...';btn.disabled=true;
+  try{
+    const resp=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:'人員名簿',values:[area,range,name,phone]})});
+    const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
+    if(json.error)throw new Error(json.error);
+    const modal=document.getElementById('adm-jin-add-modal');if(modal)modal.remove();
+    // 絞り込みが新規行を隠さないようにクリアしてから再読込
+    const sEl=document.getElementById('adm-se-search'),aEl=document.getElementById('adm-se-area');
+    if(sEl)sEl.value='';if(aEl)aEl.value='';
+    admJinState.loaded=false;
+    await admJinLoad();
+    const m=document.getElementById('adm-se-msg');
+    if(m){m.textContent=`✓ 「${name}」を人員名簿に追加しました。朝刊/夕刊コースはグリッドで入力→💾保存してください`;m.style.color='#16a34a';}
+  }catch(e){
+    msg.innerHTML='<span style="color:#dc2626;">追加失敗: '+e.message+'</span>';
+    btn.textContent='追加する';btn.disabled=false;
+  }
+}
+
 function admJinOnCellInput(ev){
   const t=ev.target;
   let r,c,newVal,host;
@@ -8509,6 +8572,7 @@ function admJinRender(){
   // トグル: 表示上の同姓同名統合 (シートは触らない)
   const toggleBg=admJinDedupeMode?'#0ea5e9':'#cbd5e1';
   h+=`<div style="display:flex;gap:6px;align-items:center;">`;
+  h+=`<button onclick="admJinAddRow()" style="background:var(--primary);color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;" title="新しいドライバーを人員名簿に追加">➕ 新規ドライバー追加</button>`;
   h+=`<button onclick="admJinToggleDedupe()" style="background:${toggleBg};color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;" title="同姓同名を表示上で1行に統合 (シート上のデータは保持)">🔍 統合表示: ${admJinDedupeMode?'ON':'OFF'}</button>`;
   h+=`</div>`;
   h+=`</div>`;
@@ -14778,12 +14842,12 @@ function sysLogout(){
     window.sysPublicMode=true;
     sysLoggedIn=true;sysUserName='閲覧者';sysIsAdmin=false;
     sysUserPerms=['shiftedit'];// 月別シフト 表示権限のみ与える (編集系は別 authed フラグ無しで弾かれる)
-    // ナビは「ダッシュボード」「月別シフト」だけ残す
+    // ナビは「ダッシュボード」「月別シフト」「ダイヤグラム」だけ残す
     document.querySelectorAll('.nav-links button[onclick*="showView"]').forEach(btn=>{
       const m=btn.getAttribute('onclick').match(/showView\('(\w+)'/);
       if(!m){btn.style.display='none';return;}
       const v=m[1];
-      btn.style.display=(v==='dashboard'||v==='shift')?'':'none';
+      btn.style.display=(v==='dashboard'||v==='shift'||v==='diagram')?'':'none';
     });
     // 右上のユーザーラベル/PW変更/管理/ログアウト 等は非表示 (ID 無いものは onclick で特定)
     ['sys-user-label','sys-changepw-btn'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none';});
