@@ -117,7 +117,7 @@ async function getAccessToken(): Promise<string> {
   return (await resp.json()).access_token;
 }
 function parseRates(rows: string[][]) {
-  return rows.filter((r:string[])=>r[0]).map((r:string[])=>({name:r[0]||'',am_weekday:r[1]||'',am_weekend:r[2]||'',pm_weekday:r[3]||'',pm_weekend:r[4]||'',warehouse_am:r[5]||'',warehouse_pm:r[6]||'',calc_type:r[7]||'固定',unit_price:r[8]||'',login_id:r[9]||'',login_pw:r[10]||'',biz_type:r[11]||'',company:r[12]||'',calc_type_pm:r[13]||'',unit_price_pm:r[14]||'',am_sunday:r[15]||'',pm_sunday:r[16]||'',permissions:r[17]||'',kw_am_daily:r[18]||'',kw_pattern:r[19]||'',monthly_salary:r[20]||'',invoice_number:r[21]||''}));
+  return rows.map((r:string[],i:number)=>({row_number:i+2,name:r[0]||'',am_weekday:r[1]||'',am_weekend:r[2]||'',pm_weekday:r[3]||'',pm_weekend:r[4]||'',warehouse_am:r[5]||'',warehouse_pm:r[6]||'',calc_type:r[7]||'固定',unit_price:r[8]||'',login_id:r[9]||'',login_pw:r[10]||'',biz_type:r[11]||'',company:r[12]||'',calc_type_pm:r[13]||'',unit_price_pm:r[14]||'',am_sunday:r[15]||'',pm_sunday:r[16]||'',permissions:r[17]||'',kw_am_daily:r[18]||'',kw_pattern:r[19]||'',monthly_salary:r[20]||'',invoice_number:r[21]||''})).filter((o:any)=>o.name);
 }
 function parseWork(rows: string[][]) {
   return rows.map((r:string[],i:number)=>({row_number:i+2,date:r[0]||'',staff:r[1]||'',course:r[2]||'',category:r[3]||'',start_time:r[4]||'',end_time:r[5]||'',quantity:r[6]||'',unit_price:r[7]||'',amount:r[8]||'',confirmed:r[9]||''})).filter((r:any)=>r.date||r.staff);
@@ -302,6 +302,47 @@ Deno.serve(async(req:Request)=>{
         const errText=await delResp.text();
         return jsonResp({error:'deleteDimension failed: '+delResp.status+' '+errText.slice(0,200)}, 500);
       }
+      return jsonResp({success:true});
+    }
+    // ── 法人オーナー: 自社メンバーのみ管理 (単価は保全=編集不可, 会社/区分は固定) ──
+    if(action==='owner_save_member'){
+      if(!corpOwner) return forbid();
+      if(!callerCompany) return forbid('会社情報がありません');
+      if(!record?.name) return jsonResp({error:'name required'}, 400);
+      const cur = parseRates((await (await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}})).json()).values||[]);
+      let base: any = {};
+      if(row_number){
+        base = cur.find((r:any)=>r.row_number===Number(row_number));
+        if(!base) return jsonResp({error:'row not found'}, 404);
+        if(base.company!==callerCompany) return forbid('自社メンバーのみ編集できます');
+      }
+      const isSelf = row_number ? (base.name===callerName) : false; // 新規は常に配下扱い
+      // 価格系は base から保全 (オーナーは編集不可)。 オーナーが触れるのは 氏名/ログイン/show_money のみ
+      const m: any = { ...base };
+      m.name = record.name;
+      m.login_id = record.login_id ? record.login_id : (base.login_id||''); // 空欄は現状維持
+      m.login_pw = record.login_pw ? record.login_pw : (base.login_pw||''); // 空欄は現状維持(編集時PW消さない)
+      m.biz_type = '法人';
+      m.company = callerCompany;
+      if(isSelf){ const p=['owner']; if(record.show_money) p.push('show_money'); m.permissions=p.join(','); }
+      else { m.permissions=''; } // 配下ドライバーは権限なし
+      const row=[m.name,m.am_weekday||'',m.am_weekend||'',m.pm_weekday||'',m.pm_weekend||'',m.warehouse_am||'',m.warehouse_pm||'',m.calc_type||'固定',m.unit_price||'',m.login_id||'',m.login_pw||'',m.biz_type||'',m.company||'',m.calc_type_pm||'固定',m.unit_price_pm||'',m.am_sunday||'',m.pm_sunday||'',m.permissions||'',m.kw_am_daily||'',m.kw_pattern||'',m.monthly_salary||'',m.invoice_number||''];
+      if(row_number){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A${row_number}:V${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
+      else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:V1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
+      return jsonResp({success:true});
+    }
+    if(action==='owner_delete_member'){
+      if(!corpOwner) return forbid();
+      if(!row_number) return jsonResp({error:'row_number required'}, 400);
+      const cur = parseRates((await (await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:V200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}})).json()).values||[]);
+      const tgt = cur.find((r:any)=>r.row_number===Number(row_number));
+      if(!tgt) return jsonResp({error:'row not found'}, 404);
+      if(tgt.company!==callerCompany) return forbid('自社メンバーのみ削除できます');
+      if(tgt.name===callerName) return forbid('自分自身は削除できません');
+      const rowIdx=Number(row_number)-1;
+      if(rowIdx<1) return jsonResp({error:'cannot delete header'}, 400);
+      const delResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({requests:[{deleteDimension:{range:{sheetId:RATE_SHEET_ID,dimension:'ROWS',startIndex:rowIdx,endIndex:rowIdx+1}}}]})});
+      if(!delResp.ok){ return jsonResp({error:'delete failed: '+delResp.status+' '+(await delResp.text()).slice(0,200)}, 500); }
       return jsonResp({success:true});
     }
     if(action==='list_work'){

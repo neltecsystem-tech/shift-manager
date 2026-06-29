@@ -378,6 +378,7 @@ tbody tr:hover { background:var(--primary-light); }
         <h2 style="margin-bottom:0">📄 請求書</h2>
         <div style="display:flex;gap:8px;">
           <button onclick="invShowChangePw()" id="inv-changepw-btn" style="background:#94a3b8;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;display:none;">🔑 PW変更</button>
+          <button onclick="invOwnerOpenMembers()" id="inv-owner-members-btn" style="display:none;background:#0d9488;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">👥 自社メンバー</button>
           <button onclick="invShowRates()" class="inv-admin-only" style="display:none;background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">⚙ 単価設定</button>
           <button onclick="invShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ 稼働入力</button>
         </div>
@@ -4196,6 +4197,81 @@ function invOwnerScopeNames(){
   return invRates.filter(r=>r.biz_type==='法人'&&r.company===comp).map(r=>r.name);
 }
 
+// ===== 法人オーナー: 自社メンバー管理 (自社の人員のみ。単価は管理者管理) =====
+async function invOwnerRefresh(){
+  try{ const r=await invApi({action:'get_rates'}); if(r&&r.rates)invRates=r.rates; }catch(_){}
+}
+function invOwnerMembers(){
+  const me=invRates.find(r=>r.name===invStaffName);
+  const comp=me?.company||'';
+  return invRates.filter(r=>r.biz_type==='法人'&&r.company===comp);
+}
+async function invOwnerOpenMembers(){ await invOwnerRefresh(); invOwnerRenderMembers(); }
+function invOwnerRenderMembers(){
+  document.getElementById('inv-owner-modal')?.remove();
+  const me=invRates.find(r=>r.name===invStaffName);
+  const showMoney=(me?.permissions||'').split(',').includes('show_money');
+  const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const rows=invOwnerMembers().map(m=>{
+    const isOwnerRow=(m.permissions||'').split(',').includes('owner');
+    return `<div style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;">
+      <div style="flex:1;"><b>${esc(m.name)}</b> ${isOwnerRow?'<span style="color:#16a34a;font-size:12px;">👑代表</span>':''}<div style="font-size:11px;color:var(--text-sub);">ID: ${esc(m.login_id)||'-'}</div></div>
+      <button onclick="invOwnerEdit(${m.row_number})" style="background:#6366f1;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;">編集</button>
+      ${isOwnerRow?'':`<button onclick="invOwnerDelete(${m.row_number},'${esc(m.name).replace(/'/g,'')}')" style="background:var(--danger);color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;">削除</button>`}
+    </div>`;
+  }).join('');
+  const html=`<div id="inv-owner-modal" style="position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;">
+    <div style="background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:90vh;overflow:auto;padding:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><h3 style="margin:0;">👥 自社メンバー管理</h3><button onclick="document.getElementById('inv-owner-modal').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;">×</button></div>
+      <label style="display:flex;align-items:center;gap:8px;background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:10px 12px;margin-bottom:14px;cursor:pointer;"><input type="checkbox" id="inv-owner-showmoney" ${showMoney?'checked':''} onchange="invOwnerToggleShowMoney(this.checked)"> 💰 配下メンバーに金額(単価・請求額)を表示する</label>
+      <div style="margin-bottom:10px;"><button onclick="invOwnerEdit(0)" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ メンバー追加</button></div>
+      ${rows||'<p style="color:var(--text-sub);text-align:center;padding:20px;">メンバーがいません</p>'}
+      <p style="font-size:11px;color:var(--text-sub);margin-top:10px;">※ 単価(金額)の設定は管理者が行います。ここでは氏名・ログイン情報・金額表示の切替を管理できます。</p>
+    </div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+async function invOwnerToggleShowMoney(on){
+  const me=invRates.find(r=>r.name===invStaffName); if(!me)return;
+  const r=await invApi({action:'owner_save_member',record:{name:me.name,login_id:me.login_id,show_money:on},row_number:me.row_number});
+  if(r&&r.success){ await invOwnerRefresh(); invApplyUI(); invOwnerRenderMembers(); }
+  else { alert('切替に失敗: '+(r&&r.error||'')); invOwnerRenderMembers(); }
+}
+function invOwnerEdit(rowNum){
+  const m = rowNum? invOwnerMembers().find(x=>x.row_number===rowNum) : {name:'',login_id:'',row_number:0};
+  if(!m){alert('対象が見つかりません');return;}
+  const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+  document.getElementById('inv-owner-edit')?.remove();
+  const html=`<div id="inv-owner-edit" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:10000;padding:16px;">
+    <div style="background:#fff;border-radius:12px;max-width:420px;width:100%;padding:20px;">
+      <h3 style="margin:0 0 14px;">${rowNum?'メンバー編集':'メンバー追加'}</h3>
+      <div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-sub);">氏名 *</label><input id="inv-own-name" value="${esc(m.name)}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+      <div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-sub);">ログインID</label><input id="inv-own-loginid" value="${esc(m.login_id)}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+      <div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-sub);">パスワード ${rowNum?'(変更時のみ入力)':''}</label><input id="inv-own-loginpw" placeholder="${rowNum?'空欄=変更なし':''}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+      <p style="font-size:11px;color:var(--text-sub);">区分=法人 / 所属=自社 で登録。単価は管理者が設定します。</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+        <button onclick="document.getElementById('inv-owner-edit').remove()" style="background:#94a3b8;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;">キャンセル</button>
+        <button onclick="invOwnerSave(${rowNum})" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">保存</button>
+      </div>
+    </div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+async function invOwnerSave(rowNum){
+  const name=document.getElementById('inv-own-name').value.trim();
+  if(!name){alert('氏名は必須です');return;}
+  const rec={name,login_id:document.getElementById('inv-own-loginid').value.trim(),login_pw:document.getElementById('inv-own-loginpw').value};
+  const me=invRates.find(r=>r.name===invStaffName);
+  if(rowNum&&me&&me.row_number===rowNum)rec.show_money=(me.permissions||'').split(',').includes('show_money');// 自分編集時はshow_money保全
+  const r=await invApi({action:'owner_save_member',record:rec,row_number:rowNum||undefined});
+  if(r&&r.success){ document.getElementById('inv-owner-edit')?.remove(); await invOwnerRefresh(); invOwnerRenderMembers(); }
+  else alert('保存に失敗: '+(r&&r.error||''));
+}
+async function invOwnerDelete(rowNum,name){
+  if(!confirm('「'+name+'」を削除しますか？'))return;
+  const r=await invApi({action:'owner_delete_member',row_number:rowNum});
+  if(r&&r.success){ await invOwnerRefresh(); invOwnerRenderMembers(); }
+  else alert('削除に失敗: '+(r&&r.error||''));
+}
+
 function invInit(){
   if(!invAuthed){
     invShowLogin();
@@ -4276,6 +4352,9 @@ function invApplyUI(){
   // PW変更ボタン（スタッフモードのみ表示）
   const pwBtn=document.getElementById('inv-changepw-btn');
   if(pwBtn)pwBtn.style.display=(!invIsAdmin&&invStaffName)?'':'none';
+  // 法人オーナーのみ「自社メンバー」管理ボタン
+  const ownBtn=document.getElementById('inv-owner-members-btn');
+  if(ownBtn)ownBtn.style.display=(isOwner&&!invIsAdmin)?'':'none';
   // スタッフモードの請求書作成: スタッフ名固定表示 (オーナーは選択可なので固定表示しない)
   const genLabel=document.getElementById('inv-gen-staff-label');
   const genName=document.getElementById('inv-gen-staff-name');
