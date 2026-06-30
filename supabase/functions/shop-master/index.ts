@@ -5,7 +5,10 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const SPREADSHEET_ID = '1Owv83TGxSl15pqO0MaaF4AaLeslye0frfKAuo62TlGY';
+// 店舗マスタは専用スプレッドシートへ独立 (2026-06-30)。マスタ2 は旧ワークブック据え置き
+// (invoice-sheet 川越単価 + 月報ワークブック内2万数式が依存するため動かさない)。
+const SPREADSHEET_ID = '1KvMbiLMeUmUOiUwzcilp-6u2xzZXs68HcvtWuWqT70M'; // 店舗マスタ専用 (新)
+const MASTER2_ID = '1Owv83TGxSl15pqO0MaaF4AaLeslye0frfKAuo62TlGY';     // マスタ2 (旧ワークブック「月報開発中」)
 const SHEET_NAME = '店舗マスタ';
 const MASTER2_SHEET = 'マスタ2';
 const COL_END = 'AL';
@@ -152,8 +155,8 @@ Deno.serve(async (req: Request) => {
 
     if (action === 'master_options') {
       const [areaResp, courseResp] = await Promise.all([
-        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!B3:B10`, { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!A3:A150`, { headers: { 'Authorization': `Bearer ${token}` } }),
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${MASTER2_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!B3:B10`, { headers: { 'Authorization': `Bearer ${token}` } }),
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${MASTER2_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!A3:A150`, { headers: { 'Authorization': `Bearer ${token}` } }),
       ]);
       const areaJson = await areaResp.json();
       const courseJson = await courseResp.json();
@@ -209,7 +212,7 @@ Deno.serve(async (req: Request) => {
           status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-      const curResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!A3:A150`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const curResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${MASTER2_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!A3:A150`, { headers: { 'Authorization': `Bearer ${token}` } });
       const curRows = ((await curResp.json()).values || []) as string[][];
       const existing = curRows.map((r: string[]) => (r[0] || '').trim());
       if (existing.some((c: string) => c === course)) {
@@ -224,7 +227,7 @@ Deno.serve(async (req: Request) => {
         });
       }
       const putRange = encodeURIComponent(`'${MASTER2_SHEET}'!A${targetRow}`);
-      const putResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${putRange}?valueInputOption=USER_ENTERED`, {
+      const putResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${MASTER2_ID}/values/${putRange}?valueInputOption=USER_ENTERED`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ values: [[course]] }),
