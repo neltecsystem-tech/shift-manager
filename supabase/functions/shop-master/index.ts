@@ -673,6 +673,48 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: true, updates: appendResult.updates ?? null, reorder: reorderResults }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    } else if (action === 'bulk_add') {
+      // 新店CSV一括登録: records[] を一度に追加し、影響する(区分,コース)を1回ずつ店着時間順に採番
+      const records = reqBody.records;
+      if (!Array.isArray(records) || records.length === 0) {
+        return new Response(JSON.stringify({ error: 'records array required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      if (records.length > 1000) {
+        return new Response(JSON.stringify({ error: '一度に登録できるのは1000件までです' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const rows = records.map((rec: any) => {
+        const row = new Array(N_COLS).fill('');
+        Object.entries(rec).forEach(([key, val]) => { const m = key.match(/^col_(\d+)$/); if (m) row[parseInt(m[1])] = val as string; });
+        return row;
+      });
+      const appendRange = encodeURIComponent(`'${SHEET_NAME}'!A2:${COL_END}2`);
+      const appendResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${appendRange}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: rows }),
+      });
+      if (!appendResp.ok) {
+        const errText = await appendResp.text();
+        return new Response(JSON.stringify({ error: 'bulk append failed (' + appendResp.status + '): ' + errText.slice(0, 400) }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      // 影響する (edition, course) を集めて1回ずつ再採番
+      const pairs = new Set<string>();
+      for (const row of rows) {
+        for (const ed of EDITION_COLS) {
+          const course = (row[ed.courseCol] || '').trim();
+          const time = (row[ed.timeCol] || '').trim();
+          if (course && time) pairs.add(ed.name + '\t' + course);
+        }
+      }
+      let reordered = 0;
+      for (const p of pairs) {
+        const [name, course] = p.split('\t');
+        const ed = EDITION_COLS.find((e) => e.name === name)!;
+        await reorderEdition(token, ed, course);
+        reordered++;
+      }
+      return new Response(JSON.stringify({ success: true, added: rows.length, reordered }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     } else if (action === 'batch_update_latlng') {
       if (!Array.isArray(updates) || updates.length === 0) {
         return new Response(JSON.stringify({ error: 'updates array required' }), {

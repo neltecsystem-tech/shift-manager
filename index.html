@@ -283,6 +283,7 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="smShowReplace()" style="background:#f59e0b;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔄 コース一括置換</button>
           <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
           <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 新店登録</button>
+          <button onclick="smCsvImport()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📥 CSV一括登録</button>
           <button onclick="smSnapshotNow()" id="sm-snap-btn" title="現在の店舗マスタを当月の月初スナップとして固定。請求はこのスナップで計算されます。" style="background:#7c3aed;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📌 月初スナップ作成</button>
         </div>
       </div>
@@ -4248,6 +4249,130 @@ async function smSave(){
     await smLoad(true);
   }catch(e){alert('エラー: '+e.message);}
   btn.textContent=smEditRow?'更新する':'追加する';btn.disabled=false;
+}
+
+// ── 新店 CSV 一括登録 ──
+// CSV見出し → 店舗マスタ列インデックス対応 (店着時間は3種あるため区分別に明示)
+function smCsvFieldMap(){
+  const map={
+    '営業所':smColMap.area??1,'店舗コード':smColMap.code??2,'店舗名':smColMap.name??3,'開店日':smColMap.openDate??4,
+    '朝刊コース':5,'朝刊店着時間':13,'夕刊コース':14,'夕刊店着時間':18,'競馬コース':19,'競馬店着時間':24,
+  };
+  const noteIdx=smHeaders.findIndex(h=>h&&h.includes('備考'));if(noteIdx>=0)map['備考']=noteIdx;
+  const checkKw=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝'];
+  smHeaders.forEach((h,i)=>{if(h&&checkKw.some(k=>h.includes(k))&&!(h in map))map[h]=i;});
+  return map;
+}
+function smIsCheckColIdx(i){
+  const checkKw=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝','修正済み'];
+  const h=smHeaders[i]||'';
+  if(checkKw.some(k=>h.includes(k)))return true;
+  const vals=smData.slice(0,20).map(r=>r[`col_${i}`]).filter(Boolean);
+  return vals.length>0&&vals.every(v=>v==='TRUE'||v==='FALSE');
+}
+function smCsvTruthy(v){return /^(○|◯|TRUE|true|1|はい|有|あり|✓|レ|yes|y)$/i.test(String(v||'').trim());}
+let smCsvRecords=null;
+function smCsvImport(){
+  document.getElementById('sm-csv-modal')?.remove();
+  const m=document.createElement('div');
+  m.id='sm-csv-modal';
+  m.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:250;display:flex;justify-content:center;align-items:center;padding:20px;';
+  m.innerHTML=`<div style="background:#fff;border-radius:16px;padding:24px;width:100%;max-width:680px;max-height:88vh;overflow:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <h3 style="color:var(--primary);margin:0;">📥 新店をCSVで一括登録</h3>
+      <button onclick="document.getElementById('sm-csv-modal').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;color:#94a3b8;">×</button>
+    </div>
+    <div style="font-size:13px;color:var(--text-sub);line-height:1.7;margin-bottom:12px;">
+      ① テンプレDLして1行=1店で入力 → ② CSVを選択 → ③ 内容を確認して登録。<br>
+      列: 営業所/店舗コード/店舗名/開店日/朝刊コース/朝刊店着時間/夕刊コース/夕刊店着時間/競馬コース/競馬店着時間/備考。<br>
+      ※ 順番は店着時間順に自動採番。Excel保存(Shift-JIS)もUTF-8もOK。既存と重複するコード/店舗名は自動スキップ。
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+      <button onclick="smCsvTemplate()" style="background:#0ea5e9;color:#fff;border:none;padding:9px 16px;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;">⬇ テンプレートCSV</button>
+      <input type="file" id="sm-csv-file" accept=".csv,text/csv" onchange="smCsvOnFile(event)" style="font-size:13px;">
+    </div>
+    <div id="sm-csv-preview" style="font-size:13px;"></div>
+    <div style="text-align:right;margin-top:16px;">
+      <button id="sm-csv-submit" onclick="smCsvSubmit()" disabled style="background:#cbd5e1;color:#fff;border:none;padding:11px 26px;border-radius:10px;cursor:not-allowed;font-weight:700;font-size:14px;">登録する</button>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+  smCsvRecords=null;
+}
+function smCsvTemplate(){
+  const cols=['営業所','店舗コード','店舗名','開店日','朝刊コース','朝刊店着時間','夕刊コース','夕刊店着時間','競馬コース','競馬店着時間','備考'];
+  const sample=['立川','999001','サンプル店','2026/07/01','立川1','4:30','','','','','メモ'];
+  const csv='﻿'+[cols.join(','),sample.map(c=>`"${c}"`).join(',')].join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='新店登録テンプレート.csv';a.click();
+}
+function smCsvOnFile(ev){
+  const file=ev.target.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    const buf=new Uint8Array(reader.result);
+    let text=new TextDecoder('utf-8').decode(buf);
+    if(text.includes('�')){try{text=new TextDecoder('shift-jis').decode(buf);}catch(_){}}
+    const res=Papa.parse(text.replace(/^﻿/,''),{header:true,skipEmptyLines:true});
+    smCsvBuild(res.data||[],(res.meta&&res.meta.fields)||[]);
+  };
+  reader.readAsArrayBuffer(file);
+}
+function smCsvBuild(rows,fields){
+  const prev=document.getElementById('sm-csv-preview');
+  const submit=document.getElementById('sm-csv-submit');
+  const map=smCsvFieldMap();
+  const codeIdx=smColMap.code??2,nameIdx=smColMap.name??3;
+  const recognized=fields.filter(f=>f&&(f in map));
+  const unknown=fields.filter(f=>f&&!(f in map));
+  const existCodes=new Set(smData.map(r=>(r[`col_${codeIdx}`]||'').trim()).filter(Boolean));
+  const existNames=new Set(smData.map(r=>(r[`col_${nameIdx}`]||'').trim()).filter(Boolean));
+  const seenCode=new Set(),seenName=new Set();
+  const records=[],skipped=[];
+  rows.forEach((row,ri)=>{
+    const get=(label)=>{const f=fields.find(x=>x===label);return f?String(row[f]??'').trim():'';};
+    const name=get('店舗名'),code=get('店舗コード');
+    if(!name){skipped.push({ri:ri+2,reason:'店舗名が空'});return;}
+    if(code&&existCodes.has(code)){skipped.push({ri:ri+2,reason:`コード${code}は既存`,name});return;}
+    if(existNames.has(name)){skipped.push({ri:ri+2,reason:`店舗名「${name}」は既存`,name});return;}
+    if(code&&seenCode.has(code)){skipped.push({ri:ri+2,reason:`コード${code}がCSV内で重複`,name});return;}
+    if(seenName.has(name)){skipped.push({ri:ri+2,reason:`店舗名「${name}」がCSV内で重複`,name});return;}
+    if(code)seenCode.add(code);seenName.add(name);
+    const rec={};
+    recognized.forEach(f=>{const idx=map[f];let v=String(row[f]??'').trim();if(smIsCheckColIdx(idx))v=smCsvTruthy(v)?'TRUE':'FALSE';rec[`col_${idx}`]=v;});
+    records.push({rec,name,code,area:get('営業所')});
+  });
+  smCsvRecords=records.map(r=>r.rec);
+  let h=`<div style="margin-bottom:8px;">認識した列: <b>${recognized.join(' / ')||'(なし)'}</b>${unknown.length?` <span style="color:#b45309;">／ 無視: ${unknown.join(' / ')}</span>`:''}</div>`;
+  h+=`<div style="margin-bottom:8px;">登録対象: <b style="color:#15803d;font-size:16px;">${records.length}</b>件${skipped.length?` ／ <span style="color:#dc2626;">スキップ ${skipped.length}件</span>`:''}</div>`;
+  if(records.length){
+    h+='<div style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:8px;"><table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr style="background:#f8fafc;position:sticky;top:0;"><th style="padding:5px;border:1px solid #e2e8f0;">営業所</th><th style="padding:5px;border:1px solid #e2e8f0;">コード</th><th style="padding:5px;border:1px solid #e2e8f0;">店舗名</th></tr></thead><tbody>';
+    records.slice(0,50).forEach(r=>{h+=`<tr><td style="padding:4px 6px;border:1px solid #e2e8f0;">${r.area||''}</td><td style="padding:4px 6px;border:1px solid #e2e8f0;">${r.code||''}</td><td style="padding:4px 6px;border:1px solid #e2e8f0;">${r.name}</td></tr>`;});
+    h+='</tbody></table></div>';
+    if(records.length>50)h+=`<div style="font-size:11px;color:var(--text-sub);margin-top:4px;">…先頭50件を表示</div>`;
+  }
+  if(skipped.length){
+    h+=`<details style="margin-top:8px;"><summary style="cursor:pointer;color:#dc2626;font-size:12px;">スキップ ${skipped.length}件の理由を表示</summary><div style="font-size:11px;color:#64748b;max-height:140px;overflow:auto;margin-top:4px;">`+skipped.slice(0,100).map(s=>`行${s.ri}: ${s.reason}${s.name?` (${s.name})`:''}`).join('<br>')+'</div></details>';
+  }
+  prev.innerHTML=h;
+  if(records.length){submit.disabled=false;submit.style.background='var(--primary)';submit.style.cursor='pointer';submit.textContent=`登録する (${records.length}件)`;}
+  else{submit.disabled=true;submit.style.background='#cbd5e1';submit.style.cursor='not-allowed';submit.textContent='登録する';}
+}
+async function smCsvSubmit(){
+  if(!smCsvRecords||!smCsvRecords.length)return;
+  const submit=document.getElementById('sm-csv-submit');
+  if(!confirm(`${smCsvRecords.length}件の新店を店舗マスタに登録します。よろしいですか？`))return;
+  submit.disabled=true;submit.textContent='登録中...';
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'bulk_add',records:smCsvRecords})});
+    const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
+    if(!resp.ok||json.error)throw new Error(json.error||`HTTP ${resp.status}`);
+    document.getElementById('sm-csv-modal')?.remove();
+    alert(`✅ ${json.added}件を登録しました（${json.reordered}コースを店着時間順に採番）。`);
+    invalidateShopMasterCache();
+    await new Promise(r=>setTimeout(r,1000));
+    await smLoad(true);
+  }catch(e){alert('登録エラー: '+e.message);submit.disabled=false;submit.textContent=`登録する (${smCsvRecords.length}件)`;}
 }
 
 // ── コース一括置換 ──
