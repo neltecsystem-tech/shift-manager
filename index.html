@@ -7,9 +7,10 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- PDF系(出力ボタン押下時のみ使用)は defer で初期描画をブロックしない -->
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="data.js"></script>
 <style>
@@ -3021,6 +3022,7 @@ function smRenderSnapHistory(){
 }
 
 function smFilter(){
+  smRenderLimit=SM_PAGE; // フィルタ変更で表示件数をリセット(先頭から)
   const area=document.getElementById('sm-area').value;
   const q=(document.getElementById('sm-search').value||'').toLowerCase();
   const verifyEl=document.getElementById('sm-verify-filter');
@@ -3045,7 +3047,10 @@ function smFilter(){
   smRender();
 }
 
-let smShowAll=false;
+// スマホ判定 (PDF画質や一括描画件数の出し分けに使う)
+function isMobile(){return !!(window.matchMedia&&window.matchMedia('(max-width:768px)').matches);}
+const SM_PAGE=500;          // 店舗マスタ一覧の1ページ件数
+let smRenderLimit=SM_PAGE;  // 現在の表示件数上限(「さらに表示」で加算)
 function smRender(){
   document.getElementById('sm-count').textContent=`${smFiltered.length}件 / ${smData.length}件`;
   if(!smFiltered.length){
@@ -3098,7 +3103,7 @@ function smRender(){
   let h='<table><thead><tr>';
   showHeaders.forEach((hd,i)=>{h+=`<th>${hd}${i===addrColIdx?' <span style="font-size:10px;font-weight:normal;color:#94a3b8;">(精度)</span>':''}</th>`;});
   h+='<th></th></tr></thead><tbody>';
-  (smShowAll?smFiltered:smFiltered.slice(0,500)).forEach(r=>{
+  smFiltered.slice(0,smRenderLimit).forEach(r=>{
     const areaVal=r[`col_${smColMap.area??1}`]||'';
     const accVal=smColMap.accuracy!=null?(r[`col_${smColMap.accuracy}`]||''):'';
     h+='<tr>';
@@ -3119,12 +3124,13 @@ function smRender(){
     h+='</tr>';
   });
   h+='</tbody></table>';
-  if(smFiltered.length>500){
-    if(smShowAll){
-      h+=`<p style="margin-top:8px"><button onclick="smShowAll=false;smRender()" style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;">▲ 先頭500件に戻す</button> <span style="color:var(--text-sub);font-size:12px;">全${smFiltered.length}件表示中</span></p>`;
-    }else{
-      h+=`<p style="margin-top:8px"><button onclick="smShowAll=true;smRender()" style="background:var(--primary);color:#fff;border:none;border-radius:8px;padding:7px 16px;cursor:pointer;font-size:13px;font-weight:600;">▼ 残り${smFiltered.length-500}件をすべて表示</button> <span style="color:var(--text-sub);font-size:12px;">(500/${smFiltered.length}件)</span></p>`;
-    }
+  // 段階表示: 一度に全件描画するとスマホが重い/落ちるため「さらに表示」で加算する
+  if(smFiltered.length>smRenderLimit){
+    const step=isMobile()?SM_PAGE:1000;
+    const next=Math.min(step,smFiltered.length-smRenderLimit);
+    h+=`<p style="margin-top:8px"><button onclick="smRenderLimit+=${step};smRender()" style="background:var(--primary);color:#fff;border:none;border-radius:8px;padding:7px 16px;cursor:pointer;font-size:13px;font-weight:600;">▼ さらに${next}件表示</button> <span style="color:var(--text-sub);font-size:12px;">(${smRenderLimit}/${smFiltered.length}件)　※ 営業所・検索で絞ると軽くなります</span></p>`;
+  }else if(smRenderLimit>SM_PAGE){
+    h+=`<p style="margin-top:8px"><button onclick="smRenderLimit=${SM_PAGE};smRender()" style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;">▲ 先頭${SM_PAGE}件に戻す</button> <span style="color:var(--text-sub);font-size:12px;">全${smFiltered.length}件表示中</span></p>`;
   }
   document.getElementById('sm-table').innerHTML=h;
 }
@@ -12610,7 +12616,7 @@ async function admPayBulkPdfZip(){
         const wrap=list[i];
         const label=wrap.getAttribute('data-name')||groupName;
         admBillUpdateProgress(done,totalPages,`${groupName} - ${label}`);
-        const canvas=await html2canvas(wrap,{scale:2,useCORS:true,backgroundColor:'#ffffff',logging:false});
+        const canvas=await html2canvas(wrap,{scale:isMobile()?1.3:2,useCORS:true,backgroundColor:'#ffffff',logging:false});
         const imgData=canvas.toDataURL('image/jpeg',0.92);
         if(i>0)pdf.addPage();
         const pdfW=pdf.internal.pageSize.getWidth();
