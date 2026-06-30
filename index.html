@@ -3868,7 +3868,7 @@ function smBuildForm(record){
     html+='<div style="font-size:11px;color:var(--text-sub);margin-bottom:12px;">📍 地図をクリック または ピンをドラッグで位置を微調整できます (緯度・経度欄が自動更新されます)</div>';
   }
   // チェックボックス列: 値がTRUE/FALSEか、ヘッダー名に特定キーワードを含む
-  const checkHeaders=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝','修正済み'];
+  const checkHeaders=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝','修正済み','休店中'];
   const isCheckCol=i=>{
     const h=smHeaders[i]||'';
     if(checkHeaders.some(k=>h.includes(k)))return true;
@@ -4246,7 +4246,7 @@ async function smSave(){
   }
   btn.textContent='保存中...';btn.disabled=true;
   const record={};
-  const checkHeaders2=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝','修正済み'];
+  const checkHeaders2=['特殊納品','駅納品','同梱','距離増','納本','雑誌','翌朝','修正済み','休店中'];
   const isCheck2=i=>{
     const hh=smHeaders[i]||'';
     if(checkHeaders2.some(k=>hh.includes(k)))return true;

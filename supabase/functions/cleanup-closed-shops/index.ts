@@ -92,11 +92,36 @@ Deno.serve(async (req: Request) => {
     const lastDeliveryCol = 26; // AA: 最終納品日
 
     const dataResp = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A3:AD3000`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A3:AO3000`,
       { headers: { 'Authorization': `Bearer ${token}` } }
     );
     const dataResult = await dataResp.json();
     const rows = dataResult.values ?? [];
+
+    // ── 休店: 休店終了日(AO=40)を過ぎた行の休店情報(AM:AO)を自動クリア ──
+    // AM=38 休店中, AN=39 休店開始日, AO=40 休店終了日
+    const suspFlagCol = 38, suspStartCol = 39, suspEndCol = 40;
+    const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const suspData: { range: string; values: string[][] }[] = [];
+    rows.forEach((row: string[], i: number) => {
+      const rowNum = i + 3;
+      const flag = (row[suspFlagCol] ?? '').trim();
+      const startStr = (row[suspStartCol] ?? '').trim();
+      const endStr = (row[suspEndCol] ?? '').trim();
+      if (!flag && !startStr && !endStr) return;
+      const endDate = parseDate(endStr);
+      if (!endDate) return;                 // 終了日が無効/無期限はクリアしない
+      if (todayMid <= endDate) return;      // まだ終了日を過ぎていない
+      suspData.push({ range: `'${SHEET_NAME}'!${colLetter(suspFlagCol)}${rowNum}:${colLetter(suspEndCol)}${rowNum}`, values: [['', '', '']] });
+    });
+    let suspendCleared = 0;
+    if (suspData.length) {
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data: suspData }),
+      });
+      suspendCleared = suspData.length;
+    }
 
     let cleared = 0;
     const updates: number[] = [];
@@ -211,10 +236,11 @@ Deno.serve(async (req: Request) => {
 
     return new Response(JSON.stringify({
       success: true,
-      message: `${cleared}件の店舗を処理（コース名クリア + B列に納品中止追加）／順番 ${reordered}セルを詰め直し`,
+      message: `${cleared}件の店舗を処理（コース名クリア + B列に納品中止追加）／順番 ${reordered}セルを詰め直し／休店終了 ${suspendCleared}件クリア`,
       total_checked: rows.length,
       cleared,
       reordered,
+      suspendCleared,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

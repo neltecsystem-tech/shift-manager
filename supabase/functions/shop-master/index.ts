@@ -17,8 +17,9 @@ const SNAP_PREFIX = '月初_';   // タブ名 例: 月初_2026-06
 const SNAP_KEEP = 4;           // 直近4ヶ月分のスナップタブを保持(先月/今月+予備)
 const SNAP_RE = /^月初_\d{4}-\d{2}$/;
 const SUMMARY_SHEET = '月初集計'; // 4ヶ月超で実体タブを消しても残す請求店舗数の簡易履歴
-const COL_END = 'AL';
-const N_COLS = 38;
+const COL_END = 'AO';
+const N_COLS = 41;
+// AM=38 休店中(チェック), AN=39 休店開始日, AO=40 休店終了日 (休店終了日経過で cleanup-closed-shops が自動クリア)
 // 列マップ (0-indexed)
 // 朝刊:  F=5(course), M=12(order), N=13(time)
 // 夕刊:  N=13(夕刊コース・現運用), O=14(夕刊コース名), R=17(夕刊順番), S=18(店着時間)
@@ -61,7 +62,7 @@ async function getAccessToken(): Promise<string> {
 
 async function ensureExtraHeaders(token: string) {
   // AF=住所, AG=住所精度, AH=ナビ判定, AI=正式店舗名, AJ=新夕刊コース, AK=Place ID, AL=修正済み
-  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AL2`, { headers: { 'Authorization': `Bearer ${token}` } });
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AO2`, { headers: { 'Authorization': `Bearer ${token}` } });
   const j = await r.json();
   const cur = (j.values?.[0] ?? []) as string[];
   const next = [
@@ -72,10 +73,13 @@ async function ensureExtraHeaders(token: string) {
     (cur[4] || '').trim() || '新夕刊コース',
     (cur[5] || '').trim() || 'Place ID',
     (cur[6] || '').trim() || '修正済み',
+    (cur[7] || '').trim() || '休店中',
+    (cur[8] || '').trim() || '休店開始日',
+    (cur[9] || '').trim() || '休店終了日',
   ];
   const changed = next.some((v, i) => v !== (cur[i] || '').trim());
   if (changed) {
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AL2?valueInputOption=USER_ENTERED`, {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AO2?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ values: [next] }),
@@ -642,6 +646,9 @@ Deno.serve(async (req: Request) => {
       if (!headers[33]) headers[33] = 'ナビ判定';
       if (!headers[34]) headers[34] = '正式店舗名';
       if (!headers[37]) headers[37] = '修正済み';
+      if (!headers[38]) headers[38] = '休店中';
+      if (!headers[39]) headers[39] = '休店開始日';
+      if (!headers[40]) headers[40] = '休店終了日';
       const records = allRows.slice(1).map((row: string[], i: number) => {
         const obj: any = { row_number: i + 3 };
         headers.forEach((_: string, j: number) => {
