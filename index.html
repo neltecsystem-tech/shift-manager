@@ -14479,6 +14479,12 @@ function diagInit(){
 // ※店舗マスタは設定データで頻繁には変わらず、毎回必ずバックグラウンド再取得するので
 //   live性は担保される (シフト本体の live 取得ルールとは別物)。
 const DIAG_CACHE_KEY='sm_diag_master_v1';
+// iOS Safari はメモリ制限が厳しく、全コース×全店舗を一度に描画(数千DOM+数千textarea)すると
+// タブがクラッシュする。一度に描画する店舗数を予算で制限し「続きを表示」で分割描画する。
+let diagRenderToken=0;            // 描画ごとに増やし、古い逆ジオコーディングループを中断
+const DIAG_BUDGET=300;            // 一度に描画する店舗数の目安
+let diagShopBudget=DIAG_BUDGET;   // 「続きを表示」で加算
+function diagShowMore(){ diagShopBudget+=DIAG_BUDGET; diagRender(); }
 
 function diagBuildColMap(headers){
   const m={};
@@ -14575,6 +14581,7 @@ function diagAreaMatch(r,area,type){
   return areaOfCourse(course)===area;
 }
 function diagFilter(){
+  diagShopBudget=DIAG_BUDGET; // フィルタ変更で予算リセット(先頭から再描画)
   const area=document.getElementById('diag-area').value;
   const type=document.getElementById('diag-type').value;
   // 夕刊新コース切替トグルの表示制御
@@ -14955,13 +14962,24 @@ function diagRender(){
   }
   if(!targetCourses.length){content.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">該当コースがありません</p>';summary.innerHTML='';return;}
 
-  const totalShops=targetCourses.reduce((acc,c)=>acc+diagBuildCourseRoute(type,c,area).length,0);
-  summary.innerHTML=`${typeLabel} ／ <b>${targetCourses.length}</b>コース ／ 合計 <b>${totalShops}</b>店舗${area?` ／ 営業所: <b>${area}</b>`:''}`;
+  const myToken=++diagRenderToken; // この描画のトークン(古い逆ジオを中断するため)
+  // コースごとの店舗配列を一度だけ構築 (テーブル描画でも再利用)
+  const courseShops=targetCourses.map(cn=>[cn,diagBuildCourseRoute(type,cn,area)]).filter(e=>e[1].length);
+  const totalShops=courseShops.reduce((a,e)=>a+e[1].length,0);
+
+  // iOS安全: 店舗数の予算内に収まるコースだけ描画 (最低1コースは出す)
+  const shownCourses=[];let cum=0;
+  for(const e of courseShops){
+    if(shownCourses.length>0 && cum+e[1].length>diagShopBudget)break;
+    shownCourses.push(e);cum+=e[1].length;
+  }
+  const moreCourses=courseShops.length-shownCourses.length;
+  const moreShops=totalShops-cum;
+
+  summary.innerHTML=`${typeLabel} ／ <b>${targetCourses.length}</b>コース ／ 合計 <b>${totalShops}</b>店舗${area?` ／ 営業所: <b>${area}</b>`:''}${moreCourses>0?` ／ <span style="color:#dc2626;font-weight:700;">表示中 ${shownCourses.length}コース・${cum}店舗</span>`:''}`;
 
   let h='';
-  targetCourses.forEach(cn=>{
-    const shops=diagBuildCourseRoute(type,cn,area);
-    if(!shops.length)return;
+  shownCourses.forEach(([cn,shops])=>{
     const times=shops.map(s=>diagParseTime(s.schedTime)).filter(x=>x!=null);
     let vMin=times.length?Math.min(...times):6*60;
     let vMax=times.length?Math.max(...times):vMin+60;
@@ -15056,19 +15074,23 @@ function diagRender(){
     }
     h+=`</div>`;
   });
+  if(moreCourses>0){
+    h+=`<div style="text-align:center;padding:16px;"><button onclick="diagShowMore()" style="background:var(--primary);color:#fff;border:none;padding:11px 26px;border-radius:10px;cursor:pointer;font-weight:700;font-size:14px;">▼ 続きを表示（あと ${moreCourses}コース・約${moreShops}店舗）</button><div style="font-size:11px;color:var(--text-sub);margin-top:8px;line-height:1.5;">※ スマホ(特にiPhone)は一度に多く表示するとブラウザが落ちることがあるため分割表示しています。<br>営業所やコースを選んで絞り込むと軽くなります。</div></div>`;
+  }
   content.innerHTML=h;
 
-  // 住所なしを逆ジオコーディング
-  const pending=Array.from(content.querySelectorAll('.diag-addr'));
+  // 住所なしを逆ジオコーディング (描画分のみ・最大80件・古い描画は中断)
+  const pending=Array.from(content.querySelectorAll('.diag-addr')).slice(0,80);
   (async()=>{
     for(const el of pending){
+      if(myToken!==diagRenderToken)return; // 別の描画が始まったら中断(iOS負荷軽減)
       if(!el.isConnected)continue;
       const lat=parseFloat(el.dataset.lat),lng=parseFloat(el.dataset.lng);
       if(!isFinite(lat)||!isFinite(lng))continue;
       const addr=await diagReverseGeocode(lat,lng);
       if(addr){el.textContent=addr;el.style.color='#475569';el.style.fontStyle='normal';}
       else{el.textContent=`(${lat.toFixed(4)}, ${lng.toFixed(4)})`;el.style.color='#94a3b8';}
-      await new Promise(r=>setTimeout(r,130));
+      await new Promise(r=>setTimeout(r,150));
     }
   })();
 }
