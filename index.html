@@ -854,20 +854,25 @@ tbody tr:hover { background:var(--primary-light); }
       <!-- 荷主リスト突合 -->
       <div id="adm-shoplist" class="adm-panel" style="display:none;">
         <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:12px;border-radius:6px;margin-bottom:16px;font-size:13px;color:#92400e;">
-          💡 荷主から送られた xlsx をアップロードし、店舗マスタとの差異を表示します。<br>
-          マッチングキー: <b>STAND</b> (荷主リスト) ↔ <b>店舗コード</b> (店舗マスタ)。<br>
-          結果は画面表示のみで保存しません（CSV出力可）。
+          💡 荷主から送られた xlsx をアップロードし、<b>その月の月初スナップ（店舗マスタ）</b>との差異を表示します。<br>
+          マッチングキー: <b>STAND</b> (荷主リスト) ↔ <b>店舗コード</b> (月初スナップ)。<br>
+          ※ 対象月はアップロードした荷主リストの日付から自動設定。月途中の現場変更ではなく月初構成と突合します。結果は画面表示のみ（CSV出力可）。
         </div>
         <div class="filters" style="margin-bottom:12px;">
           <div>
             <label>📁 荷主リスト xlsx</label>
             <input type="file" id="adm-sl-file" accept=".xlsx,.xls" onchange="admShopListUpload(event)" style="padding:6px;border:1px solid var(--border);border-radius:6px;">
           </div>
+          <div>
+            <label>📅 突合する月（月初スナップ）</label>
+            <input type="month" id="adm-sl-month" onchange="admShopListOnMonthChange()" style="padding:6px;border:1px solid var(--border);border-radius:6px;">
+          </div>
           <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;">
             <button onclick="admShopListReloadMaster()" style="background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🔄 マスタ再取得</button>
             <button onclick="admShopListExportCsv()" id="adm-sl-csv-btn" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;display:none;">📥 現在のタブをCSV出力</button>
           </div>
         </div>
+        <div id="adm-sl-src" style="margin-bottom:8px;"></div>
         <div id="adm-sl-summary" style="margin-bottom:12px;font-size:13px;"></div>
         <div id="adm-sl-tabs" style="display:none;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
           <button onclick="admShopListSwitchTab('closeopen')" id="adm-sl-tab-closeopen" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:var(--primary);color:#fff;">🔥 閉店・新店シート</button>
@@ -12815,25 +12820,55 @@ let admSlResult=null;
 let admSlActiveTab='closeopen';
 let admSlCatDrill=null; // 区分集計のドリルダウン中キー (`営業所\t区分`)
 
+let admSlSource=''; // 'snapshot:YYYY-MM' | 'live'
+
 function admShopListInit(){
+  // 突合の対象月を当月デフォルト (アップロード時に荷主リストの日付へ自動更新)
+  const mEl=document.getElementById('adm-sl-month');
+  if(mEl&&!mEl.value){const now=new Date();mEl.value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;}
   document.getElementById('adm-sl-summary').innerHTML='<p style="color:var(--text-sub);">📁 上のボタンから荷主リスト xlsx をアップロードしてください</p>';
   document.getElementById('adm-sl-tabs').style.display='none';
   document.getElementById('adm-sl-csv-btn').style.display='none';
   document.getElementById('adm-sl-result').innerHTML='';
+  admShopListRenderSource();
+}
+
+function admShopListRenderSource(){
+  const el=document.getElementById('adm-sl-src');if(!el)return;
+  if(admSlSource.indexOf('snapshot:')===0){
+    const m=admSlSource.split(':')[1];
+    el.innerHTML=`📌 <b>${m} 月初スナップショット</b>と突合中（月途中の店舗追加・閉店・コース変更は突合に影響しません）`;
+    el.style.cssText='font-size:12px;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;padding:6px 10px;border-radius:8px;';
+  }else if(admSlSource==='live'){
+    el.innerHTML=`⚠️ <b>ライブの店舗マスタ</b>と突合中（この月の月初スナップ未作成）。月初構成で突合したい場合は店舗マスタ画面で「📌 月初スナップ作成」を実行してください。`;
+    el.style.cssText='font-size:12px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;padding:6px 10px;border-radius:8px;';
+  }else{el.innerHTML='';}
 }
 
 async function admShopListReloadMaster(){
-  admBillShopData=null;
+  invalidateShopMasterCache();
   admSlMaster=null;
   await admShopListEnsureMaster();
   if(admSlData)admShopListAnalyze();
   alert('店舗マスタを再取得しました');
 }
 
+// 対象月変更: マスタを読み直して再解析
+async function admShopListOnMonthChange(){
+  admSlMaster=null;
+  await admShopListEnsureMaster();
+  if(admSlData)admShopListAnalyze();
+}
+
 async function admShopListEnsureMaster(){
   if(admSlMaster)return;
-  admBillShopData=await fetchShopMasterList();
-  const recs=admBillShopData.records||[];
+  // 対象月の月初スナップを優先、無ければライブ
+  const month=(document.getElementById('adm-sl-month')||{}).value||'';
+  let json=month?await fetchShopMasterSnapshot(month):null;
+  if(json){admSlSource='snapshot:'+month;}
+  else{json=await fetchShopMasterList();admSlSource='live';}
+  admShopListRenderSource();
+  const recs=json.records||[];
   admSlMaster=recs.map(r=>({
     row:r.row_number,
     code:String(r.col_2||'').trim(),
@@ -12951,6 +12986,12 @@ async function admShopListUpload(event){
       shipperByCat[off+'\t'+cat]=set;
     });
     admSlData={moto,closeOpen,parsedDate,shipperByCat,shipName};
+    // 荷主リストの日付(parsedDate=YYYY/MM/DD)から突合対象月を自動設定 → その月の月初スナップと突合
+    if(parsedDate&&/^\d{4}\/\d{2}\/\d{2}/.test(parsedDate)){
+      const ym=parsedDate.slice(0,7).replace('/','-');
+      const mEl=document.getElementById('adm-sl-month');
+      if(mEl&&mEl.value!==ym){mEl.value=ym;admSlMaster=null;}
+    }
     await admShopListEnsureMaster();
     admShopListAnalyze();
   }catch(e){
