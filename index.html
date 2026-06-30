@@ -14485,6 +14485,7 @@ let diagRenderToken=0;            // 描画ごとに増やし、古い逆ジオ�
 const DIAG_BUDGET=300;            // 一度に描画する店舗数の目安
 let diagShopBudget=DIAG_BUDGET;   // 「続きを表示」で加算
 function diagShowMore(){ diagShopBudget+=DIAG_BUDGET; diagRender(); }
+function diagPickArea(a){ const s=document.getElementById('diag-area'); if(s)s.value=a; diagFilter(); }
 
 function diagBuildColMap(headers){
   const m={};
@@ -14951,6 +14952,22 @@ function diagRender(){
   const course=document.getElementById('diag-course').value;
   const typeLabel=type==='am'?'朝刊':type==='pm'?'夕刊':'競馬';
   const courseCol=diagCourseColFor(type);
+
+  // iOS安全: 営業所もコースも未選択なら全件描画せず、選択を促す(開いた瞬間のクラッシュを構造的に防止)
+  if(!course && !area){
+    const aSel=document.getElementById('diag-area');
+    const areaList=aSel?[...aSel.options].map(o=>o.value).filter(Boolean):[];
+    let p=`<div style="text-align:center;padding:34px 16px;">`;
+    p+=`<div style="font-size:15px;color:var(--text-sub);margin-bottom:18px;line-height:1.7;">📋 表示する<b>営業所</b>を選ぶか、上の「コース」から<b>1コース</b>を選んでください<br><span style="font-size:12px;color:#94a3b8;">（1コースを選ぶと最速・最軽量。スマホでも落ちません）</span></div>`;
+    if(areaList.length){
+      p+=`<div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;max-width:640px;margin:0 auto;">`;
+      areaList.forEach(a=>{p+=`<button onclick="diagPickArea('${a.replace(/'/g,"\\'")}')" style="background:var(--primary);color:#fff;border:none;padding:11px 24px;border-radius:10px;cursor:pointer;font-weight:700;font-size:15px;">${a}</button>`;});
+      p+=`</div>`;
+    }
+    p+=`</div>`;
+    content.innerHTML=p;summary.innerHTML='';
+    return;
+  }
 
   let targetCourses=[];
   if(course){
