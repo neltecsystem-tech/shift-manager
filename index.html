@@ -291,7 +291,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="sm-snap-history" style="margin-bottom:10px;"></div>
       <div id="sm-geocode-progress" style="display:none;margin-bottom:10px;padding:10px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;font-size:13px;"></div>
       <div class="filters">
-        <div><label>営業所</label><select id="sm-area" onchange="smFilter()"><option value="">すべて</option></select></div>
+        <div><label>営業所</label><select id="sm-area" onchange="smOnAreaChange()"><option value="">すべて</option></select></div>
         <div><label>ナビ判定</label><select id="sm-verify-filter" onchange="smFilter()"><option value="">すべて</option><option value="mismatch">✕ 不一致のみ</option><option value="partial">△ 部分一致のみ</option><option value="match">◎ 一致のみ</option><option value="empty">未検証のみ</option></select></div>
         <div><label>検索</label><input type="search" id="sm-search" autocomplete="off" placeholder="店舗名・コード..." oninput="dbInput('smFilter')" style="width:200px;"></div>
       </div>
@@ -2918,6 +2918,7 @@ async function smInit(){
     smAuthed=true;
   }
   if(!smInited){smInited=true;}
+  smAreaChosen=false; // 画面を開くたび営業所選択から(重い全件描画を避ける)
   smLoad();
 }
 
@@ -2958,7 +2959,12 @@ async function smLoad(force){
       if(h==='経度')smColMap.lng=i;
     });
     // 営業所フィルタ
-    const areas=[...new Set(smData.map(r=>r[`col_${smColMap.area??1}`]).filter(Boolean))];
+    // 営業所: 分割+納品中止除外+池袋→城北統合+重複排除+正規順
+    const aIdx0=smColMap.area??1;
+    const areaSet=new Set();
+    smData.forEach(r=>String(r[`col_${aIdx0}`]||'').split(/[,、]/).forEach(x=>{let t=x.trim();if(!t||t.includes('納品中止'))return;if(t==='池袋')t='城北';areaSet.add(t);}));
+    const areaOrder=['城北','立川','川越','川崎高津'];
+    const areas=[...areaSet].sort((a,b)=>{const ia=areaOrder.indexOf(a),ib=areaOrder.indexOf(b);if(ia<0&&ib<0)return a.localeCompare(b);if(ia<0)return 1;if(ib<0)return -1;return ia-ib;});
     const sel=document.getElementById('sm-area');
     sel.innerHTML='<option value="">すべて</option>'+areas.map(a=>`<option>${a}</option>`).join('');
     smFilter();
@@ -3032,6 +3038,18 @@ function smRenderSnapHistory(){
   body.innerHTML=t;
 }
 
+// 店舗マスタは件数が多く重いので、営業所を選ぶまで一覧を描画しない(ゲート)
+let smAreaChosen=false;
+function smAreaTargets(area){return area==='城北'?['城北','池袋']:[area];} // 池袋は城北に統合
+function smRowInArea(r,area,aIdx){
+  if(!area)return true;
+  const targets=smAreaTargets(area);
+  return String(r[`col_${aIdx}`]||'').split(/[,、]/).some(x=>targets.includes(x.trim()));
+}
+function smOnAreaChange(){smAreaChosen=true;smRenderLimit=SM_PAGE;smFilter();}
+function smPickArea(a){const s=document.getElementById('sm-area');if(s)s.value=a;smAreaChosen=true;smRenderLimit=SM_PAGE;document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">読み込み中...</p>';setTimeout(smFilter,20);}
+function smPickAllAreas(){const s=document.getElementById('sm-area');if(s)s.value='';smAreaChosen=true;smRenderLimit=SM_PAGE;document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">全営業所を読み込み中... (件数が多いと数秒かかります)</p>';setTimeout(smFilter,20);}
+
 function smFilter(){
   smRenderLimit=SM_PAGE; // フィルタ変更で表示件数をリセット(先頭から)
   const area=document.getElementById('sm-area').value;
@@ -3043,7 +3061,7 @@ function smFilter(){
   const nIdx=smColMap.name??3;
   const vIdx=smColMap.verify;
   smFiltered=smData.filter(r=>{
-    if(area&&(r[`col_${aIdx}`]||'')!==area)return false;
+    if(area&&!smRowInArea(r,area,aIdx))return false;
     if(q){
       const text=[r[`col_${nIdx}`],r[`col_${cIdx}`],r[`col_${aIdx}`]].join(' ').toLowerCase();
       if(!text.includes(q))return false;
@@ -3063,6 +3081,20 @@ function isMobile(){return !!(window.matchMedia&&window.matchMedia('(max-width:7
 const SM_PAGE=500;          // 店舗マスタ一覧の1ページ件数
 let smRenderLimit=SM_PAGE;  // 現在の表示件数上限(「さらに表示」で加算)
 function smRender(){
+  // ゲート: 営業所未選択(かつ検索なし)なら一覧を描画せず営業所選択を促す
+  const _area=document.getElementById('sm-area').value;
+  const _q=(document.getElementById('sm-search').value||'').trim();
+  if(!smAreaChosen && !_area && !_q){
+    document.getElementById('sm-count').innerHTML='';
+    const sel=document.getElementById('sm-area');
+    const areaList=sel?[...sel.options].map(o=>o.value).filter(Boolean):[];
+    let p=`<div style="text-align:center;padding:34px 16px;"><div style="font-size:15px;color:var(--text-sub);margin-bottom:18px;line-height:1.7;">🏪 表示する<b>営業所</b>を選んでください<br><span style="font-size:12px;color:#94a3b8;">（店舗マスタは件数が多いため、営業所で絞ると軽快です。検索ボックスからも探せます）</span></div><div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;max-width:660px;margin:0 auto;">`;
+    areaList.forEach(a=>{p+=`<button onclick="smPickArea('${a.replace(/'/g,"\\'")}')" style="background:var(--primary);color:#fff;border:none;padding:11px 24px;border-radius:10px;cursor:pointer;font-weight:700;font-size:15px;">${a}</button>`;});
+    p+=`<button onclick="smPickAllAreas()" style="background:#64748b;color:#fff;border:none;padding:11px 24px;border-radius:10px;cursor:pointer;font-weight:700;font-size:15px;">全営業所</button>`;
+    p+=`</div></div>`;
+    document.getElementById('sm-table').innerHTML=p;
+    return;
+  }
   document.getElementById('sm-count').textContent=`${smFiltered.length}件 / ${smData.length}件`;
   if(!smFiltered.length){
     document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">データがありません</p>';
