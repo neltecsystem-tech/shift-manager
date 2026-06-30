@@ -2967,11 +2967,13 @@ async function smInit(){
   }
   if(!smInited){smInited=true;}
   smAreaChosen=false; // 画面を開くたび営業所選択から(重い全件描画を避ける)
-  smLoad();
+  smShowAreaGate();        // 取得を待たず営業所選択を即表示
+  smLoadPromise=smLoad();  // 店舗マスタは裏で取得
 }
 
 async function smLoad(force){
-  document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">読み込み中...</p>';
+  // 営業所選択ゲート表示中(未選択)は「読み込み中」で上書きしない(ゲートを即表示し続ける)
+  if(smAreaChosen)document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">読み込み中...</p>';
   try{
     // マスタオプションを並行取得
     if(!smMasterAreas.length){
@@ -3014,7 +3016,9 @@ async function smLoad(force){
     const areaOrder=['城北','立川','川越','川崎高津'];
     const areas=[...areaSet].sort((a,b)=>{const ia=areaOrder.indexOf(a),ib=areaOrder.indexOf(b);if(ia<0&&ib<0)return a.localeCompare(b);if(ia<0)return 1;if(ib<0)return -1;return ia-ib;});
     const sel=document.getElementById('sm-area');
+    const curArea=sel.value; // 選択中の営業所を保持(裏ロード完了時に選択が消えないように)
     sel.innerHTML='<option value="">すべて</option>'+areas.map(a=>`<option>${a}</option>`).join('');
+    if(curArea&&areas.includes(curArea))sel.value=curArea;
     smFilter();
   }catch(e){
     document.getElementById('sm-table').innerHTML=`<p style="color:var(--danger);padding:20px;">${e.message}</p>`;
@@ -3086,6 +3090,7 @@ function smRenderSnapHistory(){
 
 // 店舗マスタは件数が多く重いので、営業所を選ぶまで一覧を描画しない(ゲート)
 let smAreaChosen=false;
+let smLoadPromise=null; // 裏で走る店舗マスタ取得(営業所選択時にawait)
 function smAreaTargets(area){return area==='城北'?['城北','池袋']:[area];} // 池袋は城北に統合
 function smRowInArea(r,area,aIdx){
   if(!area)return true;
@@ -3093,8 +3098,32 @@ function smRowInArea(r,area,aIdx){
   return String(r[`col_${aIdx}`]||'').split(/[,、]/).some(x=>targets.includes(x.trim()));
 }
 function smOnAreaChange(){smAreaChosen=true;smRenderLimit=SM_PAGE;smFilter();}
-function smPickArea(a){const s=document.getElementById('sm-area');if(s)s.value=a;smAreaChosen=true;smRenderLimit=SM_PAGE;document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">読み込み中...</p>';setTimeout(smFilter,20);}
-function smPickAllAreas(){const s=document.getElementById('sm-area');if(s)s.value='';smAreaChosen=true;smRenderLimit=SM_PAGE;document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">全営業所を読み込み中... (件数が多いと数秒かかります)</p>';setTimeout(smFilter,20);}
+// 営業所選択プロンプト(データ取得を待たず即表示。未取得時は静的な営業所リスト)
+function smShowAreaGate(){
+  const cnt=document.getElementById('sm-count');if(cnt)cnt.innerHTML='';
+  const sel=document.getElementById('sm-area');
+  let areaList=sel?[...sel.options].map(o=>o.value).filter(Boolean):[];
+  if(!areaList.length)areaList=['城北','立川','川越','川崎高津'];
+  let p=`<div style="text-align:center;padding:34px 16px;"><div style="font-size:15px;color:var(--text-sub);margin-bottom:18px;line-height:1.7;">🏪 表示する<b>営業所</b>を選んでください<br><span style="font-size:12px;color:#94a3b8;">（店舗マスタは件数が多いため、営業所で絞ると軽快です。検索ボックスからも探せます）</span></div><div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;max-width:660px;margin:0 auto;">`;
+  areaList.forEach(a=>{p+=`<button onclick="smPickArea('${a.replace(/'/g,"\\'")}')" style="background:var(--primary);color:#fff;border:none;padding:11px 24px;border-radius:10px;cursor:pointer;font-weight:700;font-size:15px;">${a}</button>`;});
+  p+=`<button onclick="smPickAllAreas()" style="background:#64748b;color:#fff;border:none;padding:11px 24px;border-radius:10px;cursor:pointer;font-weight:700;font-size:15px;">全営業所</button>`;
+  p+=`</div></div>`;
+  const t=document.getElementById('sm-table');if(t)t.innerHTML=p;
+}
+async function smPickArea(a){
+  const s=document.getElementById('sm-area');if(s)s.value=a;
+  smAreaChosen=true;smRenderLimit=SM_PAGE;
+  document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">読み込み中...</p>';
+  if(!smData.length&&smLoadPromise){await smLoadPromise;} // 取得待ち(取得後smLoad内のsmFilterで一覧描画)
+  else smFilter();
+}
+async function smPickAllAreas(){
+  const s=document.getElementById('sm-area');if(s)s.value='';
+  smAreaChosen=true;smRenderLimit=SM_PAGE;
+  document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">全営業所を読み込み中... (件数が多いと数秒かかります)</p>';
+  if(!smData.length&&smLoadPromise){await smLoadPromise;}
+  else smFilter();
+}
 
 function smFilter(){
   smRenderLimit=SM_PAGE; // フィルタ変更で表示件数をリセット(先頭から)
@@ -3130,17 +3159,7 @@ function smRender(){
   // ゲート: 営業所未選択(かつ検索なし)なら一覧を描画せず営業所選択を促す
   const _area=document.getElementById('sm-area').value;
   const _q=(document.getElementById('sm-search').value||'').trim();
-  if(!smAreaChosen && !_area && !_q){
-    document.getElementById('sm-count').innerHTML='';
-    const sel=document.getElementById('sm-area');
-    const areaList=sel?[...sel.options].map(o=>o.value).filter(Boolean):[];
-    let p=`<div style="text-align:center;padding:34px 16px;"><div style="font-size:15px;color:var(--text-sub);margin-bottom:18px;line-height:1.7;">🏪 表示する<b>営業所</b>を選んでください<br><span style="font-size:12px;color:#94a3b8;">（店舗マスタは件数が多いため、営業所で絞ると軽快です。検索ボックスからも探せます）</span></div><div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;max-width:660px;margin:0 auto;">`;
-    areaList.forEach(a=>{p+=`<button onclick="smPickArea('${a.replace(/'/g,"\\'")}')" style="background:var(--primary);color:#fff;border:none;padding:11px 24px;border-radius:10px;cursor:pointer;font-weight:700;font-size:15px;">${a}</button>`;});
-    p+=`<button onclick="smPickAllAreas()" style="background:#64748b;color:#fff;border:none;padding:11px 24px;border-radius:10px;cursor:pointer;font-weight:700;font-size:15px;">全営業所</button>`;
-    p+=`</div></div>`;
-    document.getElementById('sm-table').innerHTML=p;
-    return;
-  }
+  if(!smAreaChosen && !_area && !_q){ smShowAreaGate(); return; }
   document.getElementById('sm-count').textContent=`${smFiltered.length}件 / ${smData.length}件`;
   if(!smFiltered.length){
     document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">データがありません</p>';
