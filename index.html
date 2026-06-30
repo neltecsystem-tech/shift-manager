@@ -285,7 +285,8 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="smSnapshotNow()" id="sm-snap-btn" title="現在の店舗マスタを当月の月初スナップとして固定。請求はこのスナップで計算されます。" style="background:#7c3aed;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📌 月初スナップ作成</button>
         </div>
       </div>
-      <div id="sm-snap-info" style="margin-bottom:10px;font-size:12px;color:var(--text-sub);"></div>
+      <div id="sm-snap-info" style="margin-bottom:6px;font-size:12px;color:var(--text-sub);"></div>
+      <div id="sm-snap-history" style="margin-bottom:10px;"></div>
       <div id="sm-geocode-progress" style="display:none;margin-bottom:10px;padding:10px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;font-size:13px;"></div>
       <div class="filters">
         <div><label>営業所</label><select id="sm-area" onchange="smFilter()"><option value="">すべて</option></select></div>
@@ -2945,6 +2946,7 @@ async function smLoad(force){
     sel.innerHTML='<option value="">すべて</option>'+areas.map(a=>`<option>${a}</option>`).join('');
     smFilter();
     smLoadSnapshotInfo();
+    smLoadSnapshotHistory();
   }catch(e){
     document.getElementById('sm-table').innerHTML=`<p style="color:var(--danger);padding:20px;">${e.message}</p>`;
   }
@@ -2973,9 +2975,44 @@ async function smLoadSnapshotInfo(){
     const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_list'})});
     const json=await resp.json();
     const months=(json&&json.months)||[];
-    if(!months.length){el.innerHTML='📌 月初スナップ: <b style="color:#b45309;">なし</b>（請求はライブ計算）';return;}
-    el.innerHTML='📌 月初スナップ保有: '+months.map(m=>`<b style="color:#7c3aed;">${m}</b>`).join(' / ')+' <span style="color:#94a3b8;">（請求はこの月初構成で固定計算）</span>';
+    if(!months.length){el.innerHTML='📌 月初スナップ（実体）: <b style="color:#b45309;">なし</b>（請求はライブ計算）';return;}
+    el.innerHTML='📌 月初スナップ（実体・直近4ヶ月）: '+months.map(m=>`<b style="color:#7c3aed;">${m}</b>`).join(' / ')+' <span style="color:#94a3b8;">（請求はこの月初構成で固定計算。古い月は下の集計に残ります）</span>';
   }catch(_){el.innerHTML='';}
+}
+
+// 月初集計(請求店舗数の永久履歴)を折りたたみ表示
+let smSnapHistShown=false;
+async function smLoadSnapshotHistory(){
+  const el=document.getElementById('sm-snap-history');if(!el)return;
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_summary_read'})});
+    const json=await resp.json();
+    const rows=(json&&json.rows)||[];
+    if(!rows.length){el.innerHTML='';return;}
+    const months=[...new Set(rows.map(r=>r[0]))];
+    let h=`<button onclick="smSnapHistShown=!smSnapHistShown;smRenderSnapHistory()" style="background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;">📊 請求店舗数の履歴（${months.length}ヶ月分）<span id="sm-snap-hist-caret">▼</span></button>`;
+    h+=`<div id="sm-snap-hist-body" style="display:none;margin-top:8px;"></div>`;
+    el.innerHTML=h;
+    window.__smSnapRows=rows;
+    smRenderSnapHistory();
+  }catch(_){el.innerHTML='';}
+}
+function smRenderSnapHistory(){
+  const body=document.getElementById('sm-snap-hist-body');const caret=document.getElementById('sm-snap-hist-caret');
+  if(!body)return;
+  body.style.display=smSnapHistShown?'block':'none';if(caret)caret.textContent=smSnapHistShown?'▲':'▼';
+  if(!smSnapHistShown)return;
+  const rows=window.__smSnapRows||[];
+  let t='<div class="table-wrap"><table style="font-size:12px;border-collapse:collapse;width:auto;"><thead><tr>'
+    +['年月','営業所','朝刊','夕刊','競馬','合計'].map(x=>`<th style="border:1px solid var(--border);padding:4px 10px;background:#f8fafc;">${x}</th>`).join('')
+    +'</tr></thead><tbody>';
+  rows.forEach(r=>{
+    const isTotal=r[1]==='合計';
+    const st=isTotal?'background:#faf5ff;font-weight:700;':'';
+    t+=`<tr style="${st}">`+[r[0],r[1],r[2],r[3],r[4],r[5]].map((c,i)=>`<td style="border:1px solid var(--border);padding:4px 10px;${i>=2?'text-align:right;':''}">${c}</td>`).join('')+'</tr>';
+  });
+  t+='</tbody></table></div>';
+  body.innerHTML=t;
 }
 
 function smFilter(){

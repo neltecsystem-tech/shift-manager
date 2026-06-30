@@ -16,6 +16,7 @@ const MASTER2_SHEET = 'マスタ2';
 const SNAP_PREFIX = '月初_';   // タブ名 例: 月初_2026-06
 const SNAP_KEEP = 4;           // 直近4ヶ月分のスナップタブを保持(先月/今月+予備)
 const SNAP_RE = /^月初_\d{4}-\d{2}$/;
+const SUMMARY_SHEET = '月初集計'; // 4ヶ月超で実体タブを消しても残す請求店舗数の簡易履歴
 const COL_END = 'AL';
 const N_COLS = 38;
 // 列マップ (0-indexed)
@@ -93,6 +94,81 @@ function colLetter(idx: number): string {
   let n = idx, s = '';
   while (n >= 0) { s = String.fromCharCode((n % 26) + 65) + s; n = Math.floor(n / 26) - 1; }
   return s;
+}
+
+// 日付文字列 → YYYY-MM-DD (空/不正は '')
+function normDateYmd(s: string): string {
+  if (!s) return '';
+  const t = String(s).trim().replace(/\//g, '-');
+  const m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (!m) return '';
+  return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+}
+
+// 月初スナップの「請求に使った店舗数(営業所×朝刊/夕刊/競馬)」を 月初集計 シートへ upsert。
+// 実体タブ(月初_YYYY-MM)が4ヶ月超で剪定されても、この簡易集計は永久に残す。
+async function writeSnapshotSummary(token: string, month: string, allRows: string[][]) {
+  const header = (allRows[0] || []).map((h) => (h || '').trim());
+  const idxBy = (pred: (h: string) => boolean) => header.findIndex(pred);
+  const areaIdx = idxBy((h) => h.includes('営業所'));
+  const amIdx = idxBy((h) => h.includes('朝刊コース'));
+  let pmIdx = -1; header.forEach((h, i) => { if (h === '新夕刊コース') return; if (h.includes('夕刊コース')) pmIdx = i; });
+  const keibaIdx = idxBy((h) => h.includes('競馬コース'));
+  const openIdx = idxBy((h) => h.includes('開店日'));
+  const codeIdx = idxBy((h) => h.includes('店舗コード'));
+  const nameIdx = idxBy((h) => h.includes('店舗名') && h !== '正式店舗名');
+  const monthFirst = month + '-01';
+  const acc: Record<string, { am: number; pm: number; keiba: number }> = {};
+  for (let i = 1; i < allRows.length; i++) {
+    const row = allRows[i] || [];
+    if (!(row[codeIdx] || row[nameIdx])) continue;
+    let area = String(row[areaIdx] || '').split(',')[0].trim();
+    if (!area || area.includes('納品中止')) continue;
+    if (area === '池袋') area = '城北'; // 請求は城北に統合
+    const od = normDateYmd(String(row[openIdx] || ''));
+    if (od && od > monthFirst) continue; // 月初時点で未開店は除外(請求の isOpenOn と同じ)
+    if (!acc[area]) acc[area] = { am: 0, pm: 0, keiba: 0 };
+    if (amIdx >= 0 && String(row[amIdx] || '').trim()) acc[area].am++;
+    if (pmIdx >= 0 && String(row[pmIdx] || '').trim()) acc[area].pm++;
+    if (keibaIdx >= 0 && String(row[keibaIdx] || '').trim()) acc[area].keiba++;
+  }
+  const stamp = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ');
+  const newRows: any[][] = [];
+  let tAm = 0, tPm = 0, tK = 0;
+  Object.keys(acc).sort().forEach((area) => {
+    const a = acc[area]; tAm += a.am; tPm += a.pm; tK += a.keiba;
+    newRows.push([month, area, a.am, a.pm, a.keiba, a.am + a.pm + a.keiba, stamp]);
+  });
+  newRows.push([month, '合計', tAm, tPm, tK, tAm + tPm + tK, stamp]);
+
+  // 集計シート確保 + 既存(同月除く)と結合して書き戻し
+  const metaResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties(sheetId,title)`, { headers: { 'Authorization': `Bearer ${token}` } });
+  const props = ((await metaResp.json()).sheets || []).map((s: any) => s.properties);
+  const exists = props.find((p: any) => p.title === SUMMARY_SHEET);
+  let existing: string[][] = [];
+  if (!exists) {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`, {
+      method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requests: [{ addSheet: { properties: { title: SUMMARY_SHEET, gridProperties: { rowCount: 2000, columnCount: 7 } } } }] }),
+    });
+  } else {
+    const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SUMMARY_SHEET)}!A2:G10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+    existing = (((await r.json()).values || []) as string[][]).filter((row) => row[0] && row[0] !== month);
+  }
+  const HEAD = ['年月', '営業所', '朝刊店舗数', '夕刊店舗数', '競馬店舗数', '合計', '記録日時'];
+  const merged = [...existing, ...newRows].sort((a, b) => {
+    if (a[0] !== b[0]) return String(b[0]).localeCompare(String(a[0])); // 年月 降順
+    if (a[1] === '合計') return 1; if (b[1] === '合計') return -1;       // 合計は各月の末尾
+    return String(a[1]).localeCompare(String(b[1]));
+  });
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SUMMARY_SHEET)}!A:G:clear`, {
+    method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SUMMARY_SHEET)}!A1?valueInputOption=RAW`, {
+    method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: [HEAD, ...merged] }),
+  });
+  return { month, areas: Object.keys(acc).length, total: tAm + tPm + tK };
 }
 
 // HH:MM (または HH:MM:SS) を分に変換。空文字なら -1。
@@ -227,6 +303,11 @@ Deno.serve(async (req: Request) => {
           return new Response(JSON.stringify({ error: 'snapshot write failed: ' + r.status + ' ' + t.slice(0, 300), wrote_until: i }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
       }
+      // 集計(請求店舗数)を 月初集計 シートへ記録 (実体タブが剪定されても残る)
+      let summary: any = null, summaryError: string | null = null;
+      try { summary = await writeSnapshotSummary(token, month, allRows); }
+      catch (e: any) { summaryError = e.message; }
+
       // 剪定: 月初_ タブを月降順、SNAP_KEEP を超える古いものを削除
       const snapTitles = props.filter((p: any) => SNAP_RE.test(p.title)).map((p: any) => p.title);
       if (!snapTitles.includes(tab)) snapTitles.push(tab);
@@ -242,9 +323,19 @@ Deno.serve(async (req: Request) => {
           body: JSON.stringify({ requests: delReqs }),
         });
       }
-      return new Response(JSON.stringify({ success: true, month, tab, rows: allRows.length - 1, pruned: toDelete }), {
+      return new Response(JSON.stringify({ success: true, month, tab, rows: allRows.length - 1, pruned: toDelete, summary, summaryError }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    if (action === 'snapshot_summary_read') {
+      // 月初集計シート(請求店舗数の永久履歴)を返す
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SUMMARY_SHEET)}!A1:G10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!r.ok) {
+        return new Response(JSON.stringify({ header: [], rows: [] }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const vals = ((await r.json()).values || []) as string[][];
+      return new Response(JSON.stringify({ header: vals[0] || [], rows: vals.slice(1) }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     if (action === 'snapshot_list') {
