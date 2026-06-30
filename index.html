@@ -115,7 +115,7 @@ tbody tr:hover { background:var(--primary-light); }
     <button onclick="showView('search',this)" style="display:none">検索</button>
     <button onclick="showView('staff',this)">スタッフ一覧</button>
     <button onclick="showView('defects',this)">不具合管理</button>
-    <button onclick="showView('shopmaster',this)">店舗マスタ</button>
+    <button onclick="showView('shopmaster',this)" onpointerenter="smPrefetch()" ontouchstart="smPrefetch()">店舗マスタ</button>
     <button onclick="showView('invoice',this)">請求書</button>
     <button onclick="showView('ownermembers',this)">👥 自社管理</button>
     <button onclick="showView('measure',this)">測定</button>
@@ -2937,6 +2937,14 @@ async function fetchShopMasterList(opts){
   return __shopMasterListCache.inflight;
 }
 function invalidateShopMasterCache(){__shopMasterListCache.data=null;__shopMasterListCache.ts=0;}
+// 先読み: 店舗マスタを開く前に裏で全件を取得しキャッシュを温める。
+// fetchShopMasterList は重複排除+TTLキャッシュなので、何度呼んでも実フェッチは最大1回。
+// アイドル時に走らせ初期描画を邪魔しない。既に取得済み/取得中なら即return。
+function smPrefetch(){
+  if(__shopMasterListCache.data||__shopMasterListCache.inflight)return;
+  const go=()=>{fetchShopMasterList().catch(()=>{});};
+  (window.requestIdleCallback||((f)=>setTimeout(f,1200)))(go,{timeout:3000});
+}
 let smAuthed=false;
 let smData=[];
 let smFiltered=[];
@@ -15610,6 +15618,7 @@ async function sysDoLogin(){
   // 請求書もログイン済みにする
   invAuthed=true;invIsAdmin=false;invStaffName=sysUserName;
   init();
+  if(smAuthed)smPrefetch(); // 店舗マスタ権限があれば裏で先読み(開いた瞬間に表示できるように)
 }
 
 async function sysAdminLogin(){
@@ -15630,6 +15639,7 @@ async function sysAdminLogin(){
   defectAuthed=true;smAuthed=true;adminAuthed=true;msrAuthed=true;msrStaffName='管理者';
   invAuthed=true;invIsAdmin=true;invStaffName='';
   init();
+  smPrefetch(); // 管理者は店舗マスタ権限あり。裏で先読み
 }
 
 function sysApplyPermissions(perms){
