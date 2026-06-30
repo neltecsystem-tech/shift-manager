@@ -132,6 +132,7 @@ tbody tr:hover { background:var(--primary-light); }
   <div id="loading" class="loading"><div class="spinner"></div><div>データを読み込み中...</div></div>
   <div id="view-dashboard" class="hidden">
     <div class="card"><h2>📊 今月の不具合状況</h2><div id="dash-defects"></div></div>
+    <div class="card"><h2>🏪 休店中の店舗</h2><div id="dash-suspended"></div></div>
     <div class="card"><h2>本日のコース担当</h2><div id="dash-area-tabs" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;"></div><div class="table-wrap" id="today-assignments"></div></div>
   </div>
   <div id="view-myshift" class="hidden">
@@ -1757,6 +1758,46 @@ function renderDash(){
   }
   document.getElementById('today-assignments').innerHTML=h;
   loadDashDefects();
+  loadDashSuspended();
+}
+
+// ダッシュボード: 休店中の店舗(配達対象外)を表示
+async function loadDashSuspended(){
+  const el=document.getElementById('dash-suspended');if(!el)return;
+  try{
+    const json=await fetchShopMasterList();
+    if(!json||!json.records){el.innerHTML='';return;}
+    const H=json.headers||[];
+    const si=H.findIndex(h=>h==='休店中'),ssi=H.findIndex(h=>h==='休店開始日'),sei=H.findIndex(h=>h==='休店終了日');
+    const ni=H.findIndex(h=>h&&h.includes('店舗名')&&h!=='正式店舗名'),ai=H.findIndex(h=>h&&h.includes('営業所'));
+    if(si<0){el.innerHTML='<p style="color:var(--text-sub);font-size:13px;">休店情報なし</p>';return;}
+    const today=diagTodayYmd(),norm=diagNormYmd;
+    const isFlag=r=>String(r[`col_${si}`]||'').trim().toUpperCase()==='TRUE';
+    const now=[],upcoming=[];
+    json.records.forEach(r=>{
+      if(!isFlag(r))return;
+      const s=norm(r[`col_${ssi}`]),e=norm(r[`col_${sei}`]);
+      if(s&&today<s){upcoming.push(r);return;}
+      if(e&&today>e)return;
+      now.push(r);
+    });
+    if(!now.length&&!upcoming.length){el.innerHTML='<p style="color:var(--text-sub);font-size:13px;">現在、休店中の店舗はありません</p>';return;}
+    const period=r=>`${r[`col_${ssi}`]||'-'} 〜 ${r[`col_${sei}`]||'(無期限)'}`;
+    let h='';
+    if(now.length){
+      h+=`<p style="font-size:13px;color:#b45309;font-weight:700;margin-bottom:6px;">🛑 休店中: ${now.length}件（ダイヤグラム/ナビの配達対象外）</p>`;
+      h+='<table style="font-size:13px;"><thead><tr><th>店舗名</th><th>営業所</th><th>休店期間</th></tr></thead><tbody>';
+      now.forEach(r=>{h+=`<tr><td><b>${r[`col_${ni}`]||''}</b></td><td>${r[`col_${ai}`]||''}</td><td>${period(r)}</td></tr>`;});
+      h+='</tbody></table>';
+    }
+    if(upcoming.length){
+      h+=`<p style="font-size:12px;color:var(--text-sub);margin-top:10px;margin-bottom:4px;">📅 休店予定（開始前）: ${upcoming.length}件</p>`;
+      h+='<table style="font-size:12px;"><thead><tr><th>店舗名</th><th>営業所</th><th>休店期間</th></tr></thead><tbody>';
+      upcoming.forEach(r=>{h+=`<tr><td><b>${r[`col_${ni}`]||''}</b></td><td>${r[`col_${ai}`]||''}</td><td>${period(r)}</td></tr>`;});
+      h+='</tbody></table>';
+    }
+    el.innerHTML=h;
+  }catch(_){el.innerHTML='';}
 }
 
 function dashSetArea(area){
@@ -14688,8 +14729,24 @@ function diagBuildColMap(headers){
     if(h==='緯度')m.lat=i;
     if(h==='経度')m.lng=i;
     if(h==='Place ID')m.placeId=i;
+    if(h==='休店中')m.suspend=i;
+    if(h==='休店開始日')m.suspendStart=i;
+    if(h==='休店終了日')m.suspendEnd=i;
   });
   return m;
+}
+// 休店中(配達対象外)判定: 休店中フラグTRUE かつ 期間内(開始前/終了後は対象)
+function diagTodayYmd(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+function diagNormYmd(s){if(!s)return '';const t=String(s).trim().replace(/\//g,'-');const m=t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);return m?`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`:'';}
+function diagIsSuspended(r){
+  if(diagColMap.suspend==null)return false;
+  if(String(r[`col_${diagColMap.suspend}`]||'').trim().toUpperCase()!=='TRUE')return false;
+  const today=diagTodayYmd();
+  const start=diagNormYmd(r[`col_${diagColMap.suspendStart}`]);
+  const end=diagNormYmd(r[`col_${diagColMap.suspendEnd}`]);
+  if(start&&today<start)return false; // 休店開始前はまだ配達
+  if(end&&today>end)return false;     // 休店終了後(cleanup前の念のため)
+  return true;
 }
 
 function diagApplyData(headers,records){
@@ -15013,7 +15070,7 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
   const courseCol=diagCourseColFor(type);
   const orderCol=type==='am'?diagColMap.amOrder:type==='pm'?diagColMap.pmOrder:diagColMap.keibaOrder;
   const timeCol=type==='am'?diagColMap.amTime:type==='pm'?diagColMap.pmTime:diagColMap.keibaTime;
-  let shops=diagShopData.filter(r=>r[`col_${courseCol}`]===courseName);
+  let shops=diagShopData.filter(r=>r[`col_${courseCol}`]===courseName&&!diagIsSuspended(r)); // 休店中は配達対象外
   if(areaFilter)shops=shops.filter(r=>diagAreaMatch(r,areaFilter,type));
   // 店着時間の早い順でソート。時間なしは末尾。同時刻は順番→店舗コードでタイブレーク
   shops.sort((a,b)=>{
