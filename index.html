@@ -282,8 +282,10 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="smShowReplace()" style="background:#f59e0b;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔄 コース一括置換</button>
           <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
           <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 新店登録</button>
+          <button onclick="smSnapshotNow()" id="sm-snap-btn" title="現在の店舗マスタを当月の月初スナップとして固定。請求はこのスナップで計算されます。" style="background:#7c3aed;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📌 月初スナップ作成</button>
         </div>
       </div>
+      <div id="sm-snap-info" style="margin-bottom:10px;font-size:12px;color:var(--text-sub);"></div>
       <div id="sm-geocode-progress" style="display:none;margin-bottom:10px;padding:10px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;font-size:13px;"></div>
       <div class="filters">
         <div><label>営業所</label><select id="sm-area" onchange="smFilter()"><option value="">すべて</option></select></div>
@@ -633,13 +635,14 @@ tbody tr:hover { background:var(--primary-light); }
         <div class="filters">
           <div><label>営業所</label><select id="adm-bill-area" onchange="admBillUpdateCourses()"><option value="">選択</option></select></div>
           <div><label>コース</label><select id="adm-bill-course"><option value="">選択</option></select></div>
-          <div><label>年月</label><input type="month" id="adm-bill-month"></div>
+          <div><label>年月</label><input type="month" id="adm-bill-month" onchange="admBillOnMonthChange()"></div>
           <div><button onclick="admBillGenerate()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">明細作成</button></div>
           <div><button onclick="admBillAllCourses()" style="background:#6366f1;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📄 営業所一括作成</button></div>
           <div><button onclick="admBillAllAreasTotal()" style="background:#0ea5e9;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📊 全営業所合計</button></div>
           <div><button onclick="admBillPrint()" style="background:#64748b;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">🖨 印刷</button></div>
           <div><button onclick="admBillSavePDF()" id="adm-bill-pdf-btn" style="background:#dc2626;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📄 PDF保存</button></div>
         </div>
+        <div id="adm-bill-src"></div>
         <div id="adm-bill-totals" style="margin-top:8px;"></div>
         <div id="adm-bill-preview" style="margin-top:12px;"></div>
       </div>
@@ -2941,9 +2944,38 @@ async function smLoad(force){
     const sel=document.getElementById('sm-area');
     sel.innerHTML='<option value="">すべて</option>'+areas.map(a=>`<option>${a}</option>`).join('');
     smFilter();
+    smLoadSnapshotInfo();
   }catch(e){
     document.getElementById('sm-table').innerHTML=`<p style="color:var(--danger);padding:20px;">${e.message}</p>`;
   }
+}
+
+// 月初スナップショット: 現在の店舗マスタを当月タブへ凍結。請求は対象月のスナップで固定計算される。
+async function smSnapshotNow(){
+  const now=new Date();
+  const ym=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  if(!confirm(`現在の店舗マスタを「${ym}」の月初スナップショットとして保存します。\nこの月の請求はこのスナップで固定計算され、以降の店舗マスタ編集は請求に影響しなくなります。\n（同月の既存スナップは上書きされます）\n\n実行しますか？`))return;
+  const btn=document.getElementById('sm-snap-btn');
+  const orig=btn.textContent;btn.disabled=true;btn.textContent='作成中...';
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_create',month:ym})});
+    const json=await resp.json();
+    if(json.error)throw new Error(json.error);
+    alert(`✅ ${json.month} の月初スナップを作成しました（${json.rows}件）。\nこれで店舗マスタを自由に編集しても ${json.month} の請求には影響しません。`);
+    smLoadSnapshotInfo();
+  }catch(e){alert('スナップ作成失敗: '+e.message);}
+  finally{btn.disabled=false;btn.textContent=orig;}
+}
+
+async function smLoadSnapshotInfo(){
+  const el=document.getElementById('sm-snap-info');if(!el)return;
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_list'})});
+    const json=await resp.json();
+    const months=(json&&json.months)||[];
+    if(!months.length){el.innerHTML='📌 月初スナップ: <b style="color:#b45309;">なし</b>（請求はライブ計算）';return;}
+    el.innerHTML='📌 月初スナップ保有: '+months.map(m=>`<b style="color:#7c3aed;">${m}</b>`).join(' / ')+' <span style="color:#94a3b8;">（請求はこの月初構成で固定計算）</span>';
+  }catch(_){el.innerHTML='';}
 }
 
 function smFilter(){
@@ -10572,9 +10604,62 @@ function getBillConditions(monthVal){
 // --- 得意先請求書作成 ---
 let admBillShopData=null;
 
+// 請求は「月初の店舗・コース構成」で確定する。請求が終わるまで現場が店舗マスタを触れない
+// 問題を解消するため、請求は対象月の月初スナップショット(shop-master snapshot_read)を優先して読む。
+// スナップが無い月のみライブ(fetchShopMasterList)にフォールバック。
+let admBillSource='';        // 'snapshot:YYYY-MM' | 'live'
+let admBillLoadedMonth='';   // 現在 admBillShopData が対応する月
+
+async function fetchShopMasterSnapshot(month){
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_read',month})});
+    if(!resp.ok)return null;
+    const json=await resp.json();
+    if(json&&json.snapshot&&Array.isArray(json.records))return json;
+    return null;
+  }catch(_){return null;}
+}
+
+function admBillRenderSource(){
+  const el=document.getElementById('adm-bill-src');if(!el)return;
+  if(admBillSource.indexOf('snapshot:')===0){
+    const m=admBillSource.split(':')[1];
+    el.innerHTML=`📌 <b>${m} 月初スナップショット</b>で計算中（月途中の店舗追加・閉店・コース変更はこの請求に影響しません）`;
+    el.style.cssText='margin-top:6px;font-size:12px;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;padding:6px 10px;border-radius:8px;';
+  }else if(admBillSource==='live'){
+    el.innerHTML=`⚠️ <b>ライブの店舗マスタ</b>で計算中（この月の月初スナップ未作成）。月初固定したい場合は店舗マスタ画面で「📌 今すぐ月初スナップ作成」を実行してください。`;
+    el.style.cssText='margin-top:6px;font-size:12px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;padding:6px 10px;border-radius:8px;';
+  }else{el.innerHTML='';}
+}
+
+// 指定月の店舗マスタ(スナップ優先/無ければライブ)を admBillShopData にロード
+async function admBillLoadForMonth(monthVal,force){
+  monthVal=monthVal||document.getElementById('adm-bill-month').value;
+  if(!force&&admBillShopData&&admBillLoadedMonth===monthVal)return admBillShopData;
+  const snap=monthVal?await fetchShopMasterSnapshot(monthVal):null;
+  if(snap){admBillShopData=snap;admBillSource='snapshot:'+monthVal;}
+  else{admBillShopData=await fetchShopMasterList();admBillSource='live';}
+  admBillLoadedMonth=monthVal;
+  admBillRenderSource();
+  return admBillShopData;
+}
+
+async function admBillOnMonthChange(){
+  await admBillLoadForMonth(document.getElementById('adm-bill-month').value,true);
+  admBillUpdateCourses();
+  const p=document.getElementById('adm-bill-preview');if(p)p.innerHTML='';
+  const t=document.getElementById('adm-bill-totals');if(t)t.innerHTML='';
+}
+
 async function admBillInit(){
-  // 店舗マスタ読み込み (共通キャッシュ経由、TTL内なら即返却)
-  admBillShopData=await fetchShopMasterList();
+  // 年月デフォルトを先に確定 (スナップ読込の対象月になるため)
+  const mInput=document.getElementById('adm-bill-month');
+  if(!mInput.value){
+    const now=new Date();
+    mInput.value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  }
+  // 選択月の月初スナップ(無ければライブ)を読み込む
+  await admBillLoadForMonth(mInput.value);
   const records=admBillShopData.records||[];
   const headers=admBillShopData.headers||[];
   // 列マッピング
@@ -10585,12 +10670,6 @@ async function admBillInit(){
   const sel=document.getElementById('adm-bill-area');
   if(sel.options.length<=1){
     sel.innerHTML='<option value="">選択</option>'+areas.map(a=>`<option>${a}</option>`).join('');
-  }
-  // 年月デフォルト
-  const mInput=document.getElementById('adm-bill-month');
-  if(!mInput.value){
-    const now=new Date();
-    mInput.value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   }
 }
 

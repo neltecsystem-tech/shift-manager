@@ -11,6 +11,11 @@ const SPREADSHEET_ID = '1KvMbiLMeUmUOiUwzcilp-6u2xzZXs68HcvtWuWqT70M'; // 店舗
 const MASTER2_ID = '1Owv83TGxSl15pqO0MaaF4AaLeslye0frfKAuo62TlGY';     // マスタ2 (旧ワークブック「月報開発中」)
 const SHEET_NAME = '店舗マスタ';
 const MASTER2_SHEET = 'マスタ2';
+// 月初スナップショット: 請求が「月初の店舗・コース構成」で確定するまで現場がマスタを
+// 自由に編集できるよう、毎月1日に店舗マスタ全行を月別タブへ凍結保存する。
+const SNAP_PREFIX = '月初_';   // タブ名 例: 月初_2026-06
+const SNAP_KEEP = 4;           // 直近4ヶ月分のスナップタブを保持(先月/今月+予備)
+const SNAP_RE = /^月初_\d{4}-\d{2}$/;
 const COL_END = 'AL';
 const N_COLS = 38;
 // 列マップ (0-indexed)
@@ -75,6 +80,12 @@ async function ensureExtraHeaders(token: string) {
       body: JSON.stringify({ values: [next] }),
     });
   }
+}
+
+// JST の現在の年月 (YYYY-MM)
+function jstYearMonth(): string {
+  const d = new Date(Date.now() + 9 * 3600 * 1000);
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
 }
 
 // 列インデックス → A1表記の列文字
@@ -165,6 +176,110 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ areas, courses }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // ── 月初スナップショット ──
+    if (action === 'snapshot_create') {
+      // 店舗マスタ全行(header=シート行2, data=行3+)を月別タブへ凍結。古いスナップは剪定。
+      const month = (reqBody.month || jstYearMonth()).toString().trim();
+      if (!/^\d{4}-\d{2}$/.test(month)) {
+        return new Response(JSON.stringify({ error: 'month は YYYY-MM 形式' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      await ensureExtraHeaders(token);
+      const src = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A2:${COL_END}10000`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      const allRows = ((await src.json()).values ?? []) as string[][];
+      if (allRows.length < 2) {
+        return new Response(JSON.stringify({ error: '店舗マスタが空' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const tab = SNAP_PREFIX + month;
+      const metaResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties(sheetId,title)`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const props = ((await metaResp.json()).sheets || []).map((s: any) => s.properties);
+      const existing = props.find((p: any) => p.title === tab);
+      const needRows = allRows.length + 10; // グリッド行数 (デフォルト1000では足りない)
+      if (!existing) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`, {
+          method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requests: [{ addSheet: { properties: { title: tab, gridProperties: { rowCount: needRows, columnCount: N_COLS } } } }] }),
+        });
+      } else {
+        // 既存タブ: 内容クリア + グリッドを必要行数まで拡張
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(tab)}!A:AZ:clear`, {
+          method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        });
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`, {
+          method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requests: [{ updateSheetProperties: { properties: { sheetId: existing.sheetId, gridProperties: { rowCount: needRows, columnCount: N_COLS } }, fields: 'gridProperties.rowCount,gridProperties.columnCount' } }] }),
+        });
+      }
+      // RAW で 1000行ずつ書込 (凍結なので再解釈させない)
+      const CHUNK = 1000;
+      for (let i = 0; i < allRows.length; i += CHUNK) {
+        const block = allRows.slice(i, i + CHUNK);
+        const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(tab)}!A${i + 1}?valueInputOption=RAW`, {
+          method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values: block }),
+        });
+        if (!r.ok) {
+          const t = await r.text();
+          return new Response(JSON.stringify({ error: 'snapshot write failed: ' + r.status + ' ' + t.slice(0, 300), wrote_until: i }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+      }
+      // 剪定: 月初_ タブを月降順、SNAP_KEEP を超える古いものを削除
+      const snapTitles = props.filter((p: any) => SNAP_RE.test(p.title)).map((p: any) => p.title);
+      if (!snapTitles.includes(tab)) snapTitles.push(tab);
+      snapTitles.sort().reverse();
+      const toDelete = snapTitles.slice(SNAP_KEEP);
+      const delReqs = toDelete.map((dt: string) => {
+        const p = props.find((x: any) => x.title === dt);
+        return p ? { deleteSheet: { sheetId: p.sheetId } } : null;
+      }).filter(Boolean);
+      if (delReqs.length) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`, {
+          method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requests: delReqs }),
+        });
+      }
+      return new Response(JSON.stringify({ success: true, month, tab, rows: allRows.length - 1, pruned: toDelete }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (action === 'snapshot_list') {
+      const metaResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties.title`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const months = ((await metaResp.json()).sheets || [])
+        .map((s: any) => s.properties.title)
+        .filter((t: string) => SNAP_RE.test(t))
+        .map((t: string) => t.slice(SNAP_PREFIX.length))
+        .sort().reverse();
+      return new Response(JSON.stringify({ months }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (action === 'snapshot_read') {
+      // list と同形 {records, headers} を返す (フロントが list と差し替え可能に)
+      const month = (reqBody.month || '').toString().trim();
+      if (!/^\d{4}-\d{2}$/.test(month)) {
+        return new Response(JSON.stringify({ error: 'month は YYYY-MM 形式' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const tab = SNAP_PREFIX + month;
+      const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(tab)}!A1:${COL_END}10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!resp.ok) {
+        return new Response(JSON.stringify({ error: 'snapshot not found', month, snapshot: false }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const allRows = ((await resp.json()).values ?? []) as string[][];
+      if (allRows.length < 2) {
+        return new Response(JSON.stringify({ records: [], headers: [], month, snapshot: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const headers = allRows[0].map((h: string) => (h || '').trim());
+      while (headers.length < N_COLS) headers.push('');
+      const records = allRows.slice(1).map((row: string[], i: number) => {
+        const obj: any = { row_number: i + 2 };
+        headers.forEach((_: string, j: number) => { obj[`col_${j}`] = row[j] ?? ''; });
+        return obj;
+      }).filter((r: any) => r.col_1 || r.col_2 || r.col_3);
+      return new Response(JSON.stringify({ records, headers, month, snapshot: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     if (action === 'bulk_lock_gps') {
