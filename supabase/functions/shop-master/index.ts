@@ -348,6 +348,68 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ header: vals[0] || [], rows: vals.slice(1) }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
+    if (action === 'inspect_table') {
+      const meta = await (await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets(properties(sheetId,title),tables)`, { headers: { 'Authorization': `Bearer ${token}` } })).json();
+      const sh = (meta.sheets || []).find((s: any) => s.properties?.title === SHEET_NAME);
+      return new Response(JSON.stringify({ sheetId: sh?.properties?.sheetId, tables: sh?.tables || [] }, null, 2), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (action === 'fix_validation') {
+      // 移行でコピーされた営業所/コースのドロップダウンが #REF! になったのを修正。
+      // マスタ2(旧)の選択肢を新SSの「選択肢」タブへ写し、その範囲を参照させる。
+      const [aResp, cResp] = await Promise.all([
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${MASTER2_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!B3:B10`, { headers: { 'Authorization': `Bearer ${token}` } }),
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${MASTER2_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!A3:A150`, { headers: { 'Authorization': `Bearer ${token}` } }),
+      ]);
+      const areas = (((await aResp.json()).values || []) as string[][]).map((r) => (r[0] || '').trim()).filter(Boolean);
+      const courses = (((await cResp.json()).values || []) as string[][]).map((r) => (r[0] || '').trim()).filter(Boolean);
+      const meta = await (await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties(sheetId,title,gridProperties)`, { headers: { 'Authorization': `Bearer ${token}` } })).json();
+      const props = (meta.sheets || []).map((s: any) => s.properties);
+      const masterSheet = props.find((p: any) => p.title === SHEET_NAME);
+      if (!masterSheet) return new Response(JSON.stringify({ error: 'master sheet not found' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const CHOICES = '選択肢';
+      let choices = props.find((p: any) => p.title === CHOICES);
+      if (!choices) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`, {
+          method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requests: [{ addSheet: { properties: { title: CHOICES, gridProperties: { rowCount: 300, columnCount: 2 } } } }] }),
+        });
+      }
+      // 選択肢タブへ書込 (A=営業所, B=コース)
+      const maxLen = Math.max(areas.length, courses.length);
+      const vals: any[][] = [['営業所', 'コース']];
+      for (let i = 0; i < maxLen; i++) vals.push([areas[i] || '', courses[i] || '']);
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CHOICES)}!A1?valueInputOption=RAW`, {
+        method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: vals }),
+      });
+      // 店舗マスタはテーブル(表_)で列に型がある→ updateTable で列の入力規則を直す
+      const tmeta = await (await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets(properties(title),tables(tableId,range,columnProperties))`, { headers: { 'Authorization': `Bearer ${token}` } })).json();
+      const tsh = (tmeta.sheets || []).find((s: any) => s.properties?.title === SHEET_NAME);
+      const table = (tsh?.tables || []).find((t: any) => t.range && t.range.startColumnIndex <= 1 && t.range.endColumnIndex > 1) || (tsh?.tables || [])[0];
+      if (!table) return new Response(JSON.stringify({ error: 'table not found on 店舗マスタ' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const rangeFor: Record<number, string> = {
+        1: `='${CHOICES}'!$A$2:$A$50`,    // 営業所
+        5: `='${CHOICES}'!$B$2:$B$300`,   // 朝刊コース名
+        14: `='${CHOICES}'!$B$2:$B$300`,  // 夕刊コース名
+        19: `='${CHOICES}'!$B$2:$B$300`,  // 競馬コース名
+      };
+      // 既存の columnProperties を保全しつつ、対象列だけ dataValidationRule を差し替え
+      const colProps = (table.columnProperties || []).map((cp: any) => {
+        const ci = cp.columnIndex || 0;
+        if (rangeFor[ci]) {
+          return { ...cp, columnIndex: ci, columnType: 'DROPDOWN', dataValidationRule: { condition: { type: 'ONE_OF_RANGE', values: [{ userEnteredValue: rangeFor[ci] }] } } };
+        }
+        return cp;
+      });
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requests: [{ updateTable: { table: { tableId: table.tableId, columnProperties: colProps }, fields: 'columnProperties' } }] }),
+      });
+      if (!r.ok) { const t = await r.text(); return new Response(JSON.stringify({ error: 'updateTable failed: ' + r.status + ' ' + t.slice(0, 400) }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }); }
+      return new Response(JSON.stringify({ success: true, areas: areas.length, courses: courses.length, tableId: table.tableId }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     if (action === 'snapshot_update_cells') {
       // 月初の訂正: スナップの指定店舗(店舗コード一致)のセルを更新 (col_index指定)
       const month = (reqBody.month || '').toString().trim();
