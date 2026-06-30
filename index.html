@@ -2349,6 +2349,12 @@ function renderTenpo(){
   const course=document.getElementById('tp-course').value.trim();
   const dateStr=document.getElementById('tp-date').value;
   const src=tenpoSrc();
+  // 条件が何も入っていないときは全件描画せず案内のみ（初期表示を軽くする）
+  if(!nm&&!area&&!course){
+    document.getElementById('tp-count').textContent=`${src.length}件`;
+    document.getElementById('tenpo-wrap').innerHTML='<p style="color:var(--text-sub);padding:24px 8px;">店舗名・営業所・コースのいずれかを指定すると一覧を表示します。<br><span style="font-size:12px;">（全'+src.length+'件のため初期表示は省略しています）</span></p>';
+    return;
+  }
   let f=src;
   if(nm)f=f.filter(t=>t.name.includes(nm));
   if(area)f=f.filter(t=>t.area===area);
