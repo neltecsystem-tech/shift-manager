@@ -2032,7 +2032,11 @@ async function shFreshAndRender(){
   if(ok)renderShift();
   else if(!DB.shifts[monthLabel]&&w)w.innerHTML='<p style="color:var(--danger)">シフト取得に失敗しました</p>';
 }
-function renderShift(){
+const SH_PAGE=120;            // 月別シフト表の1ページ行数(これ以上は「さらに表示」で段階描画)
+let shRenderLimit=SH_PAGE;
+function shShowMore(){ shRenderLimit+=(isMobile()?80:300); renderShift(true); }
+function renderShift(keepLimit){
+  if(!keepLimit)shRenderLimit=SH_PAGE; // フィルタ等で呼ばれたら先頭から(「さらに表示」だけ維持)
   const m=document.getElementById('sh-month').value,areaF=document.getElementById('sh-area').value,cs=document.getElementById('sh-course').value.trim(),ss=document.getElementById('sh-staff').value.trim(),w=document.getElementById('shift-wrap');
   const isCourseMode=shMode==='course';
   const src=isCourseMode?DB.shiftsByCourse:DB.shifts;
@@ -2088,7 +2092,8 @@ function renderShift(){
   h+='</tr></thead><tbody>';
   // 複数語のいずれかにヒットすればハイライト
   const ssMatch=(v)=>v&&ssTerms.some(t=>v.includes(t));
-  f.forEach(e=>{h+=`<tr><td class="cn">${e.course}</td>`;
+  const shTotal=f.length;
+  f.slice(0,shRenderLimit).forEach(e=>{h+=`<tr><td class="cn">${e.course}</td>`;
     e.a.forEach((a,i)=>{const d=sh.dates[i];
       let am=a.am||'',pm=a.pm||'';
       if(am==='0'||am==='希望休')am='';if(pm==='0'||pm==='希望休')pm='';
@@ -2098,7 +2103,12 @@ function renderShift(){
       else if(isAm) h+=`<td class="am">${am}</td>`;
       else h+=`<td class="pm">${pm}</td>`;
     });h+='</tr>';});
-  w.innerHTML=h+'</tbody></table>';
+  h+='</tbody></table>';
+  if(shTotal>shRenderLimit){
+    const next=Math.min(isMobile()?80:300,shTotal-shRenderLimit);
+    h+=`<div style="text-align:center;padding:12px;"><button onclick="shShowMore()" style="background:var(--primary);color:#fff;border:none;padding:9px 22px;border-radius:9px;cursor:pointer;font-weight:700;font-size:13px;">▼ さらに${next}行表示（${shRenderLimit}/${shTotal}）</button><div style="font-size:11px;color:var(--text-sub);margin-top:6px;">※ 営業所・コース・スタッフで絞ると軽くなります</div></div>`;
+  }
+  w.innerHTML=h;
 }
 
 // 月別シフト表を PDF (ブラウザ印刷ダイアログ) で出力
