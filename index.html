@@ -2981,15 +2981,16 @@ async function smLoad(force){
   // 営業所選択ゲート表示中(未選択)は「読み込み中」で上書きしない(ゲートを即表示し続ける)
   if(smAreaChosen)document.getElementById('sm-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">読み込み中...</p>';
   try{
-    // マスタオプションを並行取得
-    if(!smMasterAreas.length){
-      const optResp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'master_options'})});
-      const optJson=await optResp.json();
-      smMasterAreas=optJson.areas||[];
-      smMasterCourses=optJson.courses||[];
-    }
     if(force)invalidateShopMasterCache();
-    const json=await fetchShopMasterList();
+    // マスタオプションと全件listを並列取得(独立なので直列に待たない)。
+    // 初回オープンの体感速度はこの list 取得が支配的なので、optを直列に挟まない。
+    const optPromise=smMasterAreas.length?null:fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'master_options'})}).then(r=>r.json()).catch(()=>null);
+    const listPromise=fetchShopMasterList();
+    if(optPromise){
+      const optJson=await optPromise;
+      if(optJson){smMasterAreas=optJson.areas||[];smMasterCourses=optJson.courses||[];}
+    }
+    const json=await listPromise;
     if(json.error)throw new Error(json.error);
     smHeaders=json.headers||[];
     smData=json.records||[];
