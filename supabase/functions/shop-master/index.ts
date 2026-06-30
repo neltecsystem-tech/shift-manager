@@ -171,6 +171,16 @@ async function writeSnapshotSummary(token: string, month: string, allRows: strin
   return { month, areas: Object.keys(acc).length, total: tAm + tPm + tK };
 }
 
+// 月初の訂正後にスナップから集計(月初集計)を再計算して同期
+async function recomputeSnapshotSummary(token: string, month: string) {
+  const tab = SNAP_PREFIX + month;
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(tab)}!A1:${COL_END}10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+  if (!r.ok) return;
+  const rows = ((await r.json()).values || []) as string[][];
+  if (rows.length < 2) return;
+  await writeSnapshotSummary(token, month, rows);
+}
+
 // HH:MM (または HH:MM:SS) を分に変換。空文字なら -1。
 function timeToMin(s: string): number {
   if (!s) return -1;
@@ -336,6 +346,99 @@ Deno.serve(async (req: Request) => {
       }
       const vals = ((await r.json()).values || []) as string[][];
       return new Response(JSON.stringify({ header: vals[0] || [], rows: vals.slice(1) }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (action === 'snapshot_update_cells') {
+      // 月初の訂正: スナップの指定店舗(店舗コード一致)のセルを更新 (col_index指定)
+      const month = (reqBody.month || '').toString().trim();
+      const ups = (reqBody.updates || []) as any[];
+      if (!/^\d{4}-\d{2}$/.test(month)) return new Response(JSON.stringify({ error: 'month は YYYY-MM' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const tab = SNAP_PREFIX + month;
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(tab)}!A1:${COL_END}10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!r.ok) return new Response(JSON.stringify({ error: 'snapshot not found', month }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const rows = ((await r.json()).values || []) as string[][];
+      const rowByCode = new Map<string, number>(); // header=row1, data=row2+
+      for (let i = 1; i < rows.length; i++) { const c = String((rows[i] || [])[2] || '').trim(); if (c && !rowByCode.has(c)) rowByCode.set(c, i + 1); }
+      const data: any[] = []; let matched = 0; const notFound: string[] = [];
+      for (const u of ups) {
+        const sr = rowByCode.get(String(u.code || '').trim());
+        if (!sr) { notFound.push(String(u.code || '')); continue; }
+        const letter = colLetter(Number(u.col_index));
+        data.push({ range: `'${tab}'!${letter}${sr}:${letter}${sr}`, values: [[u.value ?? '']] });
+        matched++;
+      }
+      if (data.length) {
+        const up = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+          method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ valueInputOption: 'RAW', data }),
+        });
+        if (!up.ok) { const t = await up.text(); return new Response(JSON.stringify({ error: 'update failed: ' + up.status + ' ' + t.slice(0, 200) }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }); }
+        try { await recomputeSnapshotSummary(token, month); } catch (_) { /* 集計同期は致命的でない */ }
+      }
+      return new Response(JSON.stringify({ success: true, matched, notFound }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (action === 'snapshot_sync_store') {
+      // 月初の訂正: 現行店舗マスタの該当店(店舗コード)を、月初スナップへ反映(無ければ追加/あれば上書き)
+      const month = (reqBody.month || '').toString().trim();
+      const codes = ((reqBody.codes || []) as any[]).map((c) => String(c || '').trim()).filter(Boolean);
+      if (!/^\d{4}-\d{2}$/.test(month)) return new Response(JSON.stringify({ error: 'month は YYYY-MM' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const tab = SNAP_PREFIX + month;
+      const lr = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A2:${COL_END}10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const liveRows = ((await lr.json()).values || []) as string[][];
+      const liveByCode = new Map<string, string[]>();
+      for (let i = 1; i < liveRows.length; i++) { const row = liveRows[i] || []; const c = String(row[2] || '').trim(); if (c) liveByCode.set(c, row); }
+      const sr = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(tab)}!A1:${COL_END}10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!sr.ok) return new Response(JSON.stringify({ error: 'snapshot not found', month }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const snapRows = ((await sr.json()).values || []) as string[][];
+      const snapRowByCode = new Map<string, number>();
+      for (let i = 1; i < snapRows.length; i++) { const c = String((snapRows[i] || [])[2] || '').trim(); if (c) snapRowByCode.set(c, i + 1); }
+      const data: any[] = []; const appends: any[] = []; let updated = 0, appended = 0; const missingInLive: string[] = [];
+      for (const code of codes) {
+        const lrow = liveByCode.get(code);
+        if (!lrow) { missingInLive.push(code); continue; }
+        const full = [...lrow]; while (full.length < N_COLS) full.push(''); const rec = full.slice(0, N_COLS);
+        const srow = snapRowByCode.get(code);
+        if (srow) { data.push({ range: `'${tab}'!A${srow}:${COL_END}${srow}`, values: [rec] }); updated++; }
+        else { appends.push(rec); appended++; }
+      }
+      if (data.length) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+          method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ valueInputOption: 'RAW', data }),
+        });
+      }
+      if (appends.length) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(`'${tab}'!A1:${COL_END}1`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+          method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values: appends }),
+        });
+      }
+      if (updated || appended) { try { await recomputeSnapshotSummary(token, month); } catch (_) { /* 集計同期は致命的でない */ } }
+      return new Response(JSON.stringify({ success: true, updated, appended, missingInLive }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (action === 'snapshot_remove_store') {
+      // 月初の訂正: 月初に居るべきでない店をスナップから除外(行を空に=請求対象外)
+      const month = (reqBody.month || '').toString().trim();
+      const codes = ((reqBody.codes || []) as any[]).map((c) => String(c || '').trim()).filter(Boolean);
+      if (!/^\d{4}-\d{2}$/.test(month)) return new Response(JSON.stringify({ error: 'month は YYYY-MM' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const tab = SNAP_PREFIX + month;
+      const sr = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(tab)}!A1:${COL_END}10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!sr.ok) return new Response(JSON.stringify({ error: 'snapshot not found', month }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const snapRows = ((await sr.json()).values || []) as string[][];
+      const rowByCode = new Map<string, number>();
+      for (let i = 1; i < snapRows.length; i++) { const c = String((snapRows[i] || [])[2] || '').trim(); if (c && !rowByCode.has(c)) rowByCode.set(c, i + 1); }
+      const data: any[] = []; let removed = 0; const notFound: string[] = [];
+      for (const code of codes) { const r = rowByCode.get(code); if (!r) { notFound.push(code); continue; } data.push({ range: `'${tab}'!A${r}:${COL_END}${r}`, values: [new Array(N_COLS).fill('')] }); removed++; }
+      if (data.length) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+          method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ valueInputOption: 'RAW', data }),
+        });
+        try { await recomputeSnapshotSummary(token, month); } catch (_) { /* 集計同期は致命的でない */ }
+      }
+      return new Response(JSON.stringify({ success: true, removed, notFound }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     if (action === 'snapshot_list') {

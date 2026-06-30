@@ -13254,9 +13254,15 @@ function admShopListRender(){
       const cch=(cc[admSlCatDrill]&&cc[admSlCatDrill].codeChanged)||[];
       html=`<div style="margin-bottom:10px;"><button onclick="admSlCatDrill=null;admShopListRender();" style="background:#64748b;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">← 区分集計に戻る</button> <b style="margin-left:8px;">${esc(da)}${esc(dc)} の差異店舗 (${list.length}件)${cch.length?` ／ コード相違 ${cch.length}件`:''}</b></div>`;
       if(list.length){
-        html+='<table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:14px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">区分</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th></tr></thead><tbody>';
+        const snapM=admSlSnapMonth();
+        html+=`<table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:14px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">区分</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">月初訂正${snapM?` (${snapM})`:''}</th></tr></thead><tbody>`;
         list.forEach(s=>{
-          html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;font-weight:600;color:${s.color};">${esc(s.kind)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.name)}</td></tr>`;
+          let act='<span style="color:#cbd5e1;font-size:11px;">—</span>';
+          if(snapM){
+            if(String(s.kind).indexOf('荷主のみ')===0)act=`<button onclick="admSlSnapSync('${esc(s.code)}')" title="月初に居た店ならスナップ(=請求)に追加。現行マスタの値をコピー" style="background:#15803d;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;">📌 月初に反映</button>`;
+            else if(String(s.kind).indexOf('マスタのみ')===0)act=`<button onclick="admSlSnapRemove('${esc(s.code)}','${esc((s.name||'').replace(/'/g,''))}')" title="月初に居なかった店ならスナップ(=請求)から除外。現行マスタは触らない" style="background:#dc2626;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;">🚫 月初から除外</button>`;
+          }
+          html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;font-weight:600;color:${s.color};">${esc(s.kind)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${act}</td></tr>`;
         });
         html+='</tbody></table>';
       }
@@ -13326,6 +13332,39 @@ function admShopListRender(){
   cont.innerHTML=html;
 }
 
+// 突合の対象月が月初スナップなら その月(YYYY-MM)、ライブなら null
+function admSlSnapMonth(){return admSlSource.indexOf('snapshot:')===0?admSlSource.split(':')[1]:null;}
+
+// 月初の訂正: 荷主にあってマスタ未登録の店を、月初スナップ(=請求基準)に反映(現行マスタの値をコピー)。
+async function admSlSnapSync(code){
+  const month=admSlSnapMonth();
+  if(!month){alert('いまライブ突合中のため月初スナップがありません。対象月を月初スナップに切替えてください。');return;}
+  if(!confirm(`店舗コード ${code} を ${month} の月初スナップに反映します（現行マスタの今の値をコピー）。\n\n月初(${month}-01)時点で在籍していた店の場合のみ実行してください。\n（月途中に開店した店は翌月から。スナップには入れない）\n\nよろしいですか？`))return;
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_sync_store',month,codes:[String(code)]})});
+    const j=await resp.json();
+    if(j.error)throw new Error(j.error);
+    if((j.missingInLive||[]).length){alert(`⚠ コード ${code} は現行マスタに未登録です。\n先に「店舗マスタ」画面で新規登録 → もう一度「📌 月初に反映」してください。`);return;}
+    alert(`✓ ${month} の月初スナップに反映しました（更新${j.updated}／追加${j.appended}）。\n${month} の請求に反映されます。現行マスタはそのままです。`);
+    admSlMaster=null;await admShopListEnsureMaster();admShopListAnalyze();
+  }catch(e){alert('反映エラー: '+e.message);}
+}
+
+// 月初の訂正: 月初に居なかった店を 月初スナップから除外(請求対象外)。現行マスタは触らない。
+async function admSlSnapRemove(code,name){
+  const month=admSlSnapMonth();
+  if(!month){alert('いまライブ突合中のため月初スナップがありません。');return;}
+  if(!confirm(`「${name||code}」(コード ${code}) を ${month} の月初スナップから除外します（請求対象外に）。\n\n月初(${month}-01)時点で居なかった店の場合のみ実行してください。\n※現行マスタは変更しません（月途中で閉店した店はここでは除外しない＝月初に居たなら当月は請求対象）。\n\nよろしいですか？`))return;
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_remove_store',month,codes:[String(code)]})});
+    const j=await resp.json();
+    if(j.error)throw new Error(j.error);
+    if((j.notFound||[]).length){alert(`コード ${code} は ${month} スナップに見つかりませんでした。`);return;}
+    alert(`✓ ${month} の月初スナップから除外しました（${j.removed}件）。現行マスタはそのままです。`);
+    admSlMaster=null;await admShopListEnsureMaster();admShopListAnalyze();
+  }catch(e){alert('除外エラー: '+e.message);}
+}
+
 // コード相違(同一店・コードのみ違う)を 区分ごと一括で マスタの店舗コードに反映。
 // 新コードが既にマスタの別行に存在する場合は重複回避のためスキップして警告。
 async function admSlApplyCodeChange(){
@@ -13360,7 +13399,19 @@ async function admSlApplyCodeChange(){
     const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
     if(!resp.ok||json.error)throw new Error(json.error||`HTTP ${resp.status}`);
     invalidateShopMasterCache();
-    alert(`✓ ${json.updated||doable.length}件 のマスタ店舗コードを更新しました。${skipDup.length?`\n(重複スキップ ${skipDup.length}件は手動確認)`:''}\n\nマスタを再取得して再照合します。`);
+    // 月初の訂正: 突合がスナップ相手なら、その月のスナップのコードも同時更新(両方書き)
+    let snapMsg='';
+    const snapMonth=admSlSnapMonth();
+    if(snapMonth){
+      try{
+        const su=doable.map(p=>({code:p.master.code,col_index:2,value:p.ship.code}));
+        const sresp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_update_cells',month:snapMonth,updates:su})});
+        const sj=await sresp.json().catch(()=>({}));
+        if(sj&&sj.success)snapMsg=`\n月初スナップ(${snapMonth})も ${sj.matched}件 更新${(sj.notFound&&sj.notFound.length)?`（スナップ未該当 ${sj.notFound.length}件）`:''}`;
+        else snapMsg=`\n⚠ 月初スナップ更新エラー: ${(sj&&sj.error)||''}`;
+      }catch(e){snapMsg='\n⚠ 月初スナップ更新失敗: '+e.message;}
+    }
+    alert(`✓ ${json.updated||doable.length}件 のマスタ店舗コードを更新しました。${skipDup.length?`\n(重複スキップ ${skipDup.length}件は手動確認)`:''}${snapMsg}\n\nマスタを再取得して再照合します。`);
     await new Promise(r=>setTimeout(r,800));
     admSlMaster=null;
     await admShopListEnsureMaster();
