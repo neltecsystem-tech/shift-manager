@@ -14534,7 +14534,14 @@ function diagApplyData(headers,records){
   diagHeaders=headers||[];
   diagShopData=records||[];
   diagColMap=diagBuildColMap(diagHeaders);
-  const areas=[...new Set(diagShopData.map(r=>r[`col_${diagColMap.area}`]).filter(Boolean))];
+  // 営業所は複合値(「池袋, 城北」)や「納品中止」混入があるので、分割+納品中止除外+重複排除して正規化
+  const areaSet=new Set();
+  diagShopData.forEach(r=>String(r[`col_${diagColMap.area}`]||'').split(/[,、]/).forEach(x=>{
+    const t=x.trim();
+    if(t && !t.includes('納品中止')) areaSet.add(t);
+  }));
+  const areaOrder=['城北','池袋','立川','川越','川崎高津'];
+  const areas=[...areaSet].sort((a,b)=>{const ia=areaOrder.indexOf(a),ib=areaOrder.indexOf(b);if(ia<0&&ib<0)return a.localeCompare(b);if(ia<0)return 1;if(ib<0)return -1;return ia-ib;});
   const aSel=document.getElementById('diag-area');
   const aVal=aSel.value;
   aSel.innerHTML='<option value="">すべて</option>'+areas.map(a=>`<option>${a}</option>`).join('');
@@ -14588,7 +14595,7 @@ function diagAreaMatch(r,area,type){
   if(!area)return true;
   const a=(r[`col_${diagColMap.area}`]||'').trim();
   if(a){
-    return a.split(',').some(x=>x.trim()===area);
+    return a.split(/[,、]/).some(x=>x.trim()===area);
   }
   // 営業所空欄: コース名から推定
   type=type||(document.getElementById('diag-type')?.value)||'pm';
