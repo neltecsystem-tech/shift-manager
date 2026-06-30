@@ -285,11 +285,8 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
           <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 新店登録</button>
           <button onclick="smCsvImport()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📥 CSV一括登録</button>
-          <button onclick="smSnapshotNow()" id="sm-snap-btn" title="現在の店舗マスタを当月の月初スナップとして固定。請求はこのスナップで計算されます。" style="background:#7c3aed;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📌 月初スナップ作成</button>
         </div>
       </div>
-      <div id="sm-snap-info" style="margin-bottom:6px;font-size:12px;color:var(--text-sub);"></div>
-      <div id="sm-snap-history" style="margin-bottom:10px;"></div>
       <div id="sm-geocode-progress" style="display:none;margin-bottom:10px;padding:10px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;font-size:13px;"></div>
       <div class="filters">
         <div><label>営業所</label><select id="sm-area" onchange="smOnAreaChange()"><option value="">すべて</option></select></div>
@@ -613,6 +610,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('billing')" id="adm-tab-billing" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📄 請求書作成</button>
         <button onclick="adminTab('pricelist')" id="adm-tab-pricelist" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💲 単価一覧</button>
         <button onclick="adminTab('shopcount')" id="adm-tab-shopcount" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📊 店舗集計</button>
+        <button onclick="adminTab('snapshot')" id="adm-tab-snapshot" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📌 月初スナップ</button>
         <button onclick="adminTab('revenue')" id="adm-tab-revenue" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💰 収支管理</button>
         <button onclick="adminTab('billcond')" id="adm-tab-billcond" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 請求条件</button>
         <button onclick="adminTab('paystatement')" id="adm-tab-paystatement" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💴 支払い明細</button>
@@ -1222,6 +1220,15 @@ tbody tr:hover { background:var(--primary-light); }
       </div>
 
       <!-- システム設定 -->
+      <div id="adm-snapshot" class="adm-panel" style="display:none;">
+        <div style="background:#faf5ff;border-left:4px solid #7c3aed;padding:12px;border-radius:6px;margin-bottom:16px;font-size:13px;color:#6d28d9;line-height:1.7;">
+          📌 <b>月初スナップショット</b>＝請求・荷主突合の基準になる「その月の月初時点の店舗構成」。<b>毎月1日 朝に自動取得</b>されます（手動操作は不要）。<br>
+          下のボタンは<b>手動で今すぐ取り直したい時</b>用です（月初の登録ミスを直した後など。同月の既存スナップは上書き）。
+        </div>
+        <button onclick="smSnapshotNow()" id="sm-snap-btn" title="現在の店舗マスタを当月の月初スナップとして固定。請求・突合はこのスナップで計算されます。" style="background:#7c3aed;color:#fff;border:none;padding:10px 22px;border-radius:8px;cursor:pointer;font-weight:700;font-size:14px;margin-bottom:14px;">📌 今すぐ月初スナップを作成（手動）</button>
+        <div id="sm-snap-info" style="margin-bottom:10px;font-size:13px;color:var(--text-sub);"></div>
+        <div id="sm-snap-history"></div>
+      </div>
       <div id="adm-settings" class="adm-panel" style="display:none;">
         <div style="margin-bottom:24px;">
           <h3 style="font-size:15px;color:var(--primary);margin-bottom:12px;">🎛️ ナビメニュー表示制御 (通常スタッフ向け)</h3>
@@ -3009,8 +3016,6 @@ async function smLoad(force){
     const sel=document.getElementById('sm-area');
     sel.innerHTML='<option value="">すべて</option>'+areas.map(a=>`<option>${a}</option>`).join('');
     smFilter();
-    smLoadSnapshotInfo();
-    smLoadSnapshotHistory();
   }catch(e){
     document.getElementById('sm-table').innerHTML=`<p style="color:var(--danger);padding:20px;">${e.message}</p>`;
   }
@@ -3039,8 +3044,8 @@ async function smLoadSnapshotInfo(){
     const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_list'})});
     const json=await resp.json();
     const months=(json&&json.months)||[];
-    if(!months.length){el.innerHTML='📌 月初スナップ（実体）: <b style="color:#b45309;">なし</b>（請求はライブ計算）';return;}
-    el.innerHTML='📌 月初スナップ（実体・直近4ヶ月）: '+months.map(m=>`<b style="color:#7c3aed;">${m}</b>`).join(' / ')+' <span style="color:#94a3b8;">（請求はこの月初構成で固定計算。古い月は下の集計に残ります）</span>';
+    if(!months.length){el.innerHTML='📌 月初スナップ（実体）: <b style="color:#b45309;">なし</b>（請求はライブ計算）<span style="color:#94a3b8;">／ 毎月1日 朝に自動取得</span>';return;}
+    el.innerHTML='📌 月初スナップ（実体・直近4ヶ月）: '+months.map(m=>`<b style="color:#7c3aed;">${m}</b>`).join(' / ')+' <span style="color:#94a3b8;">（毎月1日 朝に自動取得。請求はこの月初構成で固定計算。古い月は下の集計に残ります）</span>';
   }catch(_){el.innerHTML='';}
 }
 
@@ -6119,7 +6124,9 @@ function adminTab(t){
   if(t==='diagram')admDgInit();
   if(t==='shoplist')admShopListInit();
   if(t==='mymaps')admMmInit();
+  if(t==='snapshot')admSnapInit();
 }
+function admSnapInit(){smLoadSnapshotInfo();smLoadSnapshotHistory();}
 
 // ===== ダイヤグラム作成 =====
 const ADM_DG_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/diagram-process';
