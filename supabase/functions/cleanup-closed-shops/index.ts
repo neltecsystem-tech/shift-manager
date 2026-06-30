@@ -47,13 +47,6 @@ function parseDate(s: string): Date | null {
   return null;
 }
 
-// 最終納品日の翌月15日 (この日を過ぎたらクリア対象)
-function getNextMonth15th(d: Date): Date {
-  const year = d.getMonth() === 11 ? d.getFullYear() + 1 : d.getFullYear();
-  const month = d.getMonth() === 11 ? 0 : d.getMonth() + 1;
-  return new Date(year, month, 15);
-}
-
 // 区分ごとの列 (0-indexed, A起点) ※ shop-master EF の EDITION_COLS と一致
 //   朝刊 F=5(course)/M=12(order)/N=13(time)
 //   夕刊 O=14(course)/R=17(order)/S=18(time)
@@ -132,8 +125,9 @@ Deno.serve(async (req: Request) => {
       const lastDate = parseDate(lastDelivery);
       if (!lastDate) return;
 
-      const deadline = getNextMonth15th(lastDate);
-      if (now <= deadline) return;
+      // 最終納品日の翌日にクリア (請求・突合は月初スナップ基準なので翌月15日まで待つ必要なし)
+      // todayMid <= 最終納品日 の間(=最終納品日当日まで)は配達中なので残す
+      if (todayMid <= lastDate) return;
 
       // Skip if already marked as 納品中止
       const currentArea = (row[areaCol] ?? '').trim();
