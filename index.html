@@ -13333,12 +13333,17 @@ async function admSlApplyCodeChange(){
   if(!key||!admSlResult||!admSlResult.catCompare[key])return;
   const pairs=admSlResult.catCompare[key].codeChanged||[];
   if(!pairs.length)return;
-  const allCodes=new Set((admSlMaster||[]).map(m=>m.code));
+  // 重要: 突合がスナップ(凍結タブ)由来だと p.master.row はスナップ行でライブと一致しない。
+  // 書込先は必ず「ライブ店舗マスタ」を店舗コードで引き直して特定する(誤行更新の防止)。
+  const liveJson=await fetchShopMasterList({force:true});
+  const liveRowByCode=new Map();
+  (liveJson.records||[]).forEach(r=>{const c=String(r.col_2||'').trim();if(c)liveRowByCode.set(c,r.row_number);});
+  const liveCodes=new Set(liveRowByCode.keys());
   const doable=[],skipDup=[],skipNoRow=[];
   pairs.forEach(p=>{
-    if(allCodes.has(p.ship.code))skipDup.push(p);          // 新コードが既にマスタに存在
-    else if(p.master.row==null)skipNoRow.push(p);          // マスタ行が特定できない
-    else doable.push(p);
+    if(liveCodes.has(p.ship.code))skipDup.push(p);            // 新コードが既にライブマスタに存在
+    else if(!liveRowByCode.has(p.master.code))skipNoRow.push(p); // 旧コードがライブに無い(変更済/閉店等)
+    else doable.push({...p,liveRow:liveRowByCode.get(p.master.code)});
   });
   const [da,dc]=key.split('\t');
   if(!doable.length){alert(`反映できる行がありません。\n重複でスキップ ${skipDup.length}件 / 行不明 ${skipNoRow.length}件`);return;}
@@ -13350,7 +13355,7 @@ async function admSlApplyCodeChange(){
   msg+='\n\nよろしいですか?';
   if(!confirm(msg))return;
   try{
-    const updates=doable.map(p=>({row_number:p.master.row,col_index:2,value:p.ship.code}));
+    const updates=doable.map(p=>({row_number:p.liveRow,col_index:2,value:p.ship.code}));
     const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_cells',updates})});
     const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
     if(!resp.ok||json.error)throw new Error(json.error||`HTTP ${resp.status}`);
