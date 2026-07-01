@@ -698,11 +698,14 @@ Deno.serve(async(req:Request)=>{
     }
     if(action==='get_confirmed_sales'){
       if(!admin) return forbid();
-      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A2:G5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A2:P5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
       const rows=(await resp.json()).values||[];
+      const numOrNull=(v:any)=> (v===undefined||v===null||v==='') ? null : (Number(v)||0);
       const all=rows.map((r:string[],i:number)=>{
         const ym = normalizeYM(r[0]);
-        return {row_number:i+2,year_month:ym,area:r[1]||'',course:r[2]||'',grand_total:Number(r[3])||0,am_total:Number(r[4])||0,pm_total:Number(r[5])||0,confirmed_at:r[6]||'',_atMs:parseAtMs(r[6]||'')};
+        return {row_number:i+2,year_month:ym,area:r[1]||'',course:r[2]||'',grand_total:Number(r[3])||0,am_total:Number(r[4])||0,pm_total:Number(r[5])||0,confirmed_at:r[6]||'',
+          counts:{am:numOrNull(r[7]),am_tokushu:numOrNull(r[8]),am_zasshi:numOrNull(r[9]),am_dokkon:numOrNull(r[10]),am_kyori:numOrNull(r[11]),pm:numOrNull(r[12]),pm_tokushu:numOrNull(r[13]),keiba:numOrNull(r[14]),keiba_tokushu:numOrNull(r[15])},
+          _atMs:parseAtMs(r[6]||'')};
       }).filter((r:any)=>r.year_month&&r.area&&r.course);
       const dedup=new Map<string,any>();
       all.forEach((r:any)=>{
@@ -720,19 +723,25 @@ Deno.serve(async(req:Request)=>{
     if(action==='save_confirmed_sale'){
       if(!admin) return forbid();
       if(!confirmed_sale) return jsonResp({error:'confirmed_sale required'}, 400);
-      const{year_month:ymRaw,area:ar,course:cs,grand_total,am_total,pm_total}=confirmed_sale;
+      const{year_month:ymRaw,area:ar,course:cs,grand_total,am_total,pm_total,counts}=confirmed_sale;
       const ym = normalizeYM(ymRaw);
       if(!ym||!ar||!cs) return jsonResp({error:'year_month, area, course required'}, 400);
       const now=new Date().toISOString().replace('T',' ').slice(0,19);
-      const newRow=[ym,ar,cs,grand_total||0,am_total||0,pm_total||0,now];
-      const existResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A2:G5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      // H〜P: 店舗数(振り返り統計用)。 未指定なら空文字(0扱い)。
+      const c=counts||{};
+      const n=(v:any)=> (v===undefined||v===null||v==='') ? '' : (Number(v)||0);
+      const newRow=[ym,ar,cs,grand_total||0,am_total||0,pm_total||0,now,
+        n(c.am),n(c.am_tokushu),n(c.am_zasshi),n(c.am_dokkon),n(c.am_kyori),n(c.pm),n(c.pm_tokushu),n(c.keiba),n(c.keiba_tokushu)];
+      const existResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A2:P5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
       const existRows=(await existResp.json()).values||[];
       const matchIdx=existRows.findIndex((r:string[])=>normalizeYM(r[0])===ym&&r[1]===ar&&r[2]===cs);
       if(matchIdx>=0){
         const rn=matchIdx+2;
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A${rn}:G${rn}?valueInputOption=RAW`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[newRow]})});
+        // counts 未指定の更新(金額のみ編集など)では既存の店舗数(H〜P)を維持
+        if(!counts){ const ex=existRows[matchIdx]||[]; for(let k=7;k<=15;k++) newRow[k]=(ex[k]!==undefined?ex[k]:''); }
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A${rn}:P${rn}?valueInputOption=RAW`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[newRow]})});
       }else{
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A1:G1:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[newRow]})});
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A1:P1:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[newRow]})});
       }
       return jsonResp({success:true});
     }

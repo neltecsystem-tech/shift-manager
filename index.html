@@ -11254,7 +11254,7 @@ async function admBillAreaConfirmAll(area,monthVal){
     const results=[];
     courses.forEach(course=>{
       const r=admBillRenderWithTotals(area,course,monthVal);
-      results.push({course,grand:r.grandTotal,am:r.totalAmSum,pm:r.totalPmSum});
+      results.push({course,grand:r.grandTotal,am:r.totalAmSum,pm:r.totalPmSum,counts:billCountsFrom(r)});
       total+=r.grandTotal;
     });
     const ok=window.confirm(`${area}営業所 ${monthVal} の全${courses.length}コースを確定します。\n総額 ¥${total.toLocaleString()}\n\n続行しますか？`);
@@ -11264,7 +11264,7 @@ async function admBillAreaConfirmAll(area,monthVal){
     try{
       for(let i=0;i<results.length;i++){
         admBillUpdateProgress(i,results.length,`${results[i].course} を確定中...`);
-        await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course:results[i].course,grand_total:results[i].grand,am_total:results[i].am,pm_total:results[i].pm}});
+        await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course:results[i].course,grand_total:results[i].grand,am_total:results[i].am,pm_total:results[i].pm,counts:results[i].counts}});
       }
       admBillUpdateProgress(results.length,results.length,'キャッシュ更新中...');
       confirmedSalesCache=null;
@@ -11313,7 +11313,8 @@ async function admBillConfirm(area,course,monthVal,grandTotal,amTotal,pmTotal){
   const ok=window.confirm(`${area} ${course} ${monthVal} の売上 ¥${Number(grandTotal).toLocaleString()} を確定しますか？\n収支管理にこの金額が反映されます。`);
   if(!ok)return;
   try{
-    await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course,grand_total:grandTotal,am_total:amTotal,pm_total:pmTotal}});
+    let counts=null; try{counts=billCountsFrom(admBillRenderWithTotals(area,course,monthVal));}catch(_){}
+    await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course,grand_total:grandTotal,am_total:amTotal,pm_total:pmTotal,counts}});
     confirmedSalesCache=null;
     await loadConfirmedSales();
     alert('売上を確定しました');
@@ -11429,7 +11430,7 @@ async function admBillBulkConfirmBefore(beforeMonth){
           else{
             try{
               const r=admBillRenderWithTotals(area,course,monthVal);
-              await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course,grand_total:r.grandTotal,am_total:r.totalAmSum,pm_total:r.totalPmSum}});
+              await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course,grand_total:r.grandTotal,am_total:r.totalAmSum,pm_total:r.totalPmSum,counts:billCountsFrom(r)}});
               saved++;
             }catch(e){failed++;console.error('Failed:',monthVal,area,course,e);}
             done++;
@@ -11551,6 +11552,11 @@ async function admBillGenerate(){
 
 function admBillRenderWithTotals(area,course,monthVal){
   return admBillTachikawa(area,course,monthVal,true);
+}
+// 確定売上に記録する店舗数(振り返り統計用)を計算結果から抽出
+function billCountsFrom(r){
+  if(!r)return null;
+  return {am:r.amCount||0,am_tokushu:r.amTokushu||0,am_zasshi:r.amZasshi||0,am_dokkon:r.amDokkon||0,am_kyori:r.amKyori||0,pm:r.pmCount||0,pm_tokushu:r.pmTokushu||0,keiba:r.keibaCount||0,keiba_tokushu:r.keibaTokushu||0};
 }
 
 function admBillTachikawa(area,course,monthVal,returnTotals){
