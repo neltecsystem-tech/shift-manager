@@ -633,12 +633,35 @@ tbody tr:hover { background:var(--primary-light); }
           <div><button onclick="admBillGenerate()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">明細作成</button></div>
           <div><button onclick="admBillAllCourses()" style="background:#6366f1;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📄 営業所一括作成</button></div>
           <div><button onclick="admBillAllAreasTotal()" style="background:#0ea5e9;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📊 全営業所合計</button></div>
+          <div><button onclick="admBillBtoB()" style="background:#0d9488;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;" title="全営業所の総額を1社宛のBtoB請求書(税込)にする">🧾 BtoB請求書</button></div>
           <div><button onclick="admBillPrint()" style="background:#64748b;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">🖨 印刷</button></div>
           <div><button onclick="admBillSavePDF()" id="adm-bill-pdf-btn" style="background:#dc2626;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">📄 PDF保存</button></div>
         </div>
         <div id="adm-bill-src"></div>
         <div id="adm-bill-totals" style="margin-top:8px;"></div>
         <div id="adm-bill-preview" style="margin-top:12px;"></div>
+      </div>
+
+      <!-- BtoB請求書 設定モーダル -->
+      <div id="sm-btob-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center;">
+        <div style="background:#fff;border-radius:12px;padding:22px;max-width:520px;width:92%;max-height:90vh;overflow:auto;">
+          <h3 style="color:#0d9488;margin:0 0 4px;">🧾 BtoB請求書を作成</h3>
+          <p style="font-size:12px;color:var(--text-sub);margin:0 0 14px;">全営業所の総額を、取引先1社宛の請求書（総額1行）にします。<span id="btob-total-preview" style="font-weight:bold;color:#92400e;"></span></p>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div><label style="font-size:12px;color:var(--text-sub);display:block;">取引先名（宛先）*</label><input type="text" id="btob-client" placeholder="例: 株式会社◯◯" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+            <div><label style="font-size:12px;color:var(--text-sub);display:block;">件名・摘要</label><input type="text" id="btob-subject" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+            <hr style="border:none;border-top:1px solid var(--border);margin:2px 0;">
+            <div style="font-size:12px;color:var(--text-sub);font-weight:600;">発行元（記憶されます）</div>
+            <div><label style="font-size:12px;color:var(--text-sub);display:block;">発行元 会社名</label><input type="text" id="btob-company" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+            <div><label style="font-size:12px;color:var(--text-sub);display:block;">登録番号（適格請求書 T番号・任意）</label><input type="text" id="btob-regno" placeholder="例: T1234567890123" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+            <div><label style="font-size:12px;color:var(--text-sub);display:block;">振込先など（任意・複数行可）</label><textarea id="btob-bank" rows="2" placeholder="例: ◯◯銀行 ◯◯支店 普通 1234567 カ)ネルテック" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;resize:vertical;"></textarea></div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input type="checkbox" id="btob-tax" checked> 消費税10%を外税で加算する（登録番号あり=適格）</label>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+            <button onclick="document.getElementById('sm-btob-modal').style.display='none'" style="background:#e2e8f0;color:#334155;border:none;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:600;">キャンセル</button>
+            <button onclick="admBillBtoBGenerate()" style="background:#0d9488;color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:700;">請求書を生成</button>
+          </div>
+        </div>
       </div>
 
       <!-- 単価一覧 -->
@@ -12096,6 +12119,78 @@ async function admBillAllAreasTotal(){
     document.getElementById('adm-bill-totals').innerHTML='';
     document.getElementById('adm-bill-preview').innerHTML=h;
   }catch(e){alert('エラー: '+e.message+'\n'+e.stack);console.error(e);}
+}
+
+// ── BtoB請求書 (全営業所総額を1社宛・総額1行・税込) ──
+let admBillBtoBCtx=null;
+async function admBillBtoB(){
+  try{
+    if(!admBillShopData)await admBillInit();
+    if(!billPricesCache)await loadBillPrices();
+    if(!confirmedSalesCache)await loadConfirmedSales();
+    const monthVal=document.getElementById('adm-bill-month').value;
+    if(!monthVal){alert('年月を選択してください');return;}
+    const records=admBillShopData.records||[];
+    const cols=admBillCols();
+    const sel=document.getElementById('adm-bill-area');
+    const areas=Array.from(sel.options).map(o=>o.value).filter(Boolean);
+    if(!areas.length){alert('営業所が見つかりません');return;}
+    let grand=0,courses=0,confirmedCnt=0;
+    areas.forEach(area=>{const t=admBillComputeAreaTotal(area,monthVal,records,cols);grand+=t.grand;courses+=t.courses;confirmedCnt+=t.confirmedCnt;});
+    const [y,m]=monthVal.split('-').map(Number);const reiwa=y-2018;
+    admBillBtoBCtx={grand,monthVal,y,m,reiwa,courses,confirmedCnt};
+    document.getElementById('btob-client').value=localStorage.getItem('sm_btob_client')||'';
+    document.getElementById('btob-subject').value=`新聞配送業務委託料 令和${reiwa}年${m}月分`;
+    document.getElementById('btob-company').value=localStorage.getItem('sm_btob_company')||'株式会社NELTEC';
+    document.getElementById('btob-regno').value=localStorage.getItem('sm_btob_regno')||'';
+    document.getElementById('btob-bank').value=localStorage.getItem('sm_btob_bank')||'';
+    document.getElementById('btob-tax').checked=(localStorage.getItem('sm_btob_tax')!=='0');
+    document.getElementById('btob-total-preview').textContent=`税抜 ¥${grand.toLocaleString()}（${confirmedCnt}/${courses}コース確定）`;
+    document.getElementById('sm-btob-modal').style.display='flex';
+  }catch(e){alert('エラー: '+e.message);}
+}
+function admBillBtoBGenerate(){
+  const ctx=admBillBtoBCtx;if(!ctx){alert('先に「🧾 BtoB請求書」を押してください');return;}
+  const client=(document.getElementById('btob-client').value||'').trim();
+  if(!client){alert('取引先名を入力してください');return;}
+  const subject=(document.getElementById('btob-subject').value||'').trim()||`新聞配送業務委託料 令和${ctx.reiwa}年${ctx.m}月分`;
+  const company=(document.getElementById('btob-company').value||'').trim()||'株式会社NELTEC';
+  const regno=(document.getElementById('btob-regno').value||'').trim();
+  const bank=(document.getElementById('btob-bank').value||'').trim();
+  const addTax=document.getElementById('btob-tax').checked;
+  localStorage.setItem('sm_btob_client',client);localStorage.setItem('sm_btob_company',company);
+  localStorage.setItem('sm_btob_regno',regno);localStorage.setItem('sm_btob_bank',bank);
+  localStorage.setItem('sm_btob_tax',addTax?'1':'0');
+  const sub=ctx.grand,tax=addTax?Math.floor(sub*0.1):0,total=sub+tax,inclTax=addTax?0:Math.floor(sub*10/110);
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const bankHtml=bank?`<div style="margin-top:14px;padding:10px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;"><b>お振込先</b><br>${esc(bank).replace(/\n/g,'<br>')}</div>`:'';
+  let h=`<div id="btob-invoice-area" style="background:#fff;padding:32px;border:1px solid var(--border);border-radius:12px;max-width:760px;margin:0 auto;">`;
+  h+=`<div style="text-align:center;margin-bottom:24px;"><h2 style="font-size:24px;margin:0;border-bottom:3px double #1e293b;display:inline-block;padding-bottom:4px;">請 求 書</h2></div>`;
+  h+=`<div style="display:flex;justify-content:space-between;margin-bottom:20px;">`;
+  h+=`<div style="min-width:260px;"><p style="font-size:18px;font-weight:bold;border-bottom:1px solid #1e293b;padding-bottom:2px;">${esc(client)} 御中</p></div>`;
+  h+=`<div style="text-align:right;font-size:13px;"><p style="font-size:16px;font-weight:bold;color:#1e293b;margin:0 0 4px;">${esc(company)}</p>${regno?`<p style="color:var(--text-sub);margin:0;">登録番号: ${esc(regno)}</p>`:''}<p style="color:var(--text-sub);margin:2px 0 0;">請求日: ${new Date().toLocaleDateString('ja-JP')}</p><p style="color:var(--text-sub);margin:0;">請求対象: 令和${ctx.reiwa}年${ctx.m}月分</p></div>`;
+  h+=`</div>`;
+  h+=`<div style="background:#f1f5f9;border-radius:8px;padding:16px;text-align:center;margin-bottom:20px;"><p style="font-size:14px;color:var(--text-sub);margin:0;">ご請求金額（税込）${addTax?' <span style="color:#0d9488;font-size:11px;">適格・外税</span>':' <span style="color:var(--text-sub);font-size:11px;">内税</span>'}</p><p style="font-size:28px;font-weight:bold;color:var(--primary);margin:4px 0 0;">¥${total.toLocaleString()}</p></div>`;
+  h+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #dde1e8;text-align:left;">摘要</th><th style="padding:8px;border:1px solid #dde1e8;width:70px;">数量</th><th style="padding:8px;border:1px solid #dde1e8;text-align:right;width:150px;">金額</th></tr></thead><tbody>`;
+  h+=`<tr><td style="padding:10px 8px;border:1px solid #dde1e8;">${esc(subject)}</td><td style="padding:10px 8px;border:1px solid #dde1e8;text-align:center;">1</td><td style="padding:10px 8px;border:1px solid #dde1e8;text-align:right;">¥${sub.toLocaleString()}</td></tr>`;
+  h+=`<tr style="font-weight:bold;"><td colspan="2" style="padding:7px 8px;border:1px solid #dde1e8;text-align:right;">小計（税抜）</td><td style="padding:7px 8px;border:1px solid #dde1e8;text-align:right;">¥${sub.toLocaleString()}</td></tr>`;
+  if(addTax)h+=`<tr><td colspan="2" style="padding:7px 8px;border:1px solid #dde1e8;text-align:right;">消費税（10%）</td><td style="padding:7px 8px;border:1px solid #dde1e8;text-align:right;">¥${tax.toLocaleString()}</td></tr>`;
+  h+=`<tr style="background:#f1f5f9;font-weight:bold;"><td colspan="2" style="padding:8px;border:1px solid #dde1e8;text-align:right;">合計（税込）</td><td style="padding:8px;border:1px solid #dde1e8;text-align:right;font-size:16px;">¥${total.toLocaleString()}</td></tr>`;
+  if(!addTax)h+=`<tr><td colspan="3" style="padding:5px 8px;border:1px solid #dde1e8;text-align:right;font-size:11px;color:var(--text-sub);">※ 内税（消費税 ¥${inclTax.toLocaleString()} を含む）</td></tr>`;
+  h+=`</tbody></table>${bankHtml}</div>`;
+  h+=`<div style="max-width:760px;margin:12px auto 0;display:flex;justify-content:flex-end;gap:10px;"><button onclick="admBillBtoBPrint()" style="background:#64748b;color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">🖨 印刷 / PDF保存</button></div>`;
+  document.getElementById('adm-bill-totals').innerHTML='';
+  document.getElementById('adm-bill-preview').innerHTML=h;
+  document.getElementById('sm-btob-modal').style.display='none';
+}
+function admBillBtoBPrint(){
+  const area=document.getElementById('btob-invoice-area');
+  if(!area){alert('請求書がありません');return;}
+  const client=(localStorage.getItem('sm_btob_client')||'請求書').replace(/[\\/:*?"<>|]/g,'');
+  const win=window.open('','_blank');
+  const css=`body{font-family:'Meiryo',sans-serif;margin:0;padding:0;color:#1e293b;}#btob-invoice-area{border:none!important;max-width:none!important;margin:0!important;}@page{size:A4 portrait;margin:12mm;}`;
+  win.document.write(`<!DOCTYPE html><html><head><title>${client}_請求書</title><style>${css}</style></head><body>${area.outerHTML}<script>setTimeout(()=>window.print(),400)<\/script></body></html>`);
+  win.document.close();
 }
 
 function admBillSavePDF(){
