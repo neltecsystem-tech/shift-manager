@@ -649,6 +649,7 @@ tbody tr:hover { background:var(--primary-light); }
           <p style="font-size:12px;color:var(--text-sub);margin:0 0 14px;">全営業所の総額を、取引先1社宛の請求書（総額1行）にします。<span id="btob-total-preview" style="font-weight:bold;color:#92400e;"></span></p>
           <div style="display:flex;flex-direction:column;gap:10px;">
             <div><label style="font-size:12px;color:var(--text-sub);display:block;">取引先名（宛先）*</label><input type="text" id="btob-client" placeholder="例: 株式会社◯◯" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+            <div><label style="font-size:12px;color:var(--text-sub);display:block;">発行先コード（インフォマートCSV用・任意）</label><input type="text" id="btob-code" placeholder="インフォマートの発行先コード" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
             <div><label style="font-size:12px;color:var(--text-sub);display:block;">件名・摘要</label><input type="text" id="btob-subject" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
             <hr style="border:none;border-top:1px solid var(--border);margin:2px 0;">
             <div style="font-size:12px;color:var(--text-sub);font-weight:600;">発行元（記憶されます）</div>
@@ -664,7 +665,8 @@ tbody tr:hover { background:var(--primary-light); }
           </div>
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
             <button onclick="document.getElementById('sm-btob-modal').style.display='none'" style="background:#e2e8f0;color:#334155;border:none;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:600;">キャンセル</button>
-            <button onclick="admBillBtoBGenerate()" style="background:#0d9488;color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:700;">請求書を生成</button>
+            <button onclick="admBillBtoBCsv()" style="background:#2563eb;color:#fff;border:none;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:700;" title="インフォマート一括アップロード用CSV(31列/SJIS)">📤 CSV出力</button>
+            <button onclick="admBillBtoBGenerate()" style="background:#0d9488;color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:700;">PDF用に生成</button>
           </div>
         </div>
       </div>
@@ -12148,6 +12150,7 @@ async function admBillBtoB(){
     const shime=new Date(y,m,0);       // 請求月の末日
     const due=new Date(y,m+1,0);       // 翌月末日 = 入金期限
     document.getElementById('btob-client').value=localStorage.getItem('sm_btob_client')||'株式会社東京即売';
+    document.getElementById('btob-code').value=localStorage.getItem('sm_btob_code')||'';
     document.getElementById('btob-subject').value=`R${reiwa}年${m}月分請求書`;
     document.getElementById('btob-company').value=localStorage.getItem('sm_btob_company')||'株式会社NELTEC';
     document.getElementById('btob-regno').value=localStorage.getItem('sm_btob_regno')||'T8011601022911';
@@ -12206,6 +12209,40 @@ function admBillBtoBPrint(){
   const css=`body{font-family:'Meiryo',sans-serif;margin:0;padding:0;color:#1e293b;}#btob-invoice-area{border:none!important;max-width:none!important;margin:0!important;}@page{size:A4 portrait;margin:12mm;}`;
   win.document.write(`<!DOCTYPE html><html><head><title>${client}_請求書</title><style>${css}</style></head><body>${area.outerHTML}<script>setTimeout(()=>window.print(),400)<\/script></body></html>`);
   win.document.close();
+}
+// インフォマート(BtoBプラットフォーム)一括アップロード用CSV。31列・Shift-JIS・1請求書=1明細。
+// 会計ツール(kaikei) の exportBtoB と同一フォーマット。
+async function admBillBtoBCsv(){
+  const ctx=admBillBtoBCtx;if(!ctx){alert('先に「🧾 BtoB請求書」を押してください');return;}
+  const code=(document.getElementById('btob-code').value||'').trim();
+  const client=(document.getElementById('btob-client').value||'').trim();
+  const subject=(document.getElementById('btob-subject').value||'').trim()||`R${ctx.reiwa}年${ctx.m}月分請求書`;
+  const shime=(document.getElementById('btob-shime').value||'').trim();
+  const due=(document.getElementById('btob-due').value||'').trim();
+  const addTax=document.getElementById('btob-tax').checked;
+  if(!code&&!window.confirm('発行先コードが未入力です。インフォマートの発行先コードが無いと取込に失敗することがあります。このまま出力しますか?'))return;
+  localStorage.setItem('sm_btob_client',client);localStorage.setItem('sm_btob_code',code);
+  const jd=s=>{const m2=(s||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);return m2?`${m2[1]}/${m2[2]}/${m2[3]}`:'';};
+  const excl=ctx.grand,tax=addTax?Math.floor(excl*0.1):0,incl=excl+tax;
+  const now=new Date();
+  const detailDate=`${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')}`;
+  const itemName=`R${ctx.reiwa}年${ctx.m}月分 配送業務委託料`;
+  const header=['請求書番号','発行先コード','件名','入金期限','前回請求金額','入金額','調整金額','繰越金額','今回請求金額（税抜）','今回消費税額','今回請求金額（税込）','おもての請求金額','締日','備考','明細日付','明細番号','商品コード','明細項目','数量','単価','単位','金額','消費税額','請求金額','税区分（課税／非課税／免税／不課税）','税率','税額入力形式（税抜／税込／手入力）','部門コード','部門名','備考','請求書作成番号'];
+  const row=['',code,subject,jd(due),0,0,0,0,excl,tax,incl,incl,jd(shime),'',detailDate,1,'',itemName,1,excl,'式',excl,tax,incl,'課税','10','税抜','','','',''];
+  const cell=v=>{const s=v==null?'':String(v);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
+  const csv=[header,row].map(r=>r.map(cell).join(',')).join('\r\n');
+  const fname=`BtoB請求書_R${ctx.reiwa}年${ctx.m}月.csv`;
+  const dl=(blob,name)=>{const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(()=>URL.revokeObjectURL(url),1000);};
+  try{
+    const Encoding=(await import('https://esm.sh/encoding-japanese@2')).default;
+    const sjis=Encoding.convert(Encoding.stringToCode(csv),{to:'SJIS',from:'UNICODE'});
+    dl(new Blob([new Uint8Array(sjis)],{type:'text/csv'}),fname);
+    document.getElementById('sm-btob-modal').style.display='none';
+    alert('✅ インフォマート標準フォーマット(31列/SJIS)でCSVを出力しました。\nインフォマートで一括アップロードしてください。\n（各営業所の明細PDFは従来どおり添付）');
+  }catch(e){
+    dl(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8;'}),fname.replace('.csv','_utf8.csv'));
+    alert('⚠ Shift-JIS変換に失敗したためUTF-8(BOM付)で出力しました。インフォマートはSJIS推奨です。\nネット接続を確認して再実行してください。\nエラー: '+e.message);
+  }
 }
 
 function admBillSavePDF(){
