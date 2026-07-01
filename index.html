@@ -602,6 +602,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('billing')" id="adm-tab-billing" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📄 請求書作成</button>
         <button onclick="adminTab('pricelist')" id="adm-tab-pricelist" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💲 単価一覧</button>
         <button onclick="adminTab('shopcount')" id="adm-tab-shopcount" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📊 店舗集計</button>
+        <button onclick="adminTab('billstats')" id="adm-tab-billstats" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📈 確定統計</button>
         <button onclick="adminTab('snapshot')" id="adm-tab-snapshot" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📌 月初スナップ</button>
         <button onclick="adminTab('revenue')" id="adm-tab-revenue" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💰 収支管理</button>
         <button onclick="adminTab('billcond')" id="adm-tab-billcond" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 請求条件</button>
@@ -682,6 +683,22 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>基準月</label><input type="month" id="adm-sc-month" onchange="admScLoad()"></div>
         </div>
         <div id="adm-sc-content" style="margin-top:8px;"></div>
+      </div>
+
+      <!-- 確定統計 (確定売上に記録された店舗数の集計・記録・編集) -->
+      <div id="adm-billstats" class="adm-panel" style="display:none;">
+        <div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:10px 12px;font-size:12px;color:#3730a3;margin-bottom:12px;">
+          確定した請求に記録された<b>店舗数（朝刊/夕刊/競馬＋各特殊）</b>を月別・営業所別に集計します。過去に確定済みで店舗数が未記録の月は、<b>その月の月初スナップから再計算して記録（back-fill）</b>できます。スナップの無い月（例: 5月）は下の表で<b>手入力</b>してください。
+        </div>
+        <div class="filters" style="align-items:flex-end;">
+          <div><label>対象月</label><input type="month" id="adm-bs-month" onchange="admBsRender()"></div>
+          <div><button onclick="admBillBackfillCounts()" id="adm-bs-backfill-btn" style="background:#4f46e5;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔄 この月の店舗数を記録(スナップから再計算)</button></div>
+          <div><button onclick="admBsRender(true)" style="background:#64748b;color:#fff;border:none;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;">↻ 再読込</button></div>
+        </div>
+        <div id="adm-bs-content" style="margin-top:10px;"></div>
+        <hr style="margin:20px 0;border:none;border-top:1px solid var(--border);">
+        <h3 style="font-size:14px;margin:0 0 8px;">📈 月別推移（営業所×月：合計店舗数）</h3>
+        <div id="adm-bs-trend" style="overflow-x:auto;"></div>
       </div>
 
       <!-- 収支管理 -->
@@ -6197,6 +6214,7 @@ function adminTab(t){
   if(t==='invoices')adminLoadInvoices();
   if(t==='staff')adminLoadStaff();
   if(t==='shopcount')admScLoad().catch(()=>{});
+  if(t==='billstats')admBsInit().catch(()=>{});
   if(t==='billing'){admBillInit().catch(()=>{});if(!billPricesCache)loadBillPrices().catch(()=>{});}
   if(t==='revenue')admRevInit().catch(()=>{});
   if(t==='billcond')admBcInit();
@@ -11212,6 +11230,119 @@ async function loadConfirmedSales(){
 function getConfirmedSale(monthVal,area,course){
   if(!confirmedSalesCache)return null;
   return confirmedSalesCache.find(r=>r.year_month===monthVal&&r.area===area&&r.course===course);
+}
+
+// ===== 確定統計 (確定売上に記録された店舗数) =====
+const BS_AREAS=['立川','城北','川越','川崎高津'];
+// 店舗数フィールド定義: [キー, 見出し]
+const BS_FIELDS=[['am','朝刊'],['pm','夕刊'],['keiba','競馬'],['am_tokushu','朝特殊'],['am_zasshi','雑誌'],['am_dokkon','同梱'],['am_kyori','距離増'],['pm_tokushu','夕特殊'],['keiba_tokushu','競特殊']];
+const bsEsc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+async function admBsInit(){
+  const mInput=document.getElementById('adm-bs-month');
+  if(!mInput.value){const now=new Date();mInput.value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;}
+  return admBsRender(true);
+}
+
+// 指定月の確定売上を、その月のスナップから再計算して店舗数を記録 (未記録のみ / 金額は保持)
+async function admBillBackfillCounts(monthVal){
+  monthVal=monthVal||document.getElementById('adm-bs-month').value;
+  if(!monthVal){alert('対象月を選んでください');return;}
+  const btn=document.getElementById('adm-bs-backfill-btn'); if(btn)btn.disabled=true;
+  try{
+    await admBillLoadForMonth(monthVal,true);
+    if(!billPricesCache){try{await loadBillPrices();}catch(_){}}
+    const usingSnap=admBillSource==='snapshot:'+monthVal;
+    if(!usingSnap){
+      if(!confirm(`${monthVal} は月初スナップが無く「${admBillSource==='live'?'ライブ(現在のマスタ)':admBillSource}」で計算します。\n現在のマスタは月初と異なる可能性があり不正確な場合があります。\n\n続行しますか？(スナップのある月での実行を推奨。無い月は下の表で手入力が確実です)`)){if(btn)btn.disabled=false;return;}
+    }
+    await loadConfirmedSales();
+    const sales=(confirmedSalesCache||[]).filter(s=>s.year_month===monthVal&&s.course!=='(手入力)');
+    if(!sales.length){alert(`${monthVal} の確定売上がありません（先に請求を確定してください）`);if(btn)btn.disabled=false;return;}
+    let updated=0,skipped=0,failed=0;
+    admBillShowProgress(`🔄 ${monthVal} 店舗数を記録中...`);
+    try{
+      for(let i=0;i<sales.length;i++){
+        const s=sales[i];
+        admBillUpdateProgress(i,sales.length,`${s.area} ${s.course}`);
+        if(s.counts&&s.counts.am!=null){skipped++;continue;}
+        try{
+          const r=admBillRenderWithTotals(s.area,s.course,monthVal);
+          await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area:s.area,course:s.course,grand_total:s.grand_total,am_total:s.am_total,pm_total:s.pm_total,counts:billCountsFrom(r)}});
+          updated++;
+        }catch(e){failed++;console.error('backfill fail',s,e);}
+      }
+    }finally{admBillHideProgress();confirmedSalesCache=null;await loadConfirmedSales();}
+    alert(`記録完了: ${updated}件更新 / ${skipped}件は記録済み${failed?` / ${failed}件失敗`:''}（計${sales.length}）`);
+    await admBsRender();
+  }catch(e){admBillHideProgress&&admBillHideProgress();alert('記録に失敗: '+e.message);console.error(e);}
+  finally{if(btn)btn.disabled=false;}
+}
+
+async function admBsRender(reload){
+  if(reload)confirmedSalesCache=null;
+  await loadConfirmedSales();
+  const all=confirmedSalesCache||[];
+  admBsRenderTrend(all);
+  const monthVal=document.getElementById('adm-bs-month').value;
+  const cont=document.getElementById('adm-bs-content');
+  if(!monthVal){cont.innerHTML='';return;}
+  const rows=all.filter(s=>s.year_month===monthVal).sort((a,b)=>(a.area+a.course).localeCompare(b.area+b.course,'ja',{numeric:true}));
+  if(!rows.length){cont.innerHTML=`<p style="color:var(--text-sub);padding:16px;">${monthVal} の確定売上がありません。請求を確定するとここに出ます。</p>`;return;}
+  // 営業所別集計
+  const agg={};
+  rows.forEach(s=>{const c=s.counts||{};const a=agg[s.area]||(agg[s.area]={rec:0,tot:0});BS_FIELDS.forEach(([k])=>{a[k]=(a[k]||0)+(Number(c[k])||0);});if(c.am!=null)a.rec++;a.tot++;});
+  let h=`<h3 style="font-size:14px;margin:0 0 8px;">${monthVal} 営業所別 店舗数（確定記録）</h3>`;
+  h+='<div style="overflow-x:auto;"><table style="border-collapse:collapse;font-size:13px;min-width:640px;"><thead><tr>'+
+     `<th style="${bsTh}">営業所</th>`+BS_FIELDS.map(([,l])=>`<th style="${bsTh}">${l}</th>`).join('')+`<th style="${bsTh}">記録状況</th></tr></thead><tbody>`;
+  BS_AREAS.forEach(area=>{const a=agg[area];if(!a)return;
+    h+=`<tr><td style="${bsTd}font-weight:600;">${area}</td>`+BS_FIELDS.map(([k])=>`<td style="${bsTd}text-align:right;">${(a[k]||0).toLocaleString()}</td>`).join('')+
+       `<td style="${bsTd}font-size:11px;color:${a.rec<a.tot?'#b45309':'#16a34a'};">${a.rec}/${a.tot}コース</td></tr>`;});
+  h+='</tbody></table></div>';
+  // コース別 編集
+  h+=`<details style="margin-top:12px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:var(--primary);">コース別 店舗数（手入力で編集・保存）</summary>`;
+  h+='<div style="overflow-x:auto;margin-top:8px;"><table style="border-collapse:collapse;font-size:12px;min-width:760px;"><thead><tr>'+
+     `<th style="${bsTh}">営業所</th><th style="${bsTh}">コース</th>`+BS_FIELDS.map(([,l])=>`<th style="${bsTh}">${l}</th>`).join('')+`<th style="${bsTh}"></th></tr></thead><tbody>`;
+  rows.forEach((s,idx)=>{const c=s.counts||{};const rid=`bs-${idx}`;
+    h+=`<tr data-ym="${bsEsc(s.year_month)}" data-area="${bsEsc(s.area)}" data-course="${bsEsc(s.course)}" data-grand="${s.grand_total||0}" data-am="${s.am_total||0}" data-pm="${s.pm_total||0}">`+
+       `<td style="${bsTd}">${bsEsc(s.area)}</td><td style="${bsTd}white-space:nowrap;">${bsEsc(s.course)}</td>`+
+       BS_FIELDS.map(([k])=>`<td style="${bsTd}"><input type="number" min="0" class="${rid}" data-k="${k}" value="${c[k]==null?'':c[k]}" style="width:56px;padding:3px;border:1px solid var(--border);border-radius:4px;font-size:12px;text-align:right;"></td>`).join('')+
+       `<td style="${bsTd}"><button onclick="admBsSaveRow(this,'${rid}')" style="background:var(--primary);color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;">保存</button></td></tr>`;});
+  h+='</tbody></table></div></details>';
+  cont.innerHTML=h;
+}
+
+const bsTh='border:1px solid #dde1e8;padding:5px 8px;background:#f1f5f9;font-weight:600;white-space:nowrap;';
+const bsTd='border:1px solid #dde1e8;padding:4px 8px;';
+
+async function admBsSaveRow(btn,rid){
+  const tr=btn.closest('tr'); if(!tr)return;
+  const counts={};
+  tr.querySelectorAll('input.'+rid).forEach(inp=>{const v=inp.value.trim();counts[inp.getAttribute('data-k')]=v===''?0:(Number(v)||0);});
+  btn.disabled=true;const old=btn.textContent;btn.textContent='...';
+  try{
+    await invApi({action:'save_confirmed_sale',confirmed_sale:{
+      year_month:tr.getAttribute('data-ym'),area:tr.getAttribute('data-area'),course:tr.getAttribute('data-course'),
+      grand_total:Number(tr.getAttribute('data-grand'))||0,am_total:Number(tr.getAttribute('data-am'))||0,pm_total:Number(tr.getAttribute('data-pm'))||0,
+      counts}});
+    btn.textContent='✓';confirmedSalesCache=null;
+    setTimeout(()=>{admBsRender();},500);
+  }catch(e){alert('保存失敗: '+e.message);btn.textContent=old;btn.disabled=false;}
+}
+
+// 営業所×月の合計店舗数(朝刊/夕刊/競馬)推移
+function admBsRenderTrend(all){
+  const el=document.getElementById('adm-bs-trend');if(!el)return;
+  const months=[...new Set(all.map(s=>s.year_month))].filter(Boolean).sort();
+  if(!months.length){el.innerHTML='<p style="color:var(--text-sub);font-size:12px;">確定データがありません。</p>';return;}
+  // area→month→{am,pm,keiba}
+  const map={};
+  all.forEach(s=>{const c=s.counts||{};if(c.am==null)return;const k=s.area+'|'+s.year_month;const m=map[k]||(map[k]={am:0,pm:0,keiba:0});m.am+=Number(c.am)||0;m.pm+=Number(c.pm)||0;m.keiba+=Number(c.keiba)||0;});
+  let h='<table style="border-collapse:collapse;font-size:12px;"><thead><tr><th style="'+bsTh+'">営業所</th>'+months.map(m=>`<th style="${bsTh}">${m}<br><span style="font-weight:400;font-size:10px;">朝/夕/競</span></th>`).join('')+'</tr></thead><tbody>';
+  BS_AREAS.forEach(area=>{
+    h+=`<tr><td style="${bsTd}font-weight:600;">${area}</td>`+months.map(m=>{const d=map[area+'|'+m];return `<td style="${bsTd}text-align:center;white-space:nowrap;">${d?`${d.am}/${d.pm}/${d.keiba}`:'<span style="color:#cbd5e1;">—</span>'}</td>`;}).join('')+'</tr>';});
+  h+='</tbody></table>';
+  el.innerHTML=h;
 }
 
 // 一括確定/解除の進捗オーバーレイ (中央モーダル)
