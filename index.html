@@ -909,6 +909,13 @@ tbody tr:hover { background:var(--primary-light); }
             <button onclick="admYobiSave()" id="adm-yobi-save" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" disabled>💾 保存 (<span id="adm-yobi-dirty">0</span>件)</button>
           </div>
         </div>
+        <div id="adm-yobi-addbar" style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-top:10px;padding:10px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">
+          <div style="font-weight:700;font-size:13px;color:#15803d;">➕ コース行を追加</div>
+          <div><label style="font-size:11px;color:var(--text-sub);display:block;">朝刊コース名 (A列)</label><input type="text" id="adm-yobi-add-am" placeholder="例: 城北24" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:130px;"></div>
+          <div><label style="font-size:11px;color:var(--text-sub);display:block;">夕刊コース名 (J列・任意)</label><input type="text" id="adm-yobi-add-pm" placeholder="夕刊があれば" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:130px;"></div>
+          <button onclick="admYobiAddRow()" style="background:#16a34a;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">追加</button>
+          <div style="font-size:11px;color:var(--text-sub);max-width:300px;line-height:1.5;">追加後、曜日別の担当者をグリッドで入力し「保存」。既存月へは「新規月作成」で反映。空き確認/黒塗りには「マスタ」シートR列の登録も必要です。</div>
+        </div>
         <div id="adm-yobi-msg" style="margin-top:8px;font-size:13px;color:var(--text-sub);"></div>
         <div id="adm-yobi-content" style="margin-top:12px;overflow:auto;max-height:75vh;border:1px solid var(--border);border-radius:8px;background:#fff;"></div>
       </div>
@@ -9494,6 +9501,37 @@ async function admYobiSave(){
     admYobiRender();
   }catch(e){
     msg.innerHTML='<span style="color:var(--danger);">保存失敗: '+e.message+'</span>';
+  }
+}
+
+// 早見表にコース行を追加 (末尾に append_row → 再読込)。担当者はグリッドで入力してもらう。
+async function admYobiAddRow(){
+  if(!admYobiState.loaded){alert('先に早見表を「🔄 再読込」で読み込んでください');return;}
+  if(admYobiState.dirty.size){alert('未保存の変更があります。先に「💾 保存」を押してから追加してください。');return;}
+  const amEl=document.getElementById('adm-yobi-add-am'),pmEl=document.getElementById('adm-yobi-add-pm');
+  const am=(amEl.value||'').trim(),pm=(pmEl.value||'').trim();
+  if(!am&&!pm){alert('朝刊コース名か夕刊コース名を入力してください');return;}
+  // 既存の早見表コースと重複チェック (A列=0, J列=9)
+  const dup=admYobiState.rows.some(r=>{
+    const a=String(r[0]||'').trim(),p=String(r[9]||'').trim();
+    return (am&&a===am)||(pm&&p===pm);
+  });
+  if(dup&&!window.confirm('同名のコースが既に早見表にあります。それでも行を追加しますか?'))return;
+  // A列(0)=朝刊コース / J列(9)=夕刊コース。間の列は空で送る。
+  const values=new Array(10).fill('');
+  values[0]=am;values[9]=pm;
+  const msg=document.getElementById('adm-yobi-msg');
+  msg.textContent='行を追加中...';msg.style.color='#3b82f6';
+  try{
+    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:YOBI_SHEET_NAME,values})});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    amEl.value='';pmEl.value='';
+    await admYobiInit(true); // 再読込して新行を表示 (dirty無しなので確認なしで進む)
+    const cont=document.getElementById('adm-yobi-content');if(cont)cont.scrollTop=cont.scrollHeight;
+    msg.textContent=`✓ コース行を追加しました (${am||pm})。曜日別の担当者をグリッドで入力し「💾 保存」してください。`;msg.style.color='#16a34a';
+  }catch(e){
+    msg.innerHTML='<span style="color:var(--danger);">追加失敗: '+e.message+'</span>';
   }
 }
 
