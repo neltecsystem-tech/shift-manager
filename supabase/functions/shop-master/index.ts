@@ -542,6 +542,61 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ records, headers, month, snapshot: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
+    if (action === 'snapshot_purge_course') {
+      // 月初スナップ(月初_YYYY-MM)の コース列(朝刊/夕刊/競馬/新夕刊)から、指定コース値のセルだけを空欄化する。
+      // 他のセル(突合で修正した内容含む)は一切変更しない。dry_run で件数プレビュー可。
+      const month = (reqBody.month || '').toString().trim();
+      const courses = Array.isArray(reqBody.courses) ? reqBody.courses.map((c: any) => String(c).trim()).filter(Boolean) : [];
+      const dryRun = !!reqBody.dry_run;
+      if (!/^\d{4}-\d{2}$/.test(month)) {
+        return new Response(JSON.stringify({ error: 'month は YYYY-MM 形式' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      if (!courses.length) {
+        return new Response(JSON.stringify({ error: 'courses (配列) が必要' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const tab = SNAP_PREFIX + month;
+      const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(tab)}!A1:${COL_END}10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!resp.ok) {
+        return new Response(JSON.stringify({ error: 'snapshot not found', month }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const allRows = ((await resp.json()).values ?? []) as string[][];
+      if (allRows.length < 2) {
+        return new Response(JSON.stringify({ error: 'snapshot が空' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const header = (allRows[0] || []).map((h) => (h || '').trim());
+      const courseCols = header.map((h, i) => ({ h, i })).filter((x) => x.h.includes('コース')).map((x) => x.i);
+      const purge = new Set(courses);
+      const cleared: Record<string, number> = {}; // 列名 -> 件数
+      let total = 0;
+      for (let r = 1; r < allRows.length; r++) {
+        const row = allRows[r] || [];
+        for (const ci of courseCols) {
+          const v = (row[ci] || '').toString().trim();
+          if (purge.has(v)) {
+            cleared[header[ci]] = (cleared[header[ci]] || 0) + 1;
+            total++;
+            if (!dryRun) row[ci] = '';
+          }
+        }
+      }
+      if (dryRun) {
+        return new Response(JSON.stringify({ dry_run: true, month, courses, target_columns: courseCols.map((i) => header[i]), total, cleared }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      // 書き戻し (RAW, 1000行ずつ。行数は不変なのでそのまま上書き)
+      const CHUNK = 1000;
+      for (let i = 0; i < allRows.length; i += CHUNK) {
+        const block = allRows.slice(i, i + CHUNK);
+        const w = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(tab)}!A${i + 1}?valueInputOption=RAW`, {
+          method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values: block }),
+        });
+        if (!w.ok) {
+          return new Response(JSON.stringify({ error: 'write failed: ' + w.status + ' ' + (await w.text()).slice(0, 200), wrote_until: i }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+      }
+      return new Response(JSON.stringify({ success: true, month, courses, total, cleared }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     if (action === 'bulk_lock_gps') {
       // 緯度経度が入っている全行を 修正済み(AL=TRUE) にする一括ロック。既にTRUEはスキップ。
       await ensureExtraHeaders(token);
