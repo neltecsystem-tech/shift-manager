@@ -914,7 +914,13 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">朝刊コース名 (A列)</label><input type="text" id="adm-yobi-add-am" placeholder="例: 城北24" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:130px;"></div>
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">夕刊コース名 (J列・任意)</label><input type="text" id="adm-yobi-add-pm" placeholder="夕刊があれば" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:130px;"></div>
           <button onclick="admYobiAddRow()" style="background:#16a34a;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">追加</button>
-          <div style="font-size:11px;color:var(--text-sub);max-width:300px;line-height:1.5;">追加後、曜日別の担当者をグリッドで入力し「保存」。既存月へは「新規月作成」で反映。空き確認/黒塗りには「マスタ」シートR列の登録も必要です。</div>
+          <div style="font-size:11px;color:var(--text-sub);max-width:300px;line-height:1.5;">追加後、曜日別の担当者をグリッドで入力し「💾保存」。<b>来月から</b>効かせるならこれだけでOK（新規月作成で反映）。空き確認/黒塗りには「マスタ」シートR列の登録も必要です。</div>
+        </div>
+        <div id="adm-yobi-reflectbar" style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-top:8px;padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;">
+          <div style="font-weight:700;font-size:13px;color:#1d4ed8;">🗓 当日反映（当月シートへ即反映）</div>
+          <div><label style="font-size:11px;color:var(--text-sub);display:block;">コース名 (複数可・カンマ区切り)</label><input type="text" id="adm-yobi-reflect-course" placeholder="例: 城北24" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:180px;"></div>
+          <button onclick="admYobiReflectToMonth()" style="background:#2563eb;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">当月へ反映</button>
+          <div style="font-size:11px;color:var(--text-sub);max-width:340px;line-height:1.5;">早見表の曜日別担当者を<b>当月シート</b>に展開＋非稼働日を黒塗り。<b>先に早見表で担当者を入力・💾保存</b>してから押すと担当者も自動で入ります。</div>
         </div>
         <div id="adm-yobi-msg" style="margin-top:8px;font-size:13px;color:var(--text-sub);"></div>
         <div id="adm-yobi-content" style="margin-top:12px;overflow:auto;max-height:75vh;border:1px solid var(--border);border-radius:8px;background:#fff;"></div>
@@ -9527,11 +9533,100 @@ async function admYobiAddRow(){
     const j=await r.json();
     if(j.error)throw new Error(j.error);
     amEl.value='';pmEl.value='';
+    // 当日反映ボックスに追加コース名を prefill (担当者入力後に「当月へ反映」を押せるよう誘導)
+    const names=[...new Set([am,pm].filter(Boolean))];
+    const refEl=document.getElementById('adm-yobi-reflect-course');if(refEl)refEl.value=names.join(', ');
     await admYobiInit(true); // 再読込して新行を表示 (dirty無しなので確認なしで進む)
     const cont=document.getElementById('adm-yobi-content');if(cont)cont.scrollTop=cont.scrollHeight;
-    msg.textContent=`✓ コース行を追加しました (${am||pm})。曜日別の担当者をグリッドで入力し「💾 保存」してください。`;msg.style.color='#16a34a';
+    msg.textContent=`✓ コース行を追加しました (${am||pm})。曜日別の担当者をグリッドで入力し「💾 保存」。当月にも今すぐ反映するなら担当者保存後に「🗓 当月へ反映」を押してください。`;msg.style.color='#16a34a';
   }catch(e){
     msg.innerHTML='<span style="color:var(--danger);">追加失敗: '+e.message+'</span>';
+  }
+}
+
+// 当日反映: 早見表の指定コースを「当月シフト」シートの Section 1 空き行へ展開 (担当者 + 黒塗り自動)
+// 新規月作成の1コース版。既存の他コース行は触らず、末尾コースの直後に追記する。
+async function admYobiReflectToMonth(){
+  const input=(document.getElementById('adm-yobi-reflect-course').value||'').trim();
+  if(!input){alert('反映するコース名を入力してください');return;}
+  const courseNames=[...new Set(input.split(/[,、\s]+/).map(s=>s.trim()).filter(Boolean))];
+  const now=new Date();
+  const year=now.getFullYear(),month=now.getMonth()+1;
+  const sheetName=`${month}月シフト${year}`;
+  if(!window.confirm(`「${sheetName}」に次のコースを当日反映します:\n${courseNames.join(', ')}\n\n早見表の曜日別担当者を展開し、非稼働日は黒塗りします。\n(担当者が早見表に未入力なら空欄のまま追加されます)\n\n続行?`))return;
+  const msg=document.getElementById('adm-yobi-msg');
+  msg.textContent='早見表・マスタ取得中...';msg.style.color='#3b82f6';
+  try{
+    const {amMap,pmMap}=await admSeFetchDowRef();
+    const reqs=await admSeLoadMaster();
+    // 当月シート取得
+    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
+    const j=await r.json();
+    if(j.error)throw new Error(`「${sheetName}」取得失敗: ${j.error} (当月シートが未作成の可能性。先に「新規月作成」してください)`);
+    const rows=(j.rows||[]).map(x=>x.slice());
+    // 日付列 (row 0)
+    const dateRow=rows[0]||[];
+    const dates=[];
+    for(let c=1;c<dateRow.length;c++){
+      const v=String(dateRow[c]||'').trim();
+      const mm=v.match(/^(\d{1,2})\/(\d{1,2})$/);
+      if(mm){const dd=Number(mm[2]);const dow=new Date(year,Number(mm[1])-1,dd).getDay();dates.push({day:dd,js:dow});}
+    }
+    if(!dates.length)throw new Error('当月シートの日付行を認識できませんでした');
+    // Section 1 の最後のコース行 (index 7..115, col0非空) を特定 → 直後に追記
+    let lastCourse=6;
+    for(let i=7;i<Math.min(116,rows.length);i++){ if(String((rows[i]||[])[0]||'').trim())lastCourse=i; }
+    let writeAt=lastCourse+1;
+    const numCols=1+dates.length*2;
+    const colEnd=admSeColLabel(numCols-1);
+    const skipped=[],done=[],noMaster=[],blackCells=[];
+    for(const name of courseNames){
+      // 当月シートに既存なら重複追加しない
+      let exists=false;
+      for(let i=7;i<Math.min(116,rows.length);i++){ if(String((rows[i]||[])[0]||'').trim()===name){exists=true;break;} }
+      if(exists){skipped.push(name+'(当月に既存)');continue;}
+      if(writeAt>=116){skipped.push(name+'(Section1に空きなし)');continue;}
+      const req=reqs[name];
+      const am=amMap[name]||{},pm=pmMap[name]||{};
+      const rowArr=new Array(numCols).fill('');
+      rowArr[0]=name;
+      dates.forEach(({day,js},i)=>{
+        const amCol=1+i*2,pmCol=2+i*2;
+        rowArr[amCol]=am[js]||'';
+        rowArr[pmCol]=pm[js]||'';
+        if(req){
+          if(!req.am)blackCells.push({row:writeAt,col:amCol});
+          let pmActive;
+          if(js===0)pmActive=false;                               // 日曜=休刊
+          else if(isPmHolidayClosed(year,month,day,js))pmActive=false; // 金土以外の祝日=夕刊休刊
+          else if(js===5||js===6)pmActive=!!req.keiba;            // 金土=競馬
+          else pmActive=!!req.pm;                                 // 月-木=夕刊
+          if(!pmActive)blackCells.push({row:writeAt,col:pmCol});
+        }
+      });
+      // 書き込み (1行ずつ update_range)
+      const range=`A${writeAt+1}:${colEnd}${writeAt+1}`;
+      const ur=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:sheetName,range,values:[rowArr]})});
+      const uj=await ur.json();if(uj.error)throw new Error(uj.error);
+      if(!req)noMaster.push(name);
+      done.push(name);
+      rows[writeAt]=rowArr; // ローカルにも反映して次コースの重複判定/追記位置を正しく
+      writeAt++;
+    }
+    if(!done.length){msg.textContent='反映対象がありません ('+skipped.join(', ')+')';msg.style.color='#f59e0b';return;}
+    // 黒塗り
+    if(blackCells.length){
+      msg.textContent='黒塗り適用中...';
+      const fr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:sheetName,cells:blackCells,bg:{red:0,green:0,blue:0}})});
+      const fj=await fr.json();if(fj.error)throw new Error(fj.error);
+    }
+    let note=`✓ ${sheetName} に反映: ${done.join(', ')}`;
+    if(skipped.length)note+=` / 対象外: ${skipped.join(', ')}`;
+    if(noMaster.length)note+=` / ⚠️マスタR列未登録で黒塗りなし: ${noMaster.join(', ')}`;
+    msg.textContent=note;msg.style.color='#16a34a';
+    forceFreshShift(year,month).catch(()=>{});
+  }catch(e){
+    msg.innerHTML='<span style="color:var(--danger);">当日反映失敗: '+e.message+'</span>';
   }
 }
 
