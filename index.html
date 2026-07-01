@@ -334,7 +334,6 @@ tbody tr:hover { background:var(--primary-light); }
           <div style="flex:1;">
             <label style="font-size:12px;color:var(--text-sub);">対象列</label>
             <select id="smr-col" onchange="smReplacePreview()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;">
-              <option value="pmCourseNew">新夕刊コース (6月以降反映用)</option>
               <option value="pmCourse">夕刊コース (現行・即時反映)</option>
               <option value="amCourse">朝刊コース (現行・即時反映)</option>
               <option value="keibaCourse">競馬コース (現行・即時反映)</option>
@@ -581,13 +580,6 @@ tbody tr:hover { background:var(--primary-light); }
         <div><label>営業所</label><select id="diag-area" onchange="diagFilter()"><option value="">すべて</option></select></div>
         <div><label>区分</label><select id="diag-type" onchange="diagFilter()"><option value="am">朝刊</option><option value="pm">夕刊</option><option value="keiba">競馬</option></select></div>
         <div><label>コース</label><select id="diag-course" onchange="diagRender()"><option value="">すべて</option></select></div>
-        <div id="diag-newpm-wrap" style="display:none;">
-          <label>夕刊コース基準</label>
-          <select id="diag-newpm" onchange="diagFilter()">
-            <option value="current">現コース (5月運用)</option>
-            <option value="new">新コース (6月以降プレビュー)</option>
-          </select>
-        </div>
       </div>
       <div id="diag-summary" style="margin-bottom:12px;color:var(--text-sub);font-size:13px;"></div>
       <div id="diag-content"></div>
