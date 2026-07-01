@@ -416,6 +416,29 @@ Deno.serve(async(req:Request)=>{
       return jsonResp({success:true, dry_run:dryRun, only_zero:onlyZero, updated:data.length, skipped:{kodate:skipKodate,kawagoe:skipKw,confirmed:skipConf,effective:skipEff,noRate,nonzero:skipNonzero}, sample});
     }
 
+    // ── 会計ツール連携: 確定売上を営業所別に合算して返す (支払計算書の東京即売売上を自動入力) ──
+    //   x-sync-secret(SYNC_SECRET) または admin_password でゲート。会計側は grand_total(税抜)合計を営業所別に受け取る。
+    if(action==='confirmed_sales_by_area'){
+      const cronSecret = req.headers.get('x-sync-secret') || '';
+      const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
+      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      const ym = normalizeYM(year_month);
+      if(!ym) return jsonResp({error:'year_month required'},400);
+      const token = await getAccessToken();
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A2:P5000`,{headers:{'Authorization':`Bearer ${token}`}});
+      const rows=(await resp.json()).values||[];
+      // (ym,area,course) の最新行のみ採用 (get_confirmed_sales と同じ重複排除)
+      const dedup=new Map<string,{area:string;grand:number;atMs:number}>();
+      rows.forEach((r:string[])=>{
+        if(normalizeYM(r[0])!==ym) return; const area=(r[1]||'').trim(); const course=(r[2]||'').trim(); if(!area||!course) return;
+        const atMs=parseAtMs(r[6]||''); const k=`${area}|${course}`; const ex=dedup.get(k);
+        if(!ex||atMs>=ex.atMs) dedup.set(k,{area,grand:Number(r[3])||0,atMs});
+      });
+      const byArea:Record<string,number>={};
+      dedup.forEach(v=>{ byArea[v.area]=(byArea[v.area]||0)+v.grand; });
+      return jsonResp({year_month:ym, by_area:byArea});
+    }
+
     // ---- 以下はトークン必須 ----
     const claims = await verifyToken(auth_token);
     if (!claims) return authErr();
