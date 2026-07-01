@@ -5695,7 +5695,14 @@ function invGenerate(){
   const from=document.getElementById('inv-gen-from').value;
   const to=document.getElementById('inv-gen-to').value;
   if(!staff||!from||!to){alert('スタッフと期間を指定してください');return;}
-  const filtered=invWork.filter(w=>w.staff===staff&&w.date&&w.date.replace(/\//g,'-')>=from&&w.date.replace(/\//g,'-')<=to);
+  const filtered=invWork.filter(w=>w.staff===staff&&w.date&&w.date.replace(/\//g,'-')>=from&&w.date.replace(/\//g,'-')<=to)
+    // 明細を日付昇順に統一 (同日内は 区分 → row_number)。稼働記録一覧・一括作成と同じ並び。
+    .sort((a,b)=>{
+      const da=(a.date||'').replace(/\//g,'-'),db=(b.date||'').replace(/\//g,'-');
+      if(da!==db)return da.localeCompare(db);
+      if((a.category||'')!==(b.category||''))return (a.category||'').localeCompare(b.category||'');
+      return (a.row_number||0)-(b.row_number||0);
+    });
   if(!filtered.length){alert('該当する稼働データがありません');return;}
   const total=filtered.reduce((s,w)=>s+Number(w.amount||0),0);
   const t=invTaxInfo(staff,total);
@@ -5742,7 +5749,12 @@ function invGenerateAll(){
   if(invIsAdmin){ names=[...new Set(invWork.filter(inP).map(w=>w.staff).filter(Boolean))]; }
   else if(invCanManageCompany()){ names=invOwnerScopeNames(); }
   else { names=invStaffName?[invStaffName]:[]; }
-  const cmpDate=(a,b)=>(a.date||'').replace(/\//g,'-').localeCompare((b.date||'').replace(/\//g,'-'));
+  const cmpDate=(a,b)=>{
+    const da=(a.date||'').replace(/\//g,'-'),db=(b.date||'').replace(/\//g,'-');
+    if(da!==db)return da.localeCompare(db);
+    if((a.category||'')!==(b.category||''))return (a.category||'').localeCompare(b.category||'');
+    return (a.row_number||0)-(b.row_number||0);
+  };
   const groups=names.map(name=>{
     const recs=invWork.filter(w=>w.staff===name&&inP(w)).slice().sort(cmpDate);
     return {name,recs,total:recs.reduce((s,w)=>s+Number(w.amount||0),0)};
@@ -5846,8 +5858,14 @@ async function invConfirmSave(staff,from,to,total){
   if(!confirm(`${staff}の請求書（¥${total.toLocaleString()}）を確定・保存しますか？`))return;
   const btn=document.getElementById('inv-confirm-btn');
   btn.textContent='保存中...';btn.disabled=true;
-  // 該当期間のデータを取得
-  const filtered=invWork.filter(w=>w.staff===staff&&w.date&&w.date.replace(/\//g,'-')>=from&&w.date.replace(/\//g,'-')<=to);
+  // 該当期間のデータを取得 (プレビューと同じ日付昇順で保存PDFに渡す)
+  const filtered=invWork.filter(w=>w.staff===staff&&w.date&&w.date.replace(/\//g,'-')>=from&&w.date.replace(/\//g,'-')<=to)
+    .sort((a,b)=>{
+      const da=(a.date||'').replace(/\//g,'-'),db=(b.date||'').replace(/\//g,'-');
+      if(da!==db)return da.localeCompare(db);
+      if((a.category||'')!==(b.category||''))return (a.category||'').localeCompare(b.category||'');
+      return (a.row_number||0)-(b.row_number||0);
+    });
   const subtotal=filtered.reduce((s,w)=>s+Number(w.amount||0),0);
   const tx=invTaxInfo(staff,subtotal);
   try{
