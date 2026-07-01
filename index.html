@@ -913,9 +913,10 @@ tbody tr:hover { background:var(--primary-light); }
           <div style="font-weight:700;font-size:13px;color:#15803d;">➕ コース追加</div>
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">朝刊コース名 (A列)</label><input type="text" id="adm-yobi-add-am" placeholder="例: 城北24" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:130px;"></div>
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">夕刊コース名 (J列・任意)</label><input type="text" id="adm-yobi-add-pm" placeholder="夕刊があれば" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:130px;"></div>
+          <div><label style="font-size:11px;color:var(--text-sub);display:block;">開始日 (当月から追加時)</label><input type="date" id="adm-yobi-add-start" title="この日より前の当月シフトは空欄にします。空なら月初から。" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;"></div>
           <button onclick="admYobiAddCourse('next')" style="background:#16a34a;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="早見表に追加。新規月作成で来月から反映">📅 次月から追加</button>
           <button onclick="admYobiAddCourse('current')" style="background:#2563eb;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="早見表に追加＋当月シフトにも即反映(黒塗り自動)">🗓 当月から追加</button>
-          <div style="font-size:11px;color:var(--text-sub);max-width:340px;line-height:1.5;"><b>次月から</b>=早見表に追加（新規月作成で反映）。<b>当月から</b>=当月シートにも即追加＋非稼働日を黒塗り。担当者は早見表グリッドで入力・💾保存 → 当月に担当者も入れるなら保存後もう一度「当月から追加」。黒塗り精度には「マスタ」R列登録も必要。</div>
+          <div style="font-size:11px;color:var(--text-sub);max-width:340px;line-height:1.5;"><b>次月から</b>=早見表に追加（新規月作成で反映）。<b>当月から</b>=当月シートにも即追加＋非稼働日を黒塗り。<b>開始日より前は空欄</b>（途中開始のコースに対応）。担当者は早見表で入力・💾保存 → 保存後もう一度「当月から追加」で当月にも担当者。黒塗り精度には「マスタ」R列登録も必要。</div>
         </div>
         <div id="adm-yobi-msg" style="margin-top:8px;font-size:13px;color:var(--text-sub);"></div>
         <div id="adm-yobi-content" style="margin-top:12px;overflow:auto;max-height:75vh;border:1px solid var(--border);border-radius:8px;background:#fff;"></div>
@@ -9438,6 +9439,9 @@ async function admYobiInit(force){
     const j=await r.json();
     if(j.error)throw new Error(j.error);
     admYobiState={rows:(j.rows||[]).map(row=>row.slice()),dirty:new Map(),loaded:true};
+    // 「当月から追加」の開始日デフォルト=今日 (未設定時のみ)
+    const stEl=document.getElementById('adm-yobi-add-start');
+    if(stEl&&!stEl.value){const d=new Date();stEl.value=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
     msg.textContent=`✓ 読み込み完了 (${admYobiState.rows.length}行)`;msg.style.color='#16a34a';
     setTimeout(()=>{const m=document.getElementById('adm-yobi-msg');if(m&&m.textContent.startsWith('✓'))m.textContent='';},2000);
     admYobiUpdateBadge();
@@ -9544,8 +9548,12 @@ async function admYobiAddCourse(scope){
       const cont=document.getElementById('adm-yobi-content');if(cont)cont.scrollTop=cont.scrollHeight;
     }
     if(scope==='current'){
+      const startDate=(document.getElementById('adm-yobi-add-start')||{}).value||'';
+      const now=new Date();const curSheet=`${now.getMonth()+1}月シフト${now.getFullYear()}`;
+      const startMsg=startDate?`開始日 ${startDate.replace(/-/g,'/')}（それ以前は空欄）`:'月初から';
+      if(!window.confirm(`「${curSheet}」に ${names.join(', ')} を当月反映します。\n${startMsg}\n\n早見表の担当者を展開し非稼働日は黒塗りします。続行?`))return;
       msg.textContent='当月シフトへ反映中...';msg.style.color='#3b82f6';
-      const res=await admYobiReflectCoursesToMonth(names);
+      const res=await admYobiReflectCoursesToMonth(names,startDate);
       let note=`✓ ${res.sheetName} に当月反映: ${res.done.join(', ')||'(なし)'}`;
       if(res.updated.length)note+=`（既存行を更新: ${res.updated.join(', ')}）`;
       if(res.skipped.length)note+=` / 対象外: ${res.skipped.join(', ')}`;
@@ -9564,8 +9572,9 @@ async function admYobiAddCourse(scope){
 
 // 早見表の指定コースを「当月シフト」シートの Section 1 へ update-or-insert (担当者展開 + 黒塗り自動)。
 // 既存行があれば上書き更新(担当者の入れ直しに対応)、無ければ末尾コース直後に追記。他コース行は触らない。
-async function admYobiReflectCoursesToMonth(courseNames){
+async function admYobiReflectCoursesToMonth(courseNames,startDate){
   courseNames=[...new Set((courseNames||[]).map(s=>String(s||'').trim()).filter(Boolean))];
+  startDate=(startDate||'').trim(); // 'YYYY-MM-DD' 空なら月初から
   const now=new Date();
   const year=now.getFullYear(),month=now.getMonth()+1;
   const sheetName=`${month}月シフト${year}`;
@@ -9579,13 +9588,15 @@ async function admYobiReflectCoursesToMonth(courseNames){
   const dates=[];
   for(let c=1;c<dateRow.length;c++){
     const v=String(dateRow[c]||'').trim();const mm=v.match(/^(\d{1,2})\/(\d{1,2})$/);
-    if(mm){const dd=Number(mm[2]);const dow=new Date(year,Number(mm[1])-1,dd).getDay();dates.push({day:dd,js:dow});}
+    if(mm){const M=Number(mm[1]),D=Number(mm[2]);const dow=new Date(year,M-1,D).getDay();
+      const ymd=`${year}-${String(M).padStart(2,'0')}-${String(D).padStart(2,'0')}`;
+      dates.push({day:D,js:dow,ymd});}
   }
   if(!dates.length)throw new Error('当月シートの日付行を認識できませんでした');
   const numCols=1+dates.length*2;const colEnd=admSeColLabel(numCols-1);
   let lastCourse=6;
   for(let i=7;i<Math.min(116,rows.length);i++){ if(String((rows[i]||[])[0]||'').trim())lastCourse=i; }
-  const done=[],updated=[],skipped=[],noMaster=[],blackCells=[];
+  const done=[],updated=[],skipped=[],noMaster=[],blackCells=[],whiteCells=[];
   for(const name of courseNames){
     // 既存行を探す (update-or-insert)
     let target=-1;
@@ -9594,8 +9605,14 @@ async function admYobiReflectCoursesToMonth(courseNames){
     if(!isUpdate){ if(lastCourse+1>=116){skipped.push(name+'(Section1に空きなし)');continue;} target=lastCourse+1; }
     const req=reqs[name];const am=amMap[name]||{},pm=pmMap[name]||{};
     const rowArr=new Array(numCols).fill('');rowArr[0]=name;
-    dates.forEach(({day,js},i)=>{
+    dates.forEach(({day,js,ymd},i)=>{
       const amCol=1+i*2,pmCol=2+i*2;
+      // 開始日より前は空欄 (担当者なし・黒塗りなし・白で塗り直し)
+      if(startDate&&ymd<startDate){
+        rowArr[amCol]='';rowArr[pmCol]='';
+        whiteCells.push({row:target,col:amCol},{row:target,col:pmCol});
+        return;
+      }
       rowArr[amCol]=am[js]||'';rowArr[pmCol]=pm[js]||'';
       if(req){
         if(!req.am)blackCells.push({row:target,col:amCol});
@@ -9614,6 +9631,11 @@ async function admYobiReflectCoursesToMonth(courseNames){
     if(!isUpdate)lastCourse=target; // 追記した分を次コースの基準に
     if(!req)noMaster.push(name);
     (isUpdate?updated:done).push(name);
+  }
+  // 開始日前セルは白(無地)に戻す → 黒塗り適用 の順 (同一セルが両方に入らない前提)
+  if(whiteCells.length){
+    const wr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:sheetName,cells:whiteCells,bg:{red:1,green:1,blue:1}})});
+    const wj=await wr.json();if(wj.error)throw new Error(wj.error);
   }
   if(blackCells.length){
     const fr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:sheetName,cells:blackCells,bg:{red:0,green:0,blue:0}})});
