@@ -655,6 +655,11 @@ tbody tr:hover { background:var(--primary-light); }
             <div><label style="font-size:12px;color:var(--text-sub);display:block;">発行元 会社名</label><input type="text" id="btob-company" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
             <div><label style="font-size:12px;color:var(--text-sub);display:block;">登録番号（適格請求書 T番号・任意）</label><input type="text" id="btob-regno" placeholder="例: T1234567890123" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
             <div><label style="font-size:12px;color:var(--text-sub);display:block;">振込先など（任意・複数行可）</label><textarea id="btob-bank" rows="2" placeholder="例: ◯◯銀行 ◯◯支店 普通 1234567 カ)ネルテック" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;resize:vertical;"></textarea></div>
+            <div><label style="font-size:12px;color:var(--text-sub);display:block;">担当（任意）</label><input type="text" id="btob-staff" placeholder="例: 株式会社NELTEC 小林 雄太" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+            <div style="display:flex;gap:10px;">
+              <div style="flex:1;"><label style="font-size:12px;color:var(--text-sub);display:block;">締日</label><input type="date" id="btob-shime" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+              <div style="flex:1;"><label style="font-size:12px;color:var(--text-sub);display:block;">入金期限</label><input type="date" id="btob-due" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+            </div>
             <label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input type="checkbox" id="btob-tax" checked> 消費税10%を外税で加算する（登録番号あり=適格）</label>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
@@ -12139,11 +12144,17 @@ async function admBillBtoB(){
     areas.forEach(area=>{const t=admBillComputeAreaTotal(area,monthVal,records,cols);grand+=t.grand;courses+=t.courses;confirmedCnt+=t.confirmedCnt;});
     const [y,m]=monthVal.split('-').map(Number);const reiwa=y-2018;
     admBillBtoBCtx={grand,monthVal,y,m,reiwa,courses,confirmedCnt};
-    document.getElementById('btob-client').value=localStorage.getItem('sm_btob_client')||'';
-    document.getElementById('btob-subject').value=`新聞配送業務委託料 令和${reiwa}年${m}月分`;
+    const ymd=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const shime=new Date(y,m,0);       // 請求月の末日
+    const due=new Date(y,m+1,0);       // 翌月末日 = 入金期限
+    document.getElementById('btob-client').value=localStorage.getItem('sm_btob_client')||'株式会社東京即売';
+    document.getElementById('btob-subject').value=`R${reiwa}年${m}月分請求書`;
     document.getElementById('btob-company').value=localStorage.getItem('sm_btob_company')||'株式会社NELTEC';
-    document.getElementById('btob-regno').value=localStorage.getItem('sm_btob_regno')||'';
-    document.getElementById('btob-bank').value=localStorage.getItem('sm_btob_bank')||'';
+    document.getElementById('btob-regno').value=localStorage.getItem('sm_btob_regno')||'T8011601022911';
+    document.getElementById('btob-bank').value=localStorage.getItem('sm_btob_bank')||'(1356)巣鴨信用金庫 (009)練馬支店 普通預金 3211674 株式会社NELTEC 代表取締役吉田希';
+    document.getElementById('btob-staff').value=localStorage.getItem('sm_btob_staff')||'株式会社NELTEC 小林 雄太';
+    document.getElementById('btob-shime').value=ymd(shime);
+    document.getElementById('btob-due').value=ymd(due);
     document.getElementById('btob-tax').checked=(localStorage.getItem('sm_btob_tax')!=='0');
     document.getElementById('btob-total-preview').textContent=`税抜 ¥${grand.toLocaleString()}（${confirmedCnt}/${courses}コース確定）`;
     document.getElementById('sm-btob-modal').style.display='flex';
@@ -12157,10 +12168,14 @@ function admBillBtoBGenerate(){
   const company=(document.getElementById('btob-company').value||'').trim()||'株式会社NELTEC';
   const regno=(document.getElementById('btob-regno').value||'').trim();
   const bank=(document.getElementById('btob-bank').value||'').trim();
+  const staff=(document.getElementById('btob-staff').value||'').trim();
+  const shime=(document.getElementById('btob-shime').value||'').trim();
+  const due=(document.getElementById('btob-due').value||'').trim();
   const addTax=document.getElementById('btob-tax').checked;
   localStorage.setItem('sm_btob_client',client);localStorage.setItem('sm_btob_company',company);
   localStorage.setItem('sm_btob_regno',regno);localStorage.setItem('sm_btob_bank',bank);
-  localStorage.setItem('sm_btob_tax',addTax?'1':'0');
+  localStorage.setItem('sm_btob_staff',staff);localStorage.setItem('sm_btob_tax',addTax?'1':'0');
+  const jd=s=>{const m2=(s||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);return m2?`${m2[1]}/${m2[2]}/${m2[3]}`:'';};
   const sub=ctx.grand,tax=addTax?Math.floor(sub*0.1):0,total=sub+tax,inclTax=addTax?0:Math.floor(sub*10/110);
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const bankHtml=bank?`<div style="margin-top:14px;padding:10px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;"><b>お振込先</b><br>${esc(bank).replace(/\n/g,'<br>')}</div>`:'';
@@ -12168,7 +12183,7 @@ function admBillBtoBGenerate(){
   h+=`<div style="text-align:center;margin-bottom:24px;"><h2 style="font-size:24px;margin:0;border-bottom:3px double #1e293b;display:inline-block;padding-bottom:4px;">請 求 書</h2></div>`;
   h+=`<div style="display:flex;justify-content:space-between;margin-bottom:20px;">`;
   h+=`<div style="min-width:260px;"><p style="font-size:18px;font-weight:bold;border-bottom:1px solid #1e293b;padding-bottom:2px;">${esc(client)} 御中</p></div>`;
-  h+=`<div style="text-align:right;font-size:13px;"><p style="font-size:16px;font-weight:bold;color:#1e293b;margin:0 0 4px;">${esc(company)}</p>${regno?`<p style="color:var(--text-sub);margin:0;">登録番号: ${esc(regno)}</p>`:''}<p style="color:var(--text-sub);margin:2px 0 0;">請求日: ${new Date().toLocaleDateString('ja-JP')}</p><p style="color:var(--text-sub);margin:0;">請求対象: 令和${ctx.reiwa}年${ctx.m}月分</p></div>`;
+  h+=`<div style="text-align:right;font-size:13px;"><p style="font-size:16px;font-weight:bold;color:#1e293b;margin:0 0 4px;">${esc(company)}</p>${regno?`<p style="color:var(--text-sub);margin:0;">登録番号: ${esc(regno)}</p>`:''}<p style="color:var(--text-sub);margin:2px 0 0;">請求日: ${new Date().toLocaleDateString('ja-JP')}</p><p style="color:var(--text-sub);margin:0;">請求対象: 令和${ctx.reiwa}年${ctx.m}月分</p>${shime?`<p style="color:var(--text-sub);margin:0;">締日: ${jd(shime)}</p>`:''}${due?`<p style="color:var(--text-sub);margin:0;">入金期限: ${jd(due)}</p>`:''}${staff?`<p style="color:var(--text-sub);margin:2px 0 0;">担当: ${esc(staff)}</p>`:''}</div>`;
   h+=`</div>`;
   h+=`<div style="background:#f1f5f9;border-radius:8px;padding:16px;text-align:center;margin-bottom:20px;"><p style="font-size:14px;color:var(--text-sub);margin:0;">ご請求金額（税込）${addTax?' <span style="color:#0d9488;font-size:11px;">適格・外税</span>':' <span style="color:var(--text-sub);font-size:11px;">内税</span>'}</p><p style="font-size:28px;font-weight:bold;color:var(--primary);margin:4px 0 0;">¥${total.toLocaleString()}</p></div>`;
   h+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #dde1e8;text-align:left;">摘要</th><th style="padding:8px;border:1px solid #dde1e8;width:70px;">数量</th><th style="padding:8px;border:1px solid #dde1e8;text-align:right;width:150px;">金額</th></tr></thead><tbody>`;
