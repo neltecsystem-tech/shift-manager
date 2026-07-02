@@ -5467,7 +5467,7 @@ function invShowAdd(){
   const today=new Date().toISOString().slice(0,10);
   document.getElementById('inve-date').value=today;
   document.getElementById('inve-date').max=today;
-  const canPickStaff=invIsAdmin||invIsCorpOwner();
+  const canPickStaff=invIsAdmin||invCanManageCompany();
   // 管理者: 空欄スタート / オーナー: 自分をデフォ / 一般: 自分で固定
   document.getElementById('inve-staff').value=invIsAdmin?'':invStaffName;
   document.getElementById('inve-staff').disabled=!canPickStaff;
@@ -5490,7 +5490,8 @@ function invEditWork(rowNum){
   document.getElementById('inve-row').value=rowNum;
   document.getElementById('inve-date').value=(w.date||'').replace(/\//g,'-');
   document.getElementById('inve-staff').value=w.staff;
-  document.getElementById('inve-staff').disabled=!(invIsAdmin||invIsCorpOwner());
+  // 管理者 / 法人オーナー / 会計担当(金額表示ON配下) は配下メンバーへスタッフ名を変更可
+  document.getElementById('inve-staff').disabled=!(invIsAdmin||invCanManageCompany());
   document.getElementById('inve-course').value=w.course;
   invCatSel=w.category||'朝刊';invRenderCatBtns();
   document.getElementById('inve-start').value=w.start_time;
@@ -5509,6 +5510,21 @@ async function invSaveWork(){
   const date=document.getElementById('inve-date').value;
   const staff=document.getElementById('inve-staff').value;
   if(!date||!staff){alert('日付とスタッフは必須です');return;}
+  // 二重計上を防止: 同じ スタッフ+日付+区分+コース の稼働が既にあれば登録不可 (編集中の行は除外)
+  const courseVal=document.getElementById('inve-course').value||'';
+  const editingRow=document.getElementById('inve-row').value?parseInt(document.getElementById('inve-row').value):null;
+  const ncourse=s=>String(s||'').replace(/[\s　]+/g,'').trim();
+  const dup=invWork.find(w=>
+    (!editingRow||w.row_number!==editingRow)&&
+    invNormName(w.staff)===invNormName(staff)&&
+    (w.date||'').replace(/\//g,'-')===date&&
+    invMapCat(w.category)===invMapCat(invCatSel)&&
+    ncourse(w.course)===ncourse(courseVal)
+  );
+  if(dup){
+    alert(`⚠ 二重計上を防止しました。\n\n同じ内容の稼働記録が既にあります:\n${dup.date} ${dup.staff} / ${dup.category} / ${dup.course||'(コース無し)'}\n\nこのままでは登録できません。既存の記録を修正するか、内容(コース・区分)を変えてください。`);
+    return;
+  }
   // シフトと区分がズレていたら登録前に確認 (庫内含む)
   const expCats=invShiftExpectedCats(staff,date);
   if(expCats.size&&!expCats.has(invCatSel)){

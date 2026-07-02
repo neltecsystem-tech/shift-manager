@@ -132,6 +132,15 @@ function parseWork(rows: string[][]) {
   return rows.map((r:string[],i:number)=>({row_number:i+2,date:r[0]||'',staff:r[1]||'',course:r[2]||'',category:r[3]||'',start_time:r[4]||'',end_time:r[5]||'',quantity:r[6]||'',unit_price:r[7]||'',amount:r[8]||'',confirmed:r[9]||''})).filter((r:any)=>r.date||r.staff);
 }
 
+// 二重計上判定キー: スタッフ+日付+区分+コースを正規化して結合 (空白除去/日付-統一/区分の表記ゆれ吸収)
+function workDupKey(rec: {staff?:string;date?:string;category?:string;course?:string}): string {
+  const norm=(s?:string)=>String(s||'').replace(/[\s　]+/g,'').trim();
+  const ndate=(s?:string)=>String(s||'').replace(/\//g,'-');
+  const c=String(rec.category||'');
+  const ncat = (c.includes('庫内')&&c.includes('夕')) ? '庫内夕刊' : c.includes('庫内') ? '庫内朝刊' : (c.includes('夕')||c.includes('競馬')) ? '夕刊/競馬' : '朝刊';
+  return `${norm(rec.staff)}|${ndate(rec.date)}|${ncat}|${norm(rec.course)}`;
+}
+
 function normalizeYM(v: any): string {
   if (v == null || v === '') return '';
   const s = String(v).trim();
@@ -619,6 +628,14 @@ Deno.serve(async(req:Request)=>{
         const scope = await getScopeNames();
         if(!scope.has(record.staff||'')) return forbid('権限のないスタッフの稼働は追加できません');
       }
+      // 二重計上防止: 同 スタッフ+日付+区分+コース が既にあれば拒否
+      {
+        const exResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+        const exWork=parseWork((await exResp.json()).values||[]);
+        const key=workDupKey(record);
+        const dup=exWork.find((w:any)=>workDupKey(w)===key);
+        if(dup) return jsonResp({error:`二重計上: 同じ稼働(${dup.date} ${dup.staff} / ${dup.category} / ${dup.course||'コース無し'})が既に登録されています`, code:'DUPLICATE'}, 409);
+      }
       const row=[record.date||'',record.staff||'',record.course||'',record.category||'',record.start_time||'',record.end_time||'',record.quantity||'',record.unit_price||'',record.amount||'',''];
       await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A1:J1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});
       return jsonResp({success:true});
@@ -635,6 +652,14 @@ Deno.serve(async(req:Request)=>{
         if(cv[9]) return jsonResp({error:'確定済みの記録は編集できません'}, 403);
         // 書き換え後の staff も scope 内に限る (オーナーが配下↔配下/自分↔配下 への移動はOK)
         if(record.staff && !scope.has(record.staff)) return forbid('権限のないスタッフへ変更できません');
+      }
+      // 二重計上防止: 変更後の内容が「別の行」と重複するなら拒否 (自分の行への上書きはOK)
+      {
+        const exResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+        const exWork=parseWork((await exResp.json()).values||[]);
+        const key=workDupKey({staff:record.staff||callerName,date:record.date,category:record.category,course:record.course});
+        const dup=exWork.find((w:any)=>w.row_number!==Number(row_number)&&workDupKey(w)===key);
+        if(dup) return jsonResp({error:`二重計上: 同じ稼働(${dup.date} ${dup.staff} / ${dup.category} / ${dup.course||'コース無し'})が既に登録されています`, code:'DUPLICATE'}, 409);
       }
       const row=[record.date||'',record.staff||callerName,record.course||'',record.category||'',record.start_time||'',record.end_time||'',record.quantity||'',record.unit_price||'',record.amount||''];
       await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A${row_number}:I${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});
