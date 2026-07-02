@@ -16041,6 +16041,14 @@ async function sysDoLogin(){
   msrAuthed=true;msrStaffName=sysUserName;
   // 請求書もログイン済みにする
   invAuthed=true;invIsAdmin=false;invStaffName=sysUserName;
+  // admin/all 権限のスタッフ(小林さん等)は請求書も「管理者ビュー=全スタッフ閲覧」にする。
+  // → システム確認のたびに管理者アカウントへログインし直す手間をなくす。
+  // サーバ側権限判定のため、請求書の管理者トークンを裏で取得してから全データ読込。
+  if(perms.includes('all')||perms.includes('admin')){
+    invServerAdminLogin(INV_PW).then(r=>{
+      if(r&&r.success){ invIsAdmin=true; invStaffName=''; invLoadAll(); }
+    }).catch(()=>{});
+  }
   init();
   if(smAuthed)smPrefetch(); // 店舗マスタ権限があれば裏で先読み(開いた瞬間に表示できるように)
 }
