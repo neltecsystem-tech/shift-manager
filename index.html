@@ -394,7 +394,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="inv-work-view">
         <div class="filters">
           <div><label>月</label><input type="month" id="inv-month" onchange="invFilterWork()"></div>
-          <div class="inv-admin-only" style="display:none;"><label>スタッフ</label><select id="inv-staff-filter" onchange="invFilterWork()"><option value="">すべて</option></select></div>
+          <div class="inv-admin-only" style="display:none;"><label>スタッフ</label><input type="search" id="inv-staff-filter" list="inv-staff-filter-dl" placeholder="全員 / 名前で検索" autocomplete="off" oninput="invFilterWork()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px;min-width:180px;"><datalist id="inv-staff-filter-dl"></datalist></div>
         </div>
         <div id="inv-work-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
         <div class="table-wrap" id="inv-work-table"></div>
@@ -402,7 +402,7 @@ tbody tr:hover { background:var(--primary-light); }
       <!-- 請求書生成ビュー -->
       <div id="inv-gen-view" style="display:none;">
         <div class="filters">
-          <div class="inv-admin-only" style="display:none;"><label>スタッフ</label><select id="inv-gen-staff"><option value="">選択</option></select></div>
+          <div class="inv-admin-only" style="display:none;"><label>スタッフ</label><input type="search" id="inv-gen-staff" list="inv-gen-staff-dl" placeholder="名前で検索" autocomplete="off" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px;min-width:180px;"><datalist id="inv-gen-staff-dl"></datalist></div>
           <div id="inv-gen-staff-label" style="display:none;"><label style="font-size:12px;color:var(--text-sub)">スタッフ</label><p style="font-weight:bold;font-size:14px;margin-top:4px;" id="inv-gen-staff-name"></p></div>
           <div><label>開始日</label><input type="date" id="inv-gen-from"></div>
           <div><label>終了日</label><input type="date" id="inv-gen-to"></div>
@@ -5016,13 +5016,19 @@ function invApplyUI(){
     names=invStaffName?[invStaffName]:[];
   }
   if(!invIsAdmin&&invStaffName&&!names.includes(invStaffName))names.unshift(invStaffName);
-  ['inve-staff','inv-staff-filter','inv-gen-staff'].forEach(id=>{
-    const sel=document.getElementById(id);if(!sel)return;
-    const defaultVal=(!canScope&&invStaffName&&id==='inve-staff')?invStaffName:'';
-    const val=sel.value||defaultVal;
-    sel.innerHTML=(id==='inve-staff'||id==='inv-gen-staff'?'<option value="">選択</option>':'<option value="">すべて</option>')+names.map(n=>`<option${n===val?' selected':''}>${n}</option>`).join('');
-    if(!canScope&&invStaffName&&id==='inve-staff'){sel.value=invStaffName;sel.disabled=true;}
-    else{sel.disabled=false;}
+  // 稼働入力モーダルの inve-staff は select のまま(本人ロックあり)
+  const seSel=document.getElementById('inve-staff');
+  if(seSel){
+    const defaultVal=(!canScope&&invStaffName)?invStaffName:'';
+    const val=seSel.value||defaultVal;
+    seSel.innerHTML='<option value="">選択</option>'+names.map(n=>`<option${n===val?' selected':''}>${n}</option>`).join('');
+    if(!canScope&&invStaffName){seSel.value=invStaffName;seSel.disabled=true;}else{seSel.disabled=false;}
+  }
+  // 稼働記録フィルタ / 請求書作成 は入力+datalist(名前で検索可)。候補だけ更新し入力値は保持。
+  const esc=s=>String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  [['inv-staff-filter','inv-staff-filter-dl'],['inv-gen-staff','inv-gen-staff-dl']].forEach(([id,dlId])=>{
+    const inp=document.getElementById(id),dl=document.getElementById(dlId);if(!inp||!dl)return;
+    dl.innerHTML=names.map(n=>`<option value="${esc(n)}"></option>`).join('');
   });
 }
 
@@ -5075,10 +5081,14 @@ function invSetTab(t){
 
 function invFilterWork(){
   const month=document.getElementById('inv-month').value;
-  const staff=document.getElementById('inv-staff-filter').value;
+  const staff=(document.getElementById('inv-staff-filter').value||'').trim();
   let filtered=invWork;
   if(month)filtered=filtered.filter(w=>(w.date||'').replace(/\//g,'-').startsWith(month));
-  if(staff)filtered=filtered.filter(w=>w.staff===staff);
+  // 完全一致優先、なければ部分一致(名前の一部入力でも絞れる)
+  if(staff){
+    const exact=filtered.filter(w=>w.staff===staff);
+    filtered=exact.length?exact:filtered.filter(w=>(w.staff||'').includes(staff));
+  }
   // 日付昇順 + 同日内は スタッフ → 区分 → row_number でソート
   filtered=[...filtered].sort((a,b)=>{
     const da=(a.date||'').replace(/\//g,'-');
