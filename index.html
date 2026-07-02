@@ -5464,7 +5464,8 @@ function invCalcAmount(){
 
 function invShowAdd(){
   document.getElementById('inve-row').value='';
-  const today=new Date().toISOString().slice(0,10);
+  const _n=new Date();// JST(ローカル)基準の今日。UTCだと早朝に前日扱いになるため
+  const today=`${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`;
   document.getElementById('inve-date').value=today;
   document.getElementById('inve-date').max=today;
   const canPickStaff=invIsAdmin||invCanManageCompany();
@@ -5510,9 +5511,22 @@ async function invSaveWork(){
   const date=document.getElementById('inve-date').value;
   const staff=document.getElementById('inve-staff').value;
   if(!date||!staff){alert('日付とスタッフは必須です');return;}
-  // 二重計上を防止: 同じ スタッフ+日付+区分+コース の稼働が既にあれば登録不可 (編集中の行は除外)
   const courseVal=document.getElementById('inve-course').value||'';
   const editingRow=document.getElementById('inve-row').value?parseInt(document.getElementById('inve-row').value):null;
+  // 当日分の解禁時刻 (新規登録のみ): 朝刊系=4:00 / 夕刊系=14:00
+  if(!editingRow){
+    const now=new Date();
+    const todayStr=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    if(date===todayStr){
+      const isPm=invCatSel==='夕刊/競馬'||invCatSel==='庫内夕刊';
+      const minH=isPm?14:4;
+      if(now.getHours()<minH){
+        alert(`⚠ 当日の${isPm?'夕刊':'朝刊'}は ${minH}:00 以降に登録できます。\n（現在 ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}）`);
+        return;
+      }
+    }
+  }
+  // 二重計上を防止: 同じ スタッフ+日付+区分+コース の稼働が既にあれば登録不可 (編集中の行は除外)
   const ncourse=s=>String(s||'').replace(/[\s　]+/g,'').trim();
   const dup=invWork.find(w=>
     (!editingRow||w.row_number!==editingRow)&&

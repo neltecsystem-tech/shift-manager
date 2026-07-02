@@ -628,6 +628,17 @@ Deno.serve(async(req:Request)=>{
         const scope = await getScopeNames();
         if(!scope.has(record.staff||'')) return forbid('権限のないスタッフの稼働は追加できません');
       }
+      // 当日分の解禁時刻 (JST): 朝刊系=4:00 / 夕刊系=14:00 より前は登録不可
+      {
+        const nowJst=new Date(Date.now()+9*3600*1000);
+        const jstToday=`${nowJst.getUTCFullYear()}-${String(nowJst.getUTCMonth()+1).padStart(2,'0')}-${String(nowJst.getUTCDate()).padStart(2,'0')}`;
+        const recDate=String(record.date||'').replace(/\//g,'-');
+        const isPm=String(record.category||'').includes('夕')||String(record.category||'').includes('競馬');
+        const minH=isPm?14:4;
+        if(recDate===jstToday && nowJst.getUTCHours()<minH){
+          return jsonResp({error:`当日の${isPm?'夕刊':'朝刊'}は${minH}:00以降に登録できます（現在 ${String(nowJst.getUTCHours()).padStart(2,'0')}時台/JST）`, code:'TOO_EARLY'},403);
+        }
+      }
       // 二重計上防止: 同 スタッフ+日付+区分+コース が既にあれば拒否
       {
         const exResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
