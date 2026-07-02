@@ -425,6 +425,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">スタッフ名 *</label><select id="inve-staff" onchange="invUpdateCourseSuggest();invCalcAmount()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">選択</option></select></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分 *</label><div style="display:flex;gap:6px;flex-wrap:wrap;" id="inve-cat-btns"></div></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">コース名</label><input type="text" id="inve-course" list="inve-course-dl" onchange="invCalcAmount()" oninput="invCalcAmount()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><datalist id="inve-course-dl"></datalist></div>
+        <div id="inve-shift-warn" style="display:none;margin-bottom:10px;padding:8px 10px;border-radius:8px;font-size:12px;background:#fef3c7;border:1px solid #f59e0b;color:#92400e;"></div>
         <div style="margin-bottom:10px;display:none;"><input type="hidden" id="inve-start"></div>
         <div style="margin-bottom:10px">
           <label style="font-size:12px;color:var(--text-sub)">終了時間</label><input type="time" id="inve-end" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;">
@@ -5123,18 +5124,11 @@ function invSetCat(c){invCatSel=c;invRenderCatBtns();invUpdateCourseSuggest();in
 
 
 
-function invUpdateCourseSuggest(){
-  const staff=document.getElementById('inve-staff').value;
-  const date=document.getElementById('inve-date').value;
-  const dl=document.getElementById('inve-course-dl');
-  const courseInput=document.getElementById('inve-course');
-  if(!staff||!date||!dl)return;
+// 指定スタッフ・日付のシフト上のコース (am/pm) を返す。庫内系もそのまま含む。
+function invShiftSlots(staff,date){
+  const am=[],pm=[];
+  if(!staff||!date)return {am,pm};
   const normStaff=invNormName(staff);
-  const amCourses=[];
-  const pmCourses=[];
-  const isAm=invCatSel==='朝刊'||invCatSel==='庫内朝刊';
-
-  // シフトデータから該当日・該当スタッフのコースを検索（名前の空白を無視して比較）
   Object.values(DB.shifts).forEach(areas=>{
     Object.values(areas).forEach(sh=>{
       const di=sh.dates.findIndex(d=>d.d===date);
@@ -5142,37 +5136,68 @@ function invUpdateCourseSuggest(){
       sh.entries.forEach(e=>{
         if(invNormName(e.course)!==normStaff)return;
         const a=e.a[di];if(!a)return;
-        if(a.am&&a.am!=='0'&&a.am!=='希望休')amCourses.push(a.am);
-        if(a.pm&&a.pm!=='0'&&a.pm!=='希望休')pmCourses.push(a.pm);
+        if(a.am&&a.am!=='0'&&a.am!=='希望休')am.push(a.am);
+        if(a.pm&&a.pm!=='0'&&a.pm!=='希望休')pm.push(a.pm);
       });
     });
   });
-
   // フォールバック: 曜日ベースのrosterからも取得
-  if(!amCourses.length&&!pmCourses.length){
-    const d=new Date(date);
-    const dw=['日','月','火','水','木','金','土'];
-    const td=dw[d.getDay()];
+  if(!am.length&&!pm.length){
+    const td=['日','月','火','水','木','金','土'][new Date(date).getDay()];
     DB.staff.forEach(s=>{
       if(invNormName(s.name)!==normStaff)return;
-      if(s.am[td])amCourses.push(s.am[td]);
-      if(s.pm[td])pmCourses.push(s.pm[td]);
+      if(s.am&&s.am[td])am.push(s.am[td]);
+      if(s.pm&&s.pm[td])pm.push(s.pm[td]);
     });
   }
+  return {am:[...new Set(am)],pm:[...new Set(pm)]};
+}
 
-  // 区分に応じたコースを選択
-  const courses=isAm?amCourses:pmCourses;
+// シフトのスロット(am/pm)とコース名から想定される区分。庫内はコース名で判定 → シフトから庫内も拾える。
+function invSlotCat(slot,courseVal){
+  const c=String(courseVal||'');
+  if(c.includes('庫内'))return slot==='pm'?'庫内夕刊':'庫内朝刊';
+  return slot==='pm'?'夕刊/競馬':'朝刊';
+}
+
+// シフト上、このスタッフ・日付で想定される区分の集合 (稼働記録と突合して区分ズレを検出)
+function invShiftExpectedCats(staff,date){
+  const {am,pm}=invShiftSlots(staff,date);
+  const set=new Set();
+  am.forEach(c=>set.add(invSlotCat('am',c)));
+  pm.forEach(c=>set.add(invSlotCat('pm',c)));
+  return set;
+}
+
+// シフトの区分と現在選択中の区分がズレていたら警告バナーを表示
+function invCheckShiftCat(){
+  const warn=document.getElementById('inve-shift-warn');if(!warn)return;
+  const staff=document.getElementById('inve-staff').value;
+  const date=document.getElementById('inve-date').value;
+  if(!staff||!date){warn.style.display='none';return;}
+  const exp=invShiftExpectedCats(staff,date);
+  if(!exp.size){warn.style.display='none';return;}// シフトに無い日は判定しない
+  if(exp.has(invCatSel)){warn.style.display='none';return;}
+  warn.innerHTML=`⚠ シフトではこの日「${[...exp].join('・')}」です。現在の区分「${invCatSel}」はシフトとズレている可能性があります。`;
+  warn.style.display='block';
+}
+
+function invUpdateCourseSuggest(){
+  const staff=document.getElementById('inve-staff').value;
+  const date=document.getElementById('inve-date').value;
+  const dl=document.getElementById('inve-course-dl');
+  const courseInput=document.getElementById('inve-course');
+  if(!staff||!date||!dl){invCheckShiftCat();return;}
+  const {am,pm}=invShiftSlots(staff,date);
+  const isAm=invCatSel==='朝刊'||invCatSel==='庫内朝刊';
+  const isKuchi=invCatSel==='庫内朝刊'||invCatSel==='庫内夕刊';
+  // 区分に応じたスロット + 庫内/通常でさらに絞る (庫内区分=庫内コースのみ / 通常区分=庫内以外)
+  const courses=(isAm?am:pm).filter(c=>isKuchi?c.includes('庫内'):!c.includes('庫内'));
   const unique=[...new Set(courses)];
   dl.innerHTML=unique.map(c=>`<option value="${c}">`).join('');
-
-  // コースを自動入力
-  if(unique.length===1){
-    courseInput.value=unique[0];
-  }else if(unique.length>1){
-    courseInput.value=unique[0]; // 最初の候補を入力、変更は手動で
-  }else{
-    courseInput.value='';
-  }
+  // コースを自動入力 (候補があれば先頭、無ければクリア)
+  courseInput.value=unique.length?unique[0]:'';
+  invCheckShiftCat();
 }
 
 // 特別単価を検索 (日付+氏名で一致)
@@ -5456,6 +5481,7 @@ function invShowAdd(){
   document.getElementById('inve-qty-wrap').style.display='none';
   document.getElementById('inve-money-wrap').style.display=invIsCorpSubStaff()?'none':'flex';
   document.getElementById('inve-submit').textContent='登録する';
+  const w0=document.getElementById('inve-shift-warn');if(w0)w0.style.display='none';
   document.getElementById('inv-work-modal').style.display='flex';
 }
 
@@ -5475,6 +5501,7 @@ function invEditWork(rowNum){
   document.getElementById('inve-money-wrap').style.display=invIsCorpSubStaff()?'none':'flex';
   document.getElementById('inve-submit').textContent='更新する';
   invCalcAmount();
+  invCheckShiftCat();
   document.getElementById('inv-work-modal').style.display='flex';
 }
 
@@ -5482,6 +5509,11 @@ async function invSaveWork(){
   const date=document.getElementById('inve-date').value;
   const staff=document.getElementById('inve-staff').value;
   if(!date||!staff){alert('日付とスタッフは必須です');return;}
+  // シフトと区分がズレていたら登録前に確認 (庫内含む)
+  const expCats=invShiftExpectedCats(staff,date);
+  if(expCats.size&&!expCats.has(invCatSel)){
+    if(!confirm(`⚠ シフトではこの日「${[...expCats].join('・')}」です。\n区分「${invCatSel}」で登録しますか？\n\n(シフトと違う区分で登録しようとしています)`))return;
+  }
   const btn=document.getElementById('inve-submit');btn.textContent='保存中...';btn.disabled=true;
   const rate=invRates.find(r=>r.name===staff);
   const d=new Date(date);const dow=d.getDay();
