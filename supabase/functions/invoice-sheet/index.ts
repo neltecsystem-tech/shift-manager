@@ -348,13 +348,28 @@ Deno.serve(async(req:Request)=>{
       const dryRun = !!body.dry_run;
       const onlyZero = body.only_zero !== false; // 既定true: 金額0の未計算行のみ補完(既存の非0金額は触らない=履歴保護)
       const token = await getAccessToken();
-      const [rRes, wRes, sRes] = await Promise.all([
+      const [rRes, wRes, sRes, kwOldRes, kwNewRes] = await Promise.all([
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:W200`,{headers:{'Authorization':`Bearer ${token}`}}),
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${token}`}}),
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A2:J5000`,{headers:{'Authorization':`Bearer ${token}`}}),
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${KAWAGOE_MASTER_SHEET_ID}/values/${encodeURIComponent(KAWAGOE_MASTER_SHEET_NAME)}!AN2:AV20`,{headers:{'Authorization':`Bearer ${token}`}}),
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${KAWAGOE_MASTER_SHEET_ID}/values/${encodeURIComponent(KAWAGOE_MASTER_SHEET_NAME)}!AN22:AV34`,{headers:{'Authorization':`Bearer ${token}`}}),
       ]);
       const rates = parseRates((await rRes.json()).values||[]);
       const work = parseWork((await wRes.json()).values||[]);
+      // 川越コース別単価マスタ (旧/新) を course→曜日単価 のMapに。朝刊のコース別自動単価に使う。
+      const dowKey = ['sun','mon','tue','wed','thu','fri','sat'];
+      const parseKwCourses = (rows:string[][]) => {
+        const m = new Map<string, any>();
+        (rows||[]).filter((r:string[])=>r[0]).forEach((r:string[])=>{
+          m.set(r[0], {mon:parseYenValue(r[2]),tue:parseYenValue(r[3]),wed:parseYenValue(r[4]),thu:parseYenValue(r[5]),fri:parseYenValue(r[6]),sat:parseYenValue(r[7]),sun:parseYenValue(r[8])});
+        });
+        return m;
+      };
+      const kwCourseMap: Record<string, Map<string,any>> = {
+        '旧': parseKwCourses((await kwOldRes.json()).values||[]),
+        '新': parseKwCourses((await kwNewRes.json()).values||[]),
+      };
       const rateByName = new Map<string,any>(rates.map((r:any)=>[r.name, r]));
       const nn = (s:string)=>String(s||'').replace(/[\s　]+/g,'').trim();
       // 特別単価を (日付|氏名) でインデックス化 (O(1)照合)
@@ -378,16 +393,22 @@ Deno.serve(async(req:Request)=>{
         const courseV = w.course||'';
         const isPm = cat==='夕刊/競馬'||cat==='庫内夕刊';
         const cType = isPm ? (rate.calc_type_pm||rate.calc_type) : rate.calc_type;
-        if(cType==='個建'){ skipKodate++; continue; }
-        if((rate.kw_pattern||'') && courseV.startsWith('川越')){ skipKw++; continue; }
+        if(cType==='個建'){ skipKodate++; continue; } // 個建は店舗マスタ依存のため引き続き対象外
         const d = new Date((w.date||'').replace(/\//g,'-')); const dow = d.getDay();
         let price = 0;
         if(cat==='朝刊'){
-          const kwD=(rate.kw_am_daily||'').split(','); const kwM=[6,0,1,2,3,4,5];
-          const kwP=kwD[kwM[dow]];
-          if(kwP) price=Number(kwP)||0;
-          else if(dow===0 && rate.am_sunday) price=Number(rate.am_sunday)||0;
-          else price=Number((dow>=1&&dow<=5)?rate.am_weekday:rate.am_weekend)||0;
+          // 川越パターン(旧/新)+コースが「川越」始まりなら、コース別曜日単価をマスタから自動適用 (入力時 invComputeRow と同一)
+          let kwCP = 0;
+          const kwPat = rate.kw_pattern||'';
+          if(kwPat && courseV.startsWith('川越')){ const fd = kwCourseMap[kwPat]?.get(courseV); if(fd) kwCP = Number(fd[dowKey[dow]])||0; }
+          if(kwCP){ price = kwCP; }
+          else{
+            const kwD=(rate.kw_am_daily||'').split(','); const kwM=[6,0,1,2,3,4,5];
+            const kwP=kwD[kwM[dow]];
+            if(kwP) price=Number(kwP)||0;
+            else if(dow===0 && rate.am_sunday) price=Number(rate.am_sunday)||0;
+            else price=Number((dow>=1&&dow<=5)?rate.am_weekday:rate.am_weekend)||0;
+          }
         } else if(cat==='夕刊/競馬'){ if(dow===0 && rate.pm_sunday) price=Number(rate.pm_sunday)||0; else price=Number((dow>=1&&dow<=4)?rate.pm_weekday:rate.pm_weekend)||0; }
         else if(cat==='庫内朝刊') price=Number(rate.warehouse_am)||0;
         else if(cat==='庫内夕刊') price=Number(rate.warehouse_pm)||0;
