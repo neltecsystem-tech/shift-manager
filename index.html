@@ -5804,9 +5804,10 @@ async function invSaveRate(){
     if(j>=0)invRates[j]={...invRates[j],...record};else invRates.push({...record});
   };
   applyLocal();
+  if(typeof admStaffInvalidate==='function')admStaffInvalidate();// 編集内容を反映するためキャッシュ破棄
   if(adminAuthed)adminRenderStaff();else invShowRates();
   // 背景で正確なデータへ同期 (Sheets 反映待ち)。反映が遅れても保存値を再マージしてブレを防ぐ
-  setTimeout(()=>{invLoadAll().then(()=>{applyLocal();if(adminAuthed)adminRenderStaff();else invShowRates();}).catch(()=>{});},1500);
+  setTimeout(()=>{invLoadAll().then(()=>{applyLocal();if(typeof admStaffInvalidate==='function')admStaffInvalidate();if(adminAuthed)adminRenderStaff();else invShowRates();}).catch(()=>{});},1500);
 }
 
 // 請求書生成
@@ -7012,20 +7013,36 @@ function adminFilterStaff(){adminRenderStaff();}
 
 // 抽出対象の営業所。null=未選択(一覧を描画しない=軽量) / '__all__'=全て / それ以外=営業所名
 let admStaffAreaSel=null;
+// 軽量化キャッシュ: 営業所マップ / 営業所リスト / 営業所ごとの描画済みHTML
+let _admAreaMapCache=null,_admAreaMapLen=-1;
+let _admAreaListCache=null,_admAreaListLen=-1;
+let _admStaffHtml={};// key: 営業所名 or '__all__' → 描画済みHTML (氏名検索時はキャッシュしない)
+// データが変わったらキャッシュ破棄 (保存・再取得時に呼ぶ)
+function admStaffInvalidate(){_admAreaMapCache=null;_admAreaListCache=null;_admStaffHtml={};}
 
-// 人員名簿(DB.staff) から スタッフ名(空白無視) → 営業所 のマップを作る
+// 人員名簿(DB.staff) から スタッフ名(空白無視) → 営業所 のマップを作る (キャッシュ)
 function admStaffAreaMap(){
+  const len=(DB.staff||[]).length;
+  if(_admAreaMapCache&&_admAreaMapLen===len)return _admAreaMapCache;
   const m={};
   (DB.staff||[]).forEach(s=>{const k=invNormName(s.name);if(k&&s.area)m[k]=s.area;});
+  _admAreaMapCache=m;_admAreaMapLen=len;
   return m;
 }
 // 営業所ボタン(全て + 各営業所)を人員名簿の営業所で生成
-function admBuildAreaBtns(){
-  const wrap=document.getElementById('adm-staff-area-btns');if(!wrap)return;
+function admStaffAreaList(){
+  const len=(DB.staff||[]).length;
+  if(_admAreaListCache&&_admAreaListLen===len)return _admAreaListCache;
   const order=['城北','川越','立川','川崎高津'];
   let areas=[...new Set((DB.staff||[]).map(s=>s.area).filter(Boolean))];
   if(!areas.length)areas=order.slice();// 人員名簿未ロード時は標準4営業所
   areas.sort((a,b)=>{const ia=order.indexOf(a),ib=order.indexOf(b);return (ia<0?99:ia)-(ib<0?99:ib)||a.localeCompare(b);});
+  _admAreaListCache=areas;_admAreaListLen=len;
+  return areas;
+}
+function admBuildAreaBtns(){
+  const wrap=document.getElementById('adm-staff-area-btns');if(!wrap)return;
+  const areas=admStaffAreaList();
   const mk=(val,label)=>{const on=admStaffAreaSel===val;return `<button type="button" onclick="admStaffPickArea('${val}')" style="padding:6px 14px;border-radius:16px;border:1px solid ${on?'var(--primary)':'var(--border)'};background:${on?'var(--primary)':'#fff'};color:${on?'#fff':'var(--text-sub)'};cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap;">${label}</button>`;};
   wrap.innerHTML='<span style="font-size:12px;color:var(--text-sub);align-self:center;margin-right:2px;">営業所:</span>'+mk('__all__','全て')+areas.map(a=>mk(a,a)).join('');
 }
@@ -7042,12 +7059,13 @@ window.admStaffPickArea=async function(val){
 };
 
 async function adminLoadStaff(){
+  admStaffInvalidate();// タブを開いた時点で最新データに合わせてキャッシュ再構築
   await adminEnsureData();
   admBuildAreaBtns();
   adminRenderStaff();// 未選択ならプロンプトのみ(軽い)
   // 営業所判定用に人員名簿(DB.staff)を裏で確保 → 取得後にボタン再生成
   if(!(DB.staff&&DB.staff.length)&&typeof loadLiveStaff==='function'){
-    loadLiveStaff().then(()=>{admBuildAreaBtns();adminRenderStaff();}).catch(()=>{});
+    loadLiveStaff().then(()=>{admStaffInvalidate();admBuildAreaBtns();adminRenderStaff();}).catch(()=>{});
   }
 }
 
@@ -7059,6 +7077,9 @@ function adminRenderStaff(){
     listEl.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">営業所ボタンを押すと、その営業所のスタッフを表示します（「全て」で全員）。<br><span style="font-size:12px;">読み込み軽量化のため、選んだ分だけ抽出します。氏名検索でも表示できます。</span></p>';
     return;
   }
+  // 描画済みHTMLキャッシュ (氏名検索時以外)。一度見た営業所は即時切替
+  const cacheKey=q?null:(admStaffAreaSel||'');
+  if(cacheKey!==null && _admStaffHtml[cacheKey]!==undefined){ listEl.innerHTML=_admStaffHtml[cacheKey]; return; }
   const amap=admStaffAreaMap();
   let rates=invRates;
   if(q)rates=rates.filter(r=>r.name.toLowerCase().includes(q));
@@ -7105,7 +7126,8 @@ function adminRenderStaff(){
     </tr>`;
   });
   h+='</tbody></table>';
-  document.getElementById('adm-staff-list').innerHTML=h;
+  if(cacheKey!==null)_admStaffHtml[cacheKey]=h;// 営業所ビューはキャッシュ (次回の切替を即時に)
+  listEl.innerHTML=h;
 }
 
 async function admStaffAdd(){
