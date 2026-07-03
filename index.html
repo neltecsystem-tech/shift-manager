@@ -7012,8 +7012,9 @@ async function adminEnsureData(){
 
 function adminFilterStaff(){adminRenderStaff();}
 
-// 抽出対象の営業所。null=未選択(一覧を描画しない=軽量) / '__all__'=全て / それ以外=営業所名
-let admStaffAreaSel=null;
+// 抽出対象の営業所。'__all__'=全て(既定=必ず表示) / 営業所名 / null=未選択
+// 「表示が出ない」を根絶するため既定は全員表示。営業所ボタンは絞り込みとして使う。
+let admStaffAreaSel='__all__';
 // 営業所マップのキャッシュ (人員名簿+稼働記録の件数が変わったら再構築)
 let _admAreaMapCache=null,_admAreaMapKey='';
 function admStaffInvalidate(){_admAreaMapCache=null;}
