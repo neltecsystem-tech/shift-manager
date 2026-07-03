@@ -6996,6 +6996,11 @@ function adminViewRecords(rowNums,staff,confirmed){
 // --- スタッフ管理 ---
 async function adminEnsureData(){
   // 管理画面で使うデータをロード（請求書未ログインでも動くように）
+  // 管理者トークンを確保: ログイン直後は invServerAdminLogin が非同期で間に合わず、
+  // get_rates が空(=スタッフが登録されていません)を返すことがあるため、admin 権限があれば先に取得。
+  if(!invIsAdmin && typeof adminAuthed!=='undefined' && adminAuthed && typeof invServerAdminLogin==='function'){
+    try{ const r=await invServerAdminLogin(INV_PW); if(r&&r.success){invIsAdmin=true;invStaffName='';} }catch(_){}
+  }
   if(!invRates.length||!invStaffNames.length){
     const [ratesRes,namesRes]=await Promise.all([invApi({action:'get_rates'}),invApi({action:'get_staff_names'})]);
     invRates=ratesRes.rates||[];
@@ -7024,7 +7029,17 @@ function admBuildAreaBtns(){
   const mk=(val,label)=>{const on=admStaffAreaSel===val;return `<button type="button" onclick="admStaffPickArea('${val}')" style="padding:6px 14px;border-radius:16px;border:1px solid ${on?'var(--primary)':'var(--border)'};background:${on?'var(--primary)':'#fff'};color:${on?'#fff':'var(--text-sub)'};cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap;">${label}</button>`;};
   wrap.innerHTML='<span style="font-size:12px;color:var(--text-sub);align-self:center;margin-right:2px;">営業所:</span>'+mk('__all__','全て')+areas.map(a=>mk(a,a)).join('');
 }
-window.admStaffPickArea=function(val){admStaffAreaSel=val;admBuildAreaBtns();adminRenderStaff();};
+window.admStaffPickArea=async function(val){
+  admStaffAreaSel=val;admBuildAreaBtns();
+  // 単価マスタ未取得(トークン取得漏れ等)なら再取得してから抽出
+  if(!invRates.length){
+    const el=document.getElementById('adm-staff-list');
+    if(el)el.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">読み込み中...</p>';
+    await adminEnsureData();
+    admBuildAreaBtns();
+  }
+  adminRenderStaff();
+};
 
 async function adminLoadStaff(){
   await adminEnsureData();
@@ -7049,7 +7064,14 @@ function adminRenderStaff(){
   if(q)rates=rates.filter(r=>r.name.toLowerCase().includes(q));
   if(admStaffAreaSel&&admStaffAreaSel!=='__all__')rates=rates.filter(r=>amap[invNormName(r.name)]===admStaffAreaSel);
   const canEdit=invCanEditStaff();
-  if(!invRates.length){listEl.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">スタッフが登録されていません</p>';return;}
+  if(!invRates.length){
+    listEl.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">読み込み中...</p>';
+    if(!window._admStaffEnsuring){
+      window._admStaffEnsuring=true;
+      adminEnsureData().then(()=>{window._admStaffEnsuring=false;if(invRates.length)adminRenderStaff();else listEl.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">スタッフを取得できませんでした。ページを再読み込みしてください。</p>';}).catch(()=>{window._admStaffEnsuring=false;});
+    }
+    return;
+  }
   if(!rates.length){listEl.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">該当なし</p>';return;}
   let h='<table><thead><tr><th>スタッフ名</th><th>区分</th><th>所属</th><th>ログインID</th><th>PW</th><th>朝刊(平)</th><th>朝(土)</th><th>朝(日)</th><th>夕刊(平)</th><th>夕(末)</th><th>夕(日)</th><th>計算</th><th>権限</th><th></th></tr></thead><tbody>';
   rates.forEach((r)=>{
