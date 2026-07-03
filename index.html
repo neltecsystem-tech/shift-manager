@@ -786,6 +786,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="adm-staff" class="adm-panel" style="display:none;">
         <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
           <input type="search" id="adm-staff-search" name="adm-staff-search" autocomplete="off" oninput="dbInput('adminFilterStaff')" placeholder="氏名で検索..." style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;flex:1;max-width:300px;">
+          <select id="adm-staff-area" onchange="adminFilterStaff()" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">営業所: すべて</option></select>
           <button onclick="admStaffAdd()" style="background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;white-space:nowrap;">＋ スタッフ追加</button>
           <button onclick="document.getElementById('adm-staff-guide').style.display=document.getElementById('adm-staff-guide').style.display==='none'?'':'none'" style="background:#94a3b8;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;white-space:nowrap;">❓ 計算方式ガイド</button>
         </div>
@@ -6993,14 +6994,40 @@ async function adminEnsureData(){
 
 function adminFilterStaff(){adminRenderStaff();}
 
+// 人員名簿(DB.staff) から スタッフ名(空白無視) → 営業所 のマップを作る
+function admStaffAreaMap(){
+  const m={};
+  (DB.staff||[]).forEach(s=>{const k=invNormName(s.name);if(k&&s.area)m[k]=s.area;});
+  return m;
+}
+// 営業所プルダウンを人員名簿の営業所で埋める
+function admPopulateAreaFilter(){
+  const sel=document.getElementById('adm-staff-area');if(!sel)return;
+  const cur=sel.value;
+  const order=['城北','川越','立川','川崎高津'];
+  const areas=[...new Set((DB.staff||[]).map(s=>s.area).filter(Boolean))]
+    .sort((a,b)=>{const ia=order.indexOf(a),ib=order.indexOf(b);return (ia<0?99:ia)-(ib<0?99:ib)||a.localeCompare(b);});
+  sel.innerHTML='<option value="">営業所: すべて</option>'+areas.map(a=>`<option value="${a}">${a}</option>`).join('');
+  if(cur&&areas.includes(cur))sel.value=cur;
+}
+
 async function adminLoadStaff(){
   await adminEnsureData();
   adminRenderStaff();
+  // 営業所フィルタ用に人員名簿(DB.staff)を確保 (未ロードなら裏で取得して再描画)
+  if(!(DB.staff&&DB.staff.length)&&typeof loadLiveStaff==='function'){
+    loadLiveStaff().then(()=>adminRenderStaff()).catch(()=>{});
+  }
 }
 
 function adminRenderStaff(){
+  admPopulateAreaFilter();
   const q=(document.getElementById('adm-staff-search')?.value||'').trim().toLowerCase();
-  const rates=q?invRates.filter(r=>r.name.toLowerCase().includes(q)):invRates;
+  const area=(document.getElementById('adm-staff-area')?.value||'');
+  const amap=admStaffAreaMap();
+  let rates=invRates;
+  if(q)rates=rates.filter(r=>r.name.toLowerCase().includes(q));
+  if(area)rates=rates.filter(r=>amap[invNormName(r.name)]===area);
   const canEdit=invCanEditStaff();
   if(!invRates.length){document.getElementById('adm-staff-list').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">スタッフが登録されていません</p>';return;}
   if(!rates.length){document.getElementById('adm-staff-list').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">該当なし</p>';return;}
@@ -7021,7 +7048,7 @@ function adminRenderStaff(){
     h+=`<tr>
       <td><b>${r.name}</b></td>
       <td><span class="badge" style="background:${bc[0]};color:${bc[1]}">${r.biz_type||'未設定'}</span></td>
-      <td>${r.company||'-'}</td>
+      <td>${(()=>{const ar=amap[invNormName(r.name)]||'';const areaTag=ar?`<span style="background:#e0f2fe;color:#0369a1;padding:1px 8px;border-radius:8px;font-size:11px;">${ar}</span>`:'';return (r.company?escHtml(r.company)+(areaTag?' ':''):'')+areaTag||'-';})()}</td>
       <td><code>${r.login_id||'-'}</code></td>
       <td><code>${r.login_pw||'-'}</code></td>
       <td>¥${Number(r.am_weekday||0).toLocaleString()}</td>
