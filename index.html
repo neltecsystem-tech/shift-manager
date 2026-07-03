@@ -383,6 +383,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="display:flex;gap:8px;">
           <!-- PW変更=ナビ右上 / 自社メンバー=ナビ「自社管理」 / 単価設定=管理画面 から利用するため、この画面のヘッダーからは非表示 -->
           <button onclick="invShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">＋ 稼働入力</button>
+          <button class="inv-admin-only" onclick="invRecalcAmounts()" style="display:none;background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;" title="表示中の月の稼働記録に、最新の単価マスタを当て直して金額を再計算（確定済み・単価適用日前は保護）">🔄 金額を再計算</button>
         </div>
       </div>
       <!-- タブ -->
