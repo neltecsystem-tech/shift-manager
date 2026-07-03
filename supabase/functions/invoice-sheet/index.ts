@@ -506,6 +506,13 @@ Deno.serve(async(req:Request)=>{
       const scope = await getScopeNames();
       return jsonResp({ names: [...scope] });
     }
+    if(action==='get_roster'){
+      // 人員名簿の全行を返す (loadLiveStaff/営業所判定用)。列: A=営業所 B=契約 C=氏名 D=電話 E-K=朝 L-R=夕
+      if(!admin) return forbid();
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${ROSTER_SHEET_ID}/values/${encodeURIComponent(ROSTER_SHEET_NAME)}!A1:Z500`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const rows=(await resp.json()).values||[];
+      return jsonResp({rows});
+    }
     if(action==='get_special_rates'){
       if(!admin) return forbid();
       const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});

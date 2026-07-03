@@ -2011,14 +2011,15 @@ async function loadLiveStaff(){
   let ind=null;
   if(wrap&&DB.staff.length){ind=document.createElement('div');ind.id='staff-live-ind';ind.style.cssText='color:#94a3b8;font-size:12px;margin-bottom:6px;';ind.textContent='最新の人員名簿を取得中…';wrap.parentElement.insertBefore(ind,wrap);}
   try{
-    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'人員名簿'})});
-    const j=await r.json();
+    // 人員名簿は invoice-sheet の get_roster から取得 (fetch-shift のSSには当シートが無く失敗するため)
+    const j=await invApi({action:'get_roster'});
     if(j.error||!Array.isArray(j.rows)||j.rows.length<3)throw new Error(j.error||'rows不足');
     DB.raw.course_staff_table=j.rows;
     DB.staff.length=0;
     parseStaff();
     staffRefreshFilters();
     if(currentView==='staff')renderStaff();
+    if(typeof admStaffInvalidate==='function'){admStaffInvalidate();if(adminAuthed&&typeof admBuildAreaBtns==='function'){admBuildAreaBtns();adminRenderStaff();}}
   }catch(e){
     console.warn('人員名簿 live 取得失敗 (静的データを表示):',e&&e.message);
   }finally{
@@ -16206,7 +16207,10 @@ async function sysDoLogin(){
   // サーバ側権限判定のため、請求書の管理者トークンを裏で取得してから全データ読込。
   if(perms.includes('all')||perms.includes('admin')){
     invServerAdminLogin(INV_PW).then(r=>{
-      if(r&&r.success){ invIsAdmin=true; invStaffName=''; invLoadAll(); }
+      if(r&&r.success){ invIsAdmin=true; invStaffName=''; invLoadAll();
+        // スタッフ管理を開いた瞬間に出せるよう、人員名簿(営業所判定)も裏で先読み
+        if(typeof loadLiveStaff==='function')loadLiveStaff().catch(()=>{});
+      }
     }).catch(()=>{});
   }
   init();
@@ -16232,6 +16236,9 @@ async function sysAdminLogin(){
   invAuthed=true;invIsAdmin=true;invStaffName='';
   init();
   smPrefetch(); // 管理者は店舗マスタ権限あり。裏で先読み
+  // スタッフ管理を即出せるよう 単価/稼働/人員名簿 を裏で先読み
+  invLoadAll().catch(()=>{});
+  if(typeof loadLiveStaff==='function')loadLiveStaff().catch(()=>{});
 }
 
 function sysApplyPermissions(perms){
