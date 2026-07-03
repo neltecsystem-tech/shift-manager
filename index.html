@@ -7013,32 +7013,29 @@ function adminFilterStaff(){adminRenderStaff();}
 
 // 抽出対象の営業所。null=未選択(一覧を描画しない=軽量) / '__all__'=全て / それ以外=営業所名
 let admStaffAreaSel=null;
-// 軽量化キャッシュ: 営業所マップ / 営業所リスト / 営業所ごとの描画済みHTML
-let _admAreaMapCache=null,_admAreaMapLen=-1;
-let _admAreaListCache=null,_admAreaListLen=-1;
-let _admStaffHtml={};// key: 営業所名 or '__all__' → 描画済みHTML (氏名検索時はキャッシュしない)
-// データが変わったらキャッシュ破棄 (保存・再取得時に呼ぶ)
-function admStaffInvalidate(){_admAreaMapCache=null;_admAreaListCache=null;_admStaffHtml={};}
+// 営業所マップのキャッシュ (人員名簿+稼働記録の件数が変わったら再構築)
+let _admAreaMapCache=null,_admAreaMapKey='';
+function admStaffInvalidate(){_admAreaMapCache=null;}
 
-// 人員名簿(DB.staff) から スタッフ名(空白無視) → 営業所 のマップを作る (キャッシュ)
+// スタッフ名(空白無視) → 営業所 のマップ。人員名簿(DB.staff) と 稼働記録(invWork) の両方から構築。
+// 城北は稼働コースが接頭辞なし(番号のみ)のことがあるため人員名簿で補い、接頭辞ありコースは稼働記録で最新化。
 function admStaffAreaMap(){
-  const len=(DB.staff||[]).length;
-  if(_admAreaMapCache&&_admAreaMapLen===len)return _admAreaMapCache;
+  const key=((DB.staff||[]).length)+'/'+((typeof invWork!=='undefined'&&invWork)?invWork.length:0);
+  if(_admAreaMapCache&&_admAreaMapKey===key)return _admAreaMapCache;
   const m={};
+  // 1) 人員名簿の営業所 (城北の接頭辞なしコース対策の土台)
   (DB.staff||[]).forEach(s=>{const k=invNormName(s.name);if(k&&s.area)m[k]=s.area;});
-  _admAreaMapCache=m;_admAreaMapLen=len;
+  // 2) 稼働記録のコース接頭辞から上書き (最新・確実)
+  if(typeof invWork!=='undefined'&&invWork){invWork.forEach(w=>{const a=areaOfCourse(w.course);if(a){const k=invNormName(w.staff);if(k)m[k]=a;}});}
+  _admAreaMapCache=m;_admAreaMapKey=key;
   return m;
 }
-// 営業所ボタン(全て + 各営業所)を人員名簿の営業所で生成
+// 営業所ボタン用リスト (標準4営業所を必ず + 実在する追加営業所)
 function admStaffAreaList(){
-  const len=(DB.staff||[]).length;
-  if(_admAreaListCache&&_admAreaListLen===len)return _admAreaListCache;
   const order=['城北','川越','立川','川崎高津'];
-  let areas=[...new Set((DB.staff||[]).map(s=>s.area).filter(Boolean))];
-  if(!areas.length)areas=order.slice();// 人員名簿未ロード時は標準4営業所
-  areas.sort((a,b)=>{const ia=order.indexOf(a),ib=order.indexOf(b);return (ia<0?99:ia)-(ib<0?99:ib)||a.localeCompare(b);});
-  _admAreaListCache=areas;_admAreaListLen=len;
-  return areas;
+  const extra=[...new Set(Object.values(admStaffAreaMap()))].filter(a=>a&&!order.includes(a));
+  extra.sort((a,b)=>a.localeCompare(b));
+  return [...order,...extra];
 }
 function admBuildAreaBtns(){
   const wrap=document.getElementById('adm-staff-area-btns');if(!wrap)return;
@@ -7063,7 +7060,11 @@ async function adminLoadStaff(){
   await adminEnsureData();
   admBuildAreaBtns();
   adminRenderStaff();// 未選択ならプロンプトのみ(軽い)
-  // 営業所判定用に人員名簿(DB.staff)を裏で確保 → 取得後にボタン再生成
+  // 営業所判定を確実にするため稼働記録(invWork)を裏で確保 → 取得後に再描画
+  if(!(typeof invWork!=='undefined'&&invWork&&invWork.length)){
+    invApi({action:'list_work'}).then(r=>{if(r&&r.records){invWork=r.records;admStaffInvalidate();admBuildAreaBtns();adminRenderStaff();}}).catch(()=>{});
+  }
+  // 営業所判定用に人員名簿(DB.staff)も裏で確保 → 取得後にボタン再生成
   if(!(DB.staff&&DB.staff.length)&&typeof loadLiveStaff==='function'){
     loadLiveStaff().then(()=>{admStaffInvalidate();admBuildAreaBtns();adminRenderStaff();}).catch(()=>{});
   }
@@ -7077,9 +7078,6 @@ function adminRenderStaff(){
     listEl.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">営業所ボタンを押すと、その営業所のスタッフを表示します（「全て」で全員）。<br><span style="font-size:12px;">読み込み軽量化のため、選んだ分だけ抽出します。氏名検索でも表示できます。</span></p>';
     return;
   }
-  // 描画済みHTMLキャッシュ (氏名検索時以外)。一度見た営業所は即時切替
-  const cacheKey=q?null:(admStaffAreaSel||'');
-  if(cacheKey!==null && _admStaffHtml[cacheKey]!==undefined){ listEl.innerHTML=_admStaffHtml[cacheKey]; return; }
   const amap=admStaffAreaMap();
   let rates=invRates;
   if(q)rates=rates.filter(r=>r.name.toLowerCase().includes(q));
@@ -7126,7 +7124,6 @@ function adminRenderStaff(){
     </tr>`;
   });
   h+='</tbody></table>';
-  if(cacheKey!==null)_admStaffHtml[cacheKey]=h;// 営業所ビューはキャッシュ (次回の切替を即時に)
   listEl.innerHTML=h;
 }
 
