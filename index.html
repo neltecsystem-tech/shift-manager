@@ -1366,7 +1366,12 @@ function init(){
 function parseStaff(){
   const R=DB.raw.course_staff_table;if(!R||R.length<3)return;
   const D=['月','火','水','木','金','土','日'];
-  for(let i=2;i<R.length;i++){const r=R[i],nm=(r[2]||'').trim();if(!nm)continue;
+  // ヘッダー行(氏名列に「氏名」)を動的に探し、その次から読む。
+  // ライブ人員名簿は先頭に余分な行が入りヘッダーが2行目でないことがあるため、
+  // 固定の i=2 開始だとヘッダー行を幽霊スタッフ(area='拠点')として取り込んでしまう不具合を防ぐ。
+  const hi=R.findIndex(r=>(((r&&r[2])||'').trim()==='氏名'));
+  const start=hi>=0?hi+1:2;
+  for(let i=start;i<R.length;i++){const r=R[i],nm=(r[2]||'').trim();if(!nm||nm==='氏名'||nm==='拠点')continue;
     const s={area:(r[0]||'').trim(),contract:(r[1]||'').trim(),name:nm,phone:(r[3]||'').trim(),am:{},pm:{}};
     D.forEach((d,j)=>{s.am[d]=(r[4+j]||'').trim();s.pm[d]=(r[11+j]||'').trim();});DB.staff.push(s);}
 }
