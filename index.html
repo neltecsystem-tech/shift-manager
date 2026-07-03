@@ -5793,9 +5793,19 @@ async function invSaveRate(){
     }catch(e){console.warn('人員名簿への自動追加失敗:',e);}
   }
   document.getElementById('inv-rate-edit').style.display='none';
-  await invLoadAll();
-  if(adminAuthed){adminLoadStaff();}
-  else{invShowRates();}
+  // 楽観的更新: 保存内容を手元の invRates に即反映して即描画。
+  // (Google Sheets は書込直後の再読込が古い値を返すことがあり、その反映待ちで
+  //  「保存してもすぐ更新されない」を防ぐ)
+  const applyLocal=()=>{
+    const i=rowNum?parseInt(rowNum)-2:-1;
+    if(i>=0&&i<invRates.length){invRates[i]={...invRates[i],...record};return;}
+    const j=invRates.findIndex(r=>invNormName(r.name)===invNormName(record.name));
+    if(j>=0)invRates[j]={...invRates[j],...record};else invRates.push({...record});
+  };
+  applyLocal();
+  if(adminAuthed)adminRenderStaff();else invShowRates();
+  // 背景で正確なデータへ同期 (Sheets 反映待ち)。反映が遅れても保存値を再マージしてブレを防ぐ
+  setTimeout(()=>{invLoadAll().then(()=>{applyLocal();if(adminAuthed)adminRenderStaff();else invShowRates();}).catch(()=>{});},1500);
 }
 
 // 請求書生成
