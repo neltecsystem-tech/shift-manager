@@ -8,6 +8,10 @@
 
 function b64utf8(b){const n=atob(b),a=new Uint8Array(n.length);for(let i=0;i<n.length;i++)a[i]=n.charCodeAt(i);return new TextDecoder('utf-8').decode(a);}
 
+// HTMLエスケープ (グローバル共通)。以前は一部の関数内ローカルにしか無く、
+// adminRenderStaff 等から呼ぶと "escHtml is not defined" で描画がクラッシュしていた。
+function escHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
 // ──────────────────────────────────────────────────────────────
 // 日付 / コース判定
 // ──────────────────────────────────────────────────────────────
