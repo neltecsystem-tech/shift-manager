@@ -7040,7 +7040,9 @@ function admStaffAreaMap(){
 // 営業所ボタン用リスト (標準4営業所を必ず + 実在する追加営業所)
 function admStaffAreaList(){
   const order=['城北','川越','立川','川崎高津'];
-  const extra=[...new Set(Object.values(admStaffAreaMap()))].filter(a=>a&&!order.includes(a));
+  // このツールは新聞のみ。アスクル等の他営業所はボタンに出さない。
+  const HIDE=['アスクル','拠点'];
+  const extra=[...new Set(Object.values(admStaffAreaMap()))].filter(a=>a&&!order.includes(a)&&!HIDE.includes(a));
   extra.sort((a,b)=>a.localeCompare(b));
   return [...order,...extra];
 }
@@ -7087,6 +7089,8 @@ function adminRenderStaff(){
   }
   const amap=admStaffAreaMap();
   let rates=invRates;
+  // このツールは新聞のみ。アスクル所属は一覧・検索・「全て」から常に除外。
+  rates=rates.filter(r=>amap[invNormName(r.name)]!=='アスクル');
   if(q)rates=rates.filter(r=>r.name.toLowerCase().includes(q));
   if(admStaffAreaSel&&admStaffAreaSel!=='__all__')rates=rates.filter(r=>amap[invNormName(r.name)]===admStaffAreaSel);
   const canEdit=invCanEditStaff();
