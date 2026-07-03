@@ -784,12 +784,13 @@ tbody tr:hover { background:var(--primary-light); }
 
       <!-- スタッフ管理 -->
       <div id="adm-staff" class="adm-panel" style="display:none;">
-        <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
           <input type="search" id="adm-staff-search" name="adm-staff-search" autocomplete="off" oninput="dbInput('adminFilterStaff')" placeholder="氏名で検索..." style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;flex:1;max-width:300px;">
-          <select id="adm-staff-area" onchange="adminFilterStaff()" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">営業所: すべて</option></select>
           <button onclick="admStaffAdd()" style="background:#6366f1;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;white-space:nowrap;">＋ スタッフ追加</button>
           <button onclick="document.getElementById('adm-staff-guide').style.display=document.getElementById('adm-staff-guide').style.display==='none'?'':'none'" style="background:#94a3b8;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;white-space:nowrap;">❓ 計算方式ガイド</button>
         </div>
+        <!-- 営業所ボタン (押した営業所だけ抽出表示。読み込み軽量化) -->
+        <div id="adm-staff-area-btns" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;"></div>
         <!-- 計算方式ガイド（初期非表示） -->
         <div id="adm-staff-guide" style="display:none;margin-bottom:16px;border:1px solid var(--border);border-radius:10px;overflow:hidden;">
           <div style="background:#f8fafc;padding:12px 16px;border-bottom:1px solid var(--border);"><h4 style="margin:0;color:var(--primary);">📋 計算方式ガイド</h4></div>
@@ -7004,43 +7005,52 @@ async function adminEnsureData(){
 
 function adminFilterStaff(){adminRenderStaff();}
 
+// 抽出対象の営業所。null=未選択(一覧を描画しない=軽量) / '__all__'=全て / それ以外=営業所名
+let admStaffAreaSel=null;
+
 // 人員名簿(DB.staff) から スタッフ名(空白無視) → 営業所 のマップを作る
 function admStaffAreaMap(){
   const m={};
   (DB.staff||[]).forEach(s=>{const k=invNormName(s.name);if(k&&s.area)m[k]=s.area;});
   return m;
 }
-// 営業所プルダウンを人員名簿の営業所で埋める
-function admPopulateAreaFilter(){
-  const sel=document.getElementById('adm-staff-area');if(!sel)return;
-  const cur=sel.value;
+// 営業所ボタン(全て + 各営業所)を人員名簿の営業所で生成
+function admBuildAreaBtns(){
+  const wrap=document.getElementById('adm-staff-area-btns');if(!wrap)return;
   const order=['城北','川越','立川','川崎高津'];
-  const areas=[...new Set((DB.staff||[]).map(s=>s.area).filter(Boolean))]
-    .sort((a,b)=>{const ia=order.indexOf(a),ib=order.indexOf(b);return (ia<0?99:ia)-(ib<0?99:ib)||a.localeCompare(b);});
-  sel.innerHTML='<option value="">営業所: すべて</option>'+areas.map(a=>`<option value="${a}">${a}</option>`).join('');
-  if(cur&&areas.includes(cur))sel.value=cur;
+  let areas=[...new Set((DB.staff||[]).map(s=>s.area).filter(Boolean))];
+  if(!areas.length)areas=order.slice();// 人員名簿未ロード時は標準4営業所
+  areas.sort((a,b)=>{const ia=order.indexOf(a),ib=order.indexOf(b);return (ia<0?99:ia)-(ib<0?99:ib)||a.localeCompare(b);});
+  const mk=(val,label)=>{const on=admStaffAreaSel===val;return `<button type="button" onclick="admStaffPickArea('${val}')" style="padding:6px 14px;border-radius:16px;border:1px solid ${on?'var(--primary)':'var(--border)'};background:${on?'var(--primary)':'#fff'};color:${on?'#fff':'var(--text-sub)'};cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap;">${label}</button>`;};
+  wrap.innerHTML='<span style="font-size:12px;color:var(--text-sub);align-self:center;margin-right:2px;">営業所:</span>'+mk('__all__','全て')+areas.map(a=>mk(a,a)).join('');
 }
+window.admStaffPickArea=function(val){admStaffAreaSel=val;admBuildAreaBtns();adminRenderStaff();};
 
 async function adminLoadStaff(){
   await adminEnsureData();
-  adminRenderStaff();
-  // 営業所フィルタ用に人員名簿(DB.staff)を確保 (未ロードなら裏で取得して再描画)
+  admBuildAreaBtns();
+  adminRenderStaff();// 未選択ならプロンプトのみ(軽い)
+  // 営業所判定用に人員名簿(DB.staff)を裏で確保 → 取得後にボタン再生成
   if(!(DB.staff&&DB.staff.length)&&typeof loadLiveStaff==='function'){
-    loadLiveStaff().then(()=>adminRenderStaff()).catch(()=>{});
+    loadLiveStaff().then(()=>{admBuildAreaBtns();adminRenderStaff();}).catch(()=>{});
   }
 }
 
 function adminRenderStaff(){
-  admPopulateAreaFilter();
+  const listEl=document.getElementById('adm-staff-list');if(!listEl)return;
   const q=(document.getElementById('adm-staff-search')?.value||'').trim().toLowerCase();
-  const area=(document.getElementById('adm-staff-area')?.value||'');
+  // 検索も営業所も無ければ抽出しない(読み込み軽量化)
+  if(!q&&admStaffAreaSel===null){
+    listEl.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">営業所ボタンを押すと、その営業所のスタッフを表示します（「全て」で全員）。<br><span style="font-size:12px;">読み込み軽量化のため、選んだ分だけ抽出します。氏名検索でも表示できます。</span></p>';
+    return;
+  }
   const amap=admStaffAreaMap();
   let rates=invRates;
   if(q)rates=rates.filter(r=>r.name.toLowerCase().includes(q));
-  if(area)rates=rates.filter(r=>amap[invNormName(r.name)]===area);
+  if(admStaffAreaSel&&admStaffAreaSel!=='__all__')rates=rates.filter(r=>amap[invNormName(r.name)]===admStaffAreaSel);
   const canEdit=invCanEditStaff();
-  if(!invRates.length){document.getElementById('adm-staff-list').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">スタッフが登録されていません</p>';return;}
-  if(!rates.length){document.getElementById('adm-staff-list').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">該当なし</p>';return;}
+  if(!invRates.length){listEl.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">スタッフが登録されていません</p>';return;}
+  if(!rates.length){listEl.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">該当なし</p>';return;}
   let h='<table><thead><tr><th>スタッフ名</th><th>区分</th><th>所属</th><th>ログインID</th><th>PW</th><th>朝刊(平)</th><th>朝(土)</th><th>朝(日)</th><th>夕刊(平)</th><th>夕(末)</th><th>夕(日)</th><th>計算</th><th>権限</th><th></th></tr></thead><tbody>';
   rates.forEach((r)=>{
     const origIdx=invRates.indexOf(r);
