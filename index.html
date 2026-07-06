@@ -11,7 +11,7 @@
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- xlsx(~900KB) は Excel取込(管理者のみ)でしか使わないので eager 読み込みを廃止 → ensureXLSX() で遅延ロード。スマホのメモリ削減。 -->
 <script src="data.js"></script>
 <style>
 :root { --primary:#1a56db; --primary-light:#e8eefb; --bg:#f5f6fa; --card:#fff; --border:#dde1e8; --text:#1e293b; --text-sub:#64748b; --danger:#dc2626; }
@@ -1342,13 +1342,21 @@ const DEFS={
 };
 const DB={staff:[],courses:[],shifts:{},shiftsByCourse:{},tenpo:[],raw:{}};
 
-function load(k){if(CSVDATA_B64&&CSVDATA_B64[k]){DB.raw[k]=Papa.parse(b64utf8(CSVDATA_B64[k]),{skipEmptyLines:false}).data;}}
+function load(k){if(CSVDATA_B64&&CSVDATA_B64[k]){DB.raw[k]=Papa.parse(b64utf8(CSVDATA_B64[k]),{skipEmptyLines:false}).data;CSVDATA_B64[k]=null;/* base64は解析後は不要 → スマホのメモリ削減(合計~1.85MB解放)。差し替えは data 管理でファイル再eval */}}
+
+// 重いライブラリの遅延ロード (必要になった時だけ読み込む → スマホのメモリ削減)
+function loadScriptOnce(url){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=url;s.onload=()=>resolve();s.onerror=()=>reject(new Error('スクリプト読込失敗: '+url));document.head.appendChild(s);});}
+let _xlsxPromise=null;
+function ensureXLSX(){if(typeof XLSX!=='undefined')return Promise.resolve();if(!_xlsxPromise)_xlsxPromise=loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');return _xlsxPromise;}
 
 function init(){
   try{
     if(typeof CSVDATA_B64==='undefined')throw new Error('data.js が見つかりません。index.html と data.js を同じフォルダに置いてください。');
     load('course_staff_table');load('sheet26');load('tenpo_list');
     parseStaff();parseCourses();parseTenpo();
+    // 解析済みの大きな静的rawを解放(以降 DB.staff/DB.courses/DB.tenpo を使い、raw再参照なし)。
+    // tenpo_list~589KB / sheet26~13KB / course_staff_table はライブ取得で置換されるので解放。スマホのメモリ削減。
+    DB.raw.tenpo_list=null;DB.raw.sheet26=null;DB.raw.course_staff_table=null;
     Object.keys(DEFS).forEach(k=>{const d=DEFS[k];if((d.type==='shift'||d.type==='shift_ev')&&CSVDATA_B64[k]){load(k);d.type==='shift'?parseShift(k):parseShiftEv(k);}});
     loadLiveShifts();// 起動高速化のため最初は localStorage から
     document.getElementById('loading').classList.add('hidden');
@@ -6460,8 +6468,9 @@ function admDgOnFile(e){
   const f=e.target.files?.[0];
   if(!f){return;}
   const reader=new FileReader();
-  reader.onload=ev=>{
+  reader.onload=async ev=>{
     try{
+      await ensureXLSX();
       const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
       const sh=wb.Sheets[wb.SheetNames[0]];
       const rows=XLSX.utils.sheet_to_json(sh,{header:1,defval:''});
@@ -13751,6 +13760,7 @@ async function admShopListUpload(event){
   if(!file)return;
   document.getElementById('adm-sl-summary').innerHTML='<p style="color:var(--text-sub);">📂 読込中...</p>';
   try{
+    await ensureXLSX();
     const buf=await file.arrayBuffer();
     const wb=XLSX.read(new Uint8Array(buf),{type:'array'});
     const motoSh=wb.Sheets['元'];
