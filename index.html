@@ -1754,7 +1754,7 @@ function renderMyShift(){
   });
   // 1日目の前に空セル
   for(let i=0;i<firstDow;i++)h+=`<div></div>`;
-  const todayStr=new Date().toISOString().slice(0,10);
+  const _t=new Date();const todayStr=`${_t.getFullYear()}-${String(_t.getMonth()+1).padStart(2,'0')}-${String(_t.getDate()).padStart(2,'0')}`;// JST(ローカル)基準。toISOStringだとUTCで朝9時まで前日扱いになるため
   for(let d=1;d<=daysInMonth;d++){
     const ymd=`${year}-${String(mon+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const dow=new Date(year,mon,d).getDay();
