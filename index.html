@@ -6422,7 +6422,11 @@ function admSysHealthRender(j){
   if(!j||j.ok===false){c.innerHTML='<p style="color:#dc2626;padding:20px;">エラー: '+shEsc(j&&j.error)+'</p>';return;}
   const groups=j.groups||[], latest=j.latest||null, cnt=j.error_count||0;
   let h='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">';
-  h+='<div style="background:'+(cnt?'#fef2f2':'#f0fdf4')+';border:1px solid '+(cnt?'#fecaca':'#bbf7d0')+';border-radius:10px;padding:10px 16px;"><div style="font-size:11px;color:var(--text-sub);">直近7日のエラー</div><div style="font-size:22px;font-weight:700;color:'+(cnt?'#dc2626':'#16a34a')+';">'+cnt+'<span style="font-size:12px;font-weight:400;"> 件</span></div></div></div>';
+  h+='<div style="background:'+(cnt?'#fef2f2':'#f0fdf4')+';border:1px solid '+(cnt?'#fecaca':'#bbf7d0')+';border-radius:10px;padding:10px 16px;"><div style="font-size:11px;color:var(--text-sub);">直近7日のエラー</div><div style="font-size:22px;font-weight:700;color:'+(cnt?'#dc2626':'#16a34a')+';">'+cnt+'<span style="font-size:12px;font-weight:400;"> 件</span></div></div>';
+  var esc=j.escalated_count||0;
+  h+='<div style="background:'+(esc?'#fef2f2':'#f0fdf4')+';border:1px solid '+(esc?'#fca5a5':'#bbf7d0')+';border-radius:10px;padding:10px 16px;"><div style="font-size:11px;color:'+(esc?'#b91c1c':'var(--text-sub)')+';">🚨 重度障害（格上げ）</div><div style="font-size:22px;font-weight:700;color:'+(esc?'#b91c1c':'#16a34a')+';">'+esc+'<span style="font-size:12px;font-weight:400;"> 件</span></div></div>';
+  h+='</div>';
+  h+='<div style="font-size:11px;color:var(--text-sub);margin:-6px 0 12px;">自己修復を試みても'+(j.threshold||3)+'回以上再発したエラーは「重度障害」に格上げして人間対応にします。</div>';
   if(latest&&latest.summary){
     h+='<div style="border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px;background:#fafafa;">';
     h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div style="font-weight:700;">🤖 Claude 診断</div><div style="font-size:11px;color:var(--text-sub);">'+shEsc((latest.created_at||'').replace('T',' ').slice(0,16))+'</div></div>';
@@ -6441,7 +6445,7 @@ function admSysHealthRender(j){
   if(!groups.length){h+='<p style="color:#16a34a;font-size:13px;">エラーは記録されていません 🎉</p>';}
   else{
     h+='<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="text-align:left;color:var(--text-sub);border-bottom:1px solid var(--border);"><th style="padding:6px;">件数</th><th style="padding:6px;">メッセージ</th><th style="padding:6px;">画面</th><th style="padding:6px;">種類</th><th style="padding:6px;">最終</th></tr></thead><tbody>';
-    groups.forEach(g=>{h+='<tr style="border-bottom:1px solid var(--border);"><td style="padding:6px;font-weight:700;">'+g.count+'</td><td style="padding:6px;font-family:monospace;word-break:break-all;">'+shEsc(g.message)+(g.healed?' <span style="color:#16a34a;">(修復'+g.healed+')</span>':'')+'</td><td style="padding:6px;">'+shEsc((g.views||[]).join(','))+'</td><td style="padding:6px;">'+shEsc((g.kinds||[]).join(','))+'</td><td style="padding:6px;white-space:nowrap;">'+shEsc((g.last||'').replace('T',' ').slice(5,16))+'</td></tr>';});
+    groups.forEach(g=>{h+='<tr style="border-bottom:1px solid var(--border);'+(g.escalated?'background:#fef2f2;':'')+'"><td style="padding:6px;font-weight:700;">'+(g.escalated?'🚨':'')+g.count+'</td><td style="padding:6px;font-family:monospace;word-break:break-all;">'+shEsc(g.message)+(g.healed?' <span style="color:#16a34a;">(修復'+g.healed+')</span>':'')+'</td><td style="padding:6px;">'+shEsc((g.views||[]).join(','))+'</td><td style="padding:6px;">'+shEsc((g.kinds||[]).join(','))+'</td><td style="padding:6px;white-space:nowrap;">'+shEsc((g.last||'').replace('T',' ').slice(5,16))+'</td></tr>';});
     h+='</tbody></table></div>';
   }
   c.innerHTML=h;

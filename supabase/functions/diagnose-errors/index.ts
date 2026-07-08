@@ -18,6 +18,8 @@ const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')!;
 const DIAG_SECRET = Deno.env.get('SM_DIAG_SECRET') || '';
 const MODEL = 'claude-sonnet-4-6';
+// 自己修復を試みても、この回数(=規定回数)以上 再発したエラーは「重度障害」に格上げして人間対応へ
+const ESCALATE_THRESHOLD = Number(Deno.env.get('SM_ESCALATE_THRESHOLD') || '3');
 
 interface Grp { message: string; count: number; kinds: string[]; views: string[]; builds: string[]; healed: number; sample_stack: string | null; last: string; }
 
@@ -47,9 +49,14 @@ async function runClaude(groups: Grp[]): Promise<{ summary: string; items: any[]
 
 ${JSON.stringify(compact, null, 1)}
 
+運用方針(障害レベル判定):
+- 重度障害(severity=high)= 人間対応が必要なもの。次のいずれか: ①認証/課金/データ破損/全面停止/セキュリティに関わる ②件数が ${ESCALATE_THRESHOLD} 以上で、自己修復(リロード等)を試みても再発が続き解消していない(=自己修復では直らない)。
+- それ以外で自己修復や軽微な対処で済むもの = low〜medium。
+- ユーザー端末のネット瞬断や拡張機能由来の可能性があるものは low とし、その旨を明記。
+
 次の JSON のみを返してください(前置き不要):
-{"summary":"全体の状況を1〜2文の日本語で","items":[{"title":"短い見出し","severity":"low|medium|high","likely_cause":"推定原因(日本語・具体的に)","suggested_fix":"推奨対処(日本語。コード箇所やキャッシュ/EF/Sheets等の切り分けを具体的に)","self_healed":true/false}]}
-注意: 件数が多い/画面が主要機能/自己修復で解消していないものを high に。ユーザー端末のネット瞬断や拡張機能由来の可能性があるものは low とし、その旨を書く。推測は推測と明記し、断定しない。`;
+{"summary":"全体の状況を1〜2文の日本語で","items":[{"title":"短い見出し","severity":"low|medium|high","likely_cause":"推定原因(日本語・具体的に)","suggested_fix":"推奨対処(日本語。コード箇所やキャッシュ/EF/Sheets等の切り分けを具体的に)","self_healed":true/false,"escalated":true/false}]}
+escalated=true は「重度障害に格上げ(自己修復では直らず人間対応が必要)」の意味。severity=high とほぼ対応。推測は推測と明記し、断定しない。`;
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
@@ -77,10 +84,13 @@ Deno.serve(async (req) => {
     const { data: logs } = await sb.from('sm_error_logs').select('created_at, kind, view, build, message, stack, healed').eq('app', app).gte('created_at', since).order('created_at', { ascending: false }).limit(500);
     const rows = logs ?? [];
     const groups = groupErrors(rows);
+    // 自己修復を試みても規定回数以上再発 → 重度障害に格上げ(deterministic)
+    const gout = groups.slice(0, 30).map((g) => ({ ...g, escalated: g.count >= ESCALATE_THRESHOLD }));
+    const escalated_count = gout.filter((g) => g.escalated).length;
     const { data: lastDiag } = await sb.from('sm_error_diagnoses').select('*').eq('app', app).order('created_at', { ascending: false }).limit(1).maybeSingle();
 
     if (action === 'summary') {
-      return json({ ok: true, error_count: rows.length, groups: groups.slice(0, 30), latest: lastDiag ?? null });
+      return json({ ok: true, error_count: rows.length, escalated_count, threshold: ESCALATE_THRESHOLD, groups: gout, latest: lastDiag ?? null });
     }
 
     if (action === 'run') {
@@ -94,7 +104,7 @@ Deno.serve(async (req) => {
       const { data: saved } = await sb.from('sm_error_diagnoses').insert({
         app, window_from: since, error_count: rows.length, summary: result.summary, items: result.items, model: MODEL,
       }).select('*').single();
-      return json({ ok: true, latest: saved, error_count: rows.length, groups: groups.slice(0, 30) });
+      return json({ ok: true, latest: saved, error_count: rows.length, escalated_count, threshold: ESCALATE_THRESHOLD, groups: gout });
     }
 
     return json({ error: 'unknown action' }, 400);
