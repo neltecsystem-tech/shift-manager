@@ -616,6 +616,16 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('diagram')" id="adm-tab-diagram" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📐 ダイヤグラム</button>
         <button onclick="adminTab('mymaps')" id="adm-tab-mymaps" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🗺️ マイマップURL</button>
         <button onclick="adminTab('settings')" id="adm-tab-settings" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⚙ システム設定</button>
+        <button onclick="adminTab('syshealth')" id="adm-tab-syshealth" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🩺 システム状態</button>
+      </div>
+
+      <!-- 🩺 システム状態(エラー監視・自己修復) -->
+      <div id="adm-syshealth" class="adm-panel" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+          <div style="font-size:12px;color:var(--text-sub);max-width:640px;">未捕捉エラーを自動収集し、既知の壊れ方は自動復旧します。Claudeが原因推定・対処案を作成（毎日08:00に自動診断）。</div>
+          <button onclick="admSysHealthRunDiagnose()" id="sh-run-btn" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;">🤖 今すぐ診断</button>
+        </div>
+        <div id="sh-content"><p style="text-align:center;padding:30px;color:var(--text-sub);">読み込み中...</p></div>
       </div>
 
       <!-- 請求書管理 -->
@@ -6380,8 +6390,62 @@ function adminTab(t){
   if(t==='shoplist')admShopListInit();
   if(t==='mymaps')admMmInit();
   if(t==='snapshot')admSnapInit();
+  if(t==='syshealth')admSysHealthInit();
 }
 function admSnapInit(){smLoadSnapshotInfo();smLoadSnapshotHistory();}
+
+// ===== 🩺 システム状態 (エラー監視 + Claude自己修復診断) =====
+const SH_DIAG_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/diagnose-errors';
+function shEsc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function shSevBadge(s){const m={high:['#dc2626','#fee2e2','高'],medium:['#d97706','#fef3c7','中'],low:['#2563eb','#dbeafe','低']};const x=m[s]||m.low;return '<span style="background:'+x[1]+';color:'+x[0]+';padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;">'+x[2]+'</span>';}
+async function admSysHealthInit(){
+  const c=document.getElementById('sh-content');
+  c.innerHTML='<p style="text-align:center;padding:30px;color:var(--text-sub);">読み込み中...</p>';
+  try{
+    const r=await fetch(SH_DIAG_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'summary',app:'shift-manager'})});
+    admSysHealthRender(await r.json());
+  }catch(e){c.innerHTML='<p style="color:#dc2626;padding:20px;">読み込み失敗: '+shEsc(e&&e.message)+'</p>';}
+}
+async function admSysHealthRunDiagnose(){
+  const btn=document.getElementById('sh-run-btn');
+  if(btn){btn.disabled=true;btn.textContent='🤖 診断中…';}
+  try{
+    const r=await fetch(SH_DIAG_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'run',app:'shift-manager'})});
+    const j=await r.json();
+    if(j&&j.empty){alert('診断対象のエラーがありません（エラーゼロ）🎉');}
+    admSysHealthRender(j);
+  }catch(e){alert('診断失敗: '+(e&&e.message));}
+  finally{if(btn){btn.disabled=false;btn.textContent='🤖 今すぐ診断';}}
+}
+function admSysHealthRender(j){
+  const c=document.getElementById('sh-content');
+  if(!j||j.ok===false){c.innerHTML='<p style="color:#dc2626;padding:20px;">エラー: '+shEsc(j&&j.error)+'</p>';return;}
+  const groups=j.groups||[], latest=j.latest||null, cnt=j.error_count||0;
+  let h='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">';
+  h+='<div style="background:'+(cnt?'#fef2f2':'#f0fdf4')+';border:1px solid '+(cnt?'#fecaca':'#bbf7d0')+';border-radius:10px;padding:10px 16px;"><div style="font-size:11px;color:var(--text-sub);">直近7日のエラー</div><div style="font-size:22px;font-weight:700;color:'+(cnt?'#dc2626':'#16a34a')+';">'+cnt+'<span style="font-size:12px;font-weight:400;"> 件</span></div></div></div>';
+  if(latest&&latest.summary){
+    h+='<div style="border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px;background:#fafafa;">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div style="font-weight:700;">🤖 Claude 診断</div><div style="font-size:11px;color:var(--text-sub);">'+shEsc((latest.created_at||'').replace('T',' ').slice(0,16))+'</div></div>';
+    h+='<div style="font-size:13px;margin-bottom:8px;">'+shEsc(latest.summary)+'</div>';
+    (latest.items||[]).forEach(it=>{
+      h+='<div style="border-top:1px solid var(--border);padding:10px 0;">';
+      h+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;flex-wrap:wrap;">'+shSevBadge(it.severity)+'<strong style="font-size:13px;">'+shEsc(it.title)+'</strong>'+(it.self_healed?'<span style="background:#dcfce7;color:#166534;padding:1px 8px;border-radius:10px;font-size:11px;">自己修復済</span>':'')+'</div>';
+      h+='<div style="font-size:12px;color:var(--text-sub);margin-bottom:3px;"><b>推定原因:</b> '+shEsc(it.likely_cause)+'</div>';
+      h+='<div style="font-size:12px;color:#0f172a;"><b>対処案:</b> '+shEsc(it.suggested_fix)+'</div></div>';
+    });
+    h+='</div>';
+  }else{
+    h+='<div style="border:1px dashed var(--border);border-radius:12px;padding:16px;margin-bottom:16px;color:var(--text-sub);font-size:13px;text-align:center;">まだClaude診断がありません。「🤖 今すぐ診断」を押すか、毎朝の自動診断をお待ちください。</div>';
+  }
+  h+='<div style="font-weight:700;font-size:13px;margin-bottom:6px;">エラー集約（直近7日）</div>';
+  if(!groups.length){h+='<p style="color:#16a34a;font-size:13px;">エラーは記録されていません 🎉</p>';}
+  else{
+    h+='<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="text-align:left;color:var(--text-sub);border-bottom:1px solid var(--border);"><th style="padding:6px;">件数</th><th style="padding:6px;">メッセージ</th><th style="padding:6px;">画面</th><th style="padding:6px;">種類</th><th style="padding:6px;">最終</th></tr></thead><tbody>';
+    groups.forEach(g=>{h+='<tr style="border-bottom:1px solid var(--border);"><td style="padding:6px;font-weight:700;">'+g.count+'</td><td style="padding:6px;font-family:monospace;word-break:break-all;">'+shEsc(g.message)+(g.healed?' <span style="color:#16a34a;">(修復'+g.healed+')</span>':'')+'</td><td style="padding:6px;">'+shEsc((g.views||[]).join(','))+'</td><td style="padding:6px;">'+shEsc((g.kinds||[]).join(','))+'</td><td style="padding:6px;white-space:nowrap;">'+shEsc((g.last||'').replace('T',' ').slice(5,16))+'</td></tr>';});
+    h+='</tbody></table></div>';
+  }
+  c.innerHTML=h;
+}
 
 // ===== ダイヤグラム作成 =====
 const ADM_DG_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/diagram-process';
