@@ -1332,6 +1332,49 @@ tbody tr:hover { background:var(--primary-light); }
 </div>
 <script src="js/utils.js?v=20260703b"></script>
 <script>
+// ===== エラー監視 + ランタイム自己修復 (社内システム自己修復機能 ①②) =====
+// 未捕捉エラー/Promise棄却を log-error EF (sm_error_logs) に自動送信し、
+// 既知の壊れ方(壊れたキャッシュ/旧バンドル)はセッション1回だけ自動復旧する。
+const SM_BUILD='2026-07-08a'; // 変更をデプロイするたびに bump (エラーとデプロイの相関用)
+const SM_LOG_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/log-error';
+(function(){
+  const seen=new Set(); let sent=0; const MAX=20; // 同一/多発エラーで溢れさせない
+  function report(kind,message,stack,source,healed){
+    try{
+      if(!message)return;
+      const key=(kind+'|'+message).slice(0,200);
+      if(seen.has(key))return; seen.add(key);
+      if(sent++>=MAX)return;
+      const body={app:'shift-manager',build:SM_BUILD,kind:kind,
+        message:String(message).slice(0,2000),
+        stack:stack?String(stack).slice(0,6000):null, source:source||null,
+        view:(typeof currentView!=='undefined'&&currentView)||location.hash||'',
+        user_name:(typeof sysUserName!=='undefined'&&sysUserName)||(typeof invStaffName!=='undefined'&&invStaffName)||'',
+        url:location.href, ua:navigator.userAgent, healed:!!healed};
+      // keepaliveで離脱時も送信。失敗は握り潰す(監視自身がエラーを生まない)
+      fetch(SM_LOG_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),keepalive:true}).catch(function(){});
+    }catch(_){}
+  }
+  window.SM_report=report; // 任意のcatchからも SM_report('kind','msg') で記録可
+  window.addEventListener('error',function(e){
+    report('error',(e&&e.message)||(e&&e.error&&e.error.message)||'script error',
+      e&&e.error&&e.error.stack,(e&&e.filename)?e.filename+':'+e.lineno+':'+e.colno:null);
+  });
+  window.addEventListener('unhandledrejection',function(e){
+    const r=e&&e.reason; report('unhandledrejection',(r&&r.message)||String(r)||'unhandled rejection',r&&r.stack);
+  });
+  // ランタイム自己修復: 壊れたキャッシュ/旧バンドルをセッション1回だけ復旧(ループ防止)
+  window.SM_selfHeal=function(reason){
+    try{
+      if(sessionStorage.getItem('sm_healed'))return false; // 既に試行済ならUIに委ねる
+      sessionStorage.setItem('sm_healed',reason||'1');
+      report('self_heal','自己修復を実行: '+(reason||''),null,null,true);
+      try{localStorage.removeItem('liveShifts');}catch(_){}
+      try{localStorage.removeItem('serverCacheUpdatedAt');}catch(_){}
+      location.reload(); return true;
+    }catch(_){return false;}
+  };
+})();
 const DEFS={
   course_staff_table:{type:'roster'},sheet26:{type:'course'},
   shift_2026_04:{label:'4月シフト2026',type:'shift',year:2026},
@@ -1369,7 +1412,12 @@ function init(){
     loadServerShiftCache(false);
     // 30分間隔で再チェック (cron は 8時間間隔だが、開きっぱなしで定刻を跨ぐケースに対応)
     setInterval(()=>loadServerShiftCache(false),30*60*1000);
-  }catch(e){document.getElementById('loading').innerHTML='<div style="color:red;max-width:600px;margin:0 auto"><p><b>読み込み失敗</b></p><p>'+e.message+'</p></div>';}
+  }catch(e){
+    if(window.SM_report)SM_report('load_fatal',e&&e.message,e&&e.stack);
+    // 初回は自動で自己修復(揮発キャッシュ退避→1回だけリロード)。復旧しなければ手動ボタン表示
+    if(window.SM_selfHeal&&SM_selfHeal('load_fatal'))return;
+    document.getElementById('loading').innerHTML='<div style="color:red;max-width:600px;margin:0 auto"><p><b>読み込み失敗</b></p><p>'+(e&&e.message)+'</p><p style="margin-top:12px"><button onclick="try{localStorage.clear()}catch(_){}sessionStorage.removeItem(\'sm_healed\');location.reload()" style="padding:8px 16px;border:1px solid #ccc;border-radius:8px;cursor:pointer;font-size:14px">🔧 修復して再読み込み</button></p></div>';
+  }
 }
 
 function parseStaff(){
