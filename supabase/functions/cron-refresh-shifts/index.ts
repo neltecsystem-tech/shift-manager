@@ -42,9 +42,10 @@ async function getToken() {
   return (await r.json()).access_token;
 }
 async function fetchSheet(token, sheetName) {
-  // 行範囲は Section 2(営業所別個人別・引継等)の下部まで取り込むため十分広く取る。
-  // ※以前は A1:ZZ500 で、500行超の引継/応援スタッフ行が丸ごと欠落していた。
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHIFT_SPREADSHEET}/values/${encodeURIComponent(sheetName)}!A1:ZZ1000`;
+  // 行番号を指定しない開放レンジ A:ZZ。シートが何行に増えても全行取得できる
+  // (Sheets API は末尾の空行/空列を自動で省くため無駄も出ない)。
+  // ※以前は A1:ZZ500 固定で、500行超の Section2(引継/応援スタッフ等)が丸ごと欠落していた。
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHIFT_SPREADSHEET}/values/${encodeURIComponent(sheetName)}!A:ZZ`;
   const resp = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`
