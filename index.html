@@ -13293,6 +13293,15 @@ function admPayDiagnoseStaff(monthLabel,targetArea){
   return result;
 }
 
+// 単価マスタ未登録スタッフを検出したら NexPort でアラート(EF側で管理者宛に送信・1日1回デデュープ)
+const SM_ALERT_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shift-alert';
+function smAlertRateMissing(month,area,names){
+  try{
+    if(!names||!names.length)return;
+    fetch(SM_ALERT_API,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({kind:'rate_missing',month:month||'',area:area||'',count:names.length,names:names}),keepalive:true}).catch(function(){});
+  }catch(_){}
+}
 // 「未作成スタッフ確認」ボタンのハンドラ
 async function admPayDiagnose(){
   const monthVal=document.getElementById('adm-pay-month').value;
@@ -13307,6 +13316,8 @@ async function admPayDiagnose(){
   if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
   msg.textContent='';
   const r=admPayDiagnoseStaff(monthLabel,area);
+  // 単価マスタ未登録がいたら NexPort アラート
+  if(r.missingRate&&r.missingRate.length)smAlertRateMissing(monthVal,area,r.missingRate.map(x=>x.name));
   let h=`<div style="background:#fff;padding:20px;border:1px solid var(--border);border-radius:10px;max-width:760px;margin:0 auto;">`;
   h+=`<h3 style="margin:0 0 12px 0;font-size:16px;">⚠️ 未作成スタッフ確認 — ${monthVal}${area?` / ${area}営業所基準`:''}</h3>`;
   const renderList=(title,bg,border,arr,extraCol,note)=>{
@@ -13479,6 +13490,8 @@ async function admPayBulk(){
   const diag=admPayDiagnoseStaff(monthLabel,area);
   // 主稼働が targetArea の missingRate のみ警告対象 (他営業所は別実行で警告される)
   const missingHere=diag.missingRate.filter(x=>x.primaryArea===area);
+  // 一括作成で単価未登録により作成されないスタッフがいたら NexPort アラート
+  if(missingHere.length)smAlertRateMissing(monthVal,area,missingHere.map(x=>x.name));
   let warnMsg='';
   if(missingHere.length){
     warnMsg=`\n\n⚠️ ${area}主稼働で単価マスタ未登録のスタッフ ${missingHere.length}名 (作成されません):\n${missingHere.map(x=>'・'+x.name+` (${x.paidDays}日)`).slice(0,10).join('\n')}${missingHere.length>10?`\n他 ${missingHere.length-10}名`:''}`;
