@@ -1,0 +1,37 @@
+name: self-repair-bot
+# 新聞ツールの自己修復ボット(PRモード)。
+# 毎朝の Claude 診断(08:00 JST)の後に起動し、低〜中リスクのエラーに対して
+# 最小の防御的修正を生成→構文チェック→PRを作成する(人間がマージして初めて本番反映)。
+# 重度障害(severity=high / escalated)は対象外(人間対応)。
+
+on:
+  schedule:
+    - cron: '40 23 * * *' # 23:40 UTC = 08:40 JST (診断cron 08:00 の後)
+  workflow_dispatch:       # 手動テスト実行用
+
+permissions:
+  contents: write        # ブランチ作成・push
+  pull-requests: write   # PR作成
+
+concurrency:
+  group: self-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run self-repair bot (PR mode)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_PAT: ${{ secrets.SUPABASE_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          # AUTO_MERGE_LOW_RISK: '1'  # ← 実績を確認できたら有効化(低リスクのみ自動マージ)
+        run: node scripts/self-repair.mjs
