@@ -5110,11 +5110,21 @@ function invApplyUI(){
 
 // バックグラウンドで残りデータを読み込む
 async function invLoadAllBackground(){
-  const [namesRes,specialRes,kwRes]=await Promise.all([invApi({action:'get_staff_names'}),invApi({action:'get_special_rates'}),invApi({action:'get_kawagoe_course_prices'})]);
+  // ログイン直後に本人分(単価マスタ・稼働記録も)を裏で先読みしておく。
+  // → 稼働タブを開いてすぐ稼働登録を押しても、単価が読み込み済みで金額が確実に出る。
+  const [namesRes,specialRes,kwRes,ratesRes,workRes]=await Promise.all([
+    invApi({action:'get_staff_names'}),invApi({action:'get_special_rates'}),invApi({action:'get_kawagoe_course_prices'}),
+    invApi({action:'get_rates'}),invApi({action:'list_work'})
+  ]);
   invStaffNames=namesRes.names||[];
   invSpecial=specialRes.records||[];
   if(kwRes.old)kwCoursePrices.old=kwRes.old;
   if(kwRes.new)kwCoursePrices.new=kwRes.new;
+  invRates=ratesRes.rates||[];
+  invWork=workRes.records||[];
+  if(!invIsAdmin&&invStaffName&&!invCanManageCompany()){
+    invWork=invWork.filter(w=>w.staff===invStaffName);
+  }
   invApplyUI();
 }
 
@@ -16366,6 +16376,9 @@ async function sysDoLogin(){
         if(typeof loadLiveStaff==='function')loadLiveStaff().catch(()=>{});
       }
     }).catch(()=>{});
+  }else{
+    // 一般スタッフ: 本人の単価・稼働を裏で先読み(稼働登録の金額が即出るように)
+    invLoadAllBackground().catch(()=>{});
   }
   init();
   if(smAuthed)smPrefetch(); // 店舗マスタ権限があれば裏で先読み(開いた瞬間に表示できるように)
