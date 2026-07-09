@@ -2140,6 +2140,7 @@ function renderShiftView(){
     const allAreas=new Set();
     Object.values(DB.shifts).forEach(areas=>Object.keys(areas).forEach(a=>allAreas.add(a)));
     [...allAreas].forEach(a=>aSel.add(new Option(a,a)));
+    aSel.add(new Option('👤 社員のみ','__employee__')); // 営業所ではなく社員(月給制)で絞る特別項目
     // 当月をデフォルト選択 (なければ最新月)
     const now=new Date();
     const curLabel=`${now.getMonth()+1}月シフト${now.getFullYear()}`;
@@ -2208,9 +2209,22 @@ async function shFreshAndRender(){
 const SH_PAGE=120;            // 月別シフト表の1ページ行数(これ以上は「さらに表示」で段階描画)
 let shRenderLimit=SH_PAGE;
 function shShowMore(){ shRenderLimit+=(isMobile()?80:300); renderShift(true); }
+// スタッフ名が社員(月給制)か判定。単価マスタ(biz_type=社員)優先、無ければ人員名簿の契約区分でフォールバック
+function shIsEmployee(name){
+  const norm=invNormName(name);
+  if(typeof invRates!=='undefined'&&invRates&&invRates.length){
+    const r=invRates.find(x=>invNormName(x.name)===norm);
+    if(r)return r.biz_type==='社員';
+  }
+  const s=(DB.staff||[]).find(x=>invNormName(x.name)===norm);
+  return !!(s&&/社員/.test(s.contract||''));
+}
 function renderShift(keepLimit){
   if(!keepLimit)shRenderLimit=SH_PAGE; // フィルタ等で呼ばれたら先頭から(「さらに表示」だけ維持)
-  const m=document.getElementById('sh-month').value,areaF=document.getElementById('sh-area').value,cs=document.getElementById('sh-course').value.trim(),ss=document.getElementById('sh-staff').value.trim(),w=document.getElementById('shift-wrap');
+  const m=document.getElementById('sh-month').value,areaFRaw=document.getElementById('sh-area').value,cs=document.getElementById('sh-course').value.trim(),ss=document.getElementById('sh-staff').value.trim(),w=document.getElementById('shift-wrap');
+  // 「社員のみ」は営業所フィルタではなく社員フィルタ(全営業所対象)として扱う
+  const empOnly=areaFRaw==='__employee__';
+  const areaF=empOnly?'':areaFRaw;
   const isCourseMode=shMode==='course';
   const src=isCourseMode?DB.shiftsByCourse:DB.shifts;
   const monthData=src[m];if(!monthData){w.innerHTML='<p style="color:var(--text-sub)">データなし</p>';return;}
@@ -2241,6 +2255,8 @@ function renderShift(keepLimit){
     if(shEd==='am')return am&&am!=='0'&&am!=='希望休';
     if(shEd==='pm')return pm&&pm!=='0'&&pm!=='希望休';
     return(am&&am!=='0'&&am!=='希望休')||(pm&&pm!=='0'&&pm!=='希望休');}));
+  // 「社員のみ」: スタッフ起点のとき社員(月給制)だけに絞る
+  if(empOnly&&!isCourseMode)f=f.filter(e=>shIsEmployee(e.course));
   if(cs)f=f.filter(e=>e.course.includes(cs));
   // スタッフ検索: カンマ/空白/読点 区切りで複数指定可、いずれかにヒットすれば表示 (OR)
   const ssTerms=ss?ss.split(/[,、\s　]+/).filter(Boolean):[];
@@ -2287,7 +2303,9 @@ function renderShift(keepLimit){
 // 月別シフト表を PDF (ブラウザ印刷ダイアログ) で出力
 function shExportPdf(){
   const m=document.getElementById('sh-month').value;
-  const areaF=document.getElementById('sh-area').value;
+  const areaFRaw=document.getElementById('sh-area').value;
+  const empOnly=areaFRaw==='__employee__';
+  const areaF=empOnly?'':areaFRaw;
   const cs=document.getElementById('sh-course').value.trim();
   const ss=document.getElementById('sh-staff').value.trim();
   const isCourseMode=shMode==='course';
@@ -2318,6 +2336,7 @@ function shExportPdf(){
     if(shEd==='am')return am&&am!=='0'&&am!=='希望休';
     if(shEd==='pm')return pm&&pm!=='0'&&pm!=='希望休';
     return(am&&am!=='0'&&am!=='希望休')||(pm&&pm!=='0'&&pm!=='希望休');}));
+  if(empOnly&&!isCourseMode)f=f.filter(e=>shIsEmployee(e.course));
   if(cs)f=f.filter(e=>e.course.includes(cs));
   const ssTerms=ss?ss.split(/[,、\s　]+/).filter(Boolean):[];
   if(ssTerms.length){
