@@ -5620,6 +5620,9 @@ async function invSaveWork(){
     if(!confirm(`⚠ シフトではこの日「${[...expCats].join('・')}」です。\n区分「${invCatSel}」で登録しますか？\n\n(シフトと違う区分で登録しようとしています)`))return;
   }
   const btn=document.getElementById('inve-submit');btn.textContent='保存中...';btn.disabled=true;
+  // 単価マスタ(invRates)未読込のまま保存すると金額が0になるため、必ず読み込んでから計算する
+  // (「3秒待つ」等の曖昧な遅延では回線次第で取りこぼす。確実に取得を待つのが正解)
+  if(!invRates.length){ try{ const rr=await invApi({action:'get_rates'}); if(rr&&rr.rates)invRates=rr.rates; }catch(_){} }
   const rate=invRates.find(r=>r.name===staff);
   const d=new Date(date);const dow=d.getDay();
   let price=0,amount=0;
