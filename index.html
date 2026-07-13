@@ -5273,6 +5273,61 @@ function invShiftExpectedCats(staff,date){
   return set;
 }
 
+// 月まとめてシフト×稼働記録を突合し、3種の不一致(氏名リスト)を返す。
+//  #1 missingWork: シフトに有給稼働があるのに稼働記録が無い (請求漏れの温床)
+//  #2 extraWork:   稼働記録があるのにシフトに無い (誤入力/代走/過大請求の温床・要確認)
+//  #3 catMismatch: 両方あるが稼働記録の区分がシフトの想定とズレ (要確認)
+// 単価マスタ未登録・社員は対象外(前者は rate_missing で別報告、後者は月給制)。
+function invShiftWorkMismatch(monthLabel,monthVal){
+  const out={missingWork:[],extraWork:[],catMismatch:[]};
+  const months=DB.shifts[monthLabel];
+  if(!months)return out;
+  const nd=s=>String(s||'').replace(/\//g,'-');
+  const rateOf=norm=>invRates.find(r=>invNormName(r.name)===norm);
+  // 1) シフト側: "norm|date" -> {name, norm, cats:Set} (有給スロットのみ)
+  const shiftMap={};
+  Object.values(months).forEach(sh=>{
+    const dates=sh.dates||[];
+    (sh.entries||[]).forEach(e=>{
+      const norm=invNormName(e.course);
+      dates.forEach((dObj,di)=>{
+        const a=e.a[di];if(!a)return;
+        const cats=new Set();
+        if(a.am&&!admPayIsNonPaidShift(a.am))cats.add(invSlotCat('am',a.am));
+        if(a.pm&&!admPayIsNonPaidShift(a.pm))cats.add(invSlotCat('pm',a.pm));
+        if(!cats.size)return;
+        const key=norm+'|'+nd(dObj.d);
+        if(!shiftMap[key])shiftMap[key]={name:e.course,norm,cats:new Set()};
+        cats.forEach(c=>shiftMap[key].cats.add(c));
+      });
+    });
+  });
+  // 2) 稼働記録側: "norm|date" -> [{name,cat}]
+  const workMap={};
+  (invWork||[]).forEach(w=>{
+    const date=nd(w.date);
+    if(monthVal&&!date.startsWith(monthVal))return;
+    const norm=invNormName(w.staff);
+    const key=norm+'|'+date;
+    (workMap[key]=workMap[key]||[]).push({name:w.staff,cat:invMapCat(w.category)});
+  });
+  // 3) 判定
+  const s1=new Set(),s2=new Set(),s3=new Set();
+  Object.entries(shiftMap).forEach(([key,s])=>{
+    const rt=rateOf(s.norm);
+    if(!rt||rt.biz_type==='社員')return;
+    const recs=workMap[key];
+    if(!recs||!recs.length){s1.add(s.name);return;}
+    if(recs.some(r=>!s.cats.has(r.cat)))s3.add(s.name);
+  });
+  Object.entries(workMap).forEach(([key,recs])=>{
+    if(!shiftMap[key])s2.add(recs[0].name);
+  });
+  const sortJa=a=>[...a].sort((x,y)=>String(x).localeCompare(String(y),'ja'));
+  out.missingWork=sortJa(s1);out.extraWork=sortJa(s2);out.catMismatch=sortJa(s3);
+  return out;
+}
+
 // シフトの区分と現在選択中の区分がズレていたら警告バナーを表示
 function invCheckShiftCat(){
   const warn=document.getElementById('inve-shift-warn');if(!warn)return;
@@ -13335,6 +13390,15 @@ function smSyncRateAlert(month,names){
       body:JSON.stringify({action:'sync',kind:'rate_missing',month:month,names:names||[]}),keepalive:true}).catch(function(){});
   }catch(_){}
 }
+// シフト×稼働記録の不一致(3種)を NexPort 常設アラートに同期。全0件で自動解消。
+function smSyncMismatchAlert(month,mm){
+  try{
+    if(!month||!mm)return;
+    fetch(SM_ALERT_API,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'sync',kind:'shift_work_mismatch',month:month,
+        missingWork:mm.missingWork||[],extraWork:mm.extraWork||[],catMismatch:mm.catMismatch||[]}),keepalive:true}).catch(function(){});
+  }catch(_){}
+}
 // 「未作成スタッフ確認」ボタンのハンドラ
 async function admPayDiagnose(){
   const monthVal=document.getElementById('adm-pay-month').value;
@@ -13351,6 +13415,9 @@ async function admPayDiagnose(){
   const r=admPayDiagnoseStaff(monthLabel,area);
   // 単価マスタ未登録の状態を NexPort に同期(0名なら自動で対処済みになり表示が消える)
   smSyncRateAlert(monthVal,(r.missingRate||[]).map(x=>x.name));
+  // シフト×稼働記録の不一致(3種)を算出して NexPort に同期
+  const mm=invShiftWorkMismatch(monthLabel,monthVal);
+  smSyncMismatchAlert(monthVal,mm);
   let h=`<div style="background:#fff;padding:20px;border:1px solid var(--border);border-radius:10px;max-width:760px;margin:0 auto;">`;
   h+=`<h3 style="margin:0 0 12px 0;font-size:16px;">⚠️ 未作成スタッフ確認 — ${monthVal}${area?` / ${area}営業所基準`:''}</h3>`;
   const renderList=(title,bg,border,arr,extraCol,note)=>{
@@ -13370,6 +13437,19 @@ async function admPayDiagnose(){
   renderList('🚫 単価マスタ未登録','#fee2e2','#fca5a5',r.missingRate,'主稼働営業所','単価マスタに登録がないため明細が作成できません。スタッフ管理から追加してください。');
   renderList('👤 社員 (月給制で除外)','#e0e7ff','#a5b4fc',r.employees,'主稼働営業所','区分=社員のため支払い明細の対象外です (月給制)。');
   if(area)renderList(`📍 別営業所が主稼働 (${area} 一括対象外)`,'#fef3c7','#fbbf24',r.wrongArea,'主稼働営業所',`${area} 以外を主稼働とするドライバーは別営業所の一括作成で表示されます。`);
+  // シフト×稼働記録の不一致(3種)を表示
+  const renderNames=(title,bg,border,names,note)=>{
+    h+=`<div style="margin-bottom:14px;border:1px solid ${border};border-radius:8px;overflow:hidden;">`;
+    h+=`<div style="background:${bg};padding:8px 12px;font-weight:600;font-size:13px;">${title} (${names.length}名)</div>`;
+    if(note)h+=`<div style="padding:6px 12px;font-size:11px;color:var(--text-sub);background:#fafafa;">${note}</div>`;
+    if(!names.length){h+=`<div style="padding:10px 12px;color:var(--text-sub);font-size:12px;">該当なし</div>`;}
+    else{h+=`<div style="padding:8px 12px;font-size:12px;line-height:1.9;">${names.join('、')}</div>`;}
+    h+=`</div>`;
+  };
+  h+=`<h4 style="margin:18px 0 10px 0;font-size:14px;color:var(--text);">🔎 シフト×稼働記録の不一致</h4>`;
+  renderNames('🕳 稼働漏れ (シフト有・記録無)','#fee2e2','#fca5a5',mm.missingWork,'シフトに稼働があるのに稼働記録がありません。請求漏れの可能性 — 稼働記録を登録してください。');
+  renderNames('➕ シフト外の稼働 (記録有・シフト無)','#fef3c7','#fbbf24',mm.extraWork,'稼働記録がありますがシフトにありません。誤入力/代走の可能性 — 要確認。');
+  renderNames('🔀 区分ズレ (シフトと区分が不一致)','#e0e7ff','#a5b4fc',mm.catMismatch,'稼働記録の区分がシフトの想定とズレています — 要確認。');
   h+=`</div>`;
   cont.innerHTML=h;
 }
