@@ -1098,6 +1098,13 @@ tbody tr:hover { background:var(--primary-light); }
                 <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">対象スタッフ (引継対象として登録)</label>
                 <input type="text" id="adm-se-vac-handover-staff" list="adm-se-staff-list" placeholder="名前を入力" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;">
               </div>
+              <div style="display:flex;gap:8px;align-items:flex-end;">
+                <div style="flex:1;">
+                  <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">営業所 (Section 2 に行が無い時の追加先)</label>
+                  <select id="adm-se-vac-handover-area" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="城北">城北</option><option value="川越">川越</option><option value="立川">立川</option><option value="川崎高津">川崎高津</option></select>
+                </div>
+                <button onclick="admSeAddToSection2FromForm()" style="background:#14b8a6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap;" title="対象スタッフが Section 2 に無い場合、選択した営業所ブロックに行を追加します">➕ Section 2 に追加</button>
+              </div>
               <div>
                 <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">書込値</label>
                 <select id="adm-se-vac-handover-value" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="引継">引継</option><option value="研修">研修</option><option value="希望休">希望休</option><option value="有給">有給</option><option value="欠勤">欠勤</option><option value="出張">出張</option><option value="ミーティング">ミーティング</option></select>
@@ -8856,7 +8863,7 @@ function admSeDiagnoseHandover(staffName,startCol,endCol,edition){
     const names=new Set();
     blocks.forEach(b=>b.staffRows.forEach(s=>{const n=String(s.name||'').trim();if(n&&key&&invNormName(n).startsWith(key))names.add(n);}));
     const hint=names.size?`\n似た名前: ${[...names].slice(0,8).join(' / ')}`:'';
-    return `「${staffName}」は Section 2 (営業所別ブロック) に行がありません。\n引継は Section 2 の既存スタッフ行に書き込む機能です。先に Section 2 へ「${staffName}」の行を追加してください。${hint}`;
+    return `「${staffName}」は Section 2 (営業所別ブロック) に行がありません。\n引継は Section 2 の既存スタッフ行に書き込む機能です。\nこの画面の「➕ Section 2 に追加」ボタン(営業所を選んで)で追加してから、もう一度「✓ 適用」してください。${hint}`;
   }
   // 行はある → 日付/時間帯のカバレッジを調査
   const coveredDates=new Set();
@@ -8946,6 +8953,44 @@ async function admSeHandoverApply(){
     });
   }catch(e){console.warn('履歴記録失敗:',e);}
   setTimeout(()=>{msg.textContent='';},4000);
+}
+
+// Section 2 に居ないスタッフ(通常コース未割当=引継/代走要員など)を、指定営業所ブロックに追加する。
+// specials機構で行を確保しつつ Section 2 を再生成して書き込む(既存の引継等マークは保持)。
+async function admSeAddToSection2(name,area){
+  name=(name||'').trim();area=(area||'').trim();
+  if(!name){alert('対象スタッフを入力してください');return false;}
+  if(!admSeState.sheetName||!admSeState.rows.length){alert('シフト月を読み込んでください');return false;}
+  const nn=invNormName(name);
+  const already=admSeParseSection2().some(b=>b.staffRows.some(s=>invNormName(s.name)===nn));
+  if(already){alert(`「${name}」は既に Section 2 にあります。そのまま「✓ 適用」で引継を書き込めます。`);return true;}
+  if(!area){alert('追加先の営業所を選択してください');return false;}
+  if(admSeState.dirty.size&&!window.confirm('未保存の変更があります。Section 2 追加(再生成)前に保存を推奨します。続行しますか?'))return false;
+  if(!window.confirm(`Section 2 の「${area}」ブロックに「${name}」の行を追加します。\n(Section 2 を最新シフトで再生成します。引継等の特殊マークは保持されます)\n\n続行?`))return false;
+  const msg=document.getElementById('adm-se-msg');
+  msg.textContent=`Section 2 に「${name}」を追加中...`;msg.style.color='#3b82f6';
+  try{
+    const specials=admSeExtractSection2Specials();
+    if(!specials[nn])specials[nn]={name,area,days:{}};else specials[nn].area=area;
+    const s2=admSeBuildSection2(admSeState.rows,specials);
+    if(!s2.length)throw new Error('Section 2 を生成できませんでした');
+    const numCols=s2[0].length;
+    const range=`A121:${admSeColLabel(numCols-1)}${121+s2.length-1}`;
+    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:admSeState.sheetName,range,values:s2})});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    msg.textContent=`✓ Section 2 の「${area}」に「${name}」を追加しました。続けて「✓ 適用」で引継を書き込めます。`;msg.style.color='#16a34a';
+    await admSeReload();
+    return true;
+  }catch(e){
+    msg.innerHTML='<span style="color:var(--danger);">Section 2 追加失敗: '+e.message+'</span>';
+    return false;
+  }
+}
+async function admSeAddToSection2FromForm(){
+  const name=document.getElementById('adm-se-vac-handover-staff').value.trim();
+  const area=document.getElementById('adm-se-vac-handover-area').value;
+  await admSeAddToSection2(name,area);
 }
 
 // === 🏖️ 休暇登録モーダル ===
