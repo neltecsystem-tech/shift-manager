@@ -2178,7 +2178,7 @@ function parseMonthLabel(label){
 async function forceFreshShift(year,month){
   const sheetName=`${month}月シフト${year}`;
   try{
-    const resp=await fetch(SHIFT_API,{
+    const resp=await smShiftFetch({
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})
     });
@@ -5946,14 +5946,14 @@ async function invSaveRate(){
   if(isNewStaff){
     try{
       // 既存の同名行をチェック
-      const fr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'人員名簿'})});
+      const fr=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'人員名簿'})});
       const fj=await fr.json();
       const norm=invNormName(name);
       const existsRow=(fj.rows||[]).findIndex((row,i)=>i>=2&&invNormName(String(row&&row[2]||''))===norm);
       if(existsRow>=0){
         console.log('人員名簿: 同名行が存在 — append スキップ (行'+(existsRow+1)+')');
       }else{
-        const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:'人員名簿',values:['','',name]})});
+        const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:'人員名簿',values:['','',name]})});
         const j=await r.json();
         if(j.error)console.warn('人員名簿への自動追加失敗:',j.error);
       }
@@ -7371,12 +7371,27 @@ function admEditRate(idx){
 
 // --- シフト取込 ---
 const SHIFT_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/fetch-shift';
+// Sheets EF(fetch-shift)呼び出しの共通ラッパー。429/クォータ超過(per-minute制限)を指数バックオフで自動リトライ。
+// 429はステータス or 200で本文に google の quota エラーが包まれて返る両方に対応。
+async function smShiftFetch(opts){
+  const waits=[1500,5000,12000]; // リトライ前の待機(ms) → 最大3回リトライ
+  for(let i=0;;i++){
+    let resp;
+    try{ resp=await fetch(SHIFT_API, opts); }
+    catch(e){ if(i>=waits.length)throw e; await new Promise(r=>setTimeout(r,waits[i])); continue; }
+    let quota=false;
+    if(resp.status===429||resp.status===503){ quota=true; }
+    else{ try{ const t=await resp.clone().text(); if(/Quota exceeded|rateLimitExceeded|RESOURCE_EXHAUSTED|"code":\s*429/i.test(t))quota=true; }catch(_){} }
+    if(quota&&i<waits.length){ await new Promise(r=>setTimeout(r,waits[i])); continue; }
+    return resp;
+  }
+}
 
 async function adminListSheets(){
   const el=document.getElementById('adm-shift-sheets');
   el.innerHTML='<p>読み込み中...</p>';
   try{
-    const resp=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list_sheets'})});
+    const resp=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list_sheets'})});
     const json=await resp.json();
     const shifts=json.shift_sheets||[];
     const others=json.other_sheets||[];
@@ -7417,7 +7432,7 @@ async function adminImportSheets(){
   for(const sheetName of checked){
     try{
       resEl.innerHTML=`<p>取込中... ${sheetName} (${imported}/${checked.length})</p>`;
-      const resp=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
+      const resp=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
       const json=await resp.json();
       if(json.error){errors.push(`${sheetName}: ${json.error}`);continue;}
       const rows=json.rows||[];
@@ -7485,7 +7500,7 @@ function rerenderCurrentView(){
 
 async function loadServerShiftCache(silent){
   try{
-    const resp=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_cached_shifts'})});
+    const resp=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_cached_shifts'})});
     const json=await resp.json();
     if(json.error||!Array.isArray(json.sheets))return false;
     const lastUpdated=parseInt(localStorage.getItem('serverCacheUpdatedAt')||'0');
@@ -8169,7 +8184,7 @@ async function admSeInit(){
   const sel=document.getElementById('adm-se-sheet');
   if(sel.options.length<=1){
     try{
-      const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list_sheets'})});
+      const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list_sheets'})});
       const j=await r.json();
       const sheets=(j.shift_sheets||[]).filter(s=>/^\d{1,2}月シフト\d{4}$/.test(s)||/^\d{1,2}月シフト$/.test(s));
       // 新しい順
@@ -8200,7 +8215,7 @@ async function admSeLoad(){
   try{localStorage.setItem('admSeSheetName',sheetName);}catch(_){}
   msg.textContent='読み込み中...';msg.style.color='#3b82f6';
   try{
-    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
+    const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
     const j=await r.json();
     if(j.error)throw new Error(j.error);
     admSeState={sheetName,rows:(j.rows||[]).map(r=>r.slice()),dirty:new Map()};
@@ -8976,7 +8991,7 @@ async function admSeAddToSection2(name,area){
     if(!s2.length)throw new Error('Section 2 を生成できませんでした');
     const numCols=s2[0].length;
     const range=`A121:${admSeColLabel(numCols-1)}${121+s2.length-1}`;
-    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:admSeState.sheetName,range,values:s2})});
+    const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:admSeState.sheetName,range,values:s2})});
     const j=await r.json();
     if(j.error)throw new Error(j.error);
     msg.textContent=`✓ Section 2 の「${area}」に「${name}」を追加しました。続けて「✓ 適用」で引継を書き込めます。`;msg.style.color='#16a34a';
@@ -9321,19 +9336,19 @@ async function admSeVacationApply(){
 // 「休暇履歴」シートに append (なければヘッダ付きで自動作成)
 async function admSeLogVacation(rec){
   // シート存在確認
-  const lr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list_sheets'})});
+  const lr=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list_sheets'})});
   const lj=await lr.json();
   const exists=(lj.all_sheets||[]).includes('休暇履歴');
   if(!exists){
-    const cr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create_sheet',sheet_name:'休暇履歴'})});
+    const cr=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create_sheet',sheet_name:'休暇履歴'})});
     const cj=await cr.json();
     if(cj.error&&!/already exists/i.test(cj.error))throw new Error(cj.error);
     // ヘッダ書き込み
     const headers=['タイムスタンプ','シート名','日付','曜日','時間帯','希望者','代わりのドライバー','変更件数','変更詳細'];
-    await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:'休暇履歴',range:'A1:I1',values:[headers]})});
+    await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:'休暇履歴',range:'A1:I1',values:[headers]})});
   }
   const values=[rec.timestamp,rec.sheetName,rec.dateStr,rec.dowStr,rec.editLabel,rec.requester,rec.replacement,rec.changeCount,rec.detail];
-  const ar=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:'休暇履歴',values})});
+  const ar=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:'休暇履歴',values})});
   const aj=await ar.json();
   if(aj.error)throw new Error(aj.error);
 }
@@ -9350,7 +9365,7 @@ async function admJinLoad(){
   msg.textContent='人員名簿 読み込み中...';msg.style.color='#3b82f6';
   try{
     const [r,_]=await Promise.all([
-      fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'人員名簿'})}),
+      smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'人員名簿'})}),
       // マスタも先にロード (コース ドロップダウンの候補に使う)
       admSeLoadMaster().catch(()=>{}),
     ]);
@@ -9425,7 +9440,7 @@ async function admJinAddRowSave(){
   btn.textContent='追加中...';btn.disabled=true;
   try{
     // ① 人員名簿シートに追加
-    const resp=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:'人員名簿',values:[area,range,name,phone]})});
+    const resp=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:'人員名簿',values:[area,range,name,phone]})});
     const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
     if(json.error)throw new Error(json.error);
     // ② 請求書の単価マスタにも追加 (admin時・チェックON。氏名のみ。単価等は後で単価一覧で設定)
@@ -9624,7 +9639,7 @@ async function admJinMergeDupNames(){
   const msg=document.getElementById('adm-se-msg');
   msg.textContent=`統合中... (${updates.length}セル)`;msg.style.color='#3b82f6';
   try{
-    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:'人員名簿',updates})});
+    const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:'人員名簿',updates})});
     const j=await r.json();
     if(j.error)throw new Error(j.error);
     msg.textContent=`✓ 統合完了 (${plan.length}名 / ${updates.length}セル更新)`;msg.style.color='#16a34a';
@@ -9841,7 +9856,7 @@ async function admJinSave(){
   if(!window.confirm(`人員名簿に ${updates.length} 件の変更を保存します。続行?`))return;
   msg.textContent=`人員名簿 保存中... (${updates.length}件)`;msg.style.color='#3b82f6';
   try{
-    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:'人員名簿',updates})});
+    const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:'人員名簿',updates})});
     const j=await r.json();
     if(j.error)throw new Error(j.error);
     updates.forEach(u=>{
@@ -9880,7 +9895,7 @@ async function admSeSave(){
   if(!window.confirm(`${admSeState.sheetName} に ${updates.length} 件の変更を保存します。続行?`))return;
   msg.textContent=`保存中... (${updates.length}件)`;msg.style.color='#3b82f6';
   try{
-    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:admSeState.sheetName,updates})});
+    const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:admSeState.sheetName,updates})});
     const j=await r.json();
     if(j.error)throw new Error(j.error);
     // 元データに反映
@@ -9912,7 +9927,7 @@ async function admYobiInit(force){
   if(admYobiState.dirty.size&&force&&!window.confirm('未保存の変更があります。破棄して再読込しますか?'))return;
   msg.textContent='読み込み中...';msg.style.color='#3b82f6';
   try{
-    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:YOBI_SHEET_NAME})});
+    const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:YOBI_SHEET_NAME})});
     const j=await r.json();
     if(j.error)throw new Error(j.error);
     admYobiState={rows:(j.rows||[]).map(row=>row.slice()),dirty:new Map(),loaded:true};
@@ -9987,7 +10002,7 @@ async function admYobiSave(){
   if(!window.confirm(`「${YOBI_SHEET_NAME}」に ${updates.length} 件の変更を保存します。続行?`))return;
   msg.textContent=`保存中... (${updates.length}件)`;msg.style.color='#3b82f6';
   try{
-    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:YOBI_SHEET_NAME,updates})});
+    const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:YOBI_SHEET_NAME,updates})});
     const j=await r.json();
     if(j.error)throw new Error(j.error);
     updates.forEach(u=>{
@@ -10019,7 +10034,7 @@ async function admYobiAddCourse(scope){
     if(!dup){
       const values=new Array(10).fill('');values[0]=am;values[9]=pm;
       msg.textContent='早見表に行を追加中...';msg.style.color='#3b82f6';
-      const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:YOBI_SHEET_NAME,values})});
+      const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:YOBI_SHEET_NAME,values})});
       const j=await r.json();if(j.error)throw new Error(j.error);
       await admYobiInit(true); // 再読込して新行を表示 (dirty無しなので確認なし)
       const cont=document.getElementById('adm-yobi-content');if(cont)cont.scrollTop=cont.scrollHeight;
@@ -10057,7 +10072,7 @@ async function admYobiReflectCoursesToMonth(courseNames,startDate){
   const sheetName=`${month}月シフト${year}`;
   const {amMap,pmMap}=await admSeFetchDowRef();
   const reqs=await admSeLoadMaster();
-  const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
+  const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
   const j=await r.json();
   if(j.error)throw new Error(`「${sheetName}」取得失敗: ${j.error} (当月シートが未作成の可能性。先に「新規月作成」)`);
   const rows=(j.rows||[]).map(x=>x.slice());
@@ -10102,7 +10117,7 @@ async function admYobiReflectCoursesToMonth(courseNames,startDate){
       }
     });
     const range=`A${target+1}:${colEnd}${target+1}`;
-    const ur=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:sheetName,range,values:[rowArr]})});
+    const ur=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:sheetName,range,values:[rowArr]})});
     const uj=await ur.json();if(uj.error)throw new Error(uj.error);
     rows[target]=rowArr;
     if(!isUpdate)lastCourse=target; // 追記した分を次コースの基準に
@@ -10111,11 +10126,11 @@ async function admYobiReflectCoursesToMonth(courseNames,startDate){
   }
   // 開始日前セルは白(無地)に戻す → 黒塗り適用 の順 (同一セルが両方に入らない前提)
   if(whiteCells.length){
-    const wr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:sheetName,cells:whiteCells,bg:{red:1,green:1,blue:1}})});
+    const wr=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:sheetName,cells:whiteCells,bg:{red:1,green:1,blue:1}})});
     const wj=await wr.json();if(wj.error)throw new Error(wj.error);
   }
   if(blackCells.length){
-    const fr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:sheetName,cells:blackCells,bg:{red:0,green:0,blue:0}})});
+    const fr=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:sheetName,cells:blackCells,bg:{red:0,green:0,blue:0}})});
     const fj=await fr.json();if(fj.error)throw new Error(fj.error);
   }
   forceFreshShift(year,month).catch(()=>{});
@@ -10168,13 +10183,13 @@ async function admSeApplyHolidayPm(){
     if(!window.confirm(`祝日の夕刊を休刊にします:\n対象日: ${days}\n\n・担当クリア: ${clearedCount}セル\n・黒塗り: ${blackCells.length}セル\n\n続行?`)){msg.textContent='';return;}
     if(clearUpdates.length){
       msg.textContent=`担当クリア中... (${clearUpdates.length}件)`;
-      const r1=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:admSeState.sheetName,updates:clearUpdates})});
+      const r1=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:admSeState.sheetName,updates:clearUpdates})});
       const j1=await r1.json();
       if(j1.error)throw new Error(j1.error);
       clearUpdates.forEach(u=>{if(!rows[u.row])rows[u.row]=[];rows[u.row][u.col]=u.value;});
     }
     msg.textContent=`黒塗り適用中... (${blackCells.length}件)`;
-    const r2=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:admSeState.sheetName,cells:blackCells,bg:{red:0,green:0,blue:0}})});
+    const r2=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:admSeState.sheetName,cells:blackCells,bg:{red:0,green:0,blue:0}})});
     const j2=await r2.json();
     if(j2.error)throw new Error(j2.error);
     admSeState.dirty.clear();
@@ -10193,7 +10208,7 @@ async function admSeApplyHolidayPm(){
 let admSeMasterReqs=null;
 async function admSeLoadMaster(){
   if(admSeMasterReqs)return admSeMasterReqs;
-  const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'マスタ'})});
+  const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'マスタ'})});
   const j=await r.json();
   if(j.error)throw new Error('マスタ取得失敗: '+j.error);
   const reqs={};
@@ -10306,7 +10321,7 @@ async function admSeCheckGaps(){
 // 早見表レイアウト: col0=AMコース, col1-7=月火水木金土日 / col9=PMコース, col10-16=月火水木金土日
 // orderedCourses はエリア別 (城北→川越→立川→川崎高津) + AM コース → PM 専用コース順にソート済
 async function admSeFetchDowRef(){
-  const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'曜日別コース人員早見表'})});
+  const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'曜日別コース人員早見表'})});
   const j=await r.json();
   if(j.error)throw new Error('曜日別コース人員早見表 取得失敗: '+j.error);
   const rows=j.rows||[];
@@ -10474,7 +10489,7 @@ async function admSeGenSection2(){
   if(!window.confirm(`「${admSeState.sheetName}」の Section 2 (営業所別 個人別) を生成します。\n\n${s2.length}行を ${range} に書き込みます。${preserveNote}\n\n続行?`))return;
   msg.textContent='Section 2 生成中...';msg.style.color='#3b82f6';
   try{
-    const r=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:admSeState.sheetName,range,values:s2})});
+    const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:admSeState.sheetName,range,values:s2})});
     const j=await r.json();
     if(j.error)throw new Error(j.error);
     msg.textContent=`✓ Section 2 生成完了 (${s2.length}行${specialCount?` / 特殊マーク${specialCount}件保持`:''})。再読込します...`;msg.style.color='#16a34a';
@@ -10555,7 +10570,7 @@ async function admSeNewMonth(){
 
     // 4. 空シート作成 → update_range で全部書き込み
     msg.textContent=`シート作成: ${sheetName}...`;
-    const cr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create_sheet',sheet_name:sheetName})});
+    const cr=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create_sheet',sheet_name:sheetName})});
     const cj=await cr.json();
     if(cj.error){
       // 既存シートが存在する場合は新規作成せず、編集モードに切り替えるか確認
@@ -10577,7 +10592,7 @@ async function admSeNewMonth(){
     msg.textContent=`日付 ${dates.length}日 + コース ${orderedCourses.length}件 + 担当者 ${filledCells}セル + Section2 ${section2Count}行 を書き込み中...`;
     const colEnd=admSeColLabel(numCols-1);
     const range=`A1:${colEnd}${sheetRows.length}`;
-    const ur=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:sheetName,range,values:sheetRows})});
+    const ur=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:sheetName,range,values:sheetRows})});
     const uj=await ur.json();
     if(uj.error)throw new Error(uj.error);
 
@@ -10603,7 +10618,7 @@ async function admSeNewMonth(){
       });
     });
     if(blackCells.length){
-      const fr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:sheetName,cells:blackCells,bg:{red:0,green:0,blue:0}})});
+      const fr=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:sheetName,cells:blackCells,bg:{red:0,green:0,blue:0}})});
       const fj=await fr.json();
       if(fj.error)console.warn('format_cells failed:',fj.error);
     }
@@ -10663,7 +10678,7 @@ async function admSeWriteImportRangeForNewMonth(sheetName,orderedCourses,numCols
   for(const target of IMPORTRANGE_TARGETS){
     const targetSheet=target.sheet;
     // 反映先取得
-    const tr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:targetSheet,spreadsheet_id:IMPORTRANGE_TARGET_SS})});
+    const tr=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:targetSheet,spreadsheet_id:IMPORTRANGE_TARGET_SS})});
     const tj=await tr.json();
     if(tj.error){console.warn(`[${targetSheet}] 取得失敗:`,tj.error);continue;}
     const targetRows=tj.rows||[];
@@ -10708,7 +10723,7 @@ async function admSeWriteImportRangeForNewMonth(sheetName,orderedCourses,numCols
         value:f(`B${firstRow}:${lastSourceColLabel}${lastRow}`),
       });
     });
-    const wr=await fetch(SHIFT_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:targetSheet,spreadsheet_id:IMPORTRANGE_TARGET_SS,updates})});
+    const wr=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:targetSheet,spreadsheet_id:IMPORTRANGE_TARGET_SS,updates})});
     const wj=await wr.json();
     if(wj.error)console.warn(`[${targetSheet}] 書込失敗:`,wj.error);
     else console.log(`[${targetSheet}] ${sheetName} を列 ${admSeColLabel(nextCol)} に書込 (${updates.length} セル)`);
