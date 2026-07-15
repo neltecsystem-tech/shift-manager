@@ -13,6 +13,7 @@ const corsHeaders = {
 interface Payload {
   phone?: string;
   name?: string;
+  company?: string;
   year_month?: string;
   auth_token?: string;
 }
@@ -63,8 +64,9 @@ Deno.serve(async (req: Request) => {
     const body = (await req.json().catch(() => ({}))) as Payload;
     const phoneInput = normalizePhone(body.phone ?? '');
     const nameInput = (body.name ?? '').trim();
+    const companyInput = (body.company ?? '').trim();
     const ym = (body.year_month ?? '').trim();
-    if (!phoneInput && !nameInput) return json({ error: 'phone or name required' }, 400);
+    if (!phoneInput && !nameInput && !companyInput) return json({ error: 'phone, name or company required' }, 400);
     if (!/^\d{4}-\d{2}$/.test(ym))
       return json({ error: 'year_month required (YYYY-MM)' }, 400);
     const [yStr, mStr] = ym.split('-');
@@ -76,20 +78,26 @@ Deno.serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    // 電話番号があれば従来どおり電話で照合。無ければ氏名照合(管理者限定)。
-    const byName = !phoneInput && !!nameInput;
+    // 法人=会社名(company_name)で照合 / 個人=氏名(staff_name) or 電話。氏名・会社名照合は管理者限定。
+    const byCompany = !phoneInput && !nameInput && !!companyInput;
+    const byName = !phoneInput && !!nameInput && !companyInput;
     let rows: any[];
-    if (byName) {
+    if (byCompany || byName) {
       if (!(await callerIsAdmin(admin, body.auth_token)))
-        return json({ error: 'forbidden (name lookup is admin only)', code: 'FORBIDDEN' }, 403);
+        return json({ error: 'forbidden (name/company lookup is admin only)', code: 'FORBIDDEN' }, 403);
       const { data, error } = await admin
         .from('closed_pay_statements')
         .select('*')
         .eq('year', year)
         .eq('month', month);
       if (error) return json({ error: 'fetch failed: ' + error.message }, 500);
-      const key = nmKey(nameInput);
-      rows = (data ?? []).filter((s) => nmKey(s.staff_name ?? '') === key);
+      if (byCompany) {
+        const ckey = nmKey(companyInput);
+        rows = (data ?? []).filter((s) => ckey && nmKey(s.company_name ?? '').includes(ckey));
+      } else {
+        const key = nmKey(nameInput);
+        rows = (data ?? []).filter((s) => nmKey(s.staff_name ?? '') === key);
+      }
     } else {
       const { data, error } = await admin
         .from('closed_pay_statements')
