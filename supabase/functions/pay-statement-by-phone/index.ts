@@ -12,7 +12,9 @@ const corsHeaders = {
 
 interface Payload {
   phone?: string;
+  name?: string;
   year_month?: string;
+  auth_token?: string;
 }
 
 function normalizePhone(s: string): string {
@@ -22,6 +24,30 @@ function normalizePhone(s: string): string {
       String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30),
     )
     .replace(/[^\d]/g, '');
+}
+
+// 氏名キー: 前後・中間の空白(全半角)を除去して比較用に正規化
+function nmKey(s: string): string {
+  return String(s ?? '').replace(/[\s　]/g, '');
+}
+
+// 氏名照合(電話番号未登録者の明細取得)は管理者のみ許可。
+// shift EF は NexPort と同一プロジェクト(workchat)上なので、admin クライアントで
+// caller の JWT を検証し profiles.role を確認できる。
+async function callerIsAdmin(admin: any, authToken: string | undefined): Promise<boolean> {
+  if (!authToken) return false;
+  try {
+    const { data: { user } } = await admin.auth.getUser(authToken);
+    if (!user) return false;
+    const { data: prof } = await admin
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .maybeSingle();
+    return !!prof && (prof.role === 'admin' || prof.role === 'super_admin');
+  } catch (_) {
+    return false;
+  }
 }
 
 function json(body: unknown, status = 200) {
@@ -36,8 +62,9 @@ Deno.serve(async (req: Request) => {
   try {
     const body = (await req.json().catch(() => ({}))) as Payload;
     const phoneInput = normalizePhone(body.phone ?? '');
+    const nameInput = (body.name ?? '').trim();
     const ym = (body.year_month ?? '').trim();
-    if (!phoneInput) return json({ error: 'phone required' }, 400);
+    if (!phoneInput && !nameInput) return json({ error: 'phone or name required' }, 400);
     if (!/^\d{4}-\d{2}$/.test(ym))
       return json({ error: 'year_month required (YYYY-MM)' }, 400);
     const [yStr, mStr] = ym.split('-');
@@ -49,16 +76,30 @@ Deno.serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const { data, error } = await admin
-      .from('closed_pay_statements')
-      .select('*')
-      .eq('phone', phoneInput)
-      .eq('year', year)
-      .eq('month', month);
-
-    if (error) return json({ error: 'fetch failed: ' + error.message }, 500);
-
-    const rows = data ?? [];
+    // 電話番号があれば従来どおり電話で照合。無ければ氏名照合(管理者限定)。
+    const byName = !phoneInput && !!nameInput;
+    let rows: any[];
+    if (byName) {
+      if (!(await callerIsAdmin(admin, body.auth_token)))
+        return json({ error: 'forbidden (name lookup is admin only)', code: 'FORBIDDEN' }, 403);
+      const { data, error } = await admin
+        .from('closed_pay_statements')
+        .select('*')
+        .eq('year', year)
+        .eq('month', month);
+      if (error) return json({ error: 'fetch failed: ' + error.message }, 500);
+      const key = nmKey(nameInput);
+      rows = (data ?? []).filter((s) => nmKey(s.staff_name ?? '') === key);
+    } else {
+      const { data, error } = await admin
+        .from('closed_pay_statements')
+        .select('*')
+        .eq('phone', phoneInput)
+        .eq('year', year)
+        .eq('month', month);
+      if (error) return json({ error: 'fetch failed: ' + error.message }, 500);
+      rows = data ?? [];
+    }
     if (rows.length === 0) {
       return json({ source: 'shift', found: false, reason: 'no_finalized_statement' });
     }

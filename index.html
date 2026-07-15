@@ -5635,9 +5635,17 @@ function invShowAdd(){
   document.getElementById('inve-date').value=today;
   document.getElementById('inve-date').max=today;
   const canPickStaff=invIsAdmin||invCanManageCompany();
-  // 管理者: 空欄スタート / オーナー: 自分をデフォ / 一般: 自分で固定
-  document.getElementById('inve-staff').value=invIsAdmin?'':invStaffName;
-  document.getElementById('inve-staff').disabled=!canPickStaff;
+  // 管理者: 自分の名前をデフォ(切替可) / オーナー: 自分をデフォ / 一般: 自分で固定
+  const seStaff=document.getElementById('inve-staff');
+  let defStaff=invStaffName;
+  if(invIsAdmin){
+    // admin/all 権限のスタッフ(小林さん等)は自分の名前を初期選択。純パスワード管理者('管理者')や名簿に無い場合は空欄。
+    const myName=(typeof sysUserName!=='undefined'&&sysUserName&&sysUserName!=='管理者')?sysUserName:'';
+    const hasOpt=myName&&Array.from(seStaff.options).some(o=>o.value===myName);
+    defStaff=hasOpt?myName:'';
+  }
+  seStaff.value=defStaff;
+  seStaff.disabled=!canPickStaff;
   document.getElementById('inve-course').value='';
   invCatSel='朝刊';invRenderCatBtns();
   document.getElementById('inve-start').value='';
