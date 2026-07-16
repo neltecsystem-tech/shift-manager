@@ -12111,6 +12111,7 @@ async function admBillGenerate(){
   const course=document.getElementById('adm-bill-course').value;
   const monthVal=document.getElementById('adm-bill-month').value;
   if(!area||!course||!monthVal){alert('営業所・コース・年月を選択してください');return;}
+  await admBillLoadForMonth(monthVal); // 選択月の月初スナップを確実にロード(既定=当月のため月変更後の取り違え防止)
 
   const result=admBillRenderWithTotals(area,course,monthVal);
   const confirmed=getConfirmedSale(monthVal,area,course);
@@ -12554,6 +12555,7 @@ async function admBillAllCourses(){
   const area=document.getElementById('adm-bill-area').value;
   const monthVal=document.getElementById('adm-bill-month').value;
   if(!area||!monthVal){alert('営業所と年月を選択してください');return;}
+  await admBillLoadForMonth(monthVal); // 選択月の月初スナップを確実にロード(取り違え防止)
 
   const records=admBillShopData.records||[];
   const cols=admBillCols();
@@ -12662,6 +12664,7 @@ async function admBillAllAreasTotal(){
     if(!confirmedSalesCache)await loadConfirmedSales();
     const monthVal=document.getElementById('adm-bill-month').value;
     if(!monthVal){alert('年月を選択してください');return;}
+    await admBillLoadForMonth(monthVal); // 選択月の月初スナップを確実にロード(取り違え防止)
     const records=admBillShopData.records||[];
     const cols=admBillCols();
     // adm-bill-area セレクタから営業所一覧を取得 (選択肢 = 空欄+各営業所)
@@ -12727,6 +12730,7 @@ async function admBillBtoB(){
     if(!confirmedSalesCache)await loadConfirmedSales();
     const monthVal=document.getElementById('adm-bill-month').value;
     if(!monthVal){alert('年月を選択してください');return;}
+    await admBillLoadForMonth(monthVal); // 選択月の月初スナップを確実にロード(取り違え防止)
     const records=admBillShopData.records||[];
     const cols=admBillCols();
     const sel=document.getElementById('adm-bill-area');
