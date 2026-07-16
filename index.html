@@ -949,6 +949,7 @@ tbody tr:hover { background:var(--primary-light); }
           <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
             <button onclick="admPayRefreshShift()" style="background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="シフトキャッシュを強制更新">🔄 シフト最新化</button>
             <button onclick="admPayBulk()" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📋 営業所一括作成</button>
+            <button onclick="admPayFinalizeAll()" style="background:#e11d48;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="全営業所の非社員ドライバー(稼働あり)を一括で確定→統合明細ビューアに公開。電話未登録者も含めて確定します。">🚀 全営業所 確定・公開</button>
             <button onclick="admPayDiagnose()" style="background:#dc2626;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="シフトに入っているのに明細が作れないスタッフを表示">⚠️ 未作成スタッフ確認</button>
             <button onclick="admPayBulkPdfZip()" style="background:#7c3aed;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📦 個別PDFをZIP保存</button>
             <button onclick="admPayPrint()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🖨 印刷 / PDF</button>
@@ -13228,6 +13229,62 @@ async function admPaySaveStatements(barId){
     msg.textContent=`❌ 保存失敗: ${e.message}`;
     msg.style.color='var(--danger)';
   }
+}
+
+// 🚀 全営業所 一括確定・公開: 非社員ドライバー全員(稼働あり)を closed_pay_statements へ保存。
+// 営業所ごとの公開漏れ・電話未登録の取りこぼしを根絶する(電話なしも保存=EF側で電話任意化済み)。
+async function admPayFinalizeAll(){
+  const monthVal=document.getElementById('adm-pay-month').value;
+  const msg=document.getElementById('adm-pay-msg');
+  const cont=document.getElementById('adm-pay-content');
+  if(!monthVal){alert('年月を選択してください');return;}
+  if(!adminAuthed){alert('管理者権限が必要です');return;}
+  const [y,m]=monthVal.split('-').map(Number);
+  const setMsg=(t,c)=>{if(msg){msg.textContent=t;msg.style.color=c||'#3b82f6';}};
+  setMsg('シフト・単価・店舗マスタを読み込み中...');
+  const monthLabel=await admPayEnsureMonthLoaded(y,m);
+  if(!monthLabel){setMsg(`❌ ${m}月シフト${y} のデータが取得できませんでした`,'var(--danger)');return;}
+  if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
+  if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}}
+  if(!invSpecial.length){try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}}
+  if(!invShopMasterCache){setMsg('店舗マスタを読み込み中...');await invLoadShopMaster();}
+
+  // 非社員ドライバー全員(営業所問わず)。稼働のある人(明細行あり or 総額>0)だけ確定。
+  const targets=[]; const skippedEmpty=[];
+  invRates.forEach(rate=>{
+    if(rate.biz_type==='社員')return;
+    let stmt; try{stmt=admPayBuildStatement(rate,y,m,monthLabel,monthVal);}catch(_){stmt=null;}
+    if(!stmt||!((stmt.rows&&stmt.rows.length)||stmt.grandTotal>0)){skippedEmpty.push(rate.name);return;}
+    targets.push({
+      staff_name:rate.name, phone:getPhone(rate.name)||'', year:y, month:m,
+      am_sum:stmt.amSum, pm_sum:stmt.pmSum, grand_total:stmt.grandTotal, rows:stmt.rows,
+      calc_type:rate.calc_type||null, calc_type_pm:rate.calc_type_pm||null,
+      biz_type:rate.biz_type||null, company_name:rate.company||null,
+      primary_area:admPayGetPrimaryArea(monthLabel,rate.name)||null,
+    });
+  });
+  if(!targets.length){setMsg('確定対象(稼働あり)がいません',' var(--danger)');return;}
+  const noPhone=targets.filter(t=>!t.phone);
+  if(!window.confirm(`${monthVal} 全営業所を一括確定・公開します。\n\n対象(稼働あり) ${targets.length}名${noPhone.length?`\n（うち電話未登録 ${noPhone.length}名も含めて確定）`:''}${skippedEmpty.length?`\n稼働なしでスキップ ${skippedEmpty.length}名`:''}\n\n続行しますか?`))return;
+
+  const CHUNK=40; let saved=0,nw=0,upd=0; const errs=[];
+  for(let i=0;i<targets.length;i+=CHUNK){
+    const chunk=targets.slice(i,i+CHUNK);
+    setMsg(`💾 確定・公開中... ${Math.min(i+CHUNK,targets.length)}/${targets.length}`);
+    try{
+      const resp=await fetch(ADM_PAY_SAVE_EF,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jY29nbnB0b3ByaHdzYmpud2N1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNDU0NDEsImV4cCI6MjA4OTkyMTQ0MX0.M3h31uPyKYWlNevVW3OvZOonoTidC1KLZ04sB5nRKzU'},
+        body:JSON.stringify({auth_token:invAuthToken,finalized_by:(typeof sysUserName!=='undefined'&&sysUserName)?sysUserName:'admin',statements:chunk})});
+      const j=await resp.json();
+      if(j.error){errs.push(j.error);continue;}
+      saved+=j.saved||0; nw+=(j.details||[]).filter(d=>!d.modified).length; upd+=(j.details||[]).filter(d=>d.modified).length;
+    }catch(e){errs.push(e.message);}
+  }
+  let out=`✅ 全営業所 確定・公開 完了 — 保存 ${saved}名（新規 ${nw} / 更新 ${upd}）`;
+  if(noPhone.length)out+=`／電話未登録 ${noPhone.length}名も確定（ビューアは氏名照合）`;
+  if(skippedEmpty.length)out+=`／稼働なしスキップ ${skippedEmpty.length}名`;
+  if(errs.length)out+=`／⚠エラー ${errs.length}件: ${errs.slice(0,2).join(' / ')}`;
+  setMsg(out,errs.length?'#b45309':'#16a34a');
+  if(cont)cont.innerHTML=`<div class="card" style="line-height:1.9;">${out}<br><span style="font-size:12px;color:var(--text-sub);">→ 統合明細ビューアの「取引先一覧」に反映されます。電話未登録の方は人員名簿シートD列に電話を入れると本人ログインでも閲覧できます。</span></div>`;
 }
 
 // 単一ドライバーの明細HTML生成 (admPayRender / admPayBulk から共有)

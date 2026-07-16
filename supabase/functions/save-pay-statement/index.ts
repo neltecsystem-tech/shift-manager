@@ -1,9 +1,3 @@
-// 管理者が支払明細を確定して closed_pay_statements に保存するための EF
-// 管理者パスワード (ADMIN_PASSWORD secret) で認証
-// 単体保存: {admin_password, statement: {staff_name, phone, year, month, ...}}
-// 一括保存: {admin_password, statements: [{...}, ...]}
-
-import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const corsHeaders = {
@@ -43,9 +37,38 @@ interface StatementPayload {
 
 interface Payload {
   admin_password?: string;
+  auth_token?: string;
   finalized_by?: string;
   statement?: StatementPayload;
   statements?: StatementPayload[];
+}
+
+// invoice-sheet と共有の HMAC token 検証 (SHIFT_SESSION_SECRET)
+const SESSION_SECRET = Deno.env.get('SHIFT_SESSION_SECRET') || '';
+function b64urlDecode(s: string): string {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+async function hmacSign(payload: string): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(SESSION_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  return btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function verifyShiftToken(token: string | undefined | null): Promise<any | null> {
+  if (!token || !SESSION_SECRET) return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  try {
+    const expected = await hmacSign(parts[0]);
+    if (expected.length !== parts[1].length) return null;
+    let diff = 0; for (let i = 0; i < parts[1].length; i++) diff |= expected.charCodeAt(i) ^ parts[1].charCodeAt(i);
+    if (diff !== 0) return null;
+    const claims = JSON.parse(b64urlDecode(parts[0]));
+    if (claims.exp && claims.exp < Date.now()) return null;
+    return claims;
+  } catch { return null; }
 }
 
 function normalizePhone(s: string): string {
@@ -66,7 +89,7 @@ function json(body: unknown, status = 200) {
 
 function validateStatement(s: StatementPayload): string | null {
   if (!s.staff_name) return 'staff_name required';
-  if (!s.phone || !normalizePhone(s.phone)) return 'phone required';
+  // 電話番号は任意(未登録でも確定可能)。無い人は明細ビューアで氏名照合になる。キーは staff_name。
   if (!Number.isInteger(s.year) || s.year < 2020 || s.year > 2100) return 'year invalid';
   if (!Number.isInteger(s.month) || s.month < 1 || s.month > 12) return 'month invalid';
   if (!Array.isArray(s.rows)) return 'rows must be array';
@@ -77,9 +100,9 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const body = (await req.json().catch(() => ({}))) as Payload;
-    const expected = Deno.env.get('ADMIN_PASSWORD');
-    if (!expected) return json({ error: 'server misconfigured: ADMIN_PASSWORD not set' }, 500);
-    if (body.admin_password !== expected) return json({ error: 'unauthorized' }, 401);
+    // 認証: HMAC token (shift admin_login で発行) のみ。 admin_password は廃止
+    const claims = await verifyShiftToken(body.auth_token);
+    if (claims?.role !== 'admin') return json({ error: 'unauthorized', code: 'AUTH_REQUIRED' }, 401);
 
     const all: StatementPayload[] = body.statement
       ? [body.statement]
