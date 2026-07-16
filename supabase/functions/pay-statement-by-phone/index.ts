@@ -16,6 +16,7 @@ interface Payload {
   company?: string;
   year_month?: string;
   auth_token?: string;
+  list_all?: boolean; // 管理者限定: 当月の全支払明細を返す(明細ビューアの取引先一覧用)
 }
 
 function normalizePhone(s: string): string {
@@ -79,7 +80,8 @@ Deno.serve(async (req: Request) => {
     const nameInput = (body.name ?? '').trim();
     const companyInput = (body.company ?? '').trim();
     const ym = (body.year_month ?? '').trim();
-    if (!phoneInput && !nameInput && !companyInput) return json({ error: 'phone, name or company required' }, 400);
+    const listAll = body.list_all === true || (body.list_all as unknown) === 'true';
+    if (!phoneInput && !nameInput && !companyInput && !listAll) return json({ error: 'phone, name or company required' }, 400);
     if (!/^\d{4}-\d{2}$/.test(ym))
       return json({ error: 'year_month required (YYYY-MM)' }, 400);
     const [yStr, mStr] = ym.split('-');
@@ -92,10 +94,21 @@ Deno.serve(async (req: Request) => {
     );
 
     // 法人=会社名(company_name)で照合 / 個人=氏名(staff_name) or 電話。氏名・会社名照合は管理者限定。
-    const byCompany = !phoneInput && !nameInput && !!companyInput;
-    const byName = !phoneInput && !!nameInput && !companyInput;
+    const byCompany = !listAll && !phoneInput && !nameInput && !!companyInput;
+    const byName = !listAll && !phoneInput && !!nameInput && !companyInput;
     let rows: any[];
-    if (byCompany || byName) {
+    if (listAll) {
+      // 取引先一覧: 当月の全確定明細を返す(管理者のみ)
+      if (!(await callerIsAdmin(admin, body.auth_token)))
+        return json({ error: 'forbidden (list_all is admin only)', code: 'FORBIDDEN' }, 403);
+      const { data, error } = await admin
+        .from('closed_pay_statements')
+        .select('*')
+        .eq('year', year)
+        .eq('month', month);
+      if (error) return json({ error: 'fetch failed: ' + error.message }, 500);
+      rows = data ?? [];
+    } else if (byCompany || byName) {
       if (!(await callerIsAdmin(admin, body.auth_token)))
         return json({ error: 'forbidden (name/company lookup is admin only)', code: 'FORBIDDEN' }, 403);
       const { data, error } = await admin
@@ -132,6 +145,7 @@ Deno.serve(async (req: Request) => {
       month,
       statements: rows.map((s) => ({
         staff_name: s.staff_name,
+        phone: s.phone,
         biz_type: s.biz_type,
         company_name: s.company_name,
         primary_area: s.primary_area,
