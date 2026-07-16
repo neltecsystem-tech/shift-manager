@@ -13244,9 +13244,11 @@ async function admPayFinalizeAll(){
   setMsg('シフト・単価・店舗マスタを読み込み中...');
   const monthLabel=await admPayEnsureMonthLoaded(y,m);
   if(!monthLabel){setMsg(`❌ ${m}月シフト${y} のデータが取得できませんでした`,'var(--danger)');return;}
-  if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
-  if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}}
-  if(!invSpecial.length){try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}}
+  // 再確定時は最新の単価マスタ・特別単価・川越コース単価を必ず取り直す
+  // (スタッフ管理で夕刊単価等を変更した直後でも、キャッシュではなく最新値で再計算するため)
+  try{const r=await invApi({action:'get_rates'});if(r&&r.rates)invRates=r.rates;}catch(_){}
+  try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw&&kw.old)kwCoursePrices.old=kw.old;if(kw&&kw.new)kwCoursePrices.new=kw.new;}catch(_){}
+  try{const sp=await invApi({action:'get_special_rates'});if(sp&&sp.records)invSpecial=sp.records;}catch(_){}
   if(!invShopMasterCache){setMsg('店舗マスタを読み込み中...');await invLoadShopMaster();}
 
   // 非社員ドライバー全員(営業所問わず)。稼働のある人(明細行あり or 総額>0)だけ確定。
