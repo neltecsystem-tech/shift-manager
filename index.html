@@ -13515,9 +13515,10 @@ async function admPayDiagnose(){
     h+=`</div>`;
   };
   h+=`<h4 style="margin:18px 0 10px 0;font-size:14px;color:var(--text);">🔎 シフト×稼働記録の不一致</h4>`;
-  renderNames('🕳 稼働漏れ (シフト有・記録無)','#fee2e2','#fca5a5',mm.missingWork,'シフトに稼働があるのに稼働記録がありません。請求漏れの可能性 — 稼働記録を登録してください。');
   renderNames('➕ シフト外の稼働 (記録有・シフト無)','#fef3c7','#fbbf24',mm.extraWork,'稼働記録がありますがシフトにありません。誤入力/代走の可能性 — 要確認。');
   renderNames('🔀 区分ズレ (シフトと区分が不一致)','#e0e7ff','#a5b4fc',mm.catMismatch,'稼働記録の区分がシフトの想定とズレています — 要確認。');
+  // 稼働漏れ(シフト有/記録無)は法人配下ドライバー等の見かけ上の不一致が多くアラート対象外。参考として控えめに表示。
+  renderNames('（参考）稼働記録が未登録 (アラート対象外)','#f1f5f9','#cbd5e1',mm.missingWork,'法人配下ドライバー等で見かけ上「記録無」になる例が多く、アラート・NexPortバナーの対象外です。実際の請求漏れが疑われる場合のみ確認してください。');
   h+=`</div>`;
   cont.innerHTML=h;
 }

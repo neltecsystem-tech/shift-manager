@@ -40,8 +40,9 @@ Deno.serve(async (req) => {
         const month = clip(b.month, 20);
         const key = `shift_work_mismatch:${month}`;
         const take = (a: unknown) => Array.isArray(a) ? (a as unknown[]).map((x) => clip(x, 40)).filter(Boolean).slice(0, 100) : [];
-        const missingWork = take(b.missingWork), extraWork = take(b.extraWork), catMismatch = take(b.catMismatch);
-        const cnt = missingWork.length + extraWork.length + catMismatch.length;
+        // 稼働漏れ(シフト有/記録無)は法人配下ドライバー等の見かけ上の不一致が多いため、アラート対象から除外(ユーザー方針)。
+        const extraWork = take(b.extraWork), catMismatch = take(b.catMismatch);
+        const cnt = extraWork.length + catMismatch.length;
         if (cnt === 0) {
           await sb.from('sm_active_alerts').update({ status: 'resolved', resolved_at: new Date().toISOString(), cnt: 0, updated_at: new Date().toISOString() }).eq('key', key).eq('status', 'open');
           return json({ ok: true, resolved: true, key });
@@ -49,10 +50,9 @@ Deno.serve(async (req) => {
         const seg = (label: string, arr: string[]) => arr.length ? `\n・${label} ${arr.length}名：${arr.slice(0, 8).join('、')}${arr.length > 8 ? ` 他${arr.length - 8}名` : ''}` : '';
         const title = '⚠️ シフトと稼働記録の不一致';
         const body = `新聞シフト管理 ${month}：シフトと稼働記録の不一致が${cnt}件あります。請求確定前に確認してください。`
-          + seg('稼働漏れ(シフト有/記録無)', missingWork)
           + seg('シフト外の稼働(記録有/シフト無・要確認)', extraWork)
           + seg('区分ズレ(要確認)', catMismatch);
-        const names = [...missingWork, ...extraWork, ...catMismatch].slice(0, 100);
+        const names = [...extraWork, ...catMismatch].slice(0, 100);
         await sb.from('sm_active_alerts').upsert({ key, app, kind, title, body, cnt, names, status: 'open', resolved_at: null, updated_at: new Date().toISOString() }, { onConflict: 'key' });
         return json({ ok: true, open: true, key, cnt });
       }
