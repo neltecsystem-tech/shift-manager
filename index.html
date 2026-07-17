@@ -737,6 +737,7 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>年月</label><input type="month" id="adm-bc-month" onchange="admBcLoad()"></div>
           <div><button onclick="admBcAutoFillFromHolidays()" style="background:#0ea5e9;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;" title="月～木の祝日を「夕刊なし」に、その翌日を「同梱無し」に一括追加">🗾 祝日から自動設定</button></div>
           <div><button onclick="admBcSave()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;">💾 保存</button></div>
+          <div><button onclick="admBcSyncToServer(true)" style="background:#0891b2;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-weight:600;margin-top:18px;" title="全月の請求条件をサーバDBへ同期。新聞の自動確定(cron)が読むために必要。初回に1回押してください。">☁️ 全月サーバ同期</button></div>
         </div>
         <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:16px;" id="adm-bc-grid">
           <div>
@@ -11582,7 +11583,17 @@ function admBcSave(){
     admBcData[month].work_kawasaki=Number(document.getElementById('adm-bc-work-kawasaki').value)||0;
   }
   localStorage.setItem('billConditions',JSON.stringify(admBcData));
+  admBcSyncToServer(false); // DB(bill_conditions)へ同期 → サーバ側の自動確定(finalize-shift)が読めるようにする
   alert('請求条件を保存しました');
+}
+
+// 請求条件(billConditions)を DB へ同期。従来 localStorage 専用だったのをサーバが読めるように移行。
+function admBcSyncToServer(showMsg){
+  try{
+    invApi({action:'save_bill_conditions', bill_conditions: admBcData})
+      .then(r=>{ if(showMsg){ (r&&r.success)?alert('サーバに同期しました ('+(r.saved||0)+'ヶ月分)'):alert('同期失敗: '+((r&&r.error)||'不明')); } })
+      .catch(e=>{ if(showMsg)alert('同期失敗: '+(e&&e.message||e)); });
+  }catch(e){ if(showMsg)alert('同期失敗: '+(e&&e.message||e)); }
 }
 
 // 請求条件を取得

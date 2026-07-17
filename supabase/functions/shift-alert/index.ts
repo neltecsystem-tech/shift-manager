@@ -57,6 +57,40 @@ Deno.serve(async (req) => {
         return json({ ok: true, open: true, key, cnt });
       }
 
+      // 配送(ヤマト): 売上シートに稼働があるのに delivery 未登録のドライバー
+      if (kind === 'yamato_unregistered') {
+        const month = clip(b.month, 20);
+        const key = `yamato_unregistered:${month}`;
+        const names: string[] = Array.isArray(b.names) ? b.names.map((x: unknown) => clip(x, 40)).filter(Boolean).slice(0, 100) : [];
+        const cnt = names.length;
+        if (cnt === 0) {
+          await sb.from('sm_active_alerts').update({ status: 'resolved', resolved_at: new Date().toISOString(), cnt: 0, updated_at: new Date().toISOString() }).eq('key', key).eq('status', 'open');
+          return json({ ok: true, resolved: true, key });
+        }
+        const nameStr = `：${names.slice(0, 8).join('、')}${names.length > 8 ? ` 他${names.length - 8}名` : ''}`;
+        const title = '⚠️ 配送(ヤマト) 未登録ドライバー';
+        const body = `配送管理(ヤマト) ${month}：売上シートに稼働があるのにドライバー未登録が${cnt}名います。このままだと支払いに反映されません。配送管理でドライバー登録してください${nameStr}`;
+        await sb.from('sm_active_alerts').upsert({ key, app, kind, title, body, cnt, names, status: 'open', resolved_at: null, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+        return json({ ok: true, open: true, key, cnt });
+      }
+
+      // アスクル: 配送実績シートに稼働があるのに profile 未紐付けのドライバー
+      if (kind === 'askul_unregistered') {
+        const month = clip(b.month, 20);
+        const key = `askul_unregistered:${month}`;
+        const names: string[] = Array.isArray(b.names) ? b.names.map((x: unknown) => clip(x, 40)).filter(Boolean).slice(0, 100) : [];
+        const cnt = names.length;
+        if (cnt === 0) {
+          await sb.from('sm_active_alerts').update({ status: 'resolved', resolved_at: new Date().toISOString(), cnt: 0, updated_at: new Date().toISOString() }).eq('key', key).eq('status', 'open');
+          return json({ ok: true, resolved: true, key });
+        }
+        const nameStr = `：${names.slice(0, 8).join('、')}${names.length > 8 ? ` 他${names.length - 8}名` : ''}`;
+        const title = '⚠️ アスクル 未登録ドライバー';
+        const body = `アスクル ${month}：配送実績に稼働があるのにドライバー未登録が${cnt}名います。このままだと支払いに反映されません。アスクル管理でドライバー登録してください${nameStr}`;
+        await sb.from('sm_active_alerts').upsert({ key, app, kind, title, body, cnt, names, status: 'open', resolved_at: null, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+        return json({ ok: true, open: true, key, cnt });
+      }
+
       if (kind !== 'rate_missing') return json({ ok: false, error: 'unsupported kind' }, 400);
       const month = clip(b.month, 20);
       const key = `rate_missing:${month}`;
