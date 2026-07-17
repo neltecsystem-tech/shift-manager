@@ -60,6 +60,62 @@ async function getAccessToken(): Promise<string> {
   return (await resp.json()).access_token;
 }
 
+// ---- 呼び出し元認証 (invoice-sheet と同じ HMAC セッショントークンを検証) ----
+// 店舗マスタは公開EF(--no-verify-jwt)だが、書き込み系は「ログイン済みトークン」を必須にして
+// 無認証の第三者による改変・全消しを防ぐ。読み取り(list/master_options/snapshot_read 等)と
+// 月初cron(snapshot_create)は素通しのまま。
+const SESSION_SECRET = Deno.env.get('SHIFT_SESSION_SECRET') || '';
+function b64urlEncodeUtf8(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin=''; for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function b64urlDecodeUtf8(s: string): string {
+  const bin = atob(s.replace(/-/g,'+').replace(/_/g,'/'));
+  const bytes = new Uint8Array(bin.length);
+  for (let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+async function hmacSign(payload: string): Promise<string> {
+  if (!SESSION_SECRET) throw new Error('SHIFT_SESSION_SECRET not set');
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(SESSION_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  return btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+async function verifyToken(token: string | undefined | null): Promise<any | null> {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
+  try {
+    const expected = await hmacSign(payload);
+    if (sig.length !== expected.length) return null;
+    let diff = 0; for (let i=0;i<sig.length;i++) diff |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
+    if (diff !== 0) return null;
+    const claims = JSON.parse(b64urlDecodeUtf8(payload));
+    if (claims.exp && claims.exp < Date.now()) return null;
+    return claims;
+  } catch { return null; }
+}
+function claimHasPerm(claims: any, perms: string[]): boolean {
+  const list = String(claims?.permissions || '').split(',').map((s:string)=>s.trim());
+  return perms.some(p => list.includes(p));
+}
+// 書き込み系アクション。無認証では実行させない。
+// destructive: 店舗マスタ本体/スナップショットを変更する管理操作 → admin もしくは shopmaster 権限が必須。
+const ADMIN_WRITE_ACTIONS = new Set([
+  'update','add','add_course','bulk_add','delete',
+  'batch_update_cells','batch_update_addr','batch_update_official','batch_update_official_name',
+  'batch_update_placeid','fix_validation','bulk_lock_gps','apply_new_pm_courses',
+  'snapshot_purge_course','snapshot_remove_store','snapshot_update_cells','snapshot_sync_store',
+  'create_place_id_helper_tab','apply_place_id_helper_tab',
+]);
+// driver: 測定中にドライバーが書く GPS/判定 → ログイン済みなら誰でも可(role不問)。
+const AUTHED_WRITE_ACTIONS = new Set(['batch_update_latlng','batch_update_verify']);
+// snapshot_create は月初 pg_cron からも叩かれるため意図的にゲート外(作成のみ・破壊性低)。
+// admin_password による代替認証も許可(cron/自動化フォールバック)。
+const SM_ADMIN_PASSWORD = Deno.env.get('SHIFT_ADMIN_PASSWORD') || '';
+
 async function ensureExtraHeaders(token: string) {
   // AF=住所, AG=住所精度, AH=ナビ判定, AI=正式店舗名, AJ=旧夕刊コース(参照用残置), AK=Place ID, AL=修正済み
   const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AO2`, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -252,6 +308,22 @@ Deno.serve(async (req: Request) => {
   try {
     const reqBody = await req.json();
     const { action, record, row_number, updates } = reqBody;
+
+    // ---- 書き込み系は認証必須 (無認証の第三者による店舗マスタ改変を遮断) ----
+    if (ADMIN_WRITE_ACTIONS.has(action) || AUTHED_WRITE_ACTIONS.has(action)) {
+      const jsonErr = (msg: string, code: string, status: number) =>
+        new Response(JSON.stringify({ error: msg, code }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const adminPwOk = !!SM_ADMIN_PASSWORD && reqBody.admin_password === SM_ADMIN_PASSWORD;
+      const claims = adminPwOk ? { role: 'admin' } : await verifyToken(reqBody.auth_token);
+      if (!claims) return jsonErr('ログインが必要です（再ログインしてください）', 'AUTH_REQUIRED', 401);
+      if (ADMIN_WRITE_ACTIONS.has(action)) {
+        // 店舗マスタ編集は 社員(role=admin) もしくは shopmaster/admin/all 権限保持者のみ
+        const ok = claims.role === 'admin' || claimHasPerm(claims, ['shopmaster','admin','all']);
+        if (!ok) return jsonErr('店舗マスタを編集する権限がありません', 'FORBIDDEN', 403);
+      }
+      // AUTHED_WRITE_ACTIONS はログイン済みなら role 不問(測定中のドライバー含む)
+    }
+
     const token = await getAccessToken();
 
     if (action === 'master_options') {

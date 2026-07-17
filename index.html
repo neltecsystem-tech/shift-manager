@@ -3057,6 +3057,13 @@ async function defectSave(){
 // ── 店舗マスタ ──
 const SM_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master';
 const SM_PASSWORD='neltec2026';
+// 店舗マスタ書き込み系はログイン済みトークン(invAuthToken)を添付する。
+// サーバ(shop-master)側で書き込みアクションはトークン必須にして無認証改変を防ぐため、
+// 全ての write 呼び出しはこの smPost 経由にすること(読み取りは素の fetch でも可)。
+function smPost(payload){
+  const tok=(typeof invAuthToken!=='undefined'&&invAuthToken)?invAuthToken:'';
+  return fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,auth_token:tok})});
+}
 
 // 共通: 店舗マスタ list キャッシュ (TTL 5分 / Promise重複排除 / 429自動リトライ)
 // Why: 旧コードは5箇所が各々fetchしてSheets API per-minute quota (60/user) を即超過する
@@ -3575,10 +3582,7 @@ async function smBatchAddrUnified(){
   if(addrUpdates.length>0){
     prog.innerHTML=`💾 住所を保存中... (${addrUpdates.length}件)`;
     try{
-      const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({action:'batch_update_addr',updates:addrUpdates})
-      });
+      const resp=await smPost({action:'batch_update_addr',updates:addrUpdates});
       const res=await resp.json();
       if(res.error)throw new Error(res.error);
     }catch(e){
@@ -3591,10 +3595,7 @@ async function smBatchAddrUnified(){
   if(llUpdates.length>0){
     prog.innerHTML=`💾 緯度経度を保存中... (${llUpdates.length}件)`;
     try{
-      const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({action:'batch_update_latlng',updates:llUpdates})
-      });
+      const resp=await smPost({action:'batch_update_latlng',updates:llUpdates});
       const res=await resp.json();
       if(res.error)console.warn('緯度経度保存エラー:',res.error);
     }catch(e){console.warn('緯度経度保存例外:',e);}
@@ -3725,10 +3726,7 @@ async function smBatchLatLngFromAddr(){
   prog.innerHTML=`💾 スプレッドシート保存中...（${updates.length}件）`;
   if(updates.length>0){
     try{
-      const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({action:'batch_update_latlng',updates})
-      });
+      const resp=await smPost({action:'batch_update_latlng',updates});
       const res=await resp.json();
       if(res.error)throw new Error(res.error);
     }catch(e){
@@ -3826,10 +3824,7 @@ async function smVerifyNavLocation(){
   prog.innerHTML=`💾 判定結果をスプレッドシートに保存中... (${results.length}件)`;
   try{
     const verifyUpdates=results.map(r=>({row_number:r.row_number,verdict:verdictToIcon(r.verdict.kind)}));
-    const resp=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({action:'batch_update_verify',updates:verifyUpdates})
-    });
+    const resp=await smPost({action:'batch_update_verify',updates:verifyUpdates});
     const res=await resp.json();
     if(res.error)console.warn('判定保存エラー:',res.error);
     else{
@@ -3942,11 +3937,11 @@ async function smBatchGpsAndVerify(){
   // 保存: 緯度経度(取得分) + ナビ判定(住所/座標が揃って検証できた分)
   prog.innerHTML=`💾 保存中... GPS ${llUpdates.length}件 / ナビ判定 ${results.filter(r=>!r._skip).length}件`;
   if(llUpdates.length){
-    try{await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_latlng',updates:llUpdates})});}catch(e){console.warn('GPS保存エラー',e);}
+    try{await smPost({action:'batch_update_latlng',updates:llUpdates});}catch(e){console.warn('GPS保存エラー',e);}
   }
   const verifyUpdates=results.filter(r=>!r._skip).map(r=>({row_number:r.row_number,verdict:verdictToIcon(r.verdict.kind)}));
   if(verifyUpdates.length){
-    try{await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_verify',updates:verifyUpdates})});}catch(e){console.warn('判定保存エラー',e);}
+    try{await smPost({action:'batch_update_verify',updates:verifyUpdates});}catch(e){console.warn('判定保存エラー',e);}
   }
   invalidateShopMasterCache();
   // ローカル smData を即時反映 (再リロードせずテーブル/地図に反映)
@@ -4309,7 +4304,7 @@ async function smApplyTimeShift(){
       if(tm>=0 && tm>=fromMin)updates.push({row_number:r.row_number,col_index:timeCol,value:smMinToTime(tm+deltaMin)});
     });
   if(!updates.length)return;
-  await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_cells',updates})});
+  await smPost({action:'batch_update_cells',updates});
 }
 
 // 汎用ピッカーモーダル
@@ -4505,7 +4500,7 @@ async function smSave(){
   try{
     const action=smEditRow?'update':'add';
     const body=smEditRow?{action,row_number:smEditRow,record}:{action,record};
-    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const resp=await smPost(body);
     const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
     if(!resp.ok||json.error){
       throw new Error(`${action} 失敗 (${resp.status}): ${json.error||'不明なエラー'}`);
@@ -4642,7 +4637,7 @@ async function smCsvSubmit(){
   if(!confirm(`${smCsvRecords.length}件の新店を店舗マスタに登録します。よろしいですか？`))return;
   submit.disabled=true;submit.textContent='登録中...';
   try{
-    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'bulk_add',records:smCsvRecords})});
+    const resp=await smPost({action:'bulk_add',records:smCsvRecords});
     const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
     if(!resp.ok||json.error)throw new Error(json.error||`HTTP ${resp.status}`);
     document.getElementById('sm-csv-modal')?.remove();
@@ -4685,7 +4680,7 @@ async function smAutoFetchPlaceId(codes){
       }
       if(pid)updates.push({row_number:r.row_number,place_id:pid});
     }
-    if(updates.length){await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_placeid',updates})});}
+    if(updates.length){await smPost({action:'batch_update_placeid',updates});}
     return updates.length;
   }catch(e){console.warn('[smAutoFetchPlaceId]',e);return 0;}
 }
@@ -4695,7 +4690,7 @@ async function smAutoFetchPlaceId(codes){
 async function smBulkLockGps(){
   if(!window.confirm('緯度経度が入っている店舗をすべて 🔒修正済み にします。\n以後、住所/GPS一括取得・ナビ検証で上書きされなくなります。\n続行しますか?'))return;
   try{
-    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'bulk_lock_gps'})});
+    const resp=await smPost({action:'bulk_lock_gps'});
     const json=await resp.json();
     if(json.success){
       alert(`✅ GPSあり ${json.gps_rows}件のうち、新たに ${json.locked}件を🔒修正済みにしました。`);
@@ -4710,7 +4705,7 @@ async function smAddCourse(){
   if(!name)return;
   if((smMasterCourses||[]).includes(name)){alert(`「${name}」は既にコース候補に登録されています`);return;}
   try{
-    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add_course',record:{course:name}})});
+    const resp=await smPost({action:'add_course',record:{course:name}});
     const json=await resp.json();
     if(json.success){
       smMasterCourses=json.courses||[...(smMasterCourses||[]),name];
@@ -4818,7 +4813,7 @@ async function smReplaceRun(){
   btn.disabled=true;btn.textContent='置換中...';msg.style.color='var(--text-sub)';msg.textContent='送信中...';
   try{
     const updates=rows.map(r=>({row_number:r.row_number,col_index:writeCol,value:to}));
-    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_cells',updates})});
+    const resp=await smPost({action:'batch_update_cells',updates});
     const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
     if(!resp.ok||json.error)throw new Error(json.error||`HTTP ${resp.status}`);
     msg.style.color='#16a34a';msg.textContent=`✓ ${json.updated||rows.length} セルを更新しました。再読込中...`;
@@ -4836,7 +4831,7 @@ async function smReplaceRun(){
 async function smApplyNewPmCourses(){
   // dry-run でプレビュー取得
   try{
-    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'apply_new_pm_courses',dry_run:true})});
+    const resp=await smPost({action:'apply_new_pm_courses',dry_run:true});
     const json=await resp.json();
     if(json.error)throw new Error(json.error);
     const targets=json.targets||[];
@@ -4853,7 +4848,7 @@ async function smApplyNewPmCourses(){
   const btn=document.getElementById('sm-apply-new-btn');
   btn.disabled=true;btn.textContent='反映中...';
   try{
-    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'apply_new_pm_courses'})});
+    const resp=await smPost({action:'apply_new_pm_courses'});
     const json=await resp.json();
     if(json.error)throw new Error(json.error);
     alert(`✓ ${json.updated||0} 店舗の夕刊コースを更新しました。`);
@@ -6358,7 +6353,7 @@ async function smCloseSave(){
   record[`col_${deliverCol}`]=lastDeliver.replace(/-/g,'/');
 
   try{
-    await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update',row_number:parseInt(rowNum),record})});
+    await smPost({action:'update',row_number:parseInt(rowNum),record});
     document.getElementById('sm-close-modal').style.display='none';
     alert('閉店情報を保存しました。翌月20日以降にコース名が自動クリアされます。');
     await smLoad(true);
@@ -14638,7 +14633,7 @@ async function admSlSnapSync(code){
   if(!month){alert('いまライブ突合中のため月初スナップがありません。対象月を月初スナップに切替えてください。');return;}
   if(!confirm(`店舗コード ${code} を ${month} の月初スナップに反映します（現行マスタの今の値をコピー）。\n\n月初(${month}-01)時点で在籍していた店の場合のみ実行してください。\n（月途中に開店した店は翌月から。スナップには入れない）\n\nよろしいですか？`))return;
   try{
-    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_sync_store',month,codes:[String(code)]})});
+    const resp=await smPost({action:'snapshot_sync_store',month,codes:[String(code)]});
     const j=await resp.json();
     if(j.error)throw new Error(j.error);
     if((j.missingInLive||[]).length){alert(`⚠ コード ${code} は現行マスタに未登録です。\n先に「店舗マスタ」画面で新規登録 → もう一度「📌 月初に反映」してください。`);return;}
@@ -14653,7 +14648,7 @@ async function admSlSnapRemove(code,name){
   if(!month){alert('いまライブ突合中のため月初スナップがありません。');return;}
   if(!confirm(`「${name||code}」(コード ${code}) を ${month} の月初スナップから除外します（請求対象外に）。\n\n月初(${month}-01)時点で居なかった店の場合のみ実行してください。\n※現行マスタは変更しません（月途中で閉店した店はここでは除外しない＝月初に居たなら当月は請求対象）。\n\nよろしいですか？`))return;
   try{
-    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_remove_store',month,codes:[String(code)]})});
+    const resp=await smPost({action:'snapshot_remove_store',month,codes:[String(code)]});
     const j=await resp.json();
     if(j.error)throw new Error(j.error);
     if((j.notFound||[]).length){alert(`コード ${code} は ${month} スナップに見つかりませんでした。`);return;}
@@ -14692,7 +14687,7 @@ async function admSlApplyCodeChange(){
   if(!confirm(msg))return;
   try{
     const updates=doable.map(p=>({row_number:p.liveRow,col_index:2,value:p.ship.code}));
-    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_cells',updates})});
+    const resp=await smPost({action:'batch_update_cells',updates});
     const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
     if(!resp.ok||json.error)throw new Error(json.error||`HTTP ${resp.status}`);
     invalidateShopMasterCache();
@@ -14702,7 +14697,7 @@ async function admSlApplyCodeChange(){
     if(snapMonth){
       try{
         const su=doable.map(p=>({code:p.master.code,col_index:2,value:p.ship.code}));
-        const sresp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_update_cells',month:snapMonth,updates:su})});
+        const sresp=await smPost({action:'snapshot_update_cells',month:snapMonth,updates:su});
         const sj=await sresp.json().catch(()=>({}));
         if(sj&&sj.success)snapMsg=`\n月初スナップ(${snapMonth})も ${sj.matched}件 更新${(sj.notFound&&sj.notFound.length)?`（スナップ未該当 ${sj.notFound.length}件）`:''}`;
         else snapMsg=`\n⚠ 月初スナップ更新エラー: ${(sj&&sj.error)||''}`;

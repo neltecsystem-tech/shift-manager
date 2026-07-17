@@ -756,16 +756,20 @@ Deno.serve(async(req:Request)=>{
       if(!admin) return forbid();
       if(!row_numbers||!row_numbers.length) return jsonResp({error:'row_numbers required'}, 400);
       const data:any[]=[];const today=new Date().toISOString().split('T')[0];
-      for(const rn of row_numbers){data.push({range:`${encodeURIComponent('稼働記録')}!J${rn}`,values:[[today]]});}
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'USER_ENTERED',data})});
+      // batchUpdate の data[].range はボディ内A1表記。URLではないので percent-encode してはいけない
+      // (エンコードすると存在しないシート名扱いで400→黙って確定が効かなくなる)。素の 'シート名'!セル で渡す。
+      for(const rn of row_numbers){data.push({range:`'稼働記録'!J${rn}`,values:[[today]]});}
+      const cfResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'USER_ENTERED',data})});
+      if(!cfResp.ok){ const t=await cfResp.text(); return jsonResp({error:'確定の書き込みに失敗しました: '+cfResp.status+' '+t.slice(0,200)},500); }
       return jsonResp({success:true,confirmed:row_numbers.length});
     }
     if(action==='unconfirm_records'){
       if(!admin) return forbid();
       if(!row_numbers||!row_numbers.length) return jsonResp({error:'row_numbers required'}, 400);
       const data:any[]=[];
-      for(const rn of row_numbers){data.push({range:`${encodeURIComponent('稼働記録')}!J${rn}`,values:[['']]});}
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'USER_ENTERED',data})});
+      for(const rn of row_numbers){data.push({range:`'稼働記録'!J${rn}`,values:[['']]});}
+      const ucResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'USER_ENTERED',data})});
+      if(!ucResp.ok){ const t=await ucResp.text(); return jsonResp({error:'確定解除の書き込みに失敗しました: '+ucResp.status+' '+t.slice(0,200)},500); }
       return jsonResp({success:true,unconfirmed:row_numbers.length});
     }
     if(action==='list_measure'){
