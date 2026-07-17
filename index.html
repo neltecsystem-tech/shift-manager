@@ -1659,7 +1659,7 @@ const CHANGELOG=[
   {date:'2026-06-18', tag:'改善', title:'店舗検索・店舗マスタをライブの店舗マスタに統一',
    desc:'古い内蔵データではなく最新の店舗マスタ(shop-master)を参照し、コース・ドライバーのズレを解消。500件上限には「すべて表示」ページングを追加しました。'},
   {date:'2026-06-15', tag:'改善', title:'荷主リスト突合・区分照合の精度を多数改善',
-   desc:'夕刊コース(O列/新夕刊コースAJ)の参照ルール統一、ヘッダー無しシートの先頭行取りこぼし修正、半角カナ正規化、特殊請求店舗の競馬集計除外など、突合の精度を底上げしました。'},
+   desc:'夕刊コース(O列/旧夕刊コースAJ)の参照ルール統一、ヘッダー無しシートの先頭行取りこぼし修正、半角カナ正規化、特殊請求店舗の競馬集計除外など、突合の精度を底上げしました。'},
   {date:'2026-06-10', tag:'改善', title:'シフト編集：祝日の夕刊休刊ルールを自動反映',
    desc:'金土以外の祝日は夕刊を休刊に（年始1/1〜3は別ルールで除外）。既存シートに後から反映するボタンも追加しました。'},
 ];
@@ -2432,7 +2432,7 @@ async function loadLiveTenpo(force){
     const find=pred=>H.findIndex(pred);
     const ci=find(h=>h.includes('店舗コード')),ni=find(h=>h.includes('店舗名')),ai=find(h=>h.includes('営業所'));
     const amc=find(h=>h.includes('朝刊コース'));
-    const pmc=find(h=>h.includes('夕刊コース')&&h!=='新夕刊コース'); // 新夕刊コース列は除外し現行夕刊コースを使う
+    const pmc=find(h=>h.includes('夕刊コース')&&h!=='旧夕刊コース'); // 旧夕刊コース列は除外し現行夕刊コースを使う
     const kc=find(h=>h.includes('競馬コース'));
     const noteI=find(h=>h.includes('備考'));
     const g=(r,i)=>i>=0?String(r['col_'+i]||'').trim():'';
@@ -2577,7 +2577,7 @@ async function defectLoadShops(force){
     const find=pred=>H.findIndex(pred);
     const ci=find(h=>h.includes('店舗コード')),ni=find(h=>h.includes('店舗名')),ai=find(h=>h.includes('営業所'));
     const amc=find(h=>h.includes('朝刊コース'));
-    const pmc=find(h=>h.includes('夕刊コース')&&h!=='新夕刊コース');
+    const pmc=find(h=>h.includes('夕刊コース')&&h!=='旧夕刊コース');
     const kc=find(h=>h.includes('競馬コース'));
     const g=(r,i)=>i>=0?String(r['col_'+i]||'').trim():'';
     defectShops=json.records.map(r=>({
@@ -3162,7 +3162,7 @@ async function smLoad(force){
       if(h.includes('店舗名')&&h!=='正式店舗名')smColMap.name=i;
       if(h.includes('開店日'))smColMap.openDate=i;
       if(h.includes('朝刊コース'))smColMap.amCourse=i;
-      if(h==='新夕刊コース')smColMap.pmCourseNew=i;
+      if(h==='旧夕刊コース')smColMap.pmCourseNew=i;
       else if(h.includes('夕刊コース'))smColMap.pmCourse=i;
       if(h.includes('競馬コース'))smColMap.keibaCourse=i;
       if(h.includes('備考'))smColMap.note=i;
@@ -4116,6 +4116,7 @@ function smBuildForm(record){
 
   smHeaders.forEach((h,i)=>{
     if(!h)return;
+    if(h==='旧夕刊コース')return; // 旧夕刊コース(参照用の残置列)は登録/編集フォームに出さない
     const val=record?record[`col_${i}`]||'':'';
 
     if(isAreaCol(i)){
@@ -4698,7 +4699,7 @@ function smShowReplace(){
   smReplacePreview();
   document.getElementById('sm-replace-modal').style.display='flex';
 }
-// 一括置換: 「新夕刊コース」対象時は、旧コースを 現在の夕刊コース列 で照合、新値を 新夕刊コース列 へ書き込む
+// 一括置換: 「旧夕刊コース」対象時は、旧コースを 現在の夕刊コース列 で照合、新値を 旧夕刊コース列 へ書き込む
 function smReplaceCols(colKey){
   // 戻り値: { matchCol: 照合対象列インデックス, writeCol: 書込先列インデックス }
   if(colKey==='pmCourseNew'){
@@ -4791,7 +4792,7 @@ async function smReplaceRun(){
   }
 }
 
-// 新夕刊コースを 夕刊コース列に反映 (2段階確認 + dry-run プレビュー)
+// 旧夕刊コースを 夕刊コース列に反映 (2段階確認 + dry-run プレビュー)
 async function smApplyNewPmCourses(){
   // dry-run でプレビュー取得
   try{
@@ -4799,11 +4800,11 @@ async function smApplyNewPmCourses(){
     const json=await resp.json();
     if(json.error)throw new Error(json.error);
     const targets=json.targets||[];
-    if(!targets.length){alert('反映対象の店舗はありません。「新夕刊コース」列に値が入っている店舗がありません。');return;}
+    if(!targets.length){alert('反映対象の店舗はありません。「旧夕刊コース」列に値が入っている店舗がありません。');return;}
     // プレビュー表示
     const lines=targets.slice(0,30).map(t=>`・${t.name||'(店舗名なし)'}: ${t.old||'(空)'} → ${t.nw}`).join('\n');
     const more=targets.length>30?`\n…他 ${targets.length-30} 件`:'';
-    if(!confirm(`【新夕刊コースを反映】\n対象 ${targets.length} 店舗:\n\n${lines}${more}\n\n上記の通り「夕刊コース」列を書き換えます。\n5月の請求/支払い計算は新コースで再計算されます (5月分が確定済みであれば問題なし)。\n\n実行してよろしいですか?`))return;
+    if(!confirm(`【旧夕刊コースを反映】\n対象 ${targets.length} 店舗:\n\n${lines}${more}\n\n上記の通り「夕刊コース」列を書き換えます。\n5月の請求/支払い計算は新コースで再計算されます (5月分が確定済みであれば問題なし)。\n\n実行してよろしいですか?`))return;
     // 二段階確認
     if(!confirm(`本当に反映しますか? 取り消しできません (新→旧の置換のみで、新列はクリアされます)。`))return;
   }catch(e){
@@ -4822,7 +4823,7 @@ async function smApplyNewPmCourses(){
   }catch(e){
     alert('エラー: '+e.message);
   }
-  btn.disabled=false;btn.textContent='✅ 新夕刊コースを反映';
+  btn.disabled=false;btn.textContent='✅ 旧夕刊コースを反映';
 }
 
 // ── 請求書 ──
@@ -5501,7 +5502,7 @@ function invCalcKodate(courseName,category){
   let pmTokushuCol=-1,keibaTokushuCol=-1;
   headers.forEach((h,i)=>{
     if(h.includes('朝刊コース'))amCourseCol=i;
-    if(h==='新夕刊コース'){/* 新コースは現運用フィルタに使わない */}
+    if(h==='旧夕刊コース'){/* 新コースは現運用フィルタに使わない */}
     else if(h.includes('夕刊コース'))pmCourseCol=i;
     if(h.includes('競馬コース'))keibaCourseCol=i;
     if(h==='朝刊特殊納品')tokushuCol=i;
@@ -11636,7 +11637,7 @@ function admBillUpdateCourses(){
   const filtered=records.filter(r=>!(r[`col_${areaCol}`]||'').includes('納品中止')&&matchAreas.includes((r[`col_${areaCol}`]||'').split(',')[0].trim()));
   // 朝刊+夕刊+競馬の全コースを結合
   let pmCourseCol=-1,keibaCourseCol=-1;
-  headers.forEach((h,i)=>{if(h==='新夕刊コース'){/* skip */}else if(h.includes('夕刊コース'))pmCourseCol=i;if(h.includes('競馬コース'))keibaCourseCol=i;});
+  headers.forEach((h,i)=>{if(h==='旧夕刊コース'){/* skip */}else if(h.includes('夕刊コース'))pmCourseCol=i;if(h.includes('競馬コース'))keibaCourseCol=i;});
   const allCourses=new Set();
   filtered.forEach(r=>{
     if(r[`col_${amCourseCol}`])allCourses.add(r[`col_${amCourseCol}`]);
@@ -11660,7 +11661,7 @@ function admBillCols(){
     if(h==='夕刊同梱')cols.yuukanDokkon=i;
     if(h==='距離増')cols.kyori=i;
     if(h==='雑誌')cols.zasshi=i;
-    if(h==='新夕刊コース')cols.pmCourseNew=i;
+    if(h==='旧夕刊コース')cols.pmCourseNew=i;
     else if(h.includes('夕刊コース'))cols.pmCourse=i;
     if(h==='夕刊特殊納品')cols.pmTokushu=i;
     if(h.includes('競馬コース'))cols.keibaCourse=i;
@@ -14122,7 +14123,7 @@ async function admShopListEnsureMaster(){
     amCourse:String(r.col_5||'').trim(),    // F=朝刊
     asaCourse:String(r.col_8||'').trim(),   // I=朝出し
     pmCourse:String(r.col_14||'').trim(),   // O=夕刊(旧)
-    pmCourseNew:String(r.col_35||'').trim(),// AJ=新夕刊コース(6月以降の平日夕刊はこちらを参照)
+    pmCourseNew:String(r.col_35||'').trim(),// AJ=旧夕刊コース(6月以降の平日夕刊はこちらを参照)
     keibaCourse:String(r.col_19||'').trim(),// T=競馬
     lastDeliver:String(r.col_26||'').trim(),
     closed:String(r.col_1||'').includes('納品中止'),
@@ -14344,7 +14345,7 @@ function admShopListAnalyze(){
   // 各区分シート(J列○) と マスタ を照合: 営業所×区分ごとに「荷主のみ/マスタのみ」を出す
   const shipByCat=admSlData.shipperByCat||{};
   const normA2=a=>String(a||'').trim().replace(/^(川崎高津|川崎)$/,'高津').replace(/^池袋$/,'城北');
-  // 平日(夕刊)はO列(夕刊コース名/pmCourse)を参照。新夕刊コースは手動で行コピー置換しO列へ反映する運用。
+  // 平日(夕刊)はO列(夕刊コース名/pmCourse)を参照。旧夕刊コースは手動で行コピー置換しO列へ反映する運用。
   // 朝出しはI列「夕刊同梱」(asaCourse=col_8)のチェックボックス。bool:true=値がTRUEの店だけ該当(非空判定だとFALSEも数えて膨らむ)。
   const SHEETCATS=[{key:'朝刊',mast:'amCourse'},{key:'平日',mast:'pmCourse'},{key:'競馬',mast:'keibaCourse'},{key:'朝出し',mast:'asaCourse',bool:true}];
   const codeName={};
@@ -15061,7 +15062,7 @@ async function msrLoadData(){
       if(h.includes('店舗名'))msrColMap.name=i;
       if(h.includes('朝刊コース'))msrColMap.amCourse=i;
       if(h.includes('朝刊順番'))msrColMap.amOrder=i;
-      if(h==='新夕刊コース')msrColMap.pmCourseNew=i;
+      if(h==='旧夕刊コース')msrColMap.pmCourseNew=i;
       else if(h.includes('夕刊コース'))msrColMap.pmCourse=i;
       if(h.includes('夕刊順番'))msrColMap.pmOrder=i;
       if(h.includes('競馬コース'))msrColMap.keibaCourse=i;
@@ -15744,8 +15745,8 @@ function diagBuildColMap(headers){
     if(h==='住所')m.addr=i;
     if(h.includes('朝刊コース'))m.amCourse=i;
     if(h.includes('朝刊順番'))m.amOrder=i;
-    // 「新夕刊コース」(AJ列) は別管理。 「夕刊コース名」(O列) のみ pmCourse に入れる
-    if(h==='新夕刊コース')m.pmCourseNew=i;
+    // 「旧夕刊コース」(AJ列) は別管理。 「夕刊コース名」(O列) のみ pmCourse に入れる
+    if(h==='旧夕刊コース')m.pmCourseNew=i;
     else if(h.includes('夕刊コース'))m.pmCourse=i;
     if(h.includes('夕刊順番'))m.pmOrder=i;
     if(h.includes('競馬コース'))m.keibaCourse=i;

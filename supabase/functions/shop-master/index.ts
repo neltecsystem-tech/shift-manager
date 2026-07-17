@@ -61,7 +61,7 @@ async function getAccessToken(): Promise<string> {
 }
 
 async function ensureExtraHeaders(token: string) {
-  // AF=住所, AG=住所精度, AH=ナビ判定, AI=正式店舗名, AJ=新夕刊コース, AK=Place ID, AL=修正済み
+  // AF=住所, AG=住所精度, AH=ナビ判定, AI=正式店舗名, AJ=旧夕刊コース(参照用残置), AK=Place ID, AL=修正済み
   const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AO2`, { headers: { 'Authorization': `Bearer ${token}` } });
   const j = await r.json();
   const cur = (j.values?.[0] ?? []) as string[];
@@ -70,7 +70,7 @@ async function ensureExtraHeaders(token: string) {
     (cur[1] || '').trim() || '住所精度',
     (cur[2] || '').trim() || 'ナビ判定',
     (cur[3] || '').trim() || '正式店舗名',
-    (cur[4] || '').trim() || '新夕刊コース',
+    ((cur[4] || '').trim() === '新夕刊コース' ? '旧夕刊コース' : (cur[4] || '').trim()) || '旧夕刊コース',
     (cur[5] || '').trim() || 'Place ID',
     (cur[6] || '').trim() || '修正済み',
     (cur[7] || '').trim() || '休店中',
