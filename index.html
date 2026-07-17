@@ -4117,10 +4117,16 @@ function smBuildForm(record){
 
     if(isAreaCol(i)){
       // 営業所: ドロップダウン
+      // 現在の営業所値(val)は候補(smMasterAreas)に無くても必ず選択肢に含めて選択済みにする。
+      // 「池袋, 城北」等の複合値や、候補リストが未読込のセッションでも、
+      // 編集→保存で営業所が空になって店舗が一覧から消えるのを防ぐ。
+      const areaOpts=[...smMasterAreas];
+      const curArea=(val||'').trim();
+      if(curArea && !areaOpts.includes(curArea)) areaOpts.unshift(curArea);
       html+=`<div style="margin-bottom:8px;">
         <label style="font-size:12px;color:var(--text-sub)">${h}</label>
         <select id="sme-${i}" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
-          <option value="">選択</option>${smMasterAreas.map(a=>`<option${a===val?' selected':''}>${a}</option>`).join('')}
+          <option value="">選択</option>${areaOpts.map(a=>`<option${a===val?' selected':''}>${a}</option>`).join('')}
         </select></div>`;
     }else if(isCourseCol(i)){
       // コース名: 検索付きドロップダウン（入力+候補）
