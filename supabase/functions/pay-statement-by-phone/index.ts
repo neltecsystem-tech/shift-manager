@@ -98,16 +98,16 @@ Deno.serve(async (req: Request) => {
     const byName = !listAll && !phoneInput && !!nameInput && !companyInput;
     let rows: any[];
     if (listAll) {
-      // 取引先一覧: 当月の「反映済み」(reflected_at セット済)確定明細のみ(管理者のみ)。
-      // 確定〜反映の管理者レビュー窓の間はビューアに出さない(反映cronがreflected_atセット後に解禁)。
+      // 取引先一覧: 当月の確定明細(closed_pay_statements)を管理者へ返す。
+      // ※ reflected_at ゲートは撤廃(2026-07): 確定済みなら即ビューア表示(会計はシート取込が正=別管理)。
+      //   会計側(pay-sheet-sync)の reflected_at ゲートは別途維持=二重計上防止。
       if (!(await callerIsAdmin(admin, body.auth_token)))
         return json({ error: 'forbidden (list_all is admin only)', code: 'FORBIDDEN' }, 403);
       const { data, error } = await admin
         .from('closed_pay_statements')
         .select('*')
         .eq('year', year)
-        .eq('month', month)
-        .not('reflected_at', 'is', null);
+        .eq('month', month);
       if (error) return json({ error: 'fetch failed: ' + error.message }, 500);
       rows = data ?? [];
     } else if (byCompany || byName) {
