@@ -11602,6 +11602,21 @@ function admBcSyncToServer(showMsg){
       .catch(e=>{ if(showMsg)alert('同期失敗: '+(e&&e.message||e)); });
   }catch(e){ if(showMsg)alert('同期失敗: '+(e&&e.message||e)); }
 }
+// 自動同期(ゼロ操作): localStorage の請求条件を無条件でDBへpush(冪等)。管理者ログイン時+請求条件タブ表示時に発火。
+let _admBcAutoSynced=false;
+function admBcAutoSync(){
+  try{
+    const raw=localStorage.getItem('billConditions');
+    if(!raw)return;
+    const data=JSON.parse(raw||'{}');
+    if(!data||!Object.keys(data).length)return;
+    if(typeof invApi!=='function'||!invAuthToken)return; // 認証前はスキップ(ログイン後に再試行)
+    _admBcAutoSynced=true;
+    invApi({action:'save_bill_conditions', bill_conditions:data}).catch(()=>{});
+  }catch(_){}
+}
+// 起動後、認証完了を待って一度だけ自動同期(最大~60秒リトライ)。管理者がアプリを開けばボタン不要で請求条件がDBへ。
+try{ let _bcTries=0; const _bcT=setInterval(()=>{ _bcTries++; if(_admBcAutoSynced||_bcTries>20){clearInterval(_bcT);return;} admBcAutoSync(); }, 3000); }catch(_){}
 
 // 請求条件を取得
 function getBillConditions(monthVal){
