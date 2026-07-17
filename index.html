@@ -4517,6 +4517,8 @@ async function smSave(){
     invalidateShopMasterCache();
     await new Promise(r=>setTimeout(r,800));
     await smLoad(true);
+    // 新店追加時のみ: その店のPlace IDを自動取得(ナビで店名表示のため)
+    if(!smEditRow){const c=String(record[`col_${smColMap.code??2}`]||'').trim();if(c)smAutoFetchPlaceId([c]).then(n=>{if(n)smLoad(true);});}
   }catch(e){alert('エラー: '+e.message);}
   btn.textContent=smEditRow?'更新する':'追加する';btn.disabled=false;
 }
@@ -4647,7 +4649,44 @@ async function smCsvSubmit(){
     invalidateShopMasterCache();
     await new Promise(r=>setTimeout(r,1000));
     await smLoad(true);
+    // CSV取込した店だけ Place ID を自動取得(ナビで店名表示のため)
+    const csvCodes=(smCsvRecords||[]).map(r=>String(r[`col_${smColMap.code??2}`]||'').trim()).filter(Boolean);
+    if(csvCodes.length)smAutoFetchPlaceId(csvCodes).then(n=>{if(n)smLoad(true);});
   }catch(e){alert('登録エラー: '+e.message);submit.disabled=false;submit.textContent=`登録する (${smCsvRecords.length}件)`;}
+}
+
+// 新店追加/CSV取込時: その店だけ Places API で Place ID を自動取得しマスタへ書込(一括ボタン不要)。
+// 座標周辺45m+正式店舗名の一致で取得(名前一致優先/無ければ最寄り店)。座標が無い店はスキップ。
+async function smAutoFetchPlaceId(codes){
+  try{
+    if(!codes||!codes.length||typeof GEOCODING_API_KEY==='undefined'||!GEOCODING_API_KEY)return 0;
+    const H=smHeaders,ci=n=>H.indexOf(n);
+    const iCode=ci('店舗コード'),iPid=ci('Place ID'),iLa=ci('緯度'),iLo=ci('経度'),iOff=ci('正式店舗名'),iName=ci('店舗名');
+    if(iPid<0||iLa<0||iLo<0)return 0;
+    const norm=s=>(s||'').normalize('NFKC').replace(/[\s　]/g,'').replace(/[ぁ-ん]/g,c=>String.fromCharCode(c.charCodeAt(0)+0x60)).toLowerCase();
+    const TYPES=['convenience_store','supermarket','grocery_store','food_store','store'];
+    const set=new Set(codes.map(c=>String(c).trim()).filter(Boolean));
+    const targets=(smData||[]).filter(r=>set.has(String(r[`col_${iCode}`]||'').trim()) && !String(r[`col_${iPid}`]||'').trim());
+    const updates=[];
+    for(const r of targets){
+      const lat=parseFloat(r[`col_${iLa}`]),lng=parseFloat(r[`col_${iLo}`]);
+      if(!(isFinite(lat)&&isFinite(lng)))continue;
+      const target=norm(r[`col_${iOff}`]||r[`col_${iName}`]||'');
+      let pid=null;
+      for(const types of [TYPES,null]){
+        const body={locationRestriction:{circle:{center:{latitude:lat,longitude:lng},radius:45}},languageCode:'ja',maxResultCount:10};
+        if(types)body.includedPrimaryTypes=types;
+        let resp;try{resp=await fetch('https://places.googleapis.com/v1/places:searchNearby',{method:'POST',headers:{'Content-Type':'application/json','X-Goog-Api-Key':GEOCODING_API_KEY,'X-Goog-FieldMask':'places.id,places.displayName'},body:JSON.stringify(body)});}catch(_){continue;}
+        if(!resp.ok)continue;
+        const places=(await resp.json()).places||[];if(!places.length)continue;
+        const m=places.find(p=>{const n=norm(p.displayName?.text||'');return n&&(n.includes(target)||target.includes(n));});
+        if(m){pid=m.id;break;} if(types===null){pid=places[0].id;break;}
+      }
+      if(pid)updates.push({row_number:r.row_number,place_id:pid});
+    }
+    if(updates.length){await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'batch_update_placeid',updates})});}
+    return updates.length;
+  }catch(e){console.warn('[smAutoFetchPlaceId]',e);return 0;}
 }
 
 // ── コース一括置換 ──
@@ -16121,6 +16160,7 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
       rawOrder,
       code:diagColMap.code!==undefined?(r[`col_${diagColMap.code}`]||''):'',
       name:diagColMap.name!==undefined?(r[`col_${diagColMap.name}`]||''):'',
+      official:diagColMap.officialName!==undefined?(r[`col_${diagColMap.officialName}`]||'').trim():'',
       area:diagColMap.area!==undefined?(r[`col_${diagColMap.area}`]||''):'',
       addr:diagColMap.addr!==undefined?(r[`col_${diagColMap.addr}`]||''):'',
       schedTime:timeCol!==undefined?(r[`col_${timeCol}`]||''):'',
@@ -16129,6 +16169,12 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
       placeId:diagColMap.placeId!==undefined?((r[`col_${diagColMap.placeId}`]||'').trim()||null):null,
     };
   });
+}
+
+// ナビの経由地ラベル: Place IDがあれば店名(place_idで正確位置+店名表示)、無ければ座標。
+// ※テキスト(店名/住所)を経由地にすると店名が出ない(過去検証で失敗)ためPlace ID必須。
+function diagNavLabel(s){
+  return s.placeId?(s.name||s.addr||`${s.lat},${s.lng}`):`${s.lat},${s.lng}`;
 }
 
 // 任意の店舗から「現在地→その店舗以降9件」のナビを開く (中断後の再開用)
@@ -16145,7 +16191,7 @@ async function diagNavFromHere(id){
     if(chunk.length===0){if(w)w.close();alert('対象店舗がありません');return;}
     // 公式仕様: waypoints=店舗名 + waypoint_place_ids=ChIJ で 名前表示+正確位置
     // Place ID なしの店舗は lat,lng で fallback (座標表示)
-    const labelOf=(s)=>s.placeId?(s.name||s.addr||`${s.lat},${s.lng}`):`${s.lat},${s.lng}`;
+    const labelOf=diagNavLabel;
     const last=chunk[chunk.length-1];
     const rest=chunk.slice(0,-1);
     const params=new URLSearchParams();
@@ -16186,7 +16232,7 @@ async function diagNavOpen(routeId){
     const last=chunk[chunk.length-1];
     const rest=chunk.slice(0,-1);
     // 公式仕様: waypoints=店舗名 + waypoint_place_ids=ChIJ で 名前表示+正確位置
-    const labelOf=(s)=>s.placeId?(s.name||s.addr||`${s.lat},${s.lng}`):`${s.lat},${s.lng}`;
+    const labelOf=diagNavLabel;
     const params=new URLSearchParams();
     params.set('api','1');
     params.set('destination',labelOf(last));
@@ -16441,7 +16487,7 @@ function diagExportPdf(){
     if(!chunkShops.length)return null;
     const last=chunkShops[chunkShops.length-1];
     const rest=chunkShops.slice(0,-1);
-    const labelOf=s=>s.placeId?(s.name||s.addr||`${s.lat},${s.lng}`):`${s.lat},${s.lng}`;
+    const labelOf=diagNavLabel;
     const params=new URLSearchParams();
     params.set('api','1');
     params.set('destination',labelOf(last));
