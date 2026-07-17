@@ -123,7 +123,27 @@ async function getAccessToken(): Promise<string> {
   const signature=btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   const jwt=`${header}.${payload}.${signature}`;
   const resp=await fetch(SERVICE_ACCOUNT.token_uri,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:`grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`});
-  return (await resp.json()).access_token;
+  const tokenJson=await resp.json().catch(()=>({}));
+  // トークン取得に失敗したまま先へ進むと、後続のSheets取得が401→values空→
+  // 「ID/PW間違い」と誤表示される。ここで確実に落として上位でリトライさせる。
+  if(!resp.ok || !tokenJson.access_token) throw new Error(`token_fetch_failed:${resp.status}`);
+  return tokenJson.access_token;
+}
+
+// Sheets値取得を一時失敗(429/5xx/トークン切れ/ネットワーク)に強くする軽リトライ。
+// 成功時は values 配列を返す。全リトライ失敗時は例外を投げる(呼び出し側で503応答)。
+async function fetchSheetValuesWithRetry(range: string, tokenGetter: ()=>Promise<string>, tries=3): Promise<any[]> {
+  let lastErr: any=null;
+  for(let i=0;i<tries;i++){
+    try{
+      const token=await tokenGetter();
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}`,{headers:{'Authorization':`Bearer ${token}`}});
+      if(resp.ok){ const j=await resp.json().catch(()=>({})); return j.values||[]; }
+      lastErr=new Error(`sheet_http_${resp.status}`);
+    }catch(e){ lastErr=e; }
+    if(i<tries-1) await new Promise(r=>setTimeout(r, 300*Math.pow(2,i))); // 300ms,600ms
+  }
+  throw lastErr||new Error('sheet_fetch_failed');
 }
 function parseRates(rows: string[][]) {
   return rows.map((r:string[],i:number)=>({row_number:i+2,name:r[0]||'',am_weekday:r[1]||'',am_weekend:r[2]||'',pm_weekday:r[3]||'',pm_weekend:r[4]||'',warehouse_am:r[5]||'',warehouse_pm:r[6]||'',calc_type:r[7]||'固定',unit_price:r[8]||'',login_id:r[9]||'',login_pw:r[10]||'',biz_type:r[11]||'',company:r[12]||'',calc_type_pm:r[13]||'',unit_price_pm:r[14]||'',am_sunday:r[15]||'',pm_sunday:r[16]||'',permissions:r[17]||'',kw_am_daily:r[18]||'',kw_pattern:r[19]||'',monthly_salary:r[20]||'',invoice_number:r[21]||'',rate_effective_from:r[22]||''})).filter((o:any)=>o.name);
@@ -200,13 +220,17 @@ Deno.serve(async(req:Request)=>{
 
     // ---- 認証不要のアクション: login / admin_login ----
     if(action==='login'){
-      const token=await getAccessToken();
-      await ensureSheets(token);
-      const [rateResp, workResp] = await Promise.all([
-        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:W200`,{headers:{'Authorization':`Bearer ${token}`}}),
-        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${token}`}}),
-      ]);
-      const rateRows=(await rateResp.json()).values||[];
+      // 単価マスタ(照合の正)は一時失敗に強い軽リトライで取得。
+      // ここが取れないと誰もマッチせず「ID/PW間違い」と誤表示されるため、
+      // 取得失敗と「認証情報が違う」を厳密に区別する。
+      let rateRows: any[];
+      try{
+        await ensureSheets(await getAccessToken());
+        rateRows=await fetchSheetValuesWithRetry('単価マスタ!A2:W1000', getAccessToken);
+      }catch(e){
+        // シート取得の一時障害。PWは合っているかもしれないので専用メッセージ+503。
+        return jsonResp({success:false, error:'サーバが一時的に混み合っています。少し待ってからもう一度お試しください。', code:'SHEET_UNAVAILABLE'}, 503);
+      }
       const match=rateRows.find((r:string[])=>(r[9]||'').trim()===login_id&&(r[10]||'').trim()===login_pw);
       if(!match) return jsonResp({success:false,error:'IDまたはパスワードが正しくありません'});
       // claims 構築
@@ -226,7 +250,10 @@ Deno.serve(async(req:Request)=>{
       const company_shows_money = is_corp_sub ? permList.includes('show_money') : true;
       const sessionToken = await createToken({ role: tokenRole, name, biz_type, company, permissions, is_corp_sub, is_owner, company_shows_money });
       // 単価 + 稼働のスコープ: admin=全件 / corp-owner=同company全員 / それ以外=自分のみ
-      const allWork = parseWork((await workResp.json()).values||[]);
+      // 稼働記録は認証には不要(表示用)なので、取得できなくてもログインは通す(空扱い)。
+      let workValues: any[] = [];
+      try{ workValues = await fetchSheetValuesWithRetry('稼働記録!A2:J5000', getAccessToken); }catch(_e){ workValues = []; }
+      const allWork = parseWork(workValues);
       let ratesScoped, myWork;
       if (has_admin) {
         ratesScoped = allRates;
