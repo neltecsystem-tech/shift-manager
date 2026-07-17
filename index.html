@@ -15832,10 +15832,7 @@ async function diagLoad(){
 function diagCourseColFor(type){
   if(type==='am')return diagColMap.amCourse;
   if(type==='keiba')return diagColMap.keibaCourse;
-  // type='pm': 切替トグルを見る
-  const useNew=(document.getElementById('diag-newpm')?.value)==='new';
-  if(useNew && diagColMap.pmCourseNew!=null)return diagColMap.pmCourseNew;
-  return diagColMap.pmCourse;
+  return diagColMap.pmCourse; // 夕刊は現行O列のみ(新コース切替トグルは廃止)
 }
 // 営業所フィルタヘルパー: 店舗マスタの営業所列が複合(「池袋, 城北」)でも対応 + 空欄ならコース名から推定
 function diagAreaMatch(r,area,type){
@@ -15856,9 +15853,6 @@ function diagFilter(){
   diagShopBudget=DIAG_BUDGET; // フィルタ変更で予算リセット(先頭から再描画)
   const area=document.getElementById('diag-area').value;
   const type=document.getElementById('diag-type').value;
-  // 夕刊新コース切替トグルの表示制御
-  const newpmWrap=document.getElementById('diag-newpm-wrap');
-  if(newpmWrap)newpmWrap.style.display=type==='pm'?'block':'none';
   const courseCol=diagCourseColFor(type);
   const cSel=document.getElementById('diag-course');
   const cVal=cSel.value;
