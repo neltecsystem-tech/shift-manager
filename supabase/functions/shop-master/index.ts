@@ -919,6 +919,41 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: true, updated: updates.length }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    } else if (action === 'batch_update_official') {
+      // 正式店舗名(AI列/col34) だけを行番号指定で一括書き込み。updates=[{row_number, official}]
+      if (!Array.isArray(updates) || updates.length === 0) {
+        return new Response(JSON.stringify({ error: 'updates array required' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      await ensureExtraHeaders(token);
+      const data: any[] = [];
+      for (const u of updates) {
+        if (!u.row_number) continue;
+        data.push({
+          range: `'${SHEET_NAME}'!AI${u.row_number}:AI${u.row_number}`,
+          values: [[u.official ?? '']],
+        });
+      }
+      if (data.length === 0) {
+        return new Response(JSON.stringify({ success: true, updated: 0 }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const batchResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data }),
+      });
+      if (!batchResp.ok) {
+        const errText = await batchResp.text();
+        return new Response(JSON.stringify({ error: 'batchUpdate failed: ' + batchResp.status + ' ' + errText.slice(0, 300) }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ success: true, updated: data.length }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     } else if (action === 'batch_update_verify') {
       if (!Array.isArray(updates) || updates.length === 0) {
         return new Response(JSON.stringify({ error: 'updates array required' }), {
