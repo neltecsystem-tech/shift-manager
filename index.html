@@ -5972,6 +5972,12 @@ async function invSaveRate(){
     return r.name===name;
   });
   if(existing){alert(`「${name}」は既に登録されています。同姓同名の登録はできません。`);return;}
+  // 新規追加は 区分+所属(中央人材マスタの法人判定用) を必須。既存編集は素通り(特殊処理)。
+  if(!rowNum){
+    const bt=document.getElementById('inv-re-biztype').value;
+    if(!bt){alert('区分（個人/法人/社員）を選択してください');return;}
+    if(bt==='法人'&&!document.getElementById('inv-re-company').value.trim()){alert('「法人・屋号有」の場合は 所属会社名 が必須です');return;}
+  }
   const permArr=[];
   if(document.getElementById('inv-re-perm-admin').checked)permArr.push('admin');
   if(document.getElementById('inv-re-perm-defects').checked)permArr.push('defects');
