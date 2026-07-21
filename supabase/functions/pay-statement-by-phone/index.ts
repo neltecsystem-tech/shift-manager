@@ -65,6 +65,18 @@ async function callerIsAdmin(admin: any, authToken: string | undefined): Promise
   }
 }
 
+// 呼び出し元(本人)の role/phone/オーナー情報。電話番号での明細取得を「本人/管理者/自社オーナー」に限定するため。
+async function getCaller(admin: any, authToken: string | undefined): Promise<{ role: string; phone: string; is_company_owner: boolean; company: string } | null> {
+  if (!authToken) return null;
+  try {
+    const { data: { user } } = await admin.auth.getUser(authToken);
+    if (!user) return null;
+    const { data: prof } = await admin.from('profiles').select('role, phone, is_company_owner, company').eq('id', user.id).maybeSingle();
+    if (!prof) return null;
+    return { role: prof.role, phone: normalizePhone(prof.phone || ''), is_company_owner: !!prof.is_company_owner, company: String(prof.company || '') };
+  } catch (_) { return null; }
+}
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -127,6 +139,19 @@ Deno.serve(async (req: Request) => {
         rows = (data ?? []).filter((s) => nmKey(s.staff_name ?? '') === key);
       }
     } else {
+      // 🔒 電話番号での本人明細取得: 本人 or 管理者 or 自社オーナー(自社メンバー)のみ。
+      //   他人の電話で他人の明細を取得できないようにする(askul/delivery EFと同一の保護)。
+      const caller = await getCaller(admin, body.auth_token);
+      const isAdmin = !!caller && (caller.role === 'admin' || caller.role === 'super_admin');
+      if (!isAdmin) {
+        if (!caller || !caller.phone) return json({ error: 'forbidden (ログインが必要です)', code: 'FORBIDDEN' }, 403);
+        if (caller.phone !== phoneInput) {
+          // 自社オーナーのみ、自社(company一致)メンバーの明細を閲覧可
+          if (!caller.is_company_owner) return json({ error: 'forbidden (自分の明細のみ閲覧できます)', code: 'FORBIDDEN' }, 403);
+          const { data: tgt } = await admin.from('profiles').select('company').eq('phone', phoneInput).maybeSingle();
+          if (!tgt || !caller.company || nmKey(String((tgt as any).company ?? '')) !== nmKey(caller.company)) return json({ error: 'forbidden', code: 'FORBIDDEN' }, 403);
+        }
+      }
       const { data, error } = await admin
         .from('closed_pay_statements')
         .select('*')
