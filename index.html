@@ -973,12 +973,12 @@ tbody tr:hover { background:var(--primary-light); }
           </div>
         </div>
         <div id="adm-yobi-addbar" style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-top:10px;padding:10px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">
-          <div style="font-weight:700;font-size:13px;color:#15803d;">➕ コース追加</div>
-          <div><label style="font-size:11px;color:var(--text-sub);display:block;">朝刊コース名 (A列)</label><input type="text" id="adm-yobi-add-am" placeholder="例: 城北24" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:130px;"></div>
-          <div><label style="font-size:11px;color:var(--text-sub);display:block;">夕刊コース名 (J列・任意)</label><input type="text" id="adm-yobi-add-pm" placeholder="夕刊があれば" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:130px;"></div>
+          <div style="font-weight:700;font-size:13px;color:#15803d;">➕ コース追加 / 📤 反映</div>
+          <div><label style="font-size:11px;color:var(--text-sub);display:block;">朝刊コース名 (A列)</label><input type="text" id="adm-yobi-add-am" placeholder="朝刊があれば (例:城北24)" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:150px;"></div>
+          <div><label style="font-size:11px;color:var(--text-sub);display:block;">夕刊コース名 (J列)</label><input type="text" id="adm-yobi-add-pm" placeholder="夕刊があれば (朝刊と同名可)" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:150px;"></div>
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">開始日 (この日以降を反映)</label><input type="date" id="adm-yobi-add-start" title="この日以降の日付を含む既存シフトへ反映。この日より前は空欄。空なら各シートの月初から。" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;"></div>
-          <button onclick="admYobiAddCourse()" style="background:#2563eb;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="早見表に同エリア直後で追加＋開始日以降の日付を含む既存シフト(今月・来月など作成済み全部)へ即反映(黒塗り自動)">➕ 追加（開始日以降の全シフトへ反映）</button>
-          <div style="font-size:11px;color:var(--text-sub);max-width:360px;line-height:1.5;">早見表に<b>同エリアの直後</b>で追加し、<b>開始日以降の既存シフトすべて</b>(今月・来月など作成済み全部)へ担当者展開＋非稼働日を黒塗り。未作成の月は「新規月作成」で反映。<b>開始日より前は空欄</b>。担当者は早見表グリッドで入力・💾保存 → もう一度「➕ 追加」で各シフトにも担当者が入ります。黒塗り精度には「マスタ」R列登録も必要。</div>
+          <button onclick="admYobiAddCourse()" style="background:#2563eb;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="未保存の担当者編集を自動保存→新規コースは同エリア直後に追加→開始日以降の日付を含む既存シフト(今月・来月など作成済み全部)へ反映(黒塗り自動)。別途「💾保存」は不要。">📤 反映（開始日以降の全シフトへ）</button>
+          <div style="font-size:11px;color:var(--text-sub);max-width:380px;line-height:1.5;"><b>朝刊だけ / 夕刊だけ / 両方(同名でも可)</b> いずれもOK。押すと<b>未保存の担当者も自動保存</b>し、新規コースは<b>同エリアの直後</b>に追加、<b>開始日以降の既存シフトすべて</b>(今月・来月など作成済み全部)へ担当者展開＋非稼働日を黒塗り。未作成の月は「新規月作成」で反映。手順=①コース名を入れて📤反映(枠だけ作成)→②早見表グリッドに担当者入力→③もう一度📤反映(担当者も展開)。💾保存を別途押す必要はありません。黒塗り精度には「マスタ」R列登録も必要。</div>
         </div>
         <div id="adm-yobi-msg" style="margin-top:8px;font-size:13px;color:var(--text-sub);"></div>
         <div id="adm-yobi-content" style="margin-top:12px;overflow:auto;max-height:75vh;border:1px solid var(--border);border-radius:8px;background:#fff;"></div>
@@ -10100,30 +10100,52 @@ function admYobiFlashRow(idx){
   cells.forEach(td=>{const o=td.style.background;td.style.transition='background .5s';td.style.background='#fde68a';setTimeout(()=>{td.style.background=o||'';},2000);});
 }
 
-// コース追加(1本化)。早見表へ同エリア直後に挿入 + 開始日以降の「既存の全シフト」へ反映。
-// 未作成の月は触らない(新規月作成で拾う)。担当者は早見表グリッドで入力・保存後もう一度押すと各シフトへ展開。
+// 📤 反映(1本化)。①未保存の担当者編集を早見表へ自動保存 → ②新規コースは同エリア直後へ挿入
+// → ③開始日以降の「既存の全シフト」へ担当者展開+黒塗り反映。別途「💾保存」を押す必要はない。
+// 反映対象コース = 入力したコース名 + 編集(dirty)した行のコース名。未作成の月は新規月作成で拾う。
 async function admYobiAddCourse(){
   if(!admYobiState.loaded){alert('先に早見表を「🔄 再読込」で読み込んでください');return;}
-  if(admYobiState.dirty.size){alert('未保存の変更があります。先に「💾 保存」を押してから追加してください。');return;}
   const amEl=document.getElementById('adm-yobi-add-am'),pmEl=document.getElementById('adm-yobi-add-pm');
   const am=(amEl.value||'').trim(),pm=(pmEl.value||'').trim();
-  if(!am&&!pm){alert('朝刊コース名か夕刊コース名を入力してください');return;}
-  const names=[...new Set([am,pm].filter(Boolean))];
   const startDate=((document.getElementById('adm-yobi-add-start')||{}).value||'').trim();
   const msg=document.getElementById('adm-yobi-msg');
+  const inputNames=[...new Set([am,pm].filter(Boolean))];
+  // 編集(dirty)中の行のコース名を反映対象に含める(担当者を入れて押す→保存+反映が一発)
+  const editedCourses=[];
+  admYobiState.dirty.forEach((v,k)=>{const ri=Number(k.split(',')[0]);const r=admYobiState.rows[ri]||[];const a=String(r[0]||'').trim(),p=String(r[9]||'').trim();if(a)editedCourses.push(a);if(p)editedCourses.push(p);});
+  if(!inputNames.length&&!admYobiState.dirty.size){alert('コース名を入力するか、早見表の担当者を編集してから押してください');return;}
   try{
-    // ① 早見表に無ければ 同エリアの直後へ挿入 (A列=0=朝刊, J列=9=夕刊)。既にあればスキップ。
-    const dup=admYobiState.rows.some(r=>{const a=String(r[0]||'').trim(),p=String(r[9]||'').trim();return (am&&a===am)||(pm&&p===pm);});
-    if(!dup){
-      const values=new Array(10).fill('');values[0]=am;values[9]=pm;
-      const insertIdx=admYobiPickInsertIndex(am||pm);
-      msg.textContent='早見表に行を挿入中...';msg.style.color='#3b82f6';
-      const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'insert_row_at',sheet_name:YOBI_SHEET_NAME,row_index:insertIdx,values})});
-      const j=await r.json();if(j.error)throw new Error(j.error);
-      await admYobiInit(true); // 再読込して新行を表示
-      admYobiFlashRow(insertIdx);
+    // ① 未保存の担当者編集を早見表へ保存(反映で読めるように)。「💾保存」を別途押す必要なし。
+    if(admYobiState.dirty.size){
+      msg.textContent='早見表を保存中...';msg.style.color='#3b82f6';
+      const updates=[];admYobiState.dirty.forEach((value,k)=>{const [row,col]=k.split(',').map(Number);updates.push({row,col,value});});
+      const sr=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:YOBI_SHEET_NAME,updates})});
+      const sj=await sr.json();if(sj.error)throw new Error('早見表の保存に失敗: '+sj.error);
+      updates.forEach(u=>{if(!admYobiState.rows[u.row])admYobiState.rows[u.row]=[];admYobiState.rows[u.row][u.col]=u.value;});
+      admYobiState.dirty.clear();admYobiUpdateBadge();admYobiRender();
     }
-    // ② 開始日以降の日付を含む「既存の全シフトシート」へ反映
+    // ② 新規コースを 同エリアの直後へ挿入 (A列=0=朝刊, J列=9=夕刊。朝刊だけ/夕刊だけ/両方同名OK)。既存ならスキップ。
+    let inserted='';
+    if(inputNames.length){
+      const dup=admYobiState.rows.some(r=>{const a=String(r[0]||'').trim(),p=String(r[9]||'').trim();return (am&&a===am)||(pm&&p===pm);});
+      if(!dup){
+        const values=new Array(10).fill('');values[0]=am;values[9]=pm;
+        const insertIdx=admYobiPickInsertIndex(am||pm);
+        msg.textContent='早見表に行を挿入中...';msg.style.color='#3b82f6';
+        const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'insert_row_at',sheet_name:YOBI_SHEET_NAME,row_index:insertIdx,values})});
+        const j=await r.json();if(j.error)throw new Error(j.error);
+        await admYobiInit(true); // 再読込して新行を表示
+        admYobiFlashRow(insertIdx);
+        inserted=(am&&pm)?(am===pm?am:`${am}/${pm}`):(am||pm);
+        amEl.value='';pmEl.value='';// 再押下での二重挿入を防ぐ(担当者入力→再度📤反映で展開)
+      }
+    }
+    // ③ 反映対象コースを確定(入力名 + 編集した行のコース名)
+    const names=[...new Set([...inputNames,...editedCourses])];
+    if(!names.length){
+      msg.textContent=`✓ 早見表に保存しました${inserted?`（${inserted} を追加）`:''}。反映するコースがありません（担当者を入力してもう一度「📤 反映」）。`;msg.style.color='#16a34a';return;
+    }
+    // ④ 開始日以降の日付を含む「既存の全シフトシート」へ反映
     msg.textContent='シフト一覧取得中...';msg.style.color='#3b82f6';
     const lr=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list_sheets'})});
     const lj=await lr.json();
