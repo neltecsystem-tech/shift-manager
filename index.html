@@ -974,11 +974,11 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="adm-yobi-addbar" style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-top:10px;padding:10px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">
           <div style="font-weight:700;font-size:13px;color:#15803d;">➕ コース追加 / 📤 反映</div>
-          <div><label style="font-size:11px;color:var(--text-sub);display:block;">朝刊コース名 (A列)</label><input type="text" id="adm-yobi-add-am" placeholder="朝刊があれば (例:城北24)" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:150px;"></div>
-          <div><label style="font-size:11px;color:var(--text-sub);display:block;">夕刊コース名 (J列)</label><input type="text" id="adm-yobi-add-pm" placeholder="夕刊があれば (朝刊と同名可)" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:150px;"></div>
+          <div><label style="font-size:11px;color:var(--text-sub);display:block;">コース名</label><input type="text" id="adm-yobi-add-name" placeholder="例:城北24" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:150px;"></div>
+          <div><label style="font-size:11px;color:var(--text-sub);display:block;">種別（黒塗り判定＝マスタR:U）</label><div style="display:flex;gap:12px;align-items:center;padding-top:6px;font-size:13px;"><label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" id="adm-yobi-add-am">朝刊</label><label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" id="adm-yobi-add-pm">夕刊</label><label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" id="adm-yobi-add-keiba">金土(競馬)</label></div></div>
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">開始日 (この日以降を反映)</label><input type="date" id="adm-yobi-add-start" title="この日以降の日付を含む既存シフトへ反映。この日より前は空欄。空なら各シートの月初から。" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;"></div>
           <button onclick="admYobiAddCourse()" style="background:#2563eb;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="未保存の担当者編集を自動保存→新規コースは同エリア直後に追加→開始日以降の日付を含む既存シフト(今月・来月など作成済み全部)へ反映(黒塗り自動)。別途「💾保存」は不要。">📤 反映（開始日以降の全シフトへ）</button>
-          <div style="font-size:11px;color:var(--text-sub);max-width:380px;line-height:1.5;"><b>朝刊だけ / 夕刊だけ / 両方(同名でも可)</b> いずれもOK。押すと<b>未保存の担当者も自動保存</b>し、新規コースは<b>同エリアの直後</b>に追加、<b>開始日以降の既存シフトすべて</b>(今月・来月など作成済み全部)へ担当者展開＋非稼働日を黒塗り。未作成の月は「新規月作成」で反映。手順=①コース名を入れて📤反映(枠だけ作成)→②早見表グリッドに担当者入力→③もう一度📤反映(担当者も展開)。💾保存を別途押す必要はありません。黒塗り精度には「マスタ」R列登録も必要。</div>
+          <div style="font-size:11px;color:var(--text-sub);max-width:380px;line-height:1.5;">コース名を入れ<b>朝刊 / 夕刊 / 金土(競馬)</b>にチェックして📤反映。押すと<b>マスタR:Uへ自動登録</b>(黒塗り判定はこれを読む)＋未保存の担当者も自動保存＋新規コースは<b>同エリアの直後</b>に追加＋<b>開始日以降の既存シフトすべて</b>へ担当者展開＋非稼働日を黒塗り。手順=①コース名＋種別チェックで📤反映(枠だけ作成)→②早見表に担当者入力→③もう一度📤反映(担当者も展開)。💾保存は別途不要。<b>担当が空でも黒にはならず</b>、黒塗りは種別チェック(マスタR:U)のみで決まります。</div>
         </div>
         <div id="adm-yobi-msg" style="margin-top:8px;font-size:13px;color:var(--text-sub);"></div>
         <div id="adm-yobi-content" style="margin-top:12px;overflow:auto;max-height:75vh;border:1px solid var(--border);border-radius:8px;background:#fff;"></div>
@@ -10105,8 +10105,12 @@ function admYobiFlashRow(idx){
 // 反映対象コース = 入力したコース名 + 編集(dirty)した行のコース名。未作成の月は新規月作成で拾う。
 async function admYobiAddCourse(){
   if(!admYobiState.loaded){alert('先に早見表を「🔄 再読込」で読み込んでください');return;}
-  const amEl=document.getElementById('adm-yobi-add-am'),pmEl=document.getElementById('adm-yobi-add-pm');
-  const am=(amEl.value||'').trim(),pm=(pmEl.value||'').trim();
+  const nameEl=document.getElementById('adm-yobi-add-name');
+  const amEl=document.getElementById('adm-yobi-add-am'),pmEl=document.getElementById('adm-yobi-add-pm'),keibaEl=document.getElementById('adm-yobi-add-keiba');
+  const courseName=(nameEl.value||'').trim();
+  // チェック式: 朝刊✔なら A列, 夕刊✔なら J列 に同名で入れる。金土(競馬)はマスタU列へ。
+  const am=amEl.checked?courseName:'',pm=pmEl.checked?courseName:'',keiba=!!keibaEl.checked;
+  if(courseName&&!am&&!pm){alert('朝刊 / 夕刊 のいずれかにチェックを入れてください');return;}
   const startDate=((document.getElementById('adm-yobi-add-start')||{}).value||'').trim();
   const msg=document.getElementById('adm-yobi-msg');
   const inputNames=[...new Set([am,pm].filter(Boolean))];
@@ -10137,8 +10141,15 @@ async function admYobiAddCourse(){
         await admYobiInit(true); // 再読込して新行を表示
         admYobiFlashRow(insertIdx);
         inserted=(am&&pm)?(am===pm?am:`${am}/${pm}`):(am||pm);
-        amEl.value='';pmEl.value='';// 再押下での二重挿入を防ぐ(担当者入力→再度📤反映で展開)
+        nameEl.value='';amEl.checked=false;pmEl.checked=false;keibaEl.checked=false;// 再押下での二重挿入を防ぐ
       }
+    }
+    // ②-b 黒塗りマスタ(「マスタ」R:U列)へ 朝刊/夕刊/金土 を反映。既存は更新・新規は追記。黒塗り判定はこれを読む。
+    if(courseName&&(am||pm)){
+      try{
+        msg.textContent='黒塗りマスタ(R:U)を更新中...';msg.style.color='#3b82f6';
+        await admYobiUpsertMasterFlags(courseName,!!am,!!pm,keiba);
+      }catch(e){ msg.textContent='⚠️ マスタR:U更新に失敗: '+(e.message||e);msg.style.color='#dc2626';return; }
     }
     // ③ 反映対象コースを確定(入力名 + 編集した行のコース名)
     const names=[...new Set([...inputNames,...editedCourses])];
@@ -10159,8 +10170,8 @@ async function admYobiAddCourse(){
     }
     targets.sort((a,b)=>(a.year-b.year)||(a.month-b.month));
     if(!targets.length){
-      amEl.value='';pmEl.value='';
-      msg.textContent=`✓ 早見表に追加しました (${names.join(', ')})。反映対象の既存シフトはまだありません。曜日別担当者を入力・💾保存 →「新規月作成」で反映されます。`;msg.style.color='#16a34a';
+      nameEl.value='';amEl.checked=false;pmEl.checked=false;keibaEl.checked=false;
+      msg.textContent=`✓ 早見表＋マスタR:Uに追加しました (${names.join(', ')})。反映対象の既存シフトはまだありません。曜日別担当者を入力・💾保存 →「新規月作成」で反映されます。`;msg.style.color='#16a34a';
       return;
     }
     const startMsg=startDate?`開始日 ${startDate.replace(/-/g,'/')} 以降`:'全期間';
@@ -10339,6 +10350,27 @@ async function admSeApplyHolidayPm(){
 
 // マスタ R:U のキャッシュ: course → {am, pm, keiba} (boolean)
 let admSeMasterReqs=null;
+// 黒塗りマスタ(「マスタ」シート R:U列 = R:コース名 / S:朝刊 / T:夕刊 / U:金土)へ upsert。
+// 既存コースは同行を更新、新規は最終コース行の直下に R:U だけ書く(行挿入しない=休刊日カレンダーV列以降に無影響)。
+async function admYobiUpsertMasterFlags(course,am,pm,keiba){
+  course=String(course||'').trim();if(!course)return;
+  const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'マスタ'})});
+  const j=await r.json();if(j.error)throw new Error('マスタ取得失敗: '+j.error);
+  const rows=j.rows||[];
+  let target=-1,lastCourseRow=1; // 0-indexed。行1,2(=idx0,1)はヘッダ
+  for(let i=2;i<rows.length;i++){
+    const c=String((rows[i]||[])[17]||'').trim();
+    if(!c||c==='コース')continue;
+    lastCourseRow=i;
+    if(c===course){target=i;break;}
+  }
+  const rowIdx=target>=0?target:(lastCourseRow+1); // 0-indexed
+  const vals=[course,am?'✔':'',pm?'✔':'',keiba?'✔':''];
+  const range=`R${rowIdx+1}:U${rowIdx+1}`; // R=18列目, U=21列目 (1-indexed行)
+  const ur=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_range',sheet_name:'マスタ',range,values:[vals]})});
+  const uj=await ur.json();if(uj.error)throw new Error('マスタ更新失敗: '+uj.error);
+  admSeMasterReqs=null; // 黒塗りキャッシュ無効化→次回描画/反映で最新フラグを再取得
+}
 async function admSeLoadMaster(){
   if(admSeMasterReqs)return admSeMasterReqs;
   const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:'マスタ'})});
