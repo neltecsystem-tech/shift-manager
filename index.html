@@ -4523,6 +4523,11 @@ function admStoreMapNearby(lat,lng){
     </div>`;
 }
 function admStoreMapRegisterNew(lat,lng,area,am,pm,keiba){
+  // sm-modal は「店舗マスタ」ビュー内にあり、管理ビューからは親(view-shopmaster)が非表示で描画されない。
+  // モーダルを body 直下へ移してグローバル表示にする(getElementById参照は不変なので安全)。
+  const modal=document.getElementById('sm-modal');
+  if(modal && modal.parentElement!==document.body){ document.body.appendChild(modal); }
+  // 店舗マスタ未読込のことがあるので、コース候補データを確保してからフォームを開く
   smShowAdd({lat,lng,area,amCourse:am,pmCourse:pm,keibaCourse:keiba});
 }
 // しずく型ピン (営業所選択時=少数向け)
