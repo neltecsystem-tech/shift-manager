@@ -1,5 +1,5 @@
 // shift-manager のシフトデータを NexPort 予定表 (schedule_events) に同期
-// 対象: 単価マスタ で 区分=社員 のスタッフ。 NexPort profiles.display_name で突合
+// 対象: 単価マスタ で 区分=社員・プランナー のスタッフ。 NexPort profiles.display_name で突合
 // 期間: 当月 + 翌月
 // 動作: 既存の event_type='シフト' 同期由来予定を削除 → 新規 insert (idempotent)
 
@@ -61,7 +61,7 @@ function areaOfCourse(c: string): string {
   return '';
 }
 
-// ── 単価マスタから 社員 名前リスト ──
+// ── 単価マスタから 社員・プランナー 名前リスト ──
 async function getShainNames(token: string): Promise<string[]> {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${INVOICE_SS}/values/${encodeURIComponent(TANKA_SHEET)}!A2:U10000`;
   const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -71,7 +71,7 @@ async function getShainNames(token: string): Promise<string[]> {
   for (const row of rows) {
     const name = (row[0] || '').trim();
     const bizType = (row[11] || '').trim(); // L列 = 区分
-    if (name && bizType === '社員') names.push(name);
+    if (name && (bizType === '社員' || bizType === 'プランナー')) names.push(name);
   }
   return [...new Set(names)];
 }
@@ -309,7 +309,7 @@ Deno.serve(async (req: Request) => {
       else unmappedStaff.push(n);
     }
 
-    // ── (1) shift-manager (新聞シフト): 社員のみ対象 ──
+    // ── (1) shift-manager (新聞シフト): 社員・プランナーが対象 ──
     type EventRec = { user_id: string; title: string; event_date: string; event_type: string; all_day: boolean; assigned_by: string; status: string };
     const events: EventRec[] = [];
     const monthsLoaded: { label: string; rows: number }[] = [];
