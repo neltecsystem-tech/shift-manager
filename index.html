@@ -4526,7 +4526,10 @@ function admStoreMapRegisterNew(lat,lng,area,am,pm,keiba){
   // sm-modal は「店舗マスタ」ビュー内にあり、管理ビューからは親(view-shopmaster)が非表示で描画されない。
   // モーダルを body 直下へ移してグローバル表示にする(getElementById参照は不変なので安全)。
   const modal=document.getElementById('sm-modal');
-  if(modal && modal.parentElement!==document.body){ document.body.appendChild(modal); }
+  if(modal){
+    if(modal.parentElement!==document.body){ document.body.appendChild(modal); }
+    modal.style.zIndex='4000'; // Leaflet地図の内部z-index(〜1000)より前面に
+  }
   // 店舗マスタ未読込のことがあるので、コース候補データを確保してからフォームを開く
   smShowAdd({lat,lng,area,amCourse:am,pmCourse:pm,keibaCourse:keiba});
 }
