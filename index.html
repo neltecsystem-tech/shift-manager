@@ -4472,10 +4472,16 @@ function admStoreMapNearby(lat,lng){
 function admStoreMapRegisterNew(lat,lng,area,am,pm){
   smShowAdd({lat,lng,area,amCourse:am,pmCourse:pm});
 }
-// コース名→安定した色 (文字列ハッシュ→HSL)
-function admSmapCourseColor(course){
-  const s=String(course); let h=0; for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0;
-  return `hsl(${h%360},68%,48%)`;
+// 表示中のコース集合に重複しない色を割り当て (均等hue + 明度/彩度バンドで隣接も分離)
+function admSmapBuildColorMap(keys){
+  const map={}; const n=Math.max(1,keys.length);
+  const bands=[[70,48],[62,60],[78,38],[66,54],[74,42]]; // [彩度%,明度%]
+  keys.forEach((k,i)=>{
+    const hue=Math.round((i*360)/n);
+    const [sat,light]=bands[i%bands.length];
+    map[k]=`hsl(${hue},${sat}%,${light}%)`;
+  });
+  return map;
 }
 function admStoreMapRender(){
   if(!admStoreMap||!admStoreLayer)return;
@@ -4488,8 +4494,8 @@ function admStoreMapRender(){
   const fArea=g('adm-smap-area'), fEd=g('adm-smap-edition'), fQ=g('adm-smap-search').toLowerCase();
   const edIdx = fEd==='am'?amIdx : fEd==='pm'?pmIdx : fEd==='keiba'?keibaIdx : null;
   const perCourse = !!fArea; // 営業所を選んだ時はコースで色分け、全営業所は営業所で色分け
-  admStoreLayer.clearLayers();
-  const pts=[]; let noCoord=0; const legendCnt={};
+  // 1st pass: フィルタを通った店舗を収集
+  const shown=[]; let noCoord=0;
   smData.forEach(r=>{
     const lat=parseFloat(r[`col_${latIdx}`]), lng=parseFloat(r[`col_${lngIdx}`]);
     const name=String(r[`col_${nameIdx}`]||'').trim();
@@ -4501,25 +4507,34 @@ function admStoreMapRender(){
     const keiba=keibaIdx!=null?String(r[`col_${keibaIdx}`]||'').trim():'';
     if(isNaN(lat)||isNaN(lng)||lat===0||lng===0){ if(name)noCoord++; return; }
     if(fArea&&area!==fArea)return;
-    // 版フィルタ: 選択した版のコースがある店舗のみ表示
     const edCourse = edIdx!=null?String(r[`col_${edIdx}`]||'').trim():'';
-    if(fEd && !edCourse)return;
+    if(fEd && !edCourse)return; // 版フィルタ: 選択した版のコースがある店舗のみ
     if(fQ&&!(`${name} ${code} ${am} ${pm} ${keiba}`.toLowerCase().includes(fQ)))return;
-    let key, color;
-    if(perCourse){ key = edCourse || am || pm || keiba || '(コース未設定)'; color = admSmapCourseColor(key); }
-    else { key = area || '(不明)'; color = ADM_SMAP_AREA_COLORS[area] || '#6b7280'; }
-    const m=L.circleMarker([lat,lng],{radius:5,color:'#fff',weight:1,fillColor:color,fillOpacity:.9});
-    const esc=s=>String(s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
-    m.bindPopup(`<b>${esc(name||'(名称なし)')}</b><br>${code?('コード: '+esc(code)+'<br>'):''}${area?('営業所: '+esc(area)+'<br>'):''}${am?('朝刊: '+esc(am)+'<br>'):''}${pm?('夕刊: '+esc(pm)+'<br>'):''}${keiba?('競馬: '+esc(keiba)+'<br>'):''}<a href="https://www.google.com/maps?q=${lat},${lng}" target="_blank" rel="noopener">Googleマップで開く</a>`);
+    const key = perCourse ? (edCourse || am || pm || keiba || '(コース未設定)') : (area || '(不明)');
+    shown.push({lat,lng,name,code,area,am,pm,keiba,key});
+  });
+  // コース別は「表示中のコース集合」に重複しない色を割当。営業所別は固定色。
+  let colorMap=null;
+  if(perCourse){
+    const keys=[...new Set(shown.map(s=>s.key))].sort((a,b)=>a.localeCompare(b,'ja',{numeric:true}));
+    colorMap=admSmapBuildColorMap(keys);
+  }
+  admStoreLayer.clearLayers();
+  const pts=[]; const legendCnt={};
+  const esc=s=>String(s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  shown.forEach(s=>{
+    const color = perCourse ? colorMap[s.key] : (ADM_SMAP_AREA_COLORS[s.area]||'#6b7280');
+    const m=L.circleMarker([s.lat,s.lng],{radius:5,color:'#fff',weight:1,fillColor:color,fillOpacity:.9});
+    m.bindPopup(`<b>${esc(s.name||'(名称なし)')}</b><br>${s.code?('コード: '+esc(s.code)+'<br>'):''}${s.area?('営業所: '+esc(s.area)+'<br>'):''}${s.am?('朝刊: '+esc(s.am)+'<br>'):''}${s.pm?('夕刊: '+esc(s.pm)+'<br>'):''}${s.keiba?('競馬: '+esc(s.keiba)+'<br>'):''}<a href="https://www.google.com/maps?q=${s.lat},${s.lng}" target="_blank" rel="noopener">Googleマップで開く</a>`);
     admStoreLayer.addLayer(m);
-    pts.push([lat,lng]);
-    legendCnt[key]=(legendCnt[key]||0)+1;
+    pts.push([s.lat,s.lng]);
+    legendCnt[s.key]=(legendCnt[s.key]||0)+1;
   });
   const legend=document.getElementById('adm-smap-legend');
   if(legend){
     if(perCourse){
       const entries=Object.keys(legendCnt).sort((a,b)=>a.localeCompare(b,'ja',{numeric:true}));
-      legend.innerHTML=entries.map(k=>`<span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${admSmapCourseColor(k)};vertical-align:middle;margin-right:4px;"></span>${k}(${legendCnt[k]})</span>`).join('');
+      legend.innerHTML=entries.map(k=>`<span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${colorMap[k]};vertical-align:middle;margin-right:4px;"></span>${esc(k)}(${legendCnt[k]})</span>`).join('');
     }else{
       legend.innerHTML=Object.entries(ADM_SMAP_AREA_COLORS).map(([a,c])=>`<span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${c};vertical-align:middle;margin-right:4px;"></span>${a}${legendCnt[a]?`(${legendCnt[a]})`:''}</span>`).join('');
     }
