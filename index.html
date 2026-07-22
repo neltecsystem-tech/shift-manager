@@ -4418,7 +4418,15 @@ function admStoreMapToggleAddMode(){
   const panel=document.getElementById('adm-smap-new');
   if(admStoreNewMode){
     if(btn){btn.style.background='#dc2626';btn.textContent='✕ 配置モードを終了';}
-    if(panel){panel.style.display='';panel.innerHTML='<b>📍 地図上をクリック</b>して新店の位置を指定してください。近くの店舗からコース候補を表示します。';}
+    if(panel){panel.style.display='';panel.innerHTML=`
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
+        <b>📍 新店の位置を指定</b>
+        <input type="text" id="adm-smap-addr" placeholder="住所や場所名で検索 (例: 東京都立川市曙町2-7-16)" style="flex:1;min-width:220px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter'){event.preventDefault();admStoreMapSearchAddr();}">
+        <button onclick="admStoreMapSearchAddr()" style="background:#0ea5e9;color:#fff;border:none;padding:7px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap;">🔍 住所で検索</button>
+        <span style="color:#92400e;font-size:12px;">または地図を直接クリック</span>
+      </div>
+      <div id="adm-smap-addr-msg" style="font-size:12px;margin-bottom:4px;min-height:14px;"></div>
+      <div id="adm-smap-new-result"></div>`;}
     if(admStoreMap)admStoreMap.getContainer().style.cursor='crosshair';
   }else{
     if(btn){btn.style.background='#16a34a';btn.textContent='📍 新店をここに配置';}
@@ -4437,8 +4445,30 @@ function admStoreMapOnClick(e){
   }
   admStoreMapNearby(lat,lng);
 }
+async function admStoreMapSearchAddr(){
+  const inp=document.getElementById('adm-smap-addr'); const msg=document.getElementById('adm-smap-addr-msg');
+  if(!inp)return;
+  const q=(inp.value||'').trim();
+  if(!q){ if(msg){msg.textContent='住所や場所名を入力してください';msg.style.color='#dc2626';} return; }
+  if(msg){msg.textContent='🔍 検索中...';msg.style.color='#3b82f6';}
+  try{
+    const url=`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&language=ja&region=jp&key=${GEOCODING_API_KEY}`;
+    const res=await fetch(url); const j=await res.json();
+    if(j.status!=='OK'||!j.results||!j.results[0]){ if(msg){msg.textContent='検索失敗: '+(j.status||'unknown')+(j.error_message?' - '+j.error_message:'');msg.style.color='#dc2626';} return; }
+    const loc=j.results[0].geometry.location, formatted=j.results[0].formatted_address||'';
+    const lat=loc.lat, lng=loc.lng;
+    if(admStoreNewMarker){ admStoreNewMarker.setLatLng([lat,lng]); }
+    else{
+      admStoreNewMarker=L.marker([lat,lng],{draggable:true,zIndexOffset:1000}).addTo(admStoreMap);
+      admStoreNewMarker.on('dragend',ev=>{ const p=ev.target.getLatLng(); admStoreMapNearby(p.lat,p.lng); });
+    }
+    admStoreMap.setView([lat,lng],16);
+    if(msg){msg.textContent='✓ '+formatted+'（ピンはドラッグで微調整できます）';msg.style.color='#16a34a';}
+    admStoreMapNearby(lat,lng);
+  }catch(e){ if(msg){msg.textContent='エラー: '+e.message;msg.style.color='#dc2626';} }
+}
 function admStoreMapNearby(lat,lng){
-  const panel=document.getElementById('adm-smap-new'); if(!panel)return;
+  const panel=document.getElementById('adm-smap-new-result')||document.getElementById('adm-smap-new'); if(!panel)return;
   const latIdx=smColMap.lat,lngIdx=smColMap.lng,nameIdx=smColMap.name??3,areaIdx=smColMap.area??1,amIdx=smColMap.amCourse,pmIdx=smColMap.pmCourse,keibaIdx=smColMap.keibaCourse;
   const near=[];
   smData.forEach(r=>{
