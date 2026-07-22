@@ -1172,9 +1172,13 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>営業所</label><select id="adm-smap-area" onchange="admStoreMapRender()"><option value="">すべて</option><option>城北</option><option>立川</option><option>川越</option><option>川崎高津</option></select></div>
           <div><label>版</label><select id="adm-smap-edition" onchange="admStoreMapRender()"><option value="">すべて</option><option value="am">朝刊</option><option value="pm">夕刊</option><option value="keiba">競馬</option></select></div>
           <div><label>絞り込み</label><input type="text" id="adm-smap-search" placeholder="店舗名・コード・コース" oninput="dbInput('admStoreMapRender',250)" style="width:200px;"></div>
-          <div style="margin-left:auto;"><button onclick="admStoreMapInit(true)" style="background:#3b82f6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;margin-top:18px;">🔄 再読み込み</button></div>
+          <div style="margin-left:auto;display:flex;gap:8px;margin-top:18px;">
+            <button onclick="admStoreMapToggleAddMode()" id="adm-smap-add-btn" style="background:#16a34a;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📍 新店をここに配置</button>
+            <button onclick="admStoreMapInit(true)" style="background:#3b82f6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🔄 再読み込み</button>
+          </div>
         </div>
         <div id="adm-smap-legend" style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;margin-bottom:8px;color:var(--text-sub);"></div>
+        <div id="adm-smap-new" style="display:none;background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:12px;margin-bottom:8px;font-size:13px;"></div>
         <div id="adm-smap-summary" style="margin-bottom:8px;font-size:12px;color:var(--text-sub);"></div>
         <div id="adm-smap-map" style="height:70vh;min-height:420px;border-radius:12px;border:1px solid var(--border);overflow:hidden;background:#eef2f7;"></div>
       </div>
@@ -4346,13 +4350,21 @@ function smOpenPicker(title,bodyHtml){
 }
 function smClosePicker(){const m=document.getElementById('sm-pick-modal');if(m)m.remove();}
 
-function smShowAdd(){
+function smShowAdd(prefill){
   smEditRow=null;
   smPendingTimeShift=null;
   document.getElementById('sm-modal-title').textContent='店舗を追加';
   document.getElementById('sm-form').innerHTML=smBuildForm(null);
   document.getElementById('sm-submit').textContent='追加する';
   document.getElementById('sm-modal').style.display='flex';
+  if(prefill){
+    const setV=(idx,v)=>{ if(idx==null||v==null||v==='')return; const el=document.getElementById(`sme-${idx}`); if(el)el.value=v; };
+    setV(smColMap.lat, prefill.lat!=null?Number(prefill.lat).toFixed(7):'');
+    setV(smColMap.lng, prefill.lng!=null?Number(prefill.lng).toFixed(7):'');
+    setV(smColMap.area, prefill.area);
+    setV(smColMap.amCourse, prefill.amCourse);
+    setV(smColMap.pmCourse, prefill.pmCourse);
+  }
   setTimeout(smInitEditMap,50);
 }
 
@@ -4384,8 +4396,81 @@ async function admStoreMapInit(reload){
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap',maxZoom:19}).addTo(admStoreMap);
     admStoreLayer=L.layerGroup().addTo(admStoreMap);
   }
+  if(!admStoreMap._newBound){ admStoreMap.on('click', admStoreMapOnClick); admStoreMap._newBound=true; }
   setTimeout(()=>{ try{ admStoreMap.invalidateSize(); }catch(_){} },60); // display:none→表示 直後のサイズ補正
   admStoreMapRender();
+}
+// ── 新店を地図で配置 → 近隣店舗からコース判定を補助 → 既存の新店登録へ ──
+let admStoreNewMode=false, admStoreNewMarker=null;
+function admSmapDist(lat1,lng1,lat2,lng2){ // ハバーサイン(メートル)
+  const R=6371000, toR=x=>x*Math.PI/180;
+  const dLat=toR(lat2-lat1), dLng=toR(lng2-lng1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toR(lat1))*Math.cos(toR(lat2))*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.min(1,Math.sqrt(a)));
+}
+function admStoreMapToggleAddMode(){
+  admStoreNewMode=!admStoreNewMode;
+  const btn=document.getElementById('adm-smap-add-btn');
+  const panel=document.getElementById('adm-smap-new');
+  if(admStoreNewMode){
+    if(btn){btn.style.background='#dc2626';btn.textContent='✕ 配置モードを終了';}
+    if(panel){panel.style.display='';panel.innerHTML='<b>📍 地図上をクリック</b>して新店の位置を指定してください。近くの店舗からコース候補を表示します。';}
+    if(admStoreMap)admStoreMap.getContainer().style.cursor='crosshair';
+  }else{
+    if(btn){btn.style.background='#16a34a';btn.textContent='📍 新店をここに配置';}
+    if(panel){panel.style.display='none';panel.innerHTML='';}
+    if(admStoreNewMarker){try{admStoreMap.removeLayer(admStoreNewMarker);}catch(_){}admStoreNewMarker=null;}
+    if(admStoreMap)admStoreMap.getContainer().style.cursor='';
+  }
+}
+function admStoreMapOnClick(e){
+  if(!admStoreNewMode)return;
+  const {lat,lng}=e.latlng;
+  if(admStoreNewMarker){ admStoreNewMarker.setLatLng([lat,lng]); }
+  else{
+    admStoreNewMarker=L.marker([lat,lng],{draggable:true,zIndexOffset:1000}).addTo(admStoreMap);
+    admStoreNewMarker.on('dragend',ev=>{ const p=ev.target.getLatLng(); admStoreMapNearby(p.lat,p.lng); });
+  }
+  admStoreMapNearby(lat,lng);
+}
+function admStoreMapNearby(lat,lng){
+  const panel=document.getElementById('adm-smap-new'); if(!panel)return;
+  const latIdx=smColMap.lat,lngIdx=smColMap.lng,nameIdx=smColMap.name??3,areaIdx=smColMap.area??1,amIdx=smColMap.amCourse,pmIdx=smColMap.pmCourse,keibaIdx=smColMap.keibaCourse;
+  const near=[];
+  smData.forEach(r=>{
+    const rlat=parseFloat(r[`col_${latIdx}`]), rlng=parseFloat(r[`col_${lngIdx}`]);
+    if(isNaN(rlat)||isNaN(rlng)||rlat===0||rlng===0)return;
+    const d=admSmapDist(lat,lng,rlat,rlng);
+    near.push({d,
+      name:String(r[`col_${nameIdx}`]||'').trim(),
+      area:(String(r[`col_${areaIdx}`]||'').split(/[,、]/)[0].trim()==='池袋'?'城北':String(r[`col_${areaIdx}`]||'').split(/[,、]/)[0].trim()),
+      am:amIdx!=null?String(r[`col_${amIdx}`]||'').trim():'',
+      pm:pmIdx!=null?String(r[`col_${pmIdx}`]||'').trim():'',
+      keiba:keibaIdx!=null?String(r[`col_${keibaIdx}`]||'').trim():''});
+  });
+  near.sort((a,b)=>a.d-b.d);
+  const top=near.slice(0,8);
+  // 最多コース(近隣3件)を候補に
+  const mode=(arr)=>{const c={};arr.forEach(v=>{if(v)c[v]=(c[v]||0)+1;});return Object.keys(c).sort((a,b)=>c[b]-c[a])[0]||'';};
+  const sugArea=top[0]?top[0].area:'';
+  const sugAm=mode(top.slice(0,3).map(s=>s.am));
+  const sugPm=mode(top.slice(0,3).map(s=>s.pm));
+  const esc=s=>String(s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  const rows=top.map(s=>{const dist=s.d<1000?`${Math.round(s.d)}m`:`${(s.d/1000).toFixed(2)}km`;
+    return `<tr><td style="padding:3px 8px;">${dist}</td><td style="padding:3px 8px;">${esc(s.name)||'-'}</td><td style="padding:3px 8px;color:#64748b;">${esc(s.area)}</td><td style="padding:3px 8px;">${esc(s.am)||'-'}</td><td style="padding:3px 8px;">${esc(s.pm)||'-'}</td></tr>`;}).join('');
+  panel.innerHTML=`
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+      <b>📍 この地点の近くの店舗（コース判定の参考）</b>
+      <span style="color:#64748b;">緯度 ${lat.toFixed(6)} / 経度 ${lng.toFixed(6)}</span>
+      <button onclick="admStoreMapRegisterNew(${lat},${lng},'${esc(sugArea)}','${esc(sugAm)}','${esc(sugPm)}')" style="margin-left:auto;background:#16a34a;color:#fff;border:none;padding:7px 14px;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px;">この位置で新店を登録 →</button>
+    </div>
+    <div style="font-size:12px;color:#92400e;margin-bottom:6px;">候補: 営業所 <b>${esc(sugArea)||'-'}</b> ／ 朝刊コース <b>${esc(sugAm)||'-'}</b> ／ 夕刊コース <b>${esc(sugPm)||'-'}</b>（登録画面で調整できます）</div>
+    <div style="max-height:180px;overflow-y:auto;background:#fff;border-radius:6px;border:1px solid #fde68a;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#fef3c7;"><th style="padding:4px 8px;text-align:left;">距離</th><th style="padding:4px 8px;text-align:left;">店舗名</th><th style="padding:4px 8px;text-align:left;">営業所</th><th style="padding:4px 8px;text-align:left;">朝刊</th><th style="padding:4px 8px;text-align:left;">夕刊</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+}
+function admStoreMapRegisterNew(lat,lng,area,am,pm){
+  smShowAdd({lat,lng,area,amCourse:am,pmCourse:pm});
 }
 // コース名→安定した色 (文字列ハッシュ→HSL)
 function admSmapCourseColor(course){
