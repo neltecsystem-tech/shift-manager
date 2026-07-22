@@ -4470,6 +4470,9 @@ async function admStoreMapSearchAddr(){
 function admStoreMapNearby(lat,lng){
   const panel=document.getElementById('adm-smap-new-result')||document.getElementById('adm-smap-new'); if(!panel)return;
   const latIdx=smColMap.lat,lngIdx=smColMap.lng,nameIdx=smColMap.name??3,areaIdx=smColMap.area??1,amIdx=smColMap.amCourse,pmIdx=smColMap.pmCourse,keibaIdx=smColMap.keibaCourse;
+  // 区分ごとの順番/店着時間の固定列 (SM_EDITIONS)
+  const amE=(typeof SM_EDITIONS!=='undefined')?SM_EDITIONS.find(e=>e.key==='am'):null;
+  const pmE=(typeof SM_EDITIONS!=='undefined')?SM_EDITIONS.find(e=>e.key==='pm'):null;
   const near=[];
   smData.forEach(r=>{
     const rlat=parseFloat(r[`col_${latIdx}`]), rlng=parseFloat(r[`col_${lngIdx}`]);
@@ -4480,7 +4483,9 @@ function admStoreMapNearby(lat,lng){
       area:(String(r[`col_${areaIdx}`]||'').split(/[,、]/)[0].trim()==='池袋'?'城北':String(r[`col_${areaIdx}`]||'').split(/[,、]/)[0].trim()),
       am:amIdx!=null?String(r[`col_${amIdx}`]||'').trim():'',
       pm:pmIdx!=null?String(r[`col_${pmIdx}`]||'').trim():'',
-      keiba:keibaIdx!=null?String(r[`col_${keibaIdx}`]||'').trim():''});
+      keiba:keibaIdx!=null?String(r[`col_${keibaIdx}`]||'').trim():'',
+      amOrder:amE?String(r[`col_${amE.order}`]||'').trim():'', amTime:amE?String(r[`col_${amE.time}`]||'').trim():'',
+      pmOrder:pmE?String(r[`col_${pmE.order}`]||'').trim():'', pmTime:pmE?String(r[`col_${pmE.time}`]||'').trim():''});
   });
   near.sort((a,b)=>a.d-b.d);
   const top=near.slice(0,8);
@@ -4490,8 +4495,9 @@ function admStoreMapNearby(lat,lng){
   const sugAm=mode(top.slice(0,3).map(s=>s.am));
   const sugPm=mode(top.slice(0,3).map(s=>s.pm));
   const esc=s=>String(s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  const cell=(course,order,time)=>{ if(!course)return '-'; const sub=(order||time)?`<br><span style="color:#64748b;font-size:11px;">順${esc(order)||'-'}${time?(' ・ '+esc(time)):''}</span>`:''; return `${esc(course)}${sub}`; };
   const rows=top.map(s=>{const dist=s.d<1000?`${Math.round(s.d)}m`:`${(s.d/1000).toFixed(2)}km`;
-    return `<tr><td style="padding:3px 8px;">${dist}</td><td style="padding:3px 8px;">${esc(s.name)||'-'}</td><td style="padding:3px 8px;color:#64748b;">${esc(s.area)}</td><td style="padding:3px 8px;">${esc(s.am)||'-'}</td><td style="padding:3px 8px;">${esc(s.pm)||'-'}</td></tr>`;}).join('');
+    return `<tr style="border-top:1px solid #fef3c7;"><td style="padding:3px 8px;vertical-align:top;">${dist}</td><td style="padding:3px 8px;vertical-align:top;">${esc(s.name)||'-'}</td><td style="padding:3px 8px;color:#64748b;vertical-align:top;">${esc(s.area)}</td><td style="padding:3px 8px;vertical-align:top;">${cell(s.am,s.amOrder,s.amTime)}</td><td style="padding:3px 8px;vertical-align:top;">${cell(s.pm,s.pmOrder,s.pmTime)}</td></tr>`;}).join('');
   panel.innerHTML=`
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
       <b>📍 この地点の近くの店舗（コース判定の参考）</b>
@@ -4500,7 +4506,7 @@ function admStoreMapNearby(lat,lng){
     </div>
     <div style="font-size:12px;color:#92400e;margin-bottom:6px;">候補: 営業所 <b>${esc(sugArea)||'-'}</b> ／ 朝刊コース <b>${esc(sugAm)||'-'}</b> ／ 夕刊コース <b>${esc(sugPm)||'-'}</b>（登録画面で調整できます）</div>
     <div style="max-height:180px;overflow-y:auto;background:#fff;border-radius:6px;border:1px solid #fde68a;">
-      <table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#fef3c7;"><th style="padding:4px 8px;text-align:left;">距離</th><th style="padding:4px 8px;text-align:left;">店舗名</th><th style="padding:4px 8px;text-align:left;">営業所</th><th style="padding:4px 8px;text-align:left;">朝刊</th><th style="padding:4px 8px;text-align:left;">夕刊</th></tr></thead><tbody>${rows}</tbody></table>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#fef3c7;"><th style="padding:4px 8px;text-align:left;">距離</th><th style="padding:4px 8px;text-align:left;">店舗名</th><th style="padding:4px 8px;text-align:left;">営業所</th><th style="padding:4px 8px;text-align:left;">朝刊<span style="font-weight:400;color:#92400e;">（順・店着）</span></th><th style="padding:4px 8px;text-align:left;">夕刊<span style="font-weight:400;color:#92400e;">（順・店着）</span></th></tr></thead><tbody>${rows}</tbody></table>
     </div>`;
 }
 function admStoreMapRegisterNew(lat,lng,area,am,pm){
