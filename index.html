@@ -618,6 +618,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('measure')" id="adm-tab-measure" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⏱ 測定データ</button>
         <button onclick="adminTab('diagram')" id="adm-tab-diagram" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📐 ダイヤグラム</button>
         <button onclick="adminTab('mymaps')" id="adm-tab-mymaps" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🗺️ マイマップURL</button>
+        <button onclick="adminTab('storemap')" id="adm-tab-storemap" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🗺 店舗地図</button>
         <button onclick="adminTab('settings')" id="adm-tab-settings" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⚙ システム設定</button>
         <button onclick="adminTab('syshealth')" id="adm-tab-syshealth" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🩺 システム状態</button>
       </div>
@@ -1163,6 +1164,19 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="adm-mm-summary" style="margin-bottom:8px;font-size:12px;color:var(--text-sub);"></div>
         <div class="table-wrap" id="adm-mm-table"></div>
+      </div>
+
+      <!-- 全店舗地図 -->
+      <div id="adm-storemap" class="adm-panel" style="display:none;">
+        <div class="filters" style="align-items:center;">
+          <div><label>営業所</label><select id="adm-smap-area" onchange="admStoreMapRender()"><option value="">すべて</option><option>城北</option><option>立川</option><option>川越</option><option>川崎高津</option></select></div>
+          <div><label>区分</label><select id="adm-smap-edition" onchange="admStoreMapRender()"><option value="">すべて</option><option value="am">朝刊コースあり</option><option value="pm">夕刊コースあり</option></select></div>
+          <div><label>絞り込み</label><input type="text" id="adm-smap-search" placeholder="店舗名・コード・コース" oninput="dbInput('admStoreMapRender',250)" style="width:200px;"></div>
+          <div style="margin-left:auto;"><button onclick="admStoreMapInit(true)" style="background:#3b82f6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;margin-top:18px;">🔄 再読み込み</button></div>
+        </div>
+        <div id="adm-smap-legend" style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;margin-bottom:8px;color:var(--text-sub);"></div>
+        <div id="adm-smap-summary" style="margin-bottom:8px;font-size:12px;color:var(--text-sub);"></div>
+        <div id="adm-smap-map" style="height:70vh;min-height:420px;border-radius:12px;border:1px solid var(--border);overflow:hidden;background:#eef2f7;"></div>
       </div>
 
       <!-- ダイヤグラム作成 -->
@@ -4354,6 +4368,62 @@ function smEdit(rowNum){
   setTimeout(smInitEditMap,50);
 }
 
+// ── 全店舗地図 (店舗マスタの緯度経度を Leaflet に全ピン表示) ──
+let admStoreMap=null, admStoreLayer=null;
+const ADM_SMAP_AREA_COLORS={ '城北':'#ef4444','立川':'#3b82f6','川越':'#10b981','川崎高津':'#f59e0b' };
+async function admStoreMapInit(reload){
+  const sum=document.getElementById('adm-smap-summary');
+  if(sum)sum.textContent='読み込み中...';
+  if(reload){ try{ await smLoad(true); }catch(_){} }
+  else if(!smData.length){ try{ await (smLoadPromise||smLoad()); }catch(_){} }
+  if(typeof L==='undefined'){ if(sum)sum.textContent='地図ライブラリの読み込みに失敗しました'; return; }
+  const el=document.getElementById('adm-smap-map');
+  if(!el)return;
+  if(!admStoreMap){
+    admStoreMap=L.map(el,{preferCanvas:true}).setView([35.75,139.6],10);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap',maxZoom:19}).addTo(admStoreMap);
+    admStoreLayer=L.layerGroup().addTo(admStoreMap);
+  }
+  setTimeout(()=>{ try{ admStoreMap.invalidateSize(); }catch(_){} },60); // display:none→表示 直後のサイズ補正
+  admStoreMapRender();
+}
+function admStoreMapRender(){
+  if(!admStoreMap||!admStoreLayer)return;
+  const sum=document.getElementById('adm-smap-summary');
+  const latIdx=smColMap.lat, lngIdx=smColMap.lng;
+  if(latIdx==null||lngIdx==null){ if(sum)sum.textContent='店舗マスタに緯度・経度の列が見つかりません'; return; }
+  const nameIdx=smColMap.name??3, codeIdx=smColMap.code, areaIdx=smColMap.area??1, amIdx=smColMap.amCourse, pmIdx=smColMap.pmCourse;
+  const g=id=>String((document.getElementById(id)||{}).value||'').trim();
+  const fArea=g('adm-smap-area'), fEd=g('adm-smap-edition'), fQ=g('adm-smap-search').toLowerCase();
+  admStoreLayer.clearLayers();
+  const pts=[]; let noCoord=0; const areaCnt={};
+  smData.forEach(r=>{
+    const lat=parseFloat(r[`col_${latIdx}`]), lng=parseFloat(r[`col_${lngIdx}`]);
+    const name=String(r[`col_${nameIdx}`]||'').trim();
+    const code=codeIdx!=null?String(r[`col_${codeIdx}`]||'').trim():'';
+    const areaRaw=String(r[`col_${areaIdx}`]||'').split(/[,、]/)[0].trim();
+    const area=areaRaw==='池袋'?'城北':areaRaw;
+    const am=amIdx!=null?String(r[`col_${amIdx}`]||'').trim():'';
+    const pm=pmIdx!=null?String(r[`col_${pmIdx}`]||'').trim():'';
+    if(isNaN(lat)||isNaN(lng)||lat===0||lng===0){ if(name)noCoord++; return; }
+    if(fArea&&area!==fArea)return;
+    if(fEd==='am'&&!am)return;
+    if(fEd==='pm'&&!pm)return;
+    if(fQ&&!(`${name} ${code} ${am} ${pm}`.toLowerCase().includes(fQ)))return;
+    const color=ADM_SMAP_AREA_COLORS[area]||'#6b7280';
+    const m=L.circleMarker([lat,lng],{radius:5,color:'#fff',weight:1,fillColor:color,fillOpacity:.9});
+    const esc=s=>String(s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+    m.bindPopup(`<b>${esc(name||'(名称なし)')}</b><br>${code?('コード: '+esc(code)+'<br>'):''}${area?('営業所: '+esc(area)+'<br>'):''}${am?('朝刊: '+esc(am)+'<br>'):''}${pm?('夕刊: '+esc(pm)+'<br>'):''}<a href="https://www.google.com/maps?q=${lat},${lng}" target="_blank" rel="noopener">Googleマップで開く</a>`);
+    admStoreLayer.addLayer(m);
+    pts.push([lat,lng]);
+    areaCnt[area||'(不明)']=(areaCnt[area||'(不明)']||0)+1;
+  });
+  const legend=document.getElementById('adm-smap-legend');
+  if(legend)legend.innerHTML=Object.entries(ADM_SMAP_AREA_COLORS).map(([a,c])=>`<span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${c};vertical-align:middle;margin-right:4px;"></span>${a}${areaCnt[a]?`(${areaCnt[a]})`:''}</span>`).join('');
+  if(sum)sum.textContent=`表示 ${pts.length}店舗${noCoord?` / 座標未設定 ${noCoord}店舗(非表示)`:''}`;
+  if(pts.length){ try{ admStoreMap.fitBounds(pts,{padding:[30,30],maxZoom:15}); }catch(_){} }
+}
+
 // 編集モーダル内 Leaflet マップ (ピンをクリック/ドラッグで緯度経度を調整)
 let smEditMap=null,smEditMarker=null;
 function smInitEditMap(){
@@ -6542,6 +6612,7 @@ function adminTab(t){
   if(t==='diagram')admDgInit();
   if(t==='shoplist')admShopListInit();
   if(t==='mymaps')admMmInit();
+  if(t==='storemap')admStoreMapInit();
   if(t==='snapshot')admSnapInit();
   if(t==='syshealth')admSysHealthInit();
 }
