@@ -388,11 +388,14 @@ tbody tr:hover { background:var(--primary-light); }
       </div>
       <!-- タブ -->
       <div id="inv-tabs" style="display:flex;gap:6px;margin-bottom:12px;">
-        <button onclick="invSetTab('work')" id="inv-tab-work" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:var(--primary);color:#fff;">稼働記録</button>
+        <button onclick="invSetTab('work')" id="inv-tab-work" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:var(--primary);color:#fff;">稼働メモ</button>
         <button onclick="invSetTab('generate')" id="inv-tab-generate" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">請求書作成</button>
       </div>
       <!-- 稼働記録ビュー -->
       <div id="inv-work-view">
+        <div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:#475569;line-height:1.7;">
+          📝 この稼働メモは<b>お支払い・請求の金額には使われません</b>（お支払いはシフトをもとに自動計算されます）。<b>シフト通りでない実態があった時だけ記録してください</b>（シフトとのズレ検知に使います）。
+        </div>
         <div class="filters">
           <div><label>月</label><input type="month" id="inv-month" onchange="invFilterWork()"></div>
           <div class="inv-admin-only" style="display:none;"><label>スタッフ</label><input type="search" id="inv-staff-filter" list="inv-staff-filter-dl" placeholder="全員 / 名前で検索" autocomplete="off" oninput="invFilterWork()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px;min-width:180px;"><datalist id="inv-staff-filter-dl"></datalist></div>
