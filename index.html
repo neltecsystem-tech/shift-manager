@@ -4524,7 +4524,7 @@ function admStoreMapRender(){
   const esc=s=>String(s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
   shown.forEach(s=>{
     const color = perCourse ? colorMap[s.key] : (ADM_SMAP_AREA_COLORS[s.area]||'#6b7280');
-    const m=L.circleMarker([s.lat,s.lng],{radius:5,color:'#fff',weight:1,fillColor:color,fillOpacity:.9});
+    const m=L.circleMarker([s.lat,s.lng],{radius:8,color:'#1e293b',weight:1.5,opacity:.85,fillColor:color,fillOpacity:1});
     m.bindPopup(`<b>${esc(s.name||'(名称なし)')}</b><br>${s.code?('コード: '+esc(s.code)+'<br>'):''}${s.area?('営業所: '+esc(s.area)+'<br>'):''}${s.am?('朝刊: '+esc(s.am)+'<br>'):''}${s.pm?('夕刊: '+esc(s.pm)+'<br>'):''}${s.keiba?('競馬: '+esc(s.keiba)+'<br>'):''}<a href="https://www.google.com/maps?q=${s.lat},${s.lng}" target="_blank" rel="noopener">Googleマップで開く</a>`);
     admStoreLayer.addLayer(m);
     pts.push([s.lat,s.lng]);
