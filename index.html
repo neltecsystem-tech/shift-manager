@@ -4369,6 +4369,7 @@ function smShowAdd(prefill){
     setV(smColMap.area, prefill.area);
     setV(smColMap.amCourse, prefill.amCourse);
     setV(smColMap.pmCourse, prefill.pmCourse);
+    setV(smColMap.keibaCourse, prefill.keibaCourse);
   }
   setTimeout(smInitEditMap,50);
 }
@@ -4471,8 +4472,8 @@ function admStoreMapNearby(lat,lng){
   const panel=document.getElementById('adm-smap-new-result')||document.getElementById('adm-smap-new'); if(!panel)return;
   const latIdx=smColMap.lat,lngIdx=smColMap.lng,nameIdx=smColMap.name??3,areaIdx=smColMap.area??1,amIdx=smColMap.amCourse,pmIdx=smColMap.pmCourse,keibaIdx=smColMap.keibaCourse;
   // 区分ごとの順番/店着時間の固定列 (SM_EDITIONS)
-  const amE=(typeof SM_EDITIONS!=='undefined')?SM_EDITIONS.find(e=>e.key==='am'):null;
-  const pmE=(typeof SM_EDITIONS!=='undefined')?SM_EDITIONS.find(e=>e.key==='pm'):null;
+  const findEd=k=>(typeof SM_EDITIONS!=='undefined')?SM_EDITIONS.find(e=>e.key===k):null;
+  const amE=findEd('am'), pmE=findEd('pm'), keibaE=findEd('keiba');
   const near=[];
   smData.forEach(r=>{
     const rlat=parseFloat(r[`col_${latIdx}`]), rlng=parseFloat(r[`col_${lngIdx}`]);
@@ -4485,32 +4486,44 @@ function admStoreMapNearby(lat,lng){
       pm:pmIdx!=null?String(r[`col_${pmIdx}`]||'').trim():'',
       keiba:keibaIdx!=null?String(r[`col_${keibaIdx}`]||'').trim():'',
       amOrder:amE?String(r[`col_${amE.order}`]||'').trim():'', amTime:amE?String(r[`col_${amE.time}`]||'').trim():'',
-      pmOrder:pmE?String(r[`col_${pmE.order}`]||'').trim():'', pmTime:pmE?String(r[`col_${pmE.time}`]||'').trim():''});
+      pmOrder:pmE?String(r[`col_${pmE.order}`]||'').trim():'', pmTime:pmE?String(r[`col_${pmE.time}`]||'').trim():'',
+      keibaOrder:keibaE?String(r[`col_${keibaE.order}`]||'').trim():'', keibaTime:keibaE?String(r[`col_${keibaE.time}`]||'').trim():''});
   });
   near.sort((a,b)=>a.d-b.d);
   const top=near.slice(0,8);
+  const esc=s=>String(s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  // 選択中の「版」に応じて表示する区分列を決める(すべて→朝刊/夕刊/競馬)
+  const fEd=String((document.getElementById('adm-smap-edition')||{}).value||'').trim();
+  const EDS=[
+    {k:'am',   label:'朝刊', c:s=>s.am,    o:s=>s.amOrder,    t:s=>s.amTime},
+    {k:'pm',   label:'夕刊', c:s=>s.pm,    o:s=>s.pmOrder,    t:s=>s.pmTime},
+    {k:'keiba',label:'競馬', c:s=>s.keiba, o:s=>s.keibaOrder, t:s=>s.keibaTime},
+  ];
+  const showEds = fEd ? EDS.filter(e=>e.k===fEd) : EDS;
   // 最多コース(近隣3件)を候補に
   const mode=(arr)=>{const c={};arr.forEach(v=>{if(v)c[v]=(c[v]||0)+1;});return Object.keys(c).sort((a,b)=>c[b]-c[a])[0]||'';};
   const sugArea=top[0]?top[0].area:'';
   const sugAm=mode(top.slice(0,3).map(s=>s.am));
   const sugPm=mode(top.slice(0,3).map(s=>s.pm));
-  const esc=s=>String(s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  const sugKeiba=mode(top.slice(0,3).map(s=>s.keiba));
+  const sugList=showEds.map(e=>`${e.label}コース <b>${esc(mode(top.slice(0,3).map(e.c)))||'-'}</b>`).join(' ／ ');
   const cell=(course,order,time)=>{ if(!course)return '-'; const sub=(order||time)?`<br><span style="color:#64748b;font-size:11px;">順${esc(order)||'-'}${time?(' ・ '+esc(time)):''}</span>`:''; return `${esc(course)}${sub}`; };
   const rows=top.map(s=>{const dist=s.d<1000?`${Math.round(s.d)}m`:`${(s.d/1000).toFixed(2)}km`;
-    return `<tr style="border-top:1px solid #fef3c7;"><td style="padding:3px 8px;vertical-align:top;">${dist}</td><td style="padding:3px 8px;vertical-align:top;">${esc(s.name)||'-'}</td><td style="padding:3px 8px;color:#64748b;vertical-align:top;">${esc(s.area)}</td><td style="padding:3px 8px;vertical-align:top;">${cell(s.am,s.amOrder,s.amTime)}</td><td style="padding:3px 8px;vertical-align:top;">${cell(s.pm,s.pmOrder,s.pmTime)}</td></tr>`;}).join('');
+    return `<tr style="border-top:1px solid #fef3c7;"><td style="padding:3px 8px;vertical-align:top;white-space:nowrap;">${dist}</td><td style="padding:3px 8px;vertical-align:top;">${esc(s.name)||'-'}</td><td style="padding:3px 8px;color:#64748b;vertical-align:top;">${esc(s.area)}</td>${showEds.map(e=>`<td style="padding:3px 8px;vertical-align:top;white-space:nowrap;">${cell(e.c(s),e.o(s),e.t(s))}</td>`).join('')}</tr>`;}).join('');
+  const heads=showEds.map(e=>`<th style="padding:4px 8px;text-align:left;">${e.label}<span style="font-weight:400;color:#92400e;">（順・店着）</span></th>`).join('');
   panel.innerHTML=`
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
       <b>📍 この地点の近くの店舗（コース判定の参考）</b>
       <span style="color:#64748b;">緯度 ${lat.toFixed(6)} / 経度 ${lng.toFixed(6)}</span>
-      <button onclick="admStoreMapRegisterNew(${lat},${lng},'${esc(sugArea)}','${esc(sugAm)}','${esc(sugPm)}')" style="margin-left:auto;background:#16a34a;color:#fff;border:none;padding:7px 14px;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px;">この位置で新店を登録 →</button>
+      <button onclick="admStoreMapRegisterNew(${lat},${lng},'${esc(sugArea)}','${esc(sugAm)}','${esc(sugPm)}','${esc(sugKeiba)}')" style="margin-left:auto;background:#16a34a;color:#fff;border:none;padding:7px 14px;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px;">この位置で新店を登録 →</button>
     </div>
-    <div style="font-size:12px;color:#92400e;margin-bottom:6px;">候補: 営業所 <b>${esc(sugArea)||'-'}</b> ／ 朝刊コース <b>${esc(sugAm)||'-'}</b> ／ 夕刊コース <b>${esc(sugPm)||'-'}</b>（登録画面で調整できます）</div>
-    <div style="max-height:180px;overflow-y:auto;background:#fff;border-radius:6px;border:1px solid #fde68a;">
-      <table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#fef3c7;"><th style="padding:4px 8px;text-align:left;">距離</th><th style="padding:4px 8px;text-align:left;">店舗名</th><th style="padding:4px 8px;text-align:left;">営業所</th><th style="padding:4px 8px;text-align:left;">朝刊<span style="font-weight:400;color:#92400e;">（順・店着）</span></th><th style="padding:4px 8px;text-align:left;">夕刊<span style="font-weight:400;color:#92400e;">（順・店着）</span></th></tr></thead><tbody>${rows}</tbody></table>
+    <div style="font-size:12px;color:#92400e;margin-bottom:6px;">候補: 営業所 <b>${esc(sugArea)||'-'}</b> ／ ${sugList}（登録画面で調整できます）</div>
+    <div style="max-height:180px;overflow:auto;background:#fff;border-radius:6px;border:1px solid #fde68a;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:#fef3c7;position:sticky;top:0;"><th style="padding:4px 8px;text-align:left;">距離</th><th style="padding:4px 8px;text-align:left;">店舗名</th><th style="padding:4px 8px;text-align:left;">営業所</th>${heads}</tr></thead><tbody>${rows}</tbody></table>
     </div>`;
 }
-function admStoreMapRegisterNew(lat,lng,area,am,pm){
-  smShowAdd({lat,lng,area,amCourse:am,pmCourse:pm});
+function admStoreMapRegisterNew(lat,lng,area,am,pm,keiba){
+  smShowAdd({lat,lng,area,amCourse:am,pmCourse:pm,keibaCourse:keiba});
 }
 // しずく型ピン (営業所選択時=少数向け)
 function admSmapTeardropIcon(color,size){
