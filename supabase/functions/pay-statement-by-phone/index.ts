@@ -123,8 +123,22 @@ Deno.serve(async (req: Request) => {
       if (error) return json({ error: 'fetch failed: ' + error.message }, 500);
       rows = data ?? [];
     } else if (byCompany || byName) {
-      if (!(await callerIsAdmin(admin, body.auth_token)))
-        return json({ error: 'forbidden (name/company lookup is admin only)', code: 'FORBIDDEN' }, 403);
+      const isAdminCaller = await callerIsAdmin(admin, body.auth_token);
+      // 氏名照合=管理者のみ。会社集計=管理者 or 自社オーナー/担当者(自社=会社名一致のみ)。
+      if (byName && !isAdminCaller)
+        return json({ error: 'forbidden (name lookup is admin only)', code: 'FORBIDDEN' }, 403);
+      if (byCompany && !isAdminCaller) {
+        const caller = await getCaller(admin, body.auth_token);
+        let callerCompany = caller?.company || '';
+        let isOwnerOrContact = !!caller?.is_company_owner;
+        if (caller?.phone) {
+          const { data: sm } = await admin.from('staff_master').select('company_name, is_company_owner, is_company_contact').eq('phone', caller.phone).maybeSingle();
+          if (sm) { if (!callerCompany) callerCompany = String((sm as any).company_name || ''); if ((sm as any).is_company_owner || (sm as any).is_company_contact) isOwnerOrContact = true; }
+        }
+        const cKey = nmKey(companyInput);
+        if (!(isOwnerOrContact && callerCompany && cKey && nmKey(callerCompany) === cKey))
+          return json({ error: 'forbidden (自社の会社集計のみ閲覧できます)', code: 'FORBIDDEN' }, 403);
+      }
       const { data, error } = await admin
         .from('closed_pay_statements')
         .select('*')
