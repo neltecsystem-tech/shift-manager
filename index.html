@@ -7,6 +7,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <!-- PDF系(出力ボタン押下時のみ使用)は defer で初期描画をブロックしない -->
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -1172,6 +1175,8 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>営業所</label><select id="adm-smap-area" onchange="admStoreMapRender()"><option value="">すべて</option><option>城北</option><option>立川</option><option>川越</option><option>川崎高津</option></select></div>
           <div><label>版</label><select id="adm-smap-edition" onchange="admStoreMapRender()"><option value="">すべて</option><option value="am">朝刊</option><option value="pm">夕刊</option><option value="keiba">競馬</option></select></div>
           <div><label>絞り込み</label><input type="text" id="adm-smap-search" placeholder="店舗名・コード・コース" oninput="dbInput('admStoreMapRender',250)" style="width:200px;"></div>
+          <div><label>ピンの大きさ</label><input type="range" id="adm-smap-size" min="4" max="18" value="8" oninput="admStoreMapRender()" style="width:120px;vertical-align:middle;"></div>
+          <div><label>&nbsp;</label><label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px;white-space:nowrap;"><input type="checkbox" id="adm-smap-cluster" onchange="admStoreMapRender()">密集をまとめる(クラスタ)</label></div>
           <div style="margin-left:auto;display:flex;gap:8px;margin-top:18px;">
             <button onclick="admStoreMapToggleAddMode()" id="adm-smap-add-btn" style="background:#16a34a;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">📍 新店をここに配置</button>
             <button onclick="admStoreMapInit(true)" style="background:#3b82f6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🔄 再読み込み</button>
@@ -4394,7 +4399,6 @@ async function admStoreMapInit(reload){
   if(!admStoreMap){
     admStoreMap=L.map(el,{preferCanvas:true}).setView([35.75,139.6],10);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap',maxZoom:19}).addTo(admStoreMap);
-    admStoreLayer=L.layerGroup().addTo(admStoreMap);
   }
   if(!admStoreMap._newBound){ admStoreMap.on('click', admStoreMapOnClick); admStoreMap._newBound=true; }
   setTimeout(()=>{ try{ admStoreMap.invalidateSize(); }catch(_){} },60); // display:none→表示 直後のサイズ補正
@@ -4472,6 +4476,18 @@ function admStoreMapNearby(lat,lng){
 function admStoreMapRegisterNew(lat,lng,area,am,pm){
   smShowAdd({lat,lng,area,amCourse:am,pmCourse:pm});
 }
+// しずく型ピン (営業所選択時=少数向け)
+function admSmapTeardropIcon(color,size){
+  const w=Math.round(size*2.2), h=Math.round(size*3.0);
+  return L.divIcon({className:'',iconSize:[w,h],iconAnchor:[w/2,h],popupAnchor:[0,-h+4],
+    html:`<svg width="${w}" height="${h}" viewBox="0 0 24 32" xmlns="http://www.w3.org/2000/svg"><path d="M12 0C5.4 0 0 5.4 0 12c0 8.5 12 20 12 20s12-11.5 12-20C24 5.4 18.6 0 12 0z" fill="${color}" stroke="#1e293b" stroke-width="1.6"/><circle cx="12" cy="12" r="4.6" fill="#fff" fill-opacity=".9"/></svg>`});
+}
+// 丸ドット DivIcon (クラスタ利用時)
+function admSmapDotIcon(color,size){
+  const d=Math.round(size*2);
+  return L.divIcon({className:'',iconSize:[d,d],iconAnchor:[d/2,d/2],
+    html:`<div style="width:${d}px;height:${d}px;border-radius:50%;background:${color};border:1.5px solid #1e293b;box-sizing:border-box;"></div>`});
+}
 // 表示中のコース集合に重複しない色を割り当て (均等hue + 明度/彩度バンドで隣接も分離)
 function admSmapBuildColorMap(keys){
   const map={}; const n=Math.max(1,keys.length);
@@ -4484,7 +4500,7 @@ function admSmapBuildColorMap(keys){
   return map;
 }
 function admStoreMapRender(){
-  if(!admStoreMap||!admStoreLayer)return;
+  if(!admStoreMap)return;
   const sum=document.getElementById('adm-smap-summary');
   const latIdx=smColMap.lat, lngIdx=smColMap.lng;
   if(latIdx==null||lngIdx==null){ if(sum)sum.textContent='店舗マスタに緯度・経度の列が見つかりません'; return; }
@@ -4519,17 +4535,32 @@ function admStoreMapRender(){
     const keys=[...new Set(shown.map(s=>s.key))].sort((a,b)=>a.localeCompare(b,'ja',{numeric:true}));
     colorMap=admSmapBuildColorMap(keys);
   }
-  admStoreLayer.clearLayers();
+  // ピン大きさ / クラスタ / 表示スタイル(営業所選択時=しずく型)
+  const size=parseInt(g('adm-smap-size'))||8;
+  const wantCluster=!!(document.getElementById('adm-smap-cluster')||{}).checked;
+  const useCluster=wantCluster && typeof L.markerClusterGroup==='function';
+  const teardrop=perCourse; // 営業所選択(=少数)のときはしずく型
+  // レイヤーを毎回作り直す(クラスタ/通常を切替)
+  if(admStoreLayer){ try{ admStoreMap.removeLayer(admStoreLayer); }catch(_){} }
+  admStoreLayer = useCluster
+    ? L.markerClusterGroup({chunkedLoading:true, maxClusterRadius:50, spiderfyOnMaxZoom:true})
+    : L.layerGroup();
   const pts=[]; const legendCnt={};
   const esc=s=>String(s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  const buf=[];
   shown.forEach(s=>{
     const color = perCourse ? colorMap[s.key] : (ADM_SMAP_AREA_COLORS[s.area]||'#6b7280');
-    const m=L.circleMarker([s.lat,s.lng],{radius:8,color:'#1e293b',weight:1.5,opacity:.85,fillColor:color,fillOpacity:1});
+    let m;
+    if(teardrop){ m=L.marker([s.lat,s.lng],{icon:admSmapTeardropIcon(color,size)}); }
+    else if(useCluster){ m=L.marker([s.lat,s.lng],{icon:admSmapDotIcon(color,size)}); }
+    else { m=L.circleMarker([s.lat,s.lng],{radius:size,color:'#1e293b',weight:1.5,opacity:.85,fillColor:color,fillOpacity:1}); }
     m.bindPopup(`<b>${esc(s.name||'(名称なし)')}</b><br>${s.code?('コード: '+esc(s.code)+'<br>'):''}${s.area?('営業所: '+esc(s.area)+'<br>'):''}${s.am?('朝刊: '+esc(s.am)+'<br>'):''}${s.pm?('夕刊: '+esc(s.pm)+'<br>'):''}${s.keiba?('競馬: '+esc(s.keiba)+'<br>'):''}<a href="https://www.google.com/maps?q=${s.lat},${s.lng}" target="_blank" rel="noopener">Googleマップで開く</a>`);
-    admStoreLayer.addLayer(m);
+    buf.push(m);
     pts.push([s.lat,s.lng]);
     legendCnt[s.key]=(legendCnt[s.key]||0)+1;
   });
+  if(useCluster){ admStoreLayer.addLayers(buf); } else { buf.forEach(m=>admStoreLayer.addLayer(m)); }
+  admStoreLayer.addTo(admStoreMap);
   const legend=document.getElementById('adm-smap-legend');
   if(legend){
     if(perCourse){
@@ -4540,7 +4571,8 @@ function admStoreMapRender(){
     }
   }
   const edLabel=fEd==='am'?'朝刊':fEd==='pm'?'夕刊':fEd==='keiba'?'競馬':'全版';
-  if(sum)sum.textContent=`${edLabel} / ${perCourse?'コース別':'営業所別'}色分け — 表示 ${pts.length}店舗${noCoord?` / 座標未設定 ${noCoord}店舗(非表示)`:''}`;
+  const styleLabel=useCluster?'クラスタ':(teardrop?'しずくピン':'ドット');
+  if(sum)sum.textContent=`${edLabel} / ${perCourse?'コース別':'営業所別'}色分け / ${styleLabel} — 表示 ${pts.length}店舗${noCoord?` / 座標未設定 ${noCoord}店舗(非表示)`:''}`;
   if(pts.length){ try{ admStoreMap.fitBounds(pts,{padding:[30,30],maxZoom:15}); }catch(_){} }
 }
 
