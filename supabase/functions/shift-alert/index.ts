@@ -28,8 +28,29 @@ Deno.serve(async (req) => {
     const sb = createClient(SUPABASE_URL, SERVICE_ROLE);
 
     if (action === 'list') {
-      const { data } = await sb.from('sm_active_alerts').select('key, kind, title, body, cnt, names, updated_at').eq('app', app).eq('status', 'open').order('updated_at', { ascending: false });
-      return json({ ok: true, alerts: data ?? [] });
+      const { data } = await sb.from('sm_active_alerts').select('key, kind, title, body, cnt, names, dismissed_cnt, updated_at').eq('app', app).eq('status', 'open').order('updated_at', { ascending: false });
+      // 「確認して非表示」= dismissed_cnt が現在の cnt と一致するものは隠す(人数が変われば/再発すれば再表示)
+      const alerts = (data ?? [])
+        .filter((a: Record<string, unknown>) => a.dismissed_cnt == null || Number(a.dismissed_cnt) !== Number(a.cnt))
+        .map((a: Record<string, unknown>) => { const { dismissed_cnt: _d, ...rest } = a; return rest; });
+      return json({ ok: true, alerts });
+    }
+
+    // 'dismiss' (NexPortが呼ぶ): 確認済みとして現在の cnt を記録し非表示に。人数が変われば再表示される。
+    if (action === 'dismiss') {
+      const key = clip(b.key, 120);
+      if (!key) return json({ ok: false, error: 'key required' }, 400);
+      const { data: cur } = await sb.from('sm_active_alerts').select('cnt').eq('app', app).eq('key', key).maybeSingle();
+      if (!cur) return json({ ok: false, error: 'not found' }, 404);
+      await sb.from('sm_active_alerts').update({ dismissed_cnt: cur.cnt, updated_at: new Date().toISOString() }).eq('app', app).eq('key', key);
+      return json({ ok: true, dismissed: true, key });
+    }
+    // 'undismiss' (再表示): 確認記録をクリア
+    if (action === 'undismiss') {
+      const key = clip(b.key, 120);
+      if (!key) return json({ ok: false, error: 'key required' }, 400);
+      await sb.from('sm_active_alerts').update({ dismissed_cnt: null, updated_at: new Date().toISOString() }).eq('app', app).eq('key', key);
+      return json({ ok: true, undismissed: true, key });
     }
 
     if (action === 'sync') {
