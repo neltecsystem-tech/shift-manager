@@ -1170,7 +1170,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="adm-storemap" class="adm-panel" style="display:none;">
         <div class="filters" style="align-items:center;">
           <div><label>営業所</label><select id="adm-smap-area" onchange="admStoreMapRender()"><option value="">すべて</option><option>城北</option><option>立川</option><option>川越</option><option>川崎高津</option></select></div>
-          <div><label>区分</label><select id="adm-smap-edition" onchange="admStoreMapRender()"><option value="">すべて</option><option value="am">朝刊コースあり</option><option value="pm">夕刊コースあり</option></select></div>
+          <div><label>版</label><select id="adm-smap-edition" onchange="admStoreMapRender()"><option value="">すべて</option><option value="am">朝刊</option><option value="pm">夕刊</option><option value="keiba">競馬</option></select></div>
           <div><label>絞り込み</label><input type="text" id="adm-smap-search" placeholder="店舗名・コード・コース" oninput="dbInput('admStoreMapRender',250)" style="width:200px;"></div>
           <div style="margin-left:auto;"><button onclick="admStoreMapInit(true)" style="background:#3b82f6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;margin-top:18px;">🔄 再読み込み</button></div>
         </div>
@@ -4387,16 +4387,24 @@ async function admStoreMapInit(reload){
   setTimeout(()=>{ try{ admStoreMap.invalidateSize(); }catch(_){} },60); // display:none→表示 直後のサイズ補正
   admStoreMapRender();
 }
+// コース名→安定した色 (文字列ハッシュ→HSL)
+function admSmapCourseColor(course){
+  const s=String(course); let h=0; for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0;
+  return `hsl(${h%360},68%,48%)`;
+}
 function admStoreMapRender(){
   if(!admStoreMap||!admStoreLayer)return;
   const sum=document.getElementById('adm-smap-summary');
   const latIdx=smColMap.lat, lngIdx=smColMap.lng;
   if(latIdx==null||lngIdx==null){ if(sum)sum.textContent='店舗マスタに緯度・経度の列が見つかりません'; return; }
-  const nameIdx=smColMap.name??3, codeIdx=smColMap.code, areaIdx=smColMap.area??1, amIdx=smColMap.amCourse, pmIdx=smColMap.pmCourse;
+  const nameIdx=smColMap.name??3, codeIdx=smColMap.code, areaIdx=smColMap.area??1;
+  const amIdx=smColMap.amCourse, pmIdx=smColMap.pmCourse, keibaIdx=smColMap.keibaCourse;
   const g=id=>String((document.getElementById(id)||{}).value||'').trim();
   const fArea=g('adm-smap-area'), fEd=g('adm-smap-edition'), fQ=g('adm-smap-search').toLowerCase();
+  const edIdx = fEd==='am'?amIdx : fEd==='pm'?pmIdx : fEd==='keiba'?keibaIdx : null;
+  const perCourse = !!fArea; // 営業所を選んだ時はコースで色分け、全営業所は営業所で色分け
   admStoreLayer.clearLayers();
-  const pts=[]; let noCoord=0; const areaCnt={};
+  const pts=[]; let noCoord=0; const legendCnt={};
   smData.forEach(r=>{
     const lat=parseFloat(r[`col_${latIdx}`]), lng=parseFloat(r[`col_${lngIdx}`]);
     const name=String(r[`col_${nameIdx}`]||'').trim();
@@ -4405,22 +4413,34 @@ function admStoreMapRender(){
     const area=areaRaw==='池袋'?'城北':areaRaw;
     const am=amIdx!=null?String(r[`col_${amIdx}`]||'').trim():'';
     const pm=pmIdx!=null?String(r[`col_${pmIdx}`]||'').trim():'';
+    const keiba=keibaIdx!=null?String(r[`col_${keibaIdx}`]||'').trim():'';
     if(isNaN(lat)||isNaN(lng)||lat===0||lng===0){ if(name)noCoord++; return; }
     if(fArea&&area!==fArea)return;
-    if(fEd==='am'&&!am)return;
-    if(fEd==='pm'&&!pm)return;
-    if(fQ&&!(`${name} ${code} ${am} ${pm}`.toLowerCase().includes(fQ)))return;
-    const color=ADM_SMAP_AREA_COLORS[area]||'#6b7280';
+    // 版フィルタ: 選択した版のコースがある店舗のみ表示
+    const edCourse = edIdx!=null?String(r[`col_${edIdx}`]||'').trim():'';
+    if(fEd && !edCourse)return;
+    if(fQ&&!(`${name} ${code} ${am} ${pm} ${keiba}`.toLowerCase().includes(fQ)))return;
+    let key, color;
+    if(perCourse){ key = edCourse || am || pm || keiba || '(コース未設定)'; color = admSmapCourseColor(key); }
+    else { key = area || '(不明)'; color = ADM_SMAP_AREA_COLORS[area] || '#6b7280'; }
     const m=L.circleMarker([lat,lng],{radius:5,color:'#fff',weight:1,fillColor:color,fillOpacity:.9});
     const esc=s=>String(s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
-    m.bindPopup(`<b>${esc(name||'(名称なし)')}</b><br>${code?('コード: '+esc(code)+'<br>'):''}${area?('営業所: '+esc(area)+'<br>'):''}${am?('朝刊: '+esc(am)+'<br>'):''}${pm?('夕刊: '+esc(pm)+'<br>'):''}<a href="https://www.google.com/maps?q=${lat},${lng}" target="_blank" rel="noopener">Googleマップで開く</a>`);
+    m.bindPopup(`<b>${esc(name||'(名称なし)')}</b><br>${code?('コード: '+esc(code)+'<br>'):''}${area?('営業所: '+esc(area)+'<br>'):''}${am?('朝刊: '+esc(am)+'<br>'):''}${pm?('夕刊: '+esc(pm)+'<br>'):''}${keiba?('競馬: '+esc(keiba)+'<br>'):''}<a href="https://www.google.com/maps?q=${lat},${lng}" target="_blank" rel="noopener">Googleマップで開く</a>`);
     admStoreLayer.addLayer(m);
     pts.push([lat,lng]);
-    areaCnt[area||'(不明)']=(areaCnt[area||'(不明)']||0)+1;
+    legendCnt[key]=(legendCnt[key]||0)+1;
   });
   const legend=document.getElementById('adm-smap-legend');
-  if(legend)legend.innerHTML=Object.entries(ADM_SMAP_AREA_COLORS).map(([a,c])=>`<span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${c};vertical-align:middle;margin-right:4px;"></span>${a}${areaCnt[a]?`(${areaCnt[a]})`:''}</span>`).join('');
-  if(sum)sum.textContent=`表示 ${pts.length}店舗${noCoord?` / 座標未設定 ${noCoord}店舗(非表示)`:''}`;
+  if(legend){
+    if(perCourse){
+      const entries=Object.keys(legendCnt).sort((a,b)=>a.localeCompare(b,'ja',{numeric:true}));
+      legend.innerHTML=entries.map(k=>`<span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${admSmapCourseColor(k)};vertical-align:middle;margin-right:4px;"></span>${k}(${legendCnt[k]})</span>`).join('');
+    }else{
+      legend.innerHTML=Object.entries(ADM_SMAP_AREA_COLORS).map(([a,c])=>`<span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${c};vertical-align:middle;margin-right:4px;"></span>${a}${legendCnt[a]?`(${legendCnt[a]})`:''}</span>`).join('');
+    }
+  }
+  const edLabel=fEd==='am'?'朝刊':fEd==='pm'?'夕刊':fEd==='keiba'?'競馬':'全版';
+  if(sum)sum.textContent=`${edLabel} / ${perCourse?'コース別':'営業所別'}色分け — 表示 ${pts.length}店舗${noCoord?` / 座標未設定 ${noCoord}店舗(非表示)`:''}`;
   if(pts.length){ try{ admStoreMap.fitBounds(pts,{padding:[30,30],maxZoom:15}); }catch(_){} }
 }
 
