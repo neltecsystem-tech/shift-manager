@@ -29,6 +29,27 @@ const ADMIN_PASSWORD = Deno.env.get('SHIFT_ADMIN_PASSWORD') || 'neltec2026';
 const SYNC_SECRET = Deno.env.get('SYNC_SECRET') || ''; // 会計同期cron用の秘密ヘッダ
 const TOKEN_EXPIRY_MS = 12 * 60 * 60 * 1000; // 12時間
 
+// SSO: NexPort(このEFと同一プロジェクト)の認証でパスワードを検証する。
+// login_id がメール形式で、NexPortにそのアカウントがあれば、NexPortのパスワードでログイン可。
+// 失敗時は false を返し、呼び出し側で従来の単価マスタ平文PWにフォールバックする。
+async function verifyNexportPassword(email: string, password: string): Promise<boolean> {
+  try {
+    const url = Deno.env.get('SUPABASE_URL');
+    const anon = Deno.env.get('SUPABASE_ANON_KEY');
+    if (!url || !anon || !email.includes('@')) return false;
+    const r = await fetch(`${url}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: { apikey: anon, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+    });
+    if (!r.ok) return false;
+    const j = await r.json();
+    return !!j.access_token;
+  } catch (_) {
+    return false;
+  }
+}
+
 // ---- セッショントークン (HMAC-SHA256 署名) ----
 // btoa は Latin1 のみ受け付けるので UTF-8 を経由
 function b64urlEncode(s: string): string {
@@ -231,8 +252,16 @@ Deno.serve(async(req:Request)=>{
         // シート取得の一時障害。PWは合っているかもしれないので専用メッセージ+503。
         return jsonResp({success:false, error:'サーバが一時的に混み合っています。少し待ってからもう一度お試しください。', code:'SHEET_UNAVAILABLE'}, 503);
       }
-      const match=rateRows.find((r:string[])=>(r[9]||'').trim()===login_id&&(r[10]||'').trim()===login_pw);
-      if(!match) return jsonResp({success:false,error:'IDまたはパスワードが正しくありません'});
+      // SSO対応: まず login_id(ログインID列)で行を特定 → パスワードは
+      //   ① 従来の単価マスタ平文PW  または  ② NexPort認証(同一プロジェクト)  のどちらか一致でOK。
+      //   → NexPortのID/パスワードでも新聞にログイン可。既存のシートPW利用者も無変更。
+      const row=rateRows.find((r:string[])=>(r[9]||'').trim()===login_id);
+      let authOk = !!row && (row[10]||'').trim()===login_pw; // ①従来のシート平文PW
+      if(row && !authOk){
+        authOk = await verifyNexportPassword(login_id, login_pw); // ②NexPort認証(SSO)
+      }
+      if(!row || !authOk) return jsonResp({success:false,error:'IDまたはパスワードが正しくありません'});
+      const match=row;
       // claims 構築
       const name = match[0];
       const biz_type = match[11] || '';
