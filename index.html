@@ -6902,6 +6902,32 @@ function admSysHealthRender(j){
   }else{
     h+='<div style="border:1px dashed var(--border);border-radius:12px;padding:16px;margin-bottom:16px;color:var(--text-sub);font-size:13px;text-align:center;">まだClaude診断がありません。「🤖 今すぐ診断」を押すか、毎朝の自動診断をお待ちください。</div>';
   }
+  // 🌐 fetch失敗 エンドポイント別集計(fetch_fail「Load failed @ <url>」をAPI単位でまとめる)
+  (function(){
+    var acc={};
+    groups.forEach(function(g){
+      var isFF=(g.kinds||[]).indexOf('fetch_fail')>=0 || /Load failed(\(retried\))? @ /.test(g.message||'');
+      if(!isFF)return;
+      var m=/ @ (\S+)/.exec(g.message||'');
+      var url=m?m[1]:'(URL不明)';
+      var a=acc[url]||(acc[url]={count:0,last:'',views:{}});
+      a.count+=(g.count||0);
+      if((g.last||'')>a.last)a.last=g.last||'';
+      (g.views||[]).forEach(function(v){ if(v)a.views[v]=1; });
+    });
+    var rows=Object.keys(acc).map(function(u){ return {url:u,count:acc[u].count,last:acc[u].last,views:Object.keys(acc[u].views)}; }).sort(function(a,b){ return b.count-a.count; });
+    if(rows.length){
+      h+='<div style="font-weight:700;font-size:13px;margin:4px 0 6px;">🌐 通信(fetch)失敗 エンドポイント別（直近7日）</div>';
+      h+='<div style="font-size:11px;color:var(--text-sub);margin:-2px 0 8px;">「Load failed」がどのAPIで起きたか。散発・少数なら端末側の一時的なネット断で自動リトライ済。特定APIに集中(⚠️)していればそのEF/Sheetsを調査。</div>';
+      h+='<div style="overflow-x:auto;margin-bottom:16px;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="text-align:left;color:var(--text-sub);border-bottom:1px solid var(--border);"><th style="padding:6px;">回数</th><th style="padding:6px;">エンドポイント</th><th style="padding:6px;">画面</th><th style="padding:6px;">最終</th></tr></thead><tbody>';
+      rows.forEach(function(r){
+        var many=r.count>=5, disp=r.url;
+        try{ var x=new URL(r.url); disp=(x.hostname.indexOf('supabase')>=0?('EF: '+x.pathname.replace('/functions/v1/','')):(x.hostname+x.pathname)); }catch(_){}
+        h+='<tr style="border-bottom:1px solid var(--border);'+(many?'background:#fffbeb;':'')+'"><td style="padding:6px;font-weight:700;">'+(many?'⚠️':'')+r.count+'</td><td style="padding:6px;font-family:monospace;word-break:break-all;">'+shEsc(disp)+'</td><td style="padding:6px;">'+shEsc(r.views.join(','))+'</td><td style="padding:6px;white-space:nowrap;">'+shEsc((r.last||'').replace('T',' ').slice(5,16))+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+    }
+  })();
   h+='<div style="font-weight:700;font-size:13px;margin-bottom:6px;">エラー集約（直近7日）</div>';
   if(!groups.length){h+='<p style="color:#16a34a;font-size:13px;">エラーは記録されていません 🎉</p>';}
   else{
