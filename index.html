@@ -1379,7 +1379,7 @@ tbody tr:hover { background:var(--primary-light); }
 // ===== エラー監視 + ランタイム自己修復 (社内システム自己修復機能 ①②) =====
 // 未捕捉エラー/Promise棄却を log-error EF (sm_error_logs) に自動送信し、
 // 既知の壊れ方(壊れたキャッシュ/旧バンドル)はセッション1回だけ自動復旧する。
-const SM_BUILD='2026-07-08a'; // 変更をデプロイするたびに bump (エラーとデプロイの相関用)
+const SM_BUILD='2026-07-24a'; // 変更をデプロイするたびに bump (エラーとデプロイの相関用)
 const SM_LOG_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/log-error';
 (function(){
   const seen=new Set(); let sent=0; const MAX=20; // 同一/多発エラーで溢れさせない
@@ -1417,6 +1417,34 @@ const SM_LOG_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/log-erro
       try{localStorage.removeItem('serverCacheUpdatedAt');}catch(_){}
       location.reload(); return true;
     }catch(_){return false;}
+  };
+})();
+// fetch を薄くラップ: ネットワーク到達失敗('Load failed'/'Failed to fetch'=オフライン/瞬断/CORS)時に
+//  ① 失敗したエンドポイントURLを掴んで sm_error_logs に記録(どこで失敗したか切り分け可能に)
+//  ② GET/HEAD 等の冪等リクエストのみ 500ms 後に1回だけ自動リトライ(端末側の瞬断を救済)
+// ※ HTTPエラー(4xx/5xx)はfetchがrejectしないためここに来ない。POST等は二重送信回避で再送しない。
+// ※ log-error 自身は再送・記録しない(監視ループ防止)。エラーは握り潰さず必ず再throw。
+(function(){
+  if(window.__smFetchWrapped)return; window.__smFetchWrapped=true;
+  const _fetch=window.fetch.bind(window);
+  const shortUrl=function(input){ try{ const u=(typeof input==='string')?input:((input&&input.url)||''); const x=new URL(u,location.href); return x.origin+x.pathname; }catch(_){ return ''; } };
+  const methodOf=function(input,init){ try{ return String((init&&init.method)||(input&&input.method)||'GET').toUpperCase(); }catch(_){ return 'GET'; } };
+  const wait=function(ms){ return new Promise(function(r){ setTimeout(r,ms); }); };
+  window.fetch=function(input,init){
+    return _fetch(input,init).catch(function(err){
+      if(!(err&&err.name==='TypeError'))throw err; // ネットワーク到達失敗のみ対象(AbortError等は素通し)
+      const u=shortUrl(input);
+      const isLogApi=u.indexOf('/log-error')>=0;
+      const idempotent=['GET','HEAD'].indexOf(methodOf(input,init))>=0;
+      if(idempotent&&!isLogApi){
+        return wait(500).then(function(){ return _fetch(input,init); }).catch(function(err2){
+          try{ window.SM_report&&window.SM_report('fetch_fail','Load failed(retried) @ '+u); }catch(_){}
+          throw err2;
+        });
+      }
+      if(!isLogApi){ try{ window.SM_report&&window.SM_report('fetch_fail','Load failed @ '+u); }catch(_){} }
+      throw err;
+    });
   };
 })();
 const DEFS={
