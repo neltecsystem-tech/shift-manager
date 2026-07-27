@@ -46,8 +46,20 @@ async function getAccessToken(): Promise<string> {
 }
 
 // 名前正規化 (空白除去のみ。 invNormName と同じ)
+// 名前突合用の正規化。空白除去に加え、異体字(サイ/高/崎/館)・小書きカナ・全角英数を吸収し、
+// 単価マスタ/シフト表/NexPort profile 間の表記揺れ(例: 齋藤=斉藤)でも同一人物として一致させる。
+const NAME_VARIANTS: Record<string, string> = {
+  '齋': '斉', '齊': '斉', '斎': '斉',   // さいとう
+  '髙': '高', '﨑': '崎', '嵜': '崎', '舘': '館', '邊': '辺', '邉': '辺',
+};
 function normName(n: string): string {
-  return (n || '').replace(/[\s　 ]+/g, '').trim();
+  let s = (n || '').replace(/[\s　 ]+/g, '').trim();
+  // 全角英数 → 半角
+  s = s.replace(/[Ａ-Ｚａ-ｚ０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+  // 小書きカナ揺れ + 異体字を代表字へ寄せる
+  s = s.replace(/ヶ/g, 'ケ');
+  s = s.split('').map((c) => NAME_VARIANTS[c] || c).join('');
+  return s;
 }
 function isDateVal(v: string): boolean {
   return !!v && /^0?\d{1,2}\/\d{1,2}$/.test(v);
@@ -87,14 +99,20 @@ async function getCachedSheet(sheetName: string): Promise<string[][] | null> {
 
 // ── profiles から display_name → user_id ──
 async function getUserMap(): Promise<Record<string, string>> {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,display_name&account_status=neq.disabled`, {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,display_name,phone&account_status=neq.disabled`, {
     headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
   });
-  const arr = await r.json() as { id: string; display_name: string }[];
+  const arr = await r.json() as { id: string; display_name: string; phone: string | null }[];
   const map: Record<string, string> = {};
+  const keyHasPhone: Record<string, boolean> = {};
   for (const p of arr) {
     const k = normName(p.display_name);
-    if (k) map[k] = p.id;
+    if (!k) continue;
+    const hasPhone = !!(p.phone && String(p.phone).trim());
+    // 異体字正規化で同一キーに衝突した場合は「電話ありの実アカウント」を優先(重複profile対策)
+    if (map[k] && keyHasPhone[k] && !hasPhone) continue;
+    map[k] = p.id;
+    keyHasPhone[k] = hasPhone;
   }
   return map;
 }
