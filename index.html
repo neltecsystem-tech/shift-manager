@@ -2842,14 +2842,15 @@ function defectRender(){
     return;
   }
   const areaClass=a=>{if(a.includes('城北'))return'badge-johoku';if(a.includes('川越'))return'badge-kawagoe';if(a.includes('立川'))return'badge-tachikawa';if(a.includes('川崎'))return'badge-kawasaki';return'';};
-  let h='<table><thead><tr><th>日付</th><th>時間</th><th>営業所</th><th>店舗名</th><th>コース</th><th>担当</th><th>不具合内容</th><th>項目</th><th>原因</th><th></th></tr></thead><tbody>';
+  let h='<div style="font-size:11px;color:var(--text-sub);margin-bottom:6px;">💡 行をクリックすると内容を編集できます（右端の ✏️ でも可）</div>';
+  h+='<table><thead><tr><th>日付</th><th>時間</th><th>営業所</th><th>店舗名</th><th>コース</th><th>担当</th><th>不具合内容</th><th>項目</th><th>原因</th><th></th></tr></thead><tbody>';
   defectData.forEach(r=>{
-    h+=`<tr>
+    h+=`<tr onclick="defectEdit(${r.row})" style="cursor:pointer;" title="クリックで編集" onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background=''">
       <td>${r.date}</td><td>${r.time}</td>
       <td><span class="badge ${areaClass(r.area)}">${r.area}</span></td>
       <td>${r.shop}</td><td>${r.course}</td><td>${r.driver}</td>
       <td>${r.content}</td><td>${r.category}</td><td>${r.reason}</td>
-      <td><button onclick="defectEdit(${r.row})" style="background:none;border:none;cursor:pointer;font-size:14px;" title="編集">✏️</button></td>
+      <td><button onclick="event.stopPropagation();defectEdit(${r.row})" style="background:none;border:none;cursor:pointer;font-size:14px;" title="編集">✏️</button></td>
     </tr>`;
   });
   h+='</tbody></table>';
