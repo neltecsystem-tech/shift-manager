@@ -12125,13 +12125,27 @@ let admBillSource='';        // 'snapshot:YYYY-MM' | 'live'
 let admBillLoadedMonth='';   // 現在 admBillShopData が対応する月
 
 async function fetchShopMasterSnapshot(month){
+  // 一時的な読込失敗で黙ってライブに落ちないよう、最大2回リトライ
+  for(let attempt=0;attempt<2;attempt++){
+    try{
+      const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_read',month})});
+      if(resp.ok){
+        const json=await resp.json();
+        if(json&&json.snapshot&&Array.isArray(json.records)&&json.records.length)return json;
+      }
+    }catch(_){}
+    if(attempt===0)await new Promise(r=>setTimeout(r,700));
+  }
+  return null;
+}
+// 月初スナップが「実体として存在するか」だけを確認(読込失敗と本当の未作成の区別用)
+async function snapshotMonthExists(month){
   try{
-    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_read',month})});
-    if(!resp.ok)return null;
-    const json=await resp.json();
-    if(json&&json.snapshot&&Array.isArray(json.records))return json;
-    return null;
-  }catch(_){return null;}
+    const r=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_list'})});
+    if(!r.ok)return false;
+    const j=await r.json();
+    return Array.isArray(j.months)&&j.months.includes(month);
+  }catch(_){return false;}
 }
 
 function admBillRenderSource(){
@@ -12140,6 +12154,10 @@ function admBillRenderSource(){
     const m=admBillSource.split(':')[1];
     el.innerHTML=`📌 <b>${m} 月初スナップショット</b>で計算中（月途中の店舗追加・閉店・コース変更はこの請求に影響しません）`;
     el.style.cssText='margin-top:6px;font-size:12px;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;padding:6px 10px;border-radius:8px;';
+  }else if(admBillSource.indexOf('snapfail:')===0){
+    const m=admBillSource.split(':')[1];
+    el.innerHTML=`🚫 <b>${m} の月初スナップは存在しますが読込に失敗しました</b>（今はライブ計算＝数字が月初と異なる可能性）。<b>年月を選び直す</b>か<b>再読み込み(Ctrl+Shift+R)</b>で再取得してください。`;
+    el.style.cssText='margin-top:6px;font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;padding:6px 10px;border-radius:8px;font-weight:600;';
   }else if(admBillSource==='live'){
     el.innerHTML=`⚠️ <b>ライブの店舗マスタ</b>で計算中（この月の月初スナップ未作成）。月初固定したい場合は店舗マスタ画面で「📌 今すぐ月初スナップ作成」を実行してください。`;
     el.style.cssText='margin-top:6px;font-size:12px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;padding:6px 10px;border-radius:8px;';
@@ -12152,7 +12170,12 @@ async function admBillLoadForMonth(monthVal,force){
   if(!force&&admBillShopData&&admBillLoadedMonth===monthVal)return admBillShopData;
   const snap=monthVal?await fetchShopMasterSnapshot(monthVal):null;
   if(snap){admBillShopData=snap;admBillSource='snapshot:'+monthVal;}
-  else{admBillShopData=await fetchShopMasterList();admBillSource='live';}
+  else{
+    // スナップ読込に失敗した場合、実体が存在するのに「未作成」と誤表示しないよう区別
+    const exists=monthVal?await snapshotMonthExists(monthVal):false;
+    admBillShopData=await fetchShopMasterList();
+    admBillSource=exists?('snapfail:'+monthVal):'live';
+  }
   admBillLoadedMonth=monthVal;
   admBillRenderSource();
   return admBillShopData;
