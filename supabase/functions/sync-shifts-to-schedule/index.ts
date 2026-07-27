@@ -88,6 +88,20 @@ async function getShainNames(token: string): Promise<string[]> {
   return [...new Set(names)];
 }
 
+// ── 予定表同期の追加対象(プランナー等)。単価マスタ区分を変えず(=支払明細に影響させず)、
+//    automation_config.schedule_sync_extra_names(JSON配列)の氏名も同期対象に含める。 ──
+async function getExtraStaff(): Promise<string[]> {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/automation_config?key=eq.schedule_sync_extra_names&select=value`, {
+      headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
+    });
+    const j = await r.json();
+    const v = j?.[0]?.value;
+    const arr = typeof v === 'string' ? JSON.parse(v) : (Array.isArray(v) ? v : []);
+    return Array.isArray(arr) ? arr.map((x: unknown) => String(x).trim()).filter(Boolean) : [];
+  } catch { return []; }
+}
+
 // ── shift_sheet_cache から sheet_name の行を取得 ──
 async function getCachedSheet(sheetName: string): Promise<string[][] | null> {
   const r = await fetch(`${SUPABASE_URL}/rest/v1/shift_sheet_cache?sheet_name=eq.${encodeURIComponent(sheetName)}&select=rows`, {
@@ -310,10 +324,13 @@ Deno.serve(async (req: Request) => {
 
     // 並行取得
     const token = await getAccessToken();
-    const [shainNames, userMap] = await Promise.all([
+    const [shainNames0, userMap, extraNames] = await Promise.all([
       getShainNames(token),
       getUserMap(),
+      getExtraStaff(),
     ]);
+    // 単価マスタ社員/プランナー + 追加対象(automation_config)。同期対象の氏名リスト。
+    const shainNames = [...new Set([...shainNames0, ...extraNames])];
 
     // 社員 → user_id マッピング(同名の全アカウントに反映)
     const staffToUser: { name: string; user_ids: string[] }[] = [];
