@@ -169,6 +169,48 @@ async function fetchSheetValuesWithRetry(range: string, tokenGetter: ()=>Promise
 function parseRates(rows: string[][]) {
   return rows.map((r:string[],i:number)=>({row_number:i+2,name:r[0]||'',am_weekday:r[1]||'',am_weekend:r[2]||'',pm_weekday:r[3]||'',pm_weekend:r[4]||'',warehouse_am:r[5]||'',warehouse_pm:r[6]||'',calc_type:r[7]||'固定',unit_price:r[8]||'',login_id:r[9]||'',login_pw:r[10]||'',biz_type:r[11]||'',company:r[12]||'',calc_type_pm:r[13]||'',unit_price_pm:r[14]||'',am_sunday:r[15]||'',pm_sunday:r[16]||'',permissions:r[17]||'',kw_am_daily:r[18]||'',kw_pattern:r[19]||'',monthly_salary:r[20]||'',invoice_number:r[21]||'',rate_effective_from:r[22]||''})).filter((o:any)=>o.name);
 }
+
+// 単価マスタ(A2:W1000) の DBキャッシュ。ログインが毎回 Sheets を叩いて 60読取/分 の枠を
+// 食い合い「混み合っています」を頻発させるのを防ぐ緩衝。TTL内はSheets非アクセス、
+// Sheets失敗時は期限切れでも旧キャッシュで凌ぐ(ログインを落とさない)。
+const RATE_CACHE_TTL_MS = 10 * 60 * 1000; // 10分
+async function getRateRowsCached(forceFresh = false): Promise<string[][]> {
+  const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  let cached: any = null;
+  if (SB_URL && SRK) {
+    try {
+      const r = await fetch(`${SB_URL}/rest/v1/sm_kv_cache?select=data,updated_at&key=eq.rates`, { headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } });
+      if (r.ok) { const a = await r.json(); cached = Array.isArray(a) && a[0] ? a[0] : null; }
+    } catch (_) { /* noop */ }
+  }
+  const fresh = !forceFresh && cached && cached.updated_at && Array.isArray(cached.data)
+    && (Date.now() - new Date(cached.updated_at).getTime() < RATE_CACHE_TTL_MS);
+  if (fresh) return cached.data as string[][];
+  try {
+    const rows = await fetchSheetValuesWithRetry('単価マスタ!A2:W1000', getAccessToken);
+    if (SB_URL && SRK) {
+      try {
+        await fetch(`${SB_URL}/rest/v1/sm_kv_cache`, {
+          method: 'POST',
+          headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify([{ key: 'rates', data: rows, updated_at: new Date().toISOString() }]),
+        });
+      } catch (_) { /* キャッシュ更新失敗は無視 */ }
+    }
+    return rows;
+  } catch (e) {
+    if (cached && Array.isArray(cached.data)) return cached.data as string[][]; // 期限切れでもキャッシュで凌ぐ
+    throw e;
+  }
+}
+// 単価マスタ更新時にキャッシュを破棄 → 次回ログインで最新を取り直す(編集の即時反映)。
+async function invalidateRateCache(): Promise<void> {
+  const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!SB_URL || !SRK) return;
+  try { await fetch(`${SB_URL}/rest/v1/sm_kv_cache?key=eq.rates`, { method: 'DELETE', headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } }); } catch (_) { /* noop */ }
+}
 function parseWork(rows: string[][]) {
   return rows.map((r:string[],i:number)=>({row_number:i+2,date:r[0]||'',staff:r[1]||'',course:r[2]||'',category:r[3]||'',start_time:r[4]||'',end_time:r[5]||'',quantity:r[6]||'',unit_price:r[7]||'',amount:r[8]||'',confirmed:r[9]||''})).filter((r:any)=>r.date||r.staff);
 }
@@ -244,10 +286,11 @@ Deno.serve(async(req:Request)=>{
       // 単価マスタ(照合の正)は一時失敗に強い軽リトライで取得。
       // ここが取れないと誰もマッチせず「ID/PW間違い」と誤表示されるため、
       // 取得失敗と「認証情報が違う」を厳密に区別する。
+      // ※ ensureSheets(=毎回6回以上のSheets読取) はログインでは呼ばない。構造は既存前提。
+      //    単価マスタは DBキャッシュ経由で取得し、Sheets読取枠(60/分)の食い合いを避ける。
       let rateRows: any[];
       try{
-        await ensureSheets(await getAccessToken());
-        rateRows=await fetchSheetValuesWithRetry('単価マスタ!A2:W1000', getAccessToken);
+        rateRows=await getRateRowsCached();
       }catch(e){
         // シート取得の一時障害。PWは合っているかもしれないので専用メッセージ+503。
         return jsonResp({success:false, error:'サーバが一時的に混み合っています。少し待ってからもう一度お試しください。', code:'SHEET_UNAVAILABLE'}, 503);
@@ -255,7 +298,11 @@ Deno.serve(async(req:Request)=>{
       // SSO対応: まず login_id(ログインID列)で行を特定 → パスワードは
       //   ① 従来の単価マスタ平文PW  または  ② NexPort認証(同一プロジェクト)  のどちらか一致でOK。
       //   → NexPortのID/パスワードでも新聞にログイン可。既存のシートPW利用者も無変更。
-      const row=rateRows.find((r:string[])=>(r[9]||'').trim()===login_id);
+      let row=rateRows.find((r:string[])=>(r[9]||'').trim()===login_id);
+      if(!row){
+        // キャッシュ未反映(単価マスタに追加直後)かもしれない → 最新を1回だけ取り直して再確認
+        try{ rateRows=await getRateRowsCached(true); row=rateRows.find((r:string[])=>(r[9]||'').trim()===login_id); }catch(_){ /* noop */ }
+      }
       let authOk = !!row && (row[10]||'').trim()===login_pw; // ①従来のシート平文PW
       if(row && !authOk){
         authOk = await verifyNexportPassword(login_id, login_pw); // ②NexPort認証(SSO)
@@ -592,6 +639,7 @@ Deno.serve(async(req:Request)=>{
       const row=[record.name,record.am_weekday||'',record.am_weekend||'',record.pm_weekday||'',record.pm_weekend||'',record.warehouse_am||'',record.warehouse_pm||'',record.calc_type||'固定',record.unit_price||'',record.login_id||'',record.login_pw||'',record.biz_type||'',record.company||'',record.calc_type_pm||'固定',record.unit_price_pm||'',record.am_sunday||'',record.pm_sunday||'',record.permissions||'',record.kw_am_daily||'',record.kw_pattern||'',record.monthly_salary||'',record.invoice_number||'',record.rate_effective_from||''];
       if(row_number){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A${row_number}:W${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
       else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:W1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
+      await invalidateRateCache();
       return jsonResp({success:true});
     }
     if(action==='change_password'){
@@ -613,6 +661,7 @@ Deno.serve(async(req:Request)=>{
         method:'PUT', headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},
         body: JSON.stringify({ values:[[newPw]] }),
       });
+      await invalidateRateCache();
       return jsonResp({success:true});
     }
     if(action==='delete_rate'){
@@ -625,6 +674,7 @@ Deno.serve(async(req:Request)=>{
         const errText=await delResp.text();
         return jsonResp({error:'deleteDimension failed: '+delResp.status+' '+errText.slice(0,200)}, 500);
       }
+      await invalidateRateCache();
       return jsonResp({success:true});
     }
     // ── 法人オーナー: 自社メンバーのみ管理 (単価は保全=編集不可, 会社/区分は固定) ──
@@ -655,6 +705,7 @@ Deno.serve(async(req:Request)=>{
       const row=[m.name,m.am_weekday||'',m.am_weekend||'',m.pm_weekday||'',m.pm_weekend||'',m.warehouse_am||'',m.warehouse_pm||'',m.calc_type||'固定',m.unit_price||'',m.login_id||'',m.login_pw||'',m.biz_type||'',m.company||'',m.calc_type_pm||'固定',m.unit_price_pm||'',m.am_sunday||'',m.pm_sunday||'',m.permissions||'',m.kw_am_daily||'',m.kw_pattern||'',m.monthly_salary||'',m.invoice_number||''];
       if(row_number){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A${row_number}:V${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
       else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:V1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
+      await invalidateRateCache();
       return jsonResp({success:true});
     }
     if(action==='owner_delete_member'){
@@ -669,6 +720,7 @@ Deno.serve(async(req:Request)=>{
       if(rowIdx<1) return jsonResp({error:'cannot delete header'}, 400);
       const delResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({requests:[{deleteDimension:{range:{sheetId:RATE_SHEET_ID,dimension:'ROWS',startIndex:rowIdx,endIndex:rowIdx+1}}}]})});
       if(!delResp.ok){ return jsonResp({error:'delete failed: '+delResp.status+' '+(await delResp.text()).slice(0,200)}, 500); }
+      await invalidateRateCache();
       return jsonResp({success:true});
     }
     if(action==='list_work'){
