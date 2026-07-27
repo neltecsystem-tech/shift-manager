@@ -98,21 +98,18 @@ async function getCachedSheet(sheetName: string): Promise<string[][] | null> {
 }
 
 // ── profiles から display_name → user_id ──
-async function getUserMap(): Promise<Record<string, string>> {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,display_name,phone&account_status=neq.disabled`, {
+// 正規化名 → 同名の全 user_id(配列)。重複profile(会社メール垢+個人メール垢など)がある場合は
+// どちらでログインしてもシフトが見えるよう、一致する全アカウントに反映する。
+async function getUserMap(): Promise<Record<string, string[]>> {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id,display_name&account_status=neq.disabled`, {
     headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
   });
-  const arr = await r.json() as { id: string; display_name: string; phone: string | null }[];
-  const map: Record<string, string> = {};
-  const keyHasPhone: Record<string, boolean> = {};
+  const arr = await r.json() as { id: string; display_name: string }[];
+  const map: Record<string, string[]> = {};
   for (const p of arr) {
     const k = normName(p.display_name);
-    if (!k) continue;
-    const hasPhone = !!(p.phone && String(p.phone).trim());
-    // 異体字正規化で同一キーに衝突した場合は「電話ありの実アカウント」を優先(重複profile対策)
-    if (map[k] && keyHasPhone[k] && !hasPhone) continue;
-    map[k] = p.id;
-    keyHasPhone[k] = hasPhone;
+    if (!k || !p.id) continue;
+    (map[k] ||= []).push(p.id);
   }
   return map;
 }
@@ -318,12 +315,12 @@ Deno.serve(async (req: Request) => {
       getUserMap(),
     ]);
 
-    // 社員 → user_id マッピング
-    const staffToUser: { name: string; user_id: string }[] = [];
+    // 社員 → user_id マッピング(同名の全アカウントに反映)
+    const staffToUser: { name: string; user_ids: string[] }[] = [];
     const unmappedStaff: string[] = [];
     for (const n of shainNames) {
-      const uid = userMap[normName(n)];
-      if (uid) staffToUser.push({ name: n, user_id: uid });
+      const uids = userMap[normName(n)] || [];
+      if (uids.length) staffToUser.push({ name: n, user_ids: uids });
       else unmappedStaff.push(n);
     }
 
@@ -339,14 +336,16 @@ Deno.serve(async (req: Request) => {
       }
       monthsLoaded.push({ label, rows: sheet.length });
       const parsed = parseShift(sheet, year);
-      for (const { name, user_id } of staffToUser) {
+      for (const { name, user_ids } of staffToUser) {
         const targetN = normName(name);
         for (const staffMap of Object.values(parsed)) {
           for (const [shiftName, dateMap] of Object.entries(staffMap)) {
             if (normName(shiftName) !== targetN) continue;
             for (const [date, ed] of Object.entries(dateMap)) {
-              if (ed.am) events.push({ user_id, title: `朝 ${ed.am}`, event_date: date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
-              if (ed.pm) events.push({ user_id, title: `夕 ${ed.pm}`, event_date: date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
+              for (const user_id of user_ids) {
+                if (ed.am) events.push({ user_id, title: `朝 ${ed.am}`, event_date: date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
+                if (ed.pm) events.push({ user_id, title: `夕 ${ed.pm}`, event_date: date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
+              }
             }
           }
         }
@@ -371,18 +370,18 @@ Deno.serve(async (req: Request) => {
     const askulUnmapped = new Set<string>();
     let askulCount = 0;
     for (const s of askulShifts) {
-      const uid = userMap[normName(s.driverName)];
-      if (!uid) { askulUnmapped.add(s.driverName); continue; }
-      events.push({ user_id: uid, title: `アスクル ${s.courseName}`, event_date: s.date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
+      const uids = userMap[normName(s.driverName)] || [];
+      if (!uids.length) { askulUnmapped.add(s.driverName); continue; }
+      for (const uid of uids) events.push({ user_id: uid, title: `アスクル ${s.courseName}`, event_date: s.date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
       askulCount++;
     }
     // delivery -> events
     const deliveryUnmapped = new Set<string>();
     let deliveryCount = 0;
     for (const s of deliveryShifts) {
-      const uid = userMap[normName(s.driverName)];
-      if (!uid) { deliveryUnmapped.add(s.driverName); continue; }
-      events.push({ user_id: uid, title: `ヤマト ${s.courseName}`, event_date: s.date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
+      const uids = userMap[normName(s.driverName)] || [];
+      if (!uids.length) { deliveryUnmapped.add(s.driverName); continue; }
+      for (const uid of uids) events.push({ user_id: uid, title: `ヤマト ${s.courseName}`, event_date: s.date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
       deliveryCount++;
     }
 
