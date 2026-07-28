@@ -6873,7 +6873,28 @@ async function admSysHealthInit(){
   try{
     const r=await fetch(SH_DIAG_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'summary',app:'shift-manager'})});
     admSysHealthRender(await r.json());
+    admShadowParityCard();
   }catch(e){c.innerHTML='<p style="color:#dc2626;padding:20px;">読み込み失敗: '+shEsc(e&&e.message)+'</p>';}
+}
+// 単価マスタ Supabase移行シャドー: 連続クリーン日数・直近差分を🩺システム状態の先頭に表示
+async function admShadowParityCard(){
+  try{
+    const r=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/invoice-sheet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'rate_parity_status',admin_password:adminPw})});
+    const j=await r.json(); if(!j||!j.success)return;
+    const last=j.last_run||null; const dc=last?(last.diff_count||0):0; const streak=j.clean_streak||0; const ok=dc===0;
+    const synced=(j.mirror_synced_at||'').replace('T',' ').slice(0,16);
+    let h='<div style="border:1px solid '+(ok?'#bbf7d0':'#fecaca')+';background:'+(ok?'#f0fdf4':'#fef2f2')+';border-radius:12px;padding:14px;margin-bottom:16px;">';
+    h+='<div style="font-weight:700;margin-bottom:6px;">🔁 単価マスタ Supabase移行シャドー</div>';
+    h+='<div style="font-size:13px;">直近チェック: '+(ok?'✅ 差分なし':'⚠ 差分 '+dc+' 件')+' ／ 連続クリーン <b>'+streak+'</b> 日（目標 約90日）</div>';
+    h+='<div style="font-size:11px;color:var(--text-sub);margin-top:4px;">本番はSheetsのまま。ミラー最終同期 '+shEsc(synced||'—')+'。差分ゼロが3ヶ月続けば取得元をSupabaseへ切替。</div>';
+    if(!ok&&(j.recent_diffs||[]).length){
+      h+='<div style="margin-top:8px;font-size:12px;">';
+      j.recent_diffs.slice(0,8).forEach(function(d){h+='<div style="border-top:1px solid #fecaca;padding:4px 0;">'+shEsc(d.name)+' / '+shEsc(d.field)+': <span style="color:#b91c1c;">Sheet「'+shEsc(d.sheet_value)+'」⇄ Mirror「'+shEsc(d.mirror_value)+'」</span></div>';});
+      h+='</div>';
+    }
+    h+='</div>';
+    const c=document.getElementById('sh-content'); if(c) c.insertAdjacentHTML('afterbegin',h);
+  }catch(_){/* サイレント */}
 }
 async function admSysHealthRunDiagnose(){
   const btn=document.getElementById('sh-run-btn');

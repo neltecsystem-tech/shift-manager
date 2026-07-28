@@ -379,6 +379,52 @@ Deno.serve(async(req:Request)=>{
       return jsonResp({success:true, synced:recs.length});
     }
 
+    // ── Phase1(シャドー監視): 単価マスタ(Sheets 最新) と ミラー(shift_rate_master) を突合し差分をログ ──
+    //   本番数値は一切変えない(log専用)。差分ゼロが3ヶ月続けば「取得元をSupabaseに替えても計算不変」と証明。
+    if(action==='check_rate_parity'){
+      const cronSecret = req.headers.get('x-sync-secret') || '';
+      const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
+      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+      const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if(!SB_URL || !SRK) return jsonResp({error:'supabase env missing'},500);
+      const H = { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } as Record<string,string>;
+      const sheet = parseRates(await getRateRowsCached(true)); // Sheets最新(本番が使う値)
+      const mr = await fetch(`${SB_URL}/rest/v1/shift_rate_master?select=*`, { headers: H });
+      const mirror: any[] = mr.ok ? await mr.json() : [];
+      const CALC_FIELDS = ['am_weekday','am_weekend','pm_weekday','pm_weekend','warehouse_am','warehouse_pm','calc_type','unit_price','biz_type','company','calc_type_pm','unit_price_pm','am_sunday','pm_sunday','permissions','kw_am_daily','kw_pattern','monthly_salary','invoice_number','rate_effective_from'];
+      const mMap = new Map(mirror.map((r:any)=>[String(r.name), r]));
+      const sMap = new Map(sheet.map((r:any)=>[String(r.name), r]));
+      const now = new Date().toISOString();
+      const diffs: any[] = [];
+      for(const s of sheet){
+        const m = mMap.get(String(s.name));
+        if(!m){ diffs.push({checked_at:now,name:s.name,field:'*',sheet_value:'(exists)',mirror_value:null,kind:'missing_in_mirror'}); continue; }
+        for(const f of CALC_FIELDS){ if(String((s as any)[f]??'') !== String(m[f]??'')) diffs.push({checked_at:now,name:s.name,field:f,sheet_value:String((s as any)[f]??''),mirror_value:String(m[f]??''),kind:'value_diff'}); }
+      }
+      for(const m of mirror){ if(!sMap.has(String(m.name))) diffs.push({checked_at:now,name:m.name,field:'*',sheet_value:null,mirror_value:'(exists)',kind:'missing_in_sheet'}); }
+      if(diffs.length){ await fetch(`${SB_URL}/rest/v1/rate_shadow_diffs`,{method:'POST',headers:{...H,'Content-Type':'application/json','Prefer':'return=minimal'},body:JSON.stringify(diffs)}); }
+      await fetch(`${SB_URL}/rest/v1/rate_shadow_runs`,{method:'POST',headers:{...H,'Content-Type':'application/json','Prefer':'return=minimal'},body:JSON.stringify([{ran_at:now,staff_checked:sheet.length,diff_count:diffs.length,clean:diffs.length===0}])});
+      return jsonResp({success:true, staff_checked:sheet.length, mirror_count:mirror.length, diff_count:diffs.length, clean:diffs.length===0, sample:diffs.slice(0,10)});
+    }
+
+    // ── Phase1: シャドー監視の状態(連続クリーン日数・直近差分)を返す(管理画面表示用・読取のみ) ──
+    if(action==='rate_parity_status'){
+      if(admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+      const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if(!SB_URL || !SRK) return jsonResp({error:'supabase env missing'},500);
+      const H = { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } as Record<string,string>;
+      const runsRes = await fetch(`${SB_URL}/rest/v1/rate_shadow_runs?select=ran_at,staff_checked,diff_count,clean&order=ran_at.desc&limit=120`, { headers: H });
+      const runs: any[] = runsRes.ok ? await runsRes.json() : [];
+      let streak = 0; for(const r of runs){ if(r.clean) streak++; else break; }
+      const diffRes = await fetch(`${SB_URL}/rest/v1/rate_shadow_diffs?select=name,field,sheet_value,mirror_value,kind,checked_at&order=checked_at.desc&limit=20`, { headers: H });
+      const recentDiffs = diffRes.ok ? await diffRes.json() : [];
+      const mrRes = await fetch(`${SB_URL}/rest/v1/shift_rate_master?select=synced_at&order=synced_at.desc&limit=1`, { headers: H });
+      const syncedAt = mrRes.ok ? (((await mrRes.json())[0])||{}).synced_at : null;
+      return jsonResp({success:true, last_run:runs[0]||null, clean_streak:streak, total_runs:runs.length, mirror_synced_at:syncedAt, recent_diffs:recentDiffs});
+    }
+
     if(action==='sync_invoice_numbers'){
       const cronSecret = req.headers.get('x-sync-secret') || '';
       const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
