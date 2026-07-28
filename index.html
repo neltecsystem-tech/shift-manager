@@ -2305,11 +2305,14 @@ function renderShift(keepLimit){
   });
   if(!mergedDates){w.innerHTML='<p style="color:var(--text-sub)">データなし</p>';return;}
   // In staff mode without area filter, merge same-name staff into one row
+  // ※ 氏名の全角/半角スペース・表記ゆれで別行化するのを防ぐため invNormName で正規化してマージ
+  //   (例: 「越智 幸輝」(半角) と「越智　幸輝」(全角) を1行に統合)
   if(!isCourseMode&&!areaF){
     const nameMap={};
     mergedEntries.forEach(e=>{
-      if(!nameMap[e.course]){nameMap[e.course]={course:e.course,a:e.a.map(x=>({...x}))};return;}
-      const m=nameMap[e.course];
+      const key=invNormName(e.course);
+      if(!nameMap[key]){nameMap[key]={course:e.course,a:e.a.map(x=>({...x}))};return;}
+      const m=nameMap[key];
       e.a.forEach((x,i)=>{
         if(x.am&&!m.a[i].am)m.a[i].am=x.am;
         if(x.pm&&!m.a[i].pm)m.a[i].pm=x.pm;
