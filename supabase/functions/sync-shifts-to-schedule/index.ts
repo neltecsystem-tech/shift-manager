@@ -360,8 +360,8 @@ Deno.serve(async (req: Request) => {
             if (normName(shiftName) !== targetN) continue;
             for (const [date, ed] of Object.entries(dateMap)) {
               for (const user_id of user_ids) {
-                if (ed.am) events.push({ user_id, title: `朝 ${ed.am}`, event_date: date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
-                if (ed.pm) events.push({ user_id, title: `夕 ${ed.pm}`, event_date: date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
+                if (ed.am) events.push({ user_id, title: `朝 ${ed.am}`, event_date: date, event_type: '現場', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
+                if (ed.pm) events.push({ user_id, title: `夕 ${ed.pm}`, event_date: date, event_type: '現場', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
               }
             }
           }
@@ -389,7 +389,7 @@ Deno.serve(async (req: Request) => {
     for (const s of askulShifts) {
       const uids = userMap[normName(s.driverName)] || [];
       if (!uids.length) { askulUnmapped.add(s.driverName); continue; }
-      for (const uid of uids) events.push({ user_id: uid, title: `アスクル ${s.courseName}`, event_date: s.date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
+      for (const uid of uids) events.push({ user_id: uid, title: `アスクル ${s.courseName}`, event_date: s.date, event_type: '現場', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
       askulCount++;
     }
     // delivery -> events
@@ -398,7 +398,7 @@ Deno.serve(async (req: Request) => {
     for (const s of deliveryShifts) {
       const uids = userMap[normName(s.driverName)] || [];
       if (!uids.length) { deliveryUnmapped.add(s.driverName); continue; }
-      for (const uid of uids) events.push({ user_id: uid, title: `ヤマト ${s.courseName}`, event_date: s.date, event_type: 'シフト', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
+      for (const uid of uids) events.push({ user_id: uid, title: `ヤマト ${s.courseName}`, event_date: s.date, event_type: '現場', all_day: true, assigned_by: 'shift-sync', status: 'accepted' });
       deliveryCount++;
     }
 
@@ -430,7 +430,7 @@ Deno.serve(async (req: Request) => {
     const toDate = dates.length ? dates[dates.length-1] : toDateStr;
     // assigned_by='shift-sync' 由来は user 制限なしで全部消す (3ツール由来をまとめて削除)
     const delResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/schedule_events?event_type=eq.シフト&assigned_by=eq.shift-sync&event_date=gte.${fromDate}&event_date=lte.${toDate}`,
+      `${SUPABASE_URL}/rest/v1/schedule_events?event_type=in.(シフト,現場)&assigned_by=eq.shift-sync&event_date=gte.${fromDate}&event_date=lte.${toDate}`,
       { method: 'DELETE', headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, Prefer: 'return=representation' } }
     );
     const deletedRows = await delResp.json().catch(() => []);
