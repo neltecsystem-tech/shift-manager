@@ -1,5 +1,7 @@
-// 貸し出し予約の返却予定日(end_date=当日)になった車両について、車両シートの
-// B列(氏名/使用者)を U列(前回使用者)へ移動し、B列を空に、V列に返却日を記録する。
+// 貸し出し予約を車両シートへ自動反映する(返却/貸出開始の両方)。
+// ・返却(end_date=当日): B列(氏名/使用者)→U列(前回使用者)へ移し、B列を空、V列に返却日を記録。
+// ・貸出開始(start_date=当日): B列(氏名/使用者)に予約の貸与先(lendee_name)をセットし、V列(返却日)をクリア。
+//   ※同一車両が当日返却＋当日再貸出の場合は、返却処理の後に貸出処理が適用され B/V を上書きする。
 // データ源: vehicle_reservations(NexPort/Supabase)。書込先: NELTEC車両シート(Google)。
 // cron(日次)から呼ぶ。verify_jwt OFF + 簡易シークレットゲート。dry_run対応。
 
@@ -39,14 +41,26 @@ Deno.serve(async (req: Request) => {
     const dryRun = !!body.dry_run;
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
     const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const sbHeaders = { apikey: SRK, Authorization: `Bearer ${SRK}` };
     // 当日(JST)
     const today = body.today || new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
 
-    // 返却予定日=当日 の予約 → 対象車両ナンバー
-    const rr = await fetch(`${SUPABASE_URL}/rest/v1/vehicle_reservations?end_date=eq.${today}&select=vehicle_number`, { headers: { apikey: SRK, Authorization: `Bearer ${SRK}` } });
+    // 返却予定日=当日 の予約 → 返却対象の車両ナンバー
+    const rr = await fetch(`${SUPABASE_URL}/rest/v1/vehicle_reservations?end_date=eq.${today}&select=vehicle_number`, { headers: sbHeaders });
     const resv = await rr.json();
-    const targetNums = [...new Set((Array.isArray(resv) ? resv : []).map((r: any) => nNum(r.vehicle_number)).filter(Boolean))];
-    if (!targetNums.length) return json({ ok: true, today, processed: 0, note: '返却予定日が当日の予約はありません' });
+    const returnNums = [...new Set((Array.isArray(resv) ? resv : []).map((r: any) => nNum(r.vehicle_number)).filter(Boolean))];
+
+    // 貸出開始日=当日 の予約 → ナンバー→貸与先 のマップ(同一車両で複数あれば先勝ち)
+    const sr2 = await fetch(`${SUPABASE_URL}/rest/v1/vehicle_reservations?start_date=eq.${today}&select=vehicle_number,lendee_name`, { headers: sbHeaders });
+    const starts = await sr2.json();
+    const startMap = new Map<string, string>();
+    for (const r of (Array.isArray(starts) ? starts : [])) {
+      const n = nNum(r.vehicle_number);
+      const nm = String(r.lendee_name ?? '').trim();
+      if (n && nm && !startMap.has(n)) startMap.set(n, nm);
+    }
+
+    if (!returnNums.length && startMap.size === 0) return json({ ok: true, today, processed: 0, note: '返却/貸出開始 予定の予約はありません' });
 
     // シート読取(A2:V)
     const token = await getAccessToken();
@@ -56,9 +70,10 @@ Deno.serve(async (req: Request) => {
     const rows: any[][] = sj.values || [];
 
     if (body.debug) {
-      const sample = rows.slice(0, 40).map((r, i) => ({ row: i + 2, B: r[COL_NAME], G: r[COL_NUMBER], rawlen: r.length }));
-      const hits = rows.map((r, i) => ({ i, num: nNum(r[COL_NUMBER]) })).filter(x => targetNums.includes(x.num));
-      return json({ ok: true, target_numbers: targetNums, hits, sample });
+      const startNums = [...startMap.keys()];
+      const sample = rows.slice(0, 40).map((r, i) => ({ row: i + 2, B: r[COL_NAME], G: r[COL_NUMBER], V: r[COL_RET], rawlen: r.length }));
+      const hits = rows.map((r, i) => ({ i, num: nNum(r[COL_NUMBER]) })).filter(x => returnNums.includes(x.num) || startMap.has(x.num));
+      return json({ ok: true, return_targets: returnNums, start_targets: startNums, hits, sample });
     }
 
     const updates: { range: string; values: any[][] }[] = [];
@@ -67,17 +82,36 @@ Deno.serve(async (req: Request) => {
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
       const num = nNum(row[COL_NUMBER]);
-      if (!num || !targetNums.includes(num)) continue;
-      const name = String(row[COL_NAME] ?? '').trim();
-      if (!name) continue; // 使用者が空なら何もしない
+      if (!num) continue;
+      const isReturn = returnNums.includes(num);
+      const startLendee = startMap.get(num) || '';
+      if (!isReturn && !startLendee) continue;
+
       const sheetRow = i + 2;
-      updates.push({ range: `${SHEET_NAME}!${colLetter(COL_PREV)}${sheetRow}`, values: [[name]] });   // U=前回使用者=氏名
-      updates.push({ range: `${SHEET_NAME}!${colLetter(COL_NAME)}${sheetRow}`, values: [['']] });      // B=氏名=空
-      updates.push({ range: `${SHEET_NAME}!${colLetter(COL_RET)}${sheetRow}`, values: [[today]] });     // V=返却日
-      processed.push({ number: row[COL_NUMBER], moved_to_prev: name, sheet_row: sheetRow });
+      const curName = String(row[COL_NAME] ?? '').trim();
+      const curRet = String(row[COL_RET] ?? '').trim();
+
+      // 返却: 使用者ありのときだけ前回使用者へ退避し、B列を空・V列に返却日
+      if (isReturn && curName) {
+        updates.push({ range: `${SHEET_NAME}!${colLetter(COL_PREV)}${sheetRow}`, values: [[curName]] }); // U=前回使用者=氏名
+        updates.push({ range: `${SHEET_NAME}!${colLetter(COL_NAME)}${sheetRow}`, values: [['']] });      // B=氏名=空
+        updates.push({ range: `${SHEET_NAME}!${colLetter(COL_RET)}${sheetRow}`, values: [[today]] });     // V=返却日
+        processed.push({ kind: 'return', number: row[COL_NUMBER], moved_to_prev: curName, sheet_row: sheetRow });
+      }
+
+      // 貸出開始: B列=貸与先、V列(返却日)をクリア。返却と同一行なら上記の後に適用されB/Vを上書き。
+      // 既にB=貸与先かつV空で、返却対象でもない場合は冪等スキップ(無駄書き防止)。
+      if (startLendee) {
+        const alreadySet = !isReturn && curName === startLendee && !curRet;
+        if (!alreadySet) {
+          updates.push({ range: `${SHEET_NAME}!${colLetter(COL_NAME)}${sheetRow}`, values: [[startLendee]] }); // B=氏名=貸与先
+          updates.push({ range: `${SHEET_NAME}!${colLetter(COL_RET)}${sheetRow}`, values: [['']] });            // V=返却日=空
+          processed.push({ kind: 'lend', number: row[COL_NUMBER], lendee: startLendee, prev_name: curName || null, sheet_row: sheetRow });
+        }
+      }
     }
 
-    if (!updates.length) return json({ ok: true, today, processed: 0, note: '該当車両(使用者あり)が見つかりませんでした', target_numbers: targetNums });
+    if (!updates.length) return json({ ok: true, today, processed: 0, note: '該当車両が見つからない/既に反映済みです', return_targets: returnNums, start_targets: [...startMap.keys()] });
     if (dryRun) return json({ ok: true, dry_run: true, today, would_process: processed });
 
     const wr = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
