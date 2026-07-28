@@ -356,6 +356,29 @@ Deno.serve(async(req:Request)=>{
 
     // ── 会計ツール連携: 単価マスタの T番号(invoice_number) を Supabase テーブルへ同期 ──
     //   admin_password または cron秘密ヘッダ(x-sync-secret)でゲート。会計側は acc_shift_invoice_numbers を読むだけ。
+    // ── Phase0(単価マスタSupabase移行): 単価マスタ(Sheets)→ shift_rate_master テーブルへ全リフレッシュ・ミラー ──
+    //   読取専用ミラー(Sheetsが正)。login_pw(K列)は非格納。cron日次 or 管理者手動。シャドー計算の元データ。
+    if(action==='sync_rate_master'){
+      const cronSecret = req.headers.get('x-sync-secret') || '';
+      const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
+      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+      const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if(!SB_URL || !SRK) return jsonResp({error:'supabase env missing'},500);
+      const rows = await getRateRowsCached(true); // forceFresh=Sheetsから最新
+      const parsed = parseRates(rows);
+      const now = new Date().toISOString();
+      const recs = parsed.map((o:any)=>({ row_number:o.row_number, name:o.name, am_weekday:o.am_weekday, am_weekend:o.am_weekend, pm_weekday:o.pm_weekday, pm_weekend:o.pm_weekend, warehouse_am:o.warehouse_am, warehouse_pm:o.warehouse_pm, calc_type:o.calc_type, unit_price:o.unit_price, login_id:o.login_id, biz_type:o.biz_type, company:o.company, calc_type_pm:o.calc_type_pm, unit_price_pm:o.unit_price_pm, am_sunday:o.am_sunday, pm_sunday:o.pm_sunday, permissions:o.permissions, kw_am_daily:o.kw_am_daily, kw_pattern:o.kw_pattern, monthly_salary:o.monthly_salary, invoice_number:o.invoice_number, rate_effective_from:o.rate_effective_from, synced_at:now }));
+      // 全削除 → 一括挿入(冪等・全リフレッシュ)。単価マスタは~200件なので一括でOK。
+      const del = await fetch(`${SB_URL}/rest/v1/shift_rate_master?name=not.is.null`,{method:'DELETE',headers:{'apikey':SRK,'Authorization':`Bearer ${SRK}`,'Prefer':'return=minimal'}});
+      if(!del.ok){ const t=await del.text(); return jsonResp({error:'delete failed: '+del.status+' '+t.slice(0,200)},500); }
+      if(recs.length){
+        const ins = await fetch(`${SB_URL}/rest/v1/shift_rate_master`,{method:'POST',headers:{'apikey':SRK,'Authorization':`Bearer ${SRK}`,'Content-Type':'application/json','Prefer':'return=minimal'},body:JSON.stringify(recs)});
+        if(!ins.ok){ const t=await ins.text(); return jsonResp({error:'insert failed: '+ins.status+' '+t.slice(0,300)},500); }
+      }
+      return jsonResp({success:true, synced:recs.length});
+    }
+
     if(action==='sync_invoice_numbers'){
       const cronSecret = req.headers.get('x-sync-secret') || '';
       const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
