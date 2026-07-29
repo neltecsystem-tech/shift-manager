@@ -688,9 +688,25 @@ Deno.serve(async(req:Request)=>{
     if(action==='get_special_rates'){
       if(!admin) return forbid();
       const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      const rows=((await resp.json()).values||[]).filter((r:string[])=>r[1]&&r[2]);
-      const records=rows.map((r:string[])=>({timestamp:r[0]||'',date:r[1]||'',name:r[2]||'',amount:r[3]||'',reason:r[4]||'',applicant:r[5]||'',category:r[6]||'',type:r[7]||'',office:r[8]||''}));
+      const raw=((await resp.json()).values||[]);
+      const records=raw.map((r:string[],i:number)=>({row_number:i+2,timestamp:r[0]||'',date:r[1]||'',name:r[2]||'',amount:r[3]||'',reason:r[4]||'',applicant:r[5]||'',category:r[6]||'',type:r[7]||'',office:r[8]||''})).filter((r:any)=>r.date&&r.name);
       return jsonResp({records});
+    }
+    if(action==='save_special_rate'){
+      // 特別単価(日当/日当+)を管理画面から手入力。Googleフォーム回答シートへ直接 append/PUT。
+      if(!admin) return forbid();
+      if(!record?.date||!record?.name) return jsonResp({error:'date and name required'},400);
+      const ts=String(record.timestamp||new Date().toISOString());
+      const row=[ts, record.date||'', record.name||'', record.amount||'', record.reason||'', record.applicant||'管理画面', record.category||'', record.type||'日当', record.office||''];
+      if(row_number){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A${row_number}:I${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
+      else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A1:I1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
+      return jsonResp({success:true});
+    }
+    if(action==='delete_special_rate'){
+      if(!admin) return forbid();
+      if(!row_number) return jsonResp({error:'row_number required'},400);
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A${row_number}:I${row_number}:clear`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      return jsonResp({success:true});
     }
     if(action==='get_rates'){
       const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A2:W200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
