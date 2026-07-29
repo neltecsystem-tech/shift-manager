@@ -10573,18 +10573,61 @@ async function admYobiSave(){
 
 // コース名の接頭辞からエリアを判定し、早見表でそのエリアの最後のコース行の「直後」の
 // 挿入位置(0始まり行インデックス)を返す。該当エリアが無ければ末尾。
+// コース名から エリア + 番号 を抽出 (城北9 → {area:'城北', num:9})。数字なしは末尾扱い。
+function admYobiParseCourse(name){
+  const AREAS=['川崎高津','川崎','城北','川越','立川']; // 長い接頭辞を優先
+  const s=String(name||'').trim();
+  const area=AREAS.find(a=>s.startsWith(a));
+  if(!area)return null;
+  const m=s.slice(area.length).match(/(\d+)/);
+  return {area, num:m?Number(m[1]):Infinity};
+}
+
+// 早見表に新規コースを挿入する行位置。同エリア内で「番号順」になる位置に入れる。
+// 番号が小さい同エリア行の直後 / いなければ同エリア先頭の前 / 同エリア無しは末尾。
 function admYobiPickInsertIndex(courseName){
   const rows=admYobiState.rows||[];
-  const AREAS=['川崎高津','川崎','城北','川越','立川']; // 長い接頭辞を優先
-  const area=AREAS.find(a=>String(courseName||'').startsWith(a));
-  if(!area)return rows.length;
-  let lastIdx=-1;
+  const me=admYobiParseCourse(courseName);
+  if(!me)return rows.length;
+  let afterIdx=-1, firstIdx=-1;
   for(let i=1;i<rows.length;i++){ // i=0 はヘッダー
-    const a=String((rows[i]||[])[0]||'').trim();
-    const p=String((rows[i]||[])[9]||'').trim();
-    if((a&&a.startsWith(area))||(p&&p.startsWith(area)))lastIdx=i;
+    const a=admYobiParseCourse(String((rows[i]||[])[0]||'').trim());
+    const p=admYobiParseCourse(String((rows[i]||[])[9]||'').trim());
+    const match=(a&&a.area===me.area)?a:((p&&p.area===me.area)?p:null);
+    if(!match)continue;
+    if(firstIdx<0)firstIdx=i;
+    if(match.num<=me.num)afterIdx=i;
   }
-  return lastIdx<0?rows.length:lastIdx+1;
+  if(afterIdx>=0)return afterIdx+1;
+  if(firstIdx>=0)return firstIdx;
+  return rows.length;
+}
+
+// 反映で末尾に追記した新規コースを、同エリア内の番号順の位置へ move_rows で移動する。
+// moveDimension は値・黒塗り書式を丸ごと保持。失敗しても致命ではない(末尾のまま残るだけ)。
+async function admYobiSortNewCourses(sheetName, newNames){
+  for(const name of newNames){
+    const me=admYobiParseCourse(name); if(!me)continue;
+    // 直前の移動で行番号が変わるため毎回取り直す
+    const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheetName})});
+    const j=await r.json(); if(j.error)continue;
+    const rows=j.rows||[];
+    const cur=rows.findIndex(rr=>String((rr[0]||'')).trim()===name);
+    if(cur<0)continue;
+    // 同エリアのコース行 (Section1: idx 7..115, 自分は除外)
+    const same=[];
+    for(let i=7;i<Math.min(116,rows.length);i++){
+      if(i===cur)continue;
+      const p=admYobiParseCourse(String((rows[i]||[])[0]||'').trim());
+      if(p&&p.area===me.area)same.push({i,num:p.num});
+    }
+    if(!same.length)continue; // 同エリアが他に無ければ動かさない
+    const smaller=same.filter(s=>s.num<me.num);
+    let dest = smaller.length ? Math.max(...smaller.map(s=>s.i))+1 : Math.min(...same.map(s=>s.i));
+    if(cur < dest) dest = dest+1; // moveDimension destinationIndex は移動前座標系。下方向のみ+1補正
+    if(dest===cur)continue;
+    await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'move_rows',sheet_name:sheetName,from_index:cur,to_index:dest})});
+  }
 }
 
 // 早見表グリッドの指定行を画面中央へスクロール + 一瞬ハイライトして見失わないようにする。
@@ -10776,6 +10819,8 @@ async function admYobiReflectCoursesToSheet(courseNames,startDate,sheetName,year
     const fr=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:sheetName,cells:blackCells,bg:{red:0,green:0,blue:0}})});
     const fj=await fr.json();if(fj.error)throw new Error(fj.error);
   }
+  // 末尾追記した新規コースを同エリアの番号順の位置へ移動 (書式適用後に実行=moveで書式ごと移動)。失敗は無視。
+  if(done.length){ try{ await admYobiSortNewCourses(sheetName, done); }catch(_){} }
   forceFreshShift(year,month).catch(()=>{});
   return {sheetName,done,updated,skipped,noMaster};
 }
