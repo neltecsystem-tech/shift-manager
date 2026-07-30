@@ -4627,6 +4627,7 @@ function admStoreMapRender(){
   if(latIdx==null||lngIdx==null){ if(sum)sum.textContent='店舗マスタに緯度・経度の列が見つかりません'; return; }
   const nameIdx=smColMap.name??3, codeIdx=smColMap.code, areaIdx=smColMap.area??1;
   const amIdx=smColMap.amCourse, pmIdx=smColMap.pmCourse, keibaIdx=smColMap.keibaCourse;
+  const odIdx=smColMap.openDate; const todayYmd=diagTodayYmd();
   const g=id=>String((document.getElementById(id)||{}).value||'').trim();
   const fArea=g('adm-smap-area'), fEd=g('adm-smap-edition'), fQ=g('adm-smap-search').toLowerCase();
   const edIdx = fEd==='am'?amIdx : fEd==='pm'?pmIdx : fEd==='keiba'?keibaIdx : null;
@@ -4642,6 +4643,7 @@ function admStoreMapRender(){
     const am=amIdx!=null?String(r[`col_${amIdx}`]||'').trim():'';
     const pm=pmIdx!=null?String(r[`col_${pmIdx}`]||'').trim():'';
     const keiba=keibaIdx!=null?String(r[`col_${keibaIdx}`]||'').trim():'';
+    if(odIdx!=null){ const od=diagNormYmd(r[`col_${odIdx}`]); if(od && od>todayYmd) return; } // 未開店(開店日が未来)は地図に出さない
     if(isNaN(lat)||isNaN(lng)||lat===0||lng===0){ if(name)noCoord++; return; }
     if(fArea&&area!==fArea)return;
     const edCourse = edIdx!=null?String(r[`col_${edIdx}`]||'').trim():'';
@@ -16565,6 +16567,7 @@ function diagBuildColMap(headers){
     if(h==='休店中')m.suspend=i;
     if(h==='休店開始日')m.suspendStart=i;
     if(h==='休店終了日')m.suspendEnd=i;
+    if(h.includes('開店日'))m.openDate=i;
   });
   return m;
 }
@@ -16580,6 +16583,12 @@ function diagIsSuspended(r){
   if(start&&today<start)return false; // 休店開始前はまだ配達
   if(end&&today>end)return false;     // 休店終了後(cleanup前の念のため)
   return true;
+}
+// 開店日が今日より後(=まだ開店していない)店舗は配達対象外 → ダイヤグラムに出さない
+function diagIsFutureOpen(r){
+  if(diagColMap.openDate==null)return false;
+  const od=diagNormYmd(r[`col_${diagColMap.openDate}`]);
+  return !!od && od>diagTodayYmd();
 }
 
 function diagApplyData(headers,records){
@@ -16897,7 +16906,7 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
   const courseCol=diagCourseColFor(type);
   const orderCol=type==='am'?diagColMap.amOrder:type==='pm'?diagColMap.pmOrder:diagColMap.keibaOrder;
   const timeCol=type==='am'?diagColMap.amTime:type==='pm'?diagColMap.pmTime:diagColMap.keibaTime;
-  let shops=diagShopData.filter(r=>r[`col_${courseCol}`]===courseName&&!diagIsSuspended(r)); // 休店中は配達対象外
+  let shops=diagShopData.filter(r=>r[`col_${courseCol}`]===courseName&&!diagIsSuspended(r)&&!diagIsFutureOpen(r)); // 休店中・未開店(開店日未来)は配達対象外
   if(areaFilter)shops=shops.filter(r=>diagAreaMatch(r,areaFilter,type));
   // 店着時間の早い順でソート。時間なしは末尾。同時刻は順番→店舗コードでタイブレーク
   shops.sort((a,b)=>{
