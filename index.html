@@ -123,6 +123,7 @@ tbody tr:hover { background:var(--primary-light); }
     <button onclick="showView('ownermembers',this)">👥 自社管理</button>
     <button onclick="showView('measure',this)">測定</button>
     <button onclick="showView('diagram',this)">ダイヤグラム</button>
+    <button onclick="showView('keytag',this)">🔑 鍵マップ</button>
     <button onclick="showView('changelog',this)">📢 更新履歴</button>
     <a href="manual.html" target="_blank" rel="noopener" style="margin-left:auto;background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);text-decoration:none;padding:6px 12px;border-radius:6px;font-size:12px;align-self:center;" title="管理者マニュアルを開く">📖 マニュアル</a>
     <button onclick="adminShowLogin()" style="background:rgba(255,255,255,.15);color:#fff;">🔧 管理</button>
@@ -564,6 +565,19 @@ tbody tr:hover { background:var(--primary-light); }
       </div>
       <div id="msr-table" style="margin-top:8px;"></div>
     </div>
+  </div>
+
+  <!-- 鍵マップ (預けた鍵=スマートタグの位置) -->
+  <div id="view-keytag" class="hidden">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <h2 style="margin:0;">🔑 鍵マップ <span style="font-size:13px;color:var(--text-sub);font-weight:normal;">ドライバーに預けた鍵(スマートタグ)の最新位置</span></h2>
+        <button onclick="renderKeyTag()" style="padding:7px 14px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;">🔄 再読み込み</button>
+      </div>
+      <div style="color:var(--text-sub);font-size:12px;margin-top:4px;">位置は約1時間ごとに自動更新。タグはドライバーのスマホが近くにある時ほど頻繁に更新されます。</div>
+      <div id="keytag-map" style="height:420px;border-radius:10px;margin-top:12px;background:#eef;"></div>
+    </div>
+    <div id="keytag-list" style="margin-top:12px;"></div>
   </div>
 
   <!-- 更新履歴 (新機能・修正一覧) -->
@@ -1779,7 +1793,68 @@ function showView(v,btn){
   const e=document.getElementById('view-'+v);if(e)e.classList.remove('hidden');
   document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
   if(btn)btn.classList.add('active');
-  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit,invoice:invInit,myshift:initMyShift,changelog:renderChangelog,ownermembers:invOwnerRenderView}[v]||function(){})();
+  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit,invoice:invInit,myshift:initMyShift,changelog:renderChangelog,ownermembers:invOwnerRenderView,keytag:renderKeyTag}[v]||function(){})();
+}
+
+// ==== 🔑 鍵マップ (スマートタグ位置) ====
+const KEYTAG_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/key-tag';
+let keytagMap=null, keytagMarkers=[];
+function ktEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function ktTime(s){if(!s)return '';try{return new Date(s).toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}catch(e){return String(s);}}
+async function renderKeyTag(){
+  const listEl=document.getElementById('keytag-list');
+  if(listEl)listEl.innerHTML='<div style="padding:12px;color:#888;">読み込み中...</div>';
+  let positions=[];
+  try{
+    const r=await fetch(KEYTAG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list',admin_password:adminPw})});
+    const j=await r.json();
+    if(j.error){if(listEl)listEl.innerHTML='<div style="padding:12px;color:#c00;">'+ktEsc(j.error)+'（管理者ログインが必要です）</div>';return;}
+    positions=j.positions||[];
+  }catch(e){if(listEl)listEl.innerHTML='<div style="padding:12px;color:#c00;">取得に失敗しました</div>';return;}
+
+  // 地図
+  const mapEl=document.getElementById('keytag-map');
+  if(mapEl && typeof L!=='undefined'){
+    if(!keytagMap){
+      keytagMap=L.map(mapEl).setView([35.73,139.73],12);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap',maxZoom:19}).addTo(keytagMap);
+    }
+    setTimeout(()=>{try{keytagMap.invalidateSize();}catch(e){}},120);
+    keytagMarkers.forEach(m=>keytagMap.removeLayer(m)); keytagMarkers=[];
+    const pts=[];
+    positions.forEach(p=>{
+      if(p.lat==null||p.lng==null)return;
+      const m=L.marker([p.lat,p.lng]).addTo(keytagMap).bindPopup('<b>🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b><br>'+(p.holder?('貸与先: '+ktEsc(p.holder)+'<br>'):'')+'最終測位: '+ktTime(p.reported_at));
+      keytagMarkers.push(m); pts.push([p.lat,p.lng]);
+    });
+    if(pts.length){try{keytagMap.fitBounds(pts,{padding:[40,40],maxZoom:16});}catch(e){}}
+  }
+
+  // 一覧
+  if(!listEl)return;
+  if(positions.length===0){listEl.innerHTML='<div class="card" style="color:#888;">まだ位置データがありません。自動更新(約1時間ごと)を待つか、タグを屋外に持ち出してください。</div>';return;}
+  listEl.innerHTML=positions.map(p=>{
+    const gmap=(p.lat!=null)?('https://www.google.com/maps/search/?api=1&query='+p.lat+','+p.lng):'';
+    return '<div class="card" style="margin-bottom:10px;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
+        +'<div><b style="font-size:16px;">🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b>'
+          +'<div style="color:#666;font-size:12px;">最終測位: '+(ktTime(p.reported_at)||'—')+' ／ 取得: '+(ktTime(p.updated_at)||'—')+'</div></div>'
+        +(gmap?('<a href="'+gmap+'" target="_blank" style="text-decoration:none;padding:6px 12px;border-radius:8px;background:#0ea5e9;color:#fff;font-weight:700;">📍 地図で開く</a>'):'')
+      +'</div>'
+      +'<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+        +'<label style="font-size:13px;color:#555;">貸与先:</label>'
+        +'<input id="kt-holder-'+ktEsc(p.tag_id)+'" value="'+ktEsc(p.holder||'')+'" placeholder="ドライバー名" style="flex:1;min-width:140px;max-width:220px;padding:6px;border:1px solid #cbd5e1;border-radius:6px;">'
+        +'<button onclick="keytagSaveHolder(\''+ktEsc(p.tag_id)+'\')" style="padding:6px 14px;border:none;border-radius:6px;background:#22c55e;color:#fff;font-weight:700;cursor:pointer;">保存</button>'
+      +'</div>'
+    +'</div>';
+  }).join('');
+}
+async function keytagSaveHolder(tagId){
+  const el=document.getElementById('kt-holder-'+tagId); if(!el)return;
+  try{
+    await fetch(KEYTAG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_holder',admin_password:adminPw,tag_id:tagId,holder:el.value})});
+    renderKeyTag();
+  }catch(e){alert('保存に失敗しました');}
 }
 
 // ---- マイシフト (本人 / 管理者は任意切替・カレンダー表記) ----
@@ -17474,6 +17549,7 @@ function sysApplyPermissions(perms){
     'tenpo':{perm:'admin', tier:'admin'},
     'search':{perm:'admin', tier:'admin'},
     'staff':{perm:'admin', tier:'admin'},
+    'keytag':{perm:'admin', tier:'admin'},
     // 個別権限 → 橙
     'defects':{perm:'defects', tier:'perm'},
     'shopmaster':{perm:'shopmaster', tier:'perm'},
