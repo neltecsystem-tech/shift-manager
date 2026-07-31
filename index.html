@@ -1878,8 +1878,9 @@ async function renderKeyTag(){
     keytagCircles.forEach(c=>map.removeLayer(c)); keytagCircles=[];
     const pts=[];
     offices.forEach(o=>{
-      const c=L.circle([o.lat,o.lng],{radius:o.radius_m,color:'#16a34a',weight:1,fillColor:'#22c55e',fillOpacity:0.12}).addTo(map).bindPopup('🏢 '+ktEsc(o.name)+'（半径'+o.radius_m+'m）');
-      keytagCircles.push(c); pts.push([o.lat,o.lng]);
+      const c=L.circle([o.lat,o.lng],{radius:o.radius_m,color:'#16a34a',weight:1,fillColor:'#22c55e',fillOpacity:0.12}).addTo(map);
+      const mk=L.marker([o.lat,o.lng],{icon:L.divIcon({html:'<div style="font-size:26px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));">🏢</div>',className:'',iconSize:[26,26],iconAnchor:[13,24]})}).addTo(map).bindPopup('🏢 <b>'+ktEsc(o.name)+'</b>（半径'+o.radius_m+'m）');
+      keytagCircles.push(c,mk); pts.push([o.lat,o.lng]);
     });
     positions.forEach(p=>{
       if(p.lat==null||p.lng==null)return;
