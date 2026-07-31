@@ -572,7 +572,10 @@ tbody tr:hover { background:var(--primary-light); }
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <h2 style="margin:0;">🔑 鍵マップ <span style="font-size:13px;color:var(--text-sub);font-weight:normal;">ドライバーに預けた鍵(スマートタグ)の最新位置</span></h2>
-        <button onclick="renderKeyTag()" style="padding:7px 14px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;">🔄 再読み込み</button>
+        <div style="display:flex;gap:8px;">
+          <button onclick="keytagRefreshNow(this)" style="padding:7px 14px;border:none;border-radius:8px;background:#f59e0b;color:#fff;font-weight:700;cursor:pointer;">⚡ 今すぐ更新</button>
+          <button onclick="renderKeyTag()" style="padding:7px 14px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;">🔄 再読み込み</button>
+        </div>
       </div>
       <div style="color:var(--text-sub);font-size:12px;margin-top:4px;">位置は約1時間ごとに自動更新。タグはドライバーのスマホが近くにある時ほど頻繁に更新されます。</div>
       <div id="keytag-map" style="height:420px;border-radius:10px;margin-top:12px;background:#eef;"></div>
@@ -1848,6 +1851,23 @@ async function renderKeyTag(){
       +'</div>'
     +'</div>';
   }).join('');
+}
+async function keytagRefreshNow(btn){
+  const old=btn.textContent;
+  btn.disabled=true; btn.textContent='更新要求中...';
+  try{
+    const r=await fetch(KEYTAG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'refresh',admin_password:adminPw})});
+    const j=await r.json();
+    if(j.error){alert('更新の起動に失敗しました: '+j.error);btn.disabled=false;btn.textContent=old;return;}
+    // 起動成功 → 約45秒後に自動反映(Actions実行時間)
+    let sec=45;
+    btn.textContent='取得中 '+sec+'秒…';
+    const iv=setInterval(()=>{
+      sec--;
+      if(sec<=0){clearInterval(iv);btn.disabled=false;btn.textContent=old;renderKeyTag();}
+      else{btn.textContent='取得中 '+sec+'秒…';}
+    },1000);
+  }catch(e){alert('更新の起動に失敗しました');btn.disabled=false;btn.textContent=old;}
 }
 async function keytagSaveHolder(tagId){
   const el=document.getElementById('kt-holder-'+tagId); if(!el)return;
