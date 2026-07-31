@@ -1959,15 +1959,19 @@ async function renderKeyTag(){
   listEl.innerHTML=courseDl+positions.map(p=>{
     const gmap=(p.lat!=null)?('https://www.google.com/maps/search/?api=1&query='+p.lat+','+p.lng):'';
     const where=p.office_id?('🏢 '+ktEsc(offName[p.office_id]||'営業所')+'内'):'🚚 外出中';
-    // コースから本日の担当を算出
-    let driverHtml='';
-    if(p.course){
+    // 現在の担当を算出: 個人名(固定)が最優先 → 無ければコースからシフト算出
+    let assignHtml='';
+    if(p.holder){
+      assignHtml='<span style="display:inline-block;padding:3px 10px;border-radius:8px;background:#f3e8ff;color:#7c3aed;font-weight:700;font-size:13px;">🔒 個人保管（固定）: '+ktEsc(p.holder)+(p.course?('・'+ktEsc(p.course)):'')+'</span>';
+    }else if(p.course){
       const d=ktCourseDriverToday(p.course);
       if(d&&(d.am||d.pm)){
-        driverHtml='<span style="font-size:13px;color:#166534;font-weight:700;margin-left:4px;">→ 本日の担当: '+(d.am?('朝刊 '+ktEsc(d.am)):'')+(d.am&&d.pm?' / ':'')+(d.pm?('夕刊 '+ktEsc(d.pm)):'')+'</span>';
+        assignHtml='<span style="display:inline-block;padding:3px 10px;border-radius:8px;background:#dcfce7;color:#166534;font-weight:700;font-size:13px;">🚩'+ktEsc(p.course)+' 本日の担当: '+(d.am?('朝刊 '+ktEsc(d.am)):'')+(d.am&&d.pm?' / ':'')+(d.pm?('夕刊 '+ktEsc(d.pm)):'')+'</span>';
       }else{
-        driverHtml='<span style="font-size:12px;color:#999;margin-left:4px;">→ 本日のシフトに担当なし</span>';
+        assignHtml='<span style="color:#999;font-size:12px;">🚩'+ktEsc(p.course)+'：本日のシフトに担当なし</span>';
       }
+    }else{
+      assignHtml='<span style="color:#999;font-size:12px;">担当未設定（コース or 個人保管を設定）</span>';
     }
     return '<div class="card" style="margin-bottom:10px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
@@ -1975,16 +1979,17 @@ async function renderKeyTag(){
           +'<div style="color:#666;font-size:12px;">最終測位: '+(ktTime(p.reported_at)||'—')+' ／ 取得: '+(ktTime(p.updated_at)||'—')+'</div></div>'
         +(gmap?('<a href="'+gmap+'" target="_blank" style="text-decoration:none;padding:6px 12px;border-radius:8px;background:#0ea5e9;color:#fff;font-weight:700;">📍 地図で開く</a>'):'')
       +'</div>'
+      +'<div style="margin-top:8px;">'+assignHtml+'</div>'
       +'<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
-        +'<label style="font-size:13px;color:#555;min-width:56px;">🚩コース:</label>'
+        +'<label style="font-size:13px;color:#555;min-width:88px;">🚩コース:</label>'
         +'<input id="kt-course-'+ktEsc(p.tag_id)+'" list="kt-course-dl" value="'+ktEsc(p.course||'')+'" placeholder="例: 立川12" style="min-width:120px;max-width:180px;padding:6px;border:1px solid #cbd5e1;border-radius:6px;">'
         +'<button onclick="keytagSaveCourse(\''+ktEsc(p.tag_id)+'\')" style="padding:6px 14px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;">保存</button>'
-        +driverHtml
       +'</div>'
       +'<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
-        +'<label style="font-size:13px;color:#555;min-width:56px;">貸与先:</label>'
-        +'<input id="kt-holder-'+ktEsc(p.tag_id)+'" value="'+ktEsc(p.holder||'')+'" placeholder="手入力(コース未設定時)" style="min-width:120px;max-width:180px;padding:6px;border:1px solid #cbd5e1;border-radius:6px;">'
-        +'<button onclick="keytagSaveHolder(\''+ktEsc(p.tag_id)+'\')" style="padding:6px 14px;border:none;border-radius:6px;background:#22c55e;color:#fff;font-weight:700;cursor:pointer;">保存</button>'
+        +'<label style="font-size:13px;color:#7c3aed;min-width:88px;">🔒個人保管:</label>'
+        +'<input id="kt-holder-'+ktEsc(p.tag_id)+'" value="'+ktEsc(p.holder||'')+'" placeholder="個人名(入れると固定)" style="min-width:120px;max-width:180px;padding:6px;border:1px solid #cbd5e1;border-radius:6px;">'
+        +'<button onclick="keytagSaveHolder(\''+ktEsc(p.tag_id)+'\')" style="padding:6px 14px;border:none;border-radius:6px;background:#7c3aed;color:#fff;font-weight:700;cursor:pointer;">保存</button>'
+        +'<span style="font-size:11px;color:#999;">個人名を入れるとシフトより優先し固定表示</span>'
       +'</div>'
     +'</div>';
   }).join('');
