@@ -1,0 +1,75 @@
+name: key-tag poller
+
+# 預けた鍵(スマートタグ)の位置を定期取得して Supabase(EF key-tag) に送る
+# 認証情報は Actions Secrets に格納:
+#   KEY_TAG_SECRETS_B64    : GoogleFindMyTools の Auth/secrets.json を base64 化した文字列
+#   KEY_TAG_INGEST_SECRET  : EF の KEY_TAG_INGEST_SECRET と同じ共有秘密
+# シークレット未設定の間は自動でスキップ(失敗しない)。
+
+on:
+  schedule:
+    - cron: '0 * * * *'        # 毎時0分 (private repoの無料枠に収まるよう1時間毎)
+  workflow_dispatch: {}         # 手動実行(今すぐ更新)も可
+
+concurrency:
+  group: key-tag-poller
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Guard (secrets configured?)
+        id: guard
+        env:
+          SECRETS_B64: ${{ secrets.KEY_TAG_SECRETS_B64 }}
+        run: |
+          if [ -z "$SECRETS_B64" ]; then
+            echo "KEY_TAG_SECRETS_B64 未設定のためスキップします。"
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout this repo (poller.py)
+        if: steps.guard.outputs.skip != '1'
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: Clone GoogleFindMyTools (pinned)
+        if: steps.guard.outputs.skip != '1'
+        run: |
+          git clone https://github.com/leonboe1/GoogleFindMyTools.git tool
+          cd tool && git checkout d46e952
+
+      - name: Setup Python
+        if: steps.guard.outputs.skip != '1'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: tool/requirements.txt
+
+      - name: Install deps
+        if: steps.guard.outputs.skip != '1'
+        run: pip install -r tool/requirements.txt
+
+      - name: Place poller + secrets
+        if: steps.guard.outputs.skip != '1'
+        env:
+          SECRETS_B64: ${{ secrets.KEY_TAG_SECRETS_B64 }}
+        run: |
+          cp repo/tools/key-tag/poller.py tool/poller.py
+          printf '%s' "$SECRETS_B64" | base64 -d > tool/Auth/secrets.json
+          test -s tool/Auth/secrets.json || { echo "secrets.json が空です(base64を確認)"; exit 1; }
+
+      - name: Run poller
+        if: steps.guard.outputs.skip != '1'
+        working-directory: tool
+        env:
+          INGEST_URL: https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/key-tag
+          INGEST_SECRET: ${{ secrets.KEY_TAG_INGEST_SECRET }}
+          # KEY_TAG_IDS: '6a6a55dd-0000-29d8-91a0-883d24f433d0'  # 明示したい場合
+        run: python poller.py
