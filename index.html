@@ -1824,6 +1824,42 @@ async function ktApi(payload){
   const r=await fetch(KEYTAG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({admin_password:adminPw},payload))});
   return r.json();
 }
+// コース一覧(シフトから) と 本日の担当算出
+// ※DB.shiftsは転置済: e.course=担当者名 / a.am,a.pm=コース名
+function ktCourseList(){
+  const set=new Set();
+  try{Object.values(DB.shifts||{}).forEach(areas=>Object.values(areas).forEach(sh=>(sh.entries||[]).forEach(e=>(e.a||[]).forEach(a=>{
+    if(!a)return;
+    const A=String(a.am||'').trim(),P=String(a.pm||'').trim();
+    if(A&&A!=='0'&&A!=='希望休')set.add(A);
+    if(P&&P!=='0'&&P!=='希望休')set.add(P);
+  }))));}catch(e){}
+  return [...set].filter(Boolean).sort();
+}
+function ktCourseDriverToday(course){
+  if(!course)return null;
+  const c=String(course).trim();
+  const now=new Date();
+  const todayStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+  let am='',pm='',area='';
+  try{
+    Object.values(DB.shifts||{}).forEach(areas=>Object.entries(areas).forEach(([ar,sh])=>{
+      const di=(sh.dates||[]).findIndex(d=>d.d===todayStr); if(di<0)return;
+      (sh.entries||[]).forEach(e=>{
+        const staff=String(e.course||'').trim(); // 転置により e.course は担当者名
+        const a=e.a&&e.a[di]; if(!a)return;
+        if(String(a.am||'').trim()===c){am=staff; area=ar;}
+        if(String(a.pm||'').trim()===c){pm=staff; area=ar;}
+      });
+    }));
+  }catch(e){}
+  return {am,pm,area};
+}
+async function keytagSaveCourse(tagId){
+  const el=document.getElementById('kt-course-'+tagId); if(!el)return;
+  try{ await ktApi({action:'set_course',tag_id:tagId,course:el.value}); renderKeyTag(); }
+  catch(e){alert('保存に失敗しました');}
+}
 function keytagEnsureMap(){
   const mapEl=document.getElementById('keytag-map');
   if(!mapEl||typeof L==='undefined')return null;
@@ -1919,9 +1955,20 @@ async function renderKeyTag(){
   if(!listEl)return;
   if(positions.length===0){listEl.innerHTML='<div class="card" style="color:#888;">まだ位置データがありません。「⚡今すぐ更新」を押すか、タグを持ち出して待ってください。</div>';return;}
   const offName={}; offices.forEach(o=>offName[o.id]=o.name);
-  listEl.innerHTML=positions.map(p=>{
+  const courseDl='<datalist id="kt-course-dl">'+ktCourseList().map(c=>'<option value="'+ktEsc(c)+'">').join('')+'</datalist>';
+  listEl.innerHTML=courseDl+positions.map(p=>{
     const gmap=(p.lat!=null)?('https://www.google.com/maps/search/?api=1&query='+p.lat+','+p.lng):'';
     const where=p.office_id?('🏢 '+ktEsc(offName[p.office_id]||'営業所')+'内'):'🚚 外出中';
+    // コースから本日の担当を算出
+    let driverHtml='';
+    if(p.course){
+      const d=ktCourseDriverToday(p.course);
+      if(d&&(d.am||d.pm)){
+        driverHtml='<span style="font-size:13px;color:#166534;font-weight:700;margin-left:4px;">→ 本日の担当: '+(d.am?('朝刊 '+ktEsc(d.am)):'')+(d.am&&d.pm?' / ':'')+(d.pm?('夕刊 '+ktEsc(d.pm)):'')+'</span>';
+      }else{
+        driverHtml='<span style="font-size:12px;color:#999;margin-left:4px;">→ 本日のシフトに担当なし</span>';
+      }
+    }
     return '<div class="card" style="margin-bottom:10px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
         +'<div><b style="font-size:16px;">🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b> <span style="font-size:12px;color:#555;">'+where+'</span>'
@@ -1929,8 +1976,14 @@ async function renderKeyTag(){
         +(gmap?('<a href="'+gmap+'" target="_blank" style="text-decoration:none;padding:6px 12px;border-radius:8px;background:#0ea5e9;color:#fff;font-weight:700;">📍 地図で開く</a>'):'')
       +'</div>'
       +'<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
-        +'<label style="font-size:13px;color:#555;">貸与先:</label>'
-        +'<input id="kt-holder-'+ktEsc(p.tag_id)+'" value="'+ktEsc(p.holder||'')+'" placeholder="ドライバー名" style="flex:1;min-width:140px;max-width:220px;padding:6px;border:1px solid #cbd5e1;border-radius:6px;">'
+        +'<label style="font-size:13px;color:#555;min-width:56px;">🚩コース:</label>'
+        +'<input id="kt-course-'+ktEsc(p.tag_id)+'" list="kt-course-dl" value="'+ktEsc(p.course||'')+'" placeholder="例: 立川12" style="min-width:120px;max-width:180px;padding:6px;border:1px solid #cbd5e1;border-radius:6px;">'
+        +'<button onclick="keytagSaveCourse(\''+ktEsc(p.tag_id)+'\')" style="padding:6px 14px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;">保存</button>'
+        +driverHtml
+      +'</div>'
+      +'<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+        +'<label style="font-size:13px;color:#555;min-width:56px;">貸与先:</label>'
+        +'<input id="kt-holder-'+ktEsc(p.tag_id)+'" value="'+ktEsc(p.holder||'')+'" placeholder="手入力(コース未設定時)" style="min-width:120px;max-width:180px;padding:6px;border:1px solid #cbd5e1;border-radius:6px;">'
         +'<button onclick="keytagSaveHolder(\''+ktEsc(p.tag_id)+'\')" style="padding:6px 14px;border:none;border-radius:6px;background:#22c55e;color:#fff;font-weight:700;cursor:pointer;">保存</button>'
       +'</div>'
     +'</div>';
