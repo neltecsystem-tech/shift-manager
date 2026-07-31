@@ -70,6 +70,23 @@ def locate_capture(cid, name):
     }
 
 
+def get_tag_targets(device_list):
+    # 物理タグ(メーカー/モデルを持つ)を自動追跡。スマホ等(メーカー空)は除外。名前非依存。
+    out = []
+    for dm in device_list.deviceMetadata:
+        reg = dm.information.deviceRegistration
+        if not ((reg.manufacturer or "").strip() or (reg.model or "").strip()):
+            continue
+        try:
+            cids = dm.identifierInformation.canonicIds.canonicId
+            cid = cids[0].id if len(cids) else None
+        except Exception:
+            cid = None
+        if cid:
+            out.append((dm.userDefinedDeviceName or (reg.model or "").strip() or cid, cid))
+    return out
+
+
 def main():
     result_hex = request_device_list()
     device_list = parse_device_list_protobuf(result_hex)
@@ -83,7 +100,7 @@ def main():
     if KEY_TAG_IDS:
         targets = [(n, c) for (n, c) in canonic_ids if c in KEY_TAG_IDS]
     else:
-        targets = [(n, c) for (n, c) in canonic_ids if "tag" in (n or "").lower()]
+        targets = get_tag_targets(device_list)
     if not targets:
         print("追跡対象なし"); return
 
