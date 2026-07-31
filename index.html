@@ -579,6 +579,22 @@ tbody tr:hover { background:var(--primary-light); }
       </div>
       <div style="color:var(--text-sub);font-size:12px;margin-top:4px;">位置は約1時間ごとに自動更新。タグはドライバーのスマホが近くにある時ほど頻繁に更新されます。</div>
       <div id="keytag-map" style="height:420px;border-radius:10px;margin-top:12px;background:#eef;"></div>
+      <div id="keytag-place-hint" style="display:none;margin-top:8px;color:#b45309;font-weight:700;">📍 地図上の営業所の位置をクリックしてください（キャンセルはもう一度ボタン）</div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <h3 style="margin:0;">🏢 営業所（ジオフェンス）<span style="font-size:12px;color:var(--text-sub);font-weight:normal;"> ここを出た/戻った時刻を記録します</span></h3>
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input id="kt-office-name" placeholder="営業所名（例: 荒川営業所）" style="padding:6px;border:1px solid #cbd5e1;border-radius:6px;min-width:160px;">
+        <label style="font-size:13px;color:#555;">半径</label>
+        <input id="kt-office-radius" type="number" value="150" style="width:70px;padding:6px;border:1px solid #cbd5e1;border-radius:6px;">
+        <span style="font-size:13px;color:#555;">m</span>
+        <button id="kt-office-place" onclick="keytagTogglePlacing()" style="padding:6px 12px;border:none;border-radius:6px;background:#22c55e;color:#fff;font-weight:700;cursor:pointer;">📍 地図で位置を指定して登録</button>
+      </div>
+      <div id="keytag-offices" style="margin-top:10px;"></div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <h3 style="margin:0 0 8px 0;">🕐 出入り履歴</h3>
+      <div id="keytag-events"></div>
     </div>
     <div id="keytag-list" style="margin-top:12px;"></div>
   </div>
@@ -1799,48 +1815,115 @@ function showView(v,btn){
   ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit,invoice:invInit,myshift:initMyShift,changelog:renderChangelog,ownermembers:invOwnerRenderView,keytag:renderKeyTag}[v]||function(){})();
 }
 
-// ==== 🔑 鍵マップ (スマートタグ位置) ====
+// ==== 🔑 鍵マップ (スマートタグ位置 + 営業所ジオフェンス) ====
 const KEYTAG_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/key-tag';
-let keytagMap=null, keytagMarkers=[];
+let keytagMap=null, keytagMarkers=[], keytagCircles=[], keytagPlacing=false;
 function ktEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function ktTime(s){if(!s)return '';try{return new Date(s).toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}catch(e){return String(s);}}
+async function ktApi(payload){
+  const r=await fetch(KEYTAG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({admin_password:adminPw},payload))});
+  return r.json();
+}
+function keytagEnsureMap(){
+  const mapEl=document.getElementById('keytag-map');
+  if(!mapEl||typeof L==='undefined')return null;
+  if(!keytagMap){
+    keytagMap=L.map(mapEl).setView([35.73,139.73],12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap',maxZoom:19}).addTo(keytagMap);
+    keytagMap.on('click',keytagMapClick);
+  }
+  setTimeout(()=>{try{keytagMap.invalidateSize();}catch(e){}},120);
+  return keytagMap;
+}
+async function keytagMapClick(e){
+  if(!keytagPlacing)return;
+  const name=(document.getElementById('kt-office-name').value||'').trim();
+  if(!name){alert('先に営業所名を入力してください');return;}
+  const radius=parseInt(document.getElementById('kt-office-radius').value,10)||150;
+  keytagPlacing=false;
+  document.getElementById('keytag-place-hint').style.display='none';
+  document.getElementById('kt-office-place').textContent='📍 地図で位置を指定して登録';
+  const j=await ktApi({action:'add_office',name:name,lat:e.latlng.lat,lng:e.latlng.lng,radius_m:radius});
+  if(j.error){alert('営業所の登録に失敗: '+j.error);return;}
+  document.getElementById('kt-office-name').value='';
+  renderKeyTag();
+}
+function keytagTogglePlacing(){
+  const nameOk=(document.getElementById('kt-office-name').value||'').trim();
+  if(!keytagPlacing && !nameOk){alert('先に営業所名を入力してください');return;}
+  keytagPlacing=!keytagPlacing;
+  document.getElementById('keytag-place-hint').style.display=keytagPlacing?'block':'none';
+  document.getElementById('kt-office-place').textContent=keytagPlacing?'✋ キャンセル':'📍 地図で位置を指定して登録';
+  if(keytagPlacing)keytagEnsureMap();
+}
+async function keytagDelOffice(id,name){
+  if(!confirm('営業所「'+name+'」を削除しますか？')) return;
+  await ktApi({action:'del_office',id:id});
+  renderKeyTag();
+}
 async function renderKeyTag(){
   const listEl=document.getElementById('keytag-list');
   if(listEl)listEl.innerHTML='<div style="padding:12px;color:#888;">読み込み中...</div>';
-  let positions=[];
+  let positions=[],offices=[],events=[];
   try{
-    const r=await fetch(KEYTAG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list',admin_password:adminPw})});
-    const j=await r.json();
-    if(j.error){if(listEl)listEl.innerHTML='<div style="padding:12px;color:#c00;">'+ktEsc(j.error)+'（管理者ログインが必要です）</div>';return;}
-    positions=j.positions||[];
+    const [jp,jo,je]=await Promise.all([ktApi({action:'list'}),ktApi({action:'list_offices'}),ktApi({action:'list_events',limit:100})]);
+    if(jp.error){if(listEl)listEl.innerHTML='<div style="padding:12px;color:#c00;">'+ktEsc(jp.error)+'（管理者ログインが必要です）</div>';return;}
+    positions=jp.positions||[]; offices=jo.offices||[]; events=je.events||[];
   }catch(e){if(listEl)listEl.innerHTML='<div style="padding:12px;color:#c00;">取得に失敗しました</div>';return;}
 
-  // 地図
-  const mapEl=document.getElementById('keytag-map');
-  if(mapEl && typeof L!=='undefined'){
-    if(!keytagMap){
-      keytagMap=L.map(mapEl).setView([35.73,139.73],12);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap',maxZoom:19}).addTo(keytagMap);
-    }
-    setTimeout(()=>{try{keytagMap.invalidateSize();}catch(e){}},120);
-    keytagMarkers.forEach(m=>keytagMap.removeLayer(m)); keytagMarkers=[];
+  // 地図(タグマーカー + 営業所の円)
+  const map=keytagEnsureMap();
+  if(map){
+    keytagMarkers.forEach(m=>map.removeLayer(m)); keytagMarkers=[];
+    keytagCircles.forEach(c=>map.removeLayer(c)); keytagCircles=[];
     const pts=[];
+    offices.forEach(o=>{
+      const c=L.circle([o.lat,o.lng],{radius:o.radius_m,color:'#16a34a',weight:1,fillColor:'#22c55e',fillOpacity:0.12}).addTo(map).bindPopup('🏢 '+ktEsc(o.name)+'（半径'+o.radius_m+'m）');
+      keytagCircles.push(c); pts.push([o.lat,o.lng]);
+    });
     positions.forEach(p=>{
       if(p.lat==null||p.lng==null)return;
-      const m=L.marker([p.lat,p.lng]).addTo(keytagMap).bindPopup('<b>🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b><br>'+(p.holder?('貸与先: '+ktEsc(p.holder)+'<br>'):'')+'最終測位: '+ktTime(p.reported_at));
+      const m=L.marker([p.lat,p.lng]).addTo(map).bindPopup('<b>🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b><br>'+(p.holder?('貸与先: '+ktEsc(p.holder)+'<br>'):'')+'最終測位: '+ktTime(p.reported_at));
       keytagMarkers.push(m); pts.push([p.lat,p.lng]);
     });
-    if(pts.length){try{keytagMap.fitBounds(pts,{padding:[40,40],maxZoom:16});}catch(e){}}
+    if(pts.length){try{map.fitBounds(pts,{padding:[40,40],maxZoom:16});}catch(e){}}
   }
 
-  // 一覧
+  // 営業所一覧
+  const offEl=document.getElementById('keytag-offices');
+  if(offEl){
+    offEl.innerHTML = offices.length===0
+      ? '<div style="color:#888;font-size:13px;">営業所は未登録です。名前を入れて「地図で位置を指定して登録」を押し、地図をクリックしてください。</div>'
+      : offices.map(o=>'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #eee;"><span>🏢 <b>'+ktEsc(o.name)+'</b> <span style="color:#888;font-size:12px;">（半径'+o.radius_m+'m）</span></span><button onclick="keytagDelOffice('+o.id+',\''+ktEsc(o.name)+'\')" style="padding:4px 10px;border:1px solid #fca5a5;border-radius:6px;background:#fff;color:#ef4444;cursor:pointer;">削除</button></div>').join('');
+  }
+
+  // 出入り履歴
+  const evEl=document.getElementById('keytag-events');
+  if(evEl){
+    if(events.length===0){evEl.innerHTML='<div style="color:#888;font-size:13px;">まだ記録がありません。営業所を登録すると、以降の出入り（出発/帰着）が記録されます。</div>';}
+    else{
+      evEl.innerHTML='<div style="max-height:280px;overflow:auto;">'+events.map(ev=>{
+        const dep=ev.event_type==='depart';
+        return '<div style="display:flex;gap:10px;align-items:center;padding:5px 0;border-bottom:1px solid #f1f5f9;font-size:13px;">'
+          +'<span style="min-width:118px;color:#333;">'+(ktTime(ev.event_at)||'—')+'</span>'
+          +'<span style="padding:2px 8px;border-radius:10px;font-weight:700;color:#fff;background:'+(dep?'#f59e0b':'#22c55e')+';">'+(dep?'出発':'帰着')+'</span>'
+          +'<span style="color:#555;">🔑'+ktEsc(ev.tag_name||ev.tag_id)+'</span>'
+          +'<span style="color:#888;">'+ktEsc(ev.office_name||'')+'</span>'
+        +'</div>';
+      }).join('')+'</div>';
+    }
+  }
+
+  // タグ一覧
   if(!listEl)return;
-  if(positions.length===0){listEl.innerHTML='<div class="card" style="color:#888;">まだ位置データがありません。自動更新(約1時間ごと)を待つか、タグを屋外に持ち出してください。</div>';return;}
+  if(positions.length===0){listEl.innerHTML='<div class="card" style="color:#888;">まだ位置データがありません。「⚡今すぐ更新」を押すか、タグを持ち出して待ってください。</div>';return;}
+  const offName={}; offices.forEach(o=>offName[o.id]=o.name);
   listEl.innerHTML=positions.map(p=>{
     const gmap=(p.lat!=null)?('https://www.google.com/maps/search/?api=1&query='+p.lat+','+p.lng):'';
+    const where=p.office_id?('🏢 '+ktEsc(offName[p.office_id]||'営業所')+'内'):'🚚 外出中';
     return '<div class="card" style="margin-bottom:10px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
-        +'<div><b style="font-size:16px;">🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b>'
+        +'<div><b style="font-size:16px;">🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b> <span style="font-size:12px;color:#555;">'+where+'</span>'
           +'<div style="color:#666;font-size:12px;">最終測位: '+(ktTime(p.reported_at)||'—')+' ／ 取得: '+(ktTime(p.updated_at)||'—')+'</div></div>'
         +(gmap?('<a href="'+gmap+'" target="_blank" style="text-decoration:none;padding:6px 12px;border-radius:8px;background:#0ea5e9;color:#fff;font-weight:700;">📍 地図で開く</a>'):'')
       +'</div>'
