@@ -15199,15 +15199,18 @@ function admShopListRenderSource(){
   }else if(admSlSource==='live'){
     el.innerHTML=`⚠️ <b>ライブの店舗マスタ</b>と突合中（この月の月初スナップ未作成）。月初構成で突合したい場合は店舗マスタ画面で「📌 月初スナップ作成」を実行してください。`;
     el.style.cssText='font-size:12px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;padding:6px 10px;border-radius:8px;';
+  }else if(admSlSource==='error'){
+    el.innerHTML=`⛔ <b>店舗マスタの取得に失敗しました</b>（Sheets読み取り上限などの一時的エラーの可能性）。少し待って「🔄 マスタ再取得」を押してください。0件での誤突合を防ぐため中止しています。`;
+    el.style.cssText='font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;padding:6px 10px;border-radius:8px;';
   }else{el.innerHTML='';}
 }
 
 async function admShopListReloadMaster(){
   invalidateShopMasterCache();
   admSlMaster=null;
-  await admShopListEnsureMaster();
+  const ok=await admShopListEnsureMaster();
   if(admSlData)admShopListAnalyze();
-  alert('店舗マスタを再取得しました');
+  alert(ok?('店舗マスタを再取得しました（'+(admSlMaster?admSlMaster.length:0)+'店）'):'⚠️ 店舗マスタの取得に失敗しました。少し待ってからもう一度お試しください。');
 }
 
 // 対象月変更: マスタを読み直して再解析
@@ -15218,15 +15221,30 @@ async function admShopListOnMonthChange(){
 }
 
 async function admShopListEnsureMaster(){
-  if(admSlMaster)return;
+  if(admSlMaster&&admSlMaster.length)return true;
   // 対象月の月初スナップを優先、無ければライブ
   const month=(document.getElementById('adm-sl-month')||{}).value||'';
   let json=month?await fetchShopMasterSnapshot(month):null;
-  if(json){admSlSource='snapshot:'+month;}
-  else{json=await fetchShopMasterList();admSlSource='live';}
-  admShopListRenderSource();
-  const recs=json.records||[];
-  admSlMaster=recs.map(r=>({
+  let src='';
+  if(json&&(json.records||[]).length){src='snapshot:'+month;}
+  else{
+    // ライブへフォールバック。取得失敗/空(429・Sheets読み取り上限)なら force で数回リトライ。
+    // ここで0件のまま突合すると全店が「荷主のみ」と誤判定されるため、必ず中身の有無を確認する。
+    json=null;
+    for(let i=0;i<3;i++){
+      if(i>0){invalidateShopMasterCache();await new Promise(r=>setTimeout(r,1200*i));}
+      json=await fetchShopMasterList({force:i>0});
+      if(json&&!json.error&&(json.records||[]).length)break;
+    }
+    src='live';
+  }
+  if(!json||json.error||!(json.records||[]).length){
+    // 取得失敗 → admSlMaster は上書きしない(前回値を保持)。エラー表示して中止。
+    admSlSource='error';admShopListRenderSource();
+    return false;
+  }
+  admSlSource=src;admShopListRenderSource();
+  admSlMaster=json.records.map(r=>({
     row:r.row_number,
     code:String(r.col_2||'').trim(),
     name:String(r.col_3||'').trim(),
@@ -15239,6 +15257,7 @@ async function admShopListEnsureMaster(){
     lastDeliver:String(r.col_26||'').trim(),
     closed:String(r.col_1||'').includes('納品中止'),
   })).filter(m=>m.code);
+  return admSlMaster.length>0;
 }
 
 async function admShopListUpload(event){
@@ -15358,7 +15377,15 @@ async function admShopListUpload(event){
 }
 
 function admShopListAnalyze(){
-  if(!admSlData||!admSlMaster)return;
+  if(!admSlData)return;
+  // 店舗マスタが0件(取得失敗)のまま突合すると全店が「荷主のみ」と誤判定される → 中止して案内。
+  if(!admSlMaster||!admSlMaster.length){
+    const s=document.getElementById('adm-sl-summary');
+    if(s)s.innerHTML='<p style="color:#b91c1c;font-weight:bold;">⛔ 店舗マスタを取得できませんでした（0件）。全店が「荷主のみ」と誤判定されるのを防ぐため突合を中止しました。<br>少し待って「🔄 マスタ再取得」を押してください。</p>';
+    const t=document.getElementById('adm-sl-tabs');if(t)t.style.display='none';
+    const rEl=document.getElementById('adm-sl-result');if(rEl)rEl.innerHTML='';
+    return;
+  }
   const {moto,closeOpen,parsedDate}=admSlData;
   const masterMap=new Map();
   admSlMaster.forEach(m=>masterMap.set(m.code,m));
