@@ -189,11 +189,16 @@ Deno.serve(async (req: Request) => {
     };
     let partialCleared = 0;
     try {
-      const psResp = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(PARTIAL_SHEET)}!A2:J10000`,
-        { headers: { 'Authorization': `Bearer ${token}` } }
-      );
-      const psRows: string[][] = psResp.ok ? ((await psResp.json()).values ?? []) : [];
+      // タブ読取が一時的に空/失敗することがあるため2回までリトライ(初回のみ空だった事象の対策)
+      let psRows: string[][] = [];
+      for (let a = 0; a < 2; a++) {
+        const psResp = await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(PARTIAL_SHEET)}!A2:J10000`,
+          { headers: { 'Authorization': `Bearer ${token}` } }
+        );
+        if (psResp.ok) { psRows = (await psResp.json()).values ?? []; if (psRows.length) break; }
+        if (a === 0) await new Promise(r => setTimeout(r, 600));
+      }
       if (psRows.length) {
         const codeToRow = new Map<string, number>(); // 店舗コード(C=2) → master rowNum
         rows.forEach((row: string[], i: number) => { const c = (row[2] ?? '').trim(); if (c && !codeToRow.has(c)) codeToRow.set(c, i + 3); });
