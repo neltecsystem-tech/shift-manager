@@ -2836,7 +2836,7 @@ function getPhone(name){
   return s?s.phone:'';
 }
 function renderTenpo(){
-  const nm=document.getElementById('tp-name').value.trim();
+  const nm=document.getElementById('tp-name').value.trim().normalize('NFKC').toLowerCase();
   const area=document.getElementById('tp-area').value;
   const course=document.getElementById('tp-course').value.trim();
   const dateStr=document.getElementById('tp-date').value;
@@ -2848,7 +2848,7 @@ function renderTenpo(){
     return;
   }
   let f=src;
-  if(nm)f=f.filter(t=>t.name.includes(nm));
+  if(nm)f=f.filter(t=>String(t.name||'').normalize('NFKC').toLowerCase().includes(nm));
   if(area)f=f.filter(t=>t.area===area);
   const isAm=tpEd==='am';
   if(course)f=f.filter(t=>(t.amCourse||'').includes(course)||(t.pmCourse||'').includes(course)||(t.keibaCourse||'').includes(course));
@@ -3649,7 +3649,8 @@ async function smPickAllAreas(){
 function smFilter(){
   smRenderLimit=SM_PAGE; // フィルタ変更で表示件数をリセット(先頭から)
   const area=document.getElementById('sm-area').value;
-  const q=(document.getElementById('sm-search').value||'').toLowerCase();
+  // 全角/半角を正規化(NFKC)して検索。店舗名の英字(例 LS…)を全角ＬＳで入力しても半角マスタにヒットさせる
+  const q=(document.getElementById('sm-search').value||'').normalize('NFKC').toLowerCase().trim();
   const verifyEl=document.getElementById('sm-verify-filter');
   const verify=verifyEl?verifyEl.value:'';
   const aIdx=smColMap.area??1;
@@ -3659,7 +3660,7 @@ function smFilter(){
   smFiltered=smData.filter(r=>{
     if(area&&!smRowInArea(r,area,aIdx))return false;
     if(q){
-      const text=[r[`col_${nIdx}`],r[`col_${cIdx}`],r[`col_${aIdx}`]].join(' ').toLowerCase();
+      const text=[r[`col_${nIdx}`],r[`col_${cIdx}`],r[`col_${aIdx}`]].join(' ').normalize('NFKC').toLowerCase();
       if(!text.includes(q))return false;
     }
     if(verify&&vIdx!=null){
@@ -6911,15 +6912,15 @@ function smShowClose(){
 }
 
 function smCloseSearch(){
-  const q=(document.getElementById('smc-search').value||'').trim().toLowerCase();
+  const q=(document.getElementById('smc-search').value||'').trim().normalize('NFKC').toLowerCase();
   const box=document.getElementById('smc-results');
   if(q.length<2){box.style.display='none';return;}
   const nIdx=smColMap.name??3;
   const cIdx=smColMap.code??2;
   const aIdx=smColMap.area??1;
   const matches=smData.filter(r=>{
-    const name=(r[`col_${nIdx}`]||'').toLowerCase();
-    const code=(r[`col_${cIdx}`]||'').toLowerCase();
+    const name=(r[`col_${nIdx}`]||'').normalize('NFKC').toLowerCase();
+    const code=(r[`col_${cIdx}`]||'').normalize('NFKC').toLowerCase();
     return name.includes(q)||code.includes(q);
   }).slice(0,20);
   if(!matches.length){box.innerHTML='<div style="padding:10px;color:var(--text-sub);font-size:13px;">該当なし</div>';box.style.display='block';return;}
