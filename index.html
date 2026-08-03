@@ -6948,10 +6948,11 @@ function smShowClose(){
   document.getElementById('sm-close-modal').style.display='flex';
 }
 
-function smCloseSearch(){
-  const q=(document.getElementById('smc-search').value||'').trim().normalize('NFKC').toLowerCase();
+async function smCloseSearch(){
   const box=document.getElementById('smc-results');
+  const q=(document.getElementById('smc-search').value||'').trim().normalize('NFKC').toLowerCase();
   if(q.length<2){box.style.display='none';return;}
+  if(!smData.length&&typeof smLoadPromise!=='undefined'&&smLoadPromise){box.innerHTML='<div style="padding:10px;color:var(--text-sub);font-size:13px;">店舗データ読込中...</div>';box.style.display='block';try{await smLoadPromise;}catch(_){}}
   const nIdx=smColMap.name??3;
   const cIdx=smColMap.code??2;
   const aIdx=smColMap.area??1;
@@ -7037,10 +7038,11 @@ function smShowPartial(){
   document.getElementById('sm-partial-modal').style.display='flex';
   smPartialLoadList();
 }
-function smPartialSearch(){
-  const q=(document.getElementById('smp-search').value||'').trim().normalize('NFKC').toLowerCase();
+async function smPartialSearch(){
   const box=document.getElementById('smp-results');
+  const q=(document.getElementById('smp-search').value||'').trim().normalize('NFKC').toLowerCase();
   if(q.length<2){box.style.display='none';return;}
+  if(!smData.length&&typeof smLoadPromise!=='undefined'&&smLoadPromise){box.innerHTML='<div style="padding:10px;color:var(--text-sub);font-size:13px;">店舗データ読込中...</div>';box.style.display='block';try{await smLoadPromise;}catch(_){}}
   const nIdx=smColMap.name??3,cIdx=smColMap.code??2,aIdx=smColMap.area??1;
   const matches=smData.filter(r=>{
     const name=(r[`col_${nIdx}`]||'').normalize('NFKC').toLowerCase();
