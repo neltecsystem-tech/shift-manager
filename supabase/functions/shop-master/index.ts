@@ -112,7 +112,7 @@ const ADMIN_WRITE_ACTIONS = new Set([
   'batch_update_placeid','fix_validation','bulk_lock_gps','apply_new_pm_courses',
   'snapshot_purge_course','snapshot_remove_store','snapshot_update_cells','snapshot_sync_store',
   'create_place_id_helper_tab','apply_place_id_helper_tab',
-  'partial_stop_add','partial_stop_cancel',
+  'partial_stop_add','partial_stop_cancel','snapshot_purge_store_course',
 ]);
 // driver: 測定中にドライバーが書く GPS/判定 → ログイン済みなら誰でも可(role不問)。
 const AUTHED_WRITE_ACTIONS = new Set(['batch_update_latlng','batch_update_verify']);
@@ -695,6 +695,34 @@ Deno.serve(async (req: Request) => {
         try { await recomputeSnapshotSummary(token, month); } catch (_) { /* 集計同期は致命的でない */ }
       }
       return new Response(JSON.stringify({ success: true, removed, notFound }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (action === 'snapshot_purge_store_course') {
+      // 月初の訂正(区分別): 指定店の「その区分だけ」を月初スナップから除外(他区分は残す)。部分中止の突合解消用。
+      const month = (reqBody.month || '').toString().trim();
+      const code = String(reqBody.code || '').trim();
+      const cat = String(reqBody.cat || '').trim(); // 朝刊/平日/夕刊/競馬/朝出し
+      // 区分 → クリアするスナップ列(course/order/time、夕刊は新夕刊AJ=35も)
+      const CAT_COLS: Record<string, number[]> = { '朝刊': [5, 12, 13], '平日': [14, 17, 18, 35], '夕刊': [14, 17, 18, 35], '競馬': [19, 23, 24], '朝出し': [8] };
+      const cols = CAT_COLS[cat];
+      if (!/^\d{4}-\d{2}$/.test(month) || !code || !cols) {
+        return new Response(JSON.stringify({ error: 'month(YYYY-MM)/code/cat(朝刊・平日・夕刊・競馬・朝出し) が必要です' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const tab = SNAP_PREFIX + month;
+      const sr = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(tab)}!A1:${COL_END}10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!sr.ok) return new Response(JSON.stringify({ error: 'snapshot not found', month }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const snapRows = ((await sr.json()).values || []) as string[][];
+      let rowNum = -1; let sname = '';
+      for (let i = 1; i < snapRows.length; i++) { if (String((snapRows[i] || [])[2] || '').trim() === code) { rowNum = i + 1; sname = String((snapRows[i] || [])[3] || ''); break; } }
+      if (rowNum < 0) return new Response(JSON.stringify({ error: `${month} スナップに店舗コード ${code} が見つかりません` }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const data = cols.map((c) => ({ range: `'${tab}'!${colLetter(c)}${rowNum}:${colLetter(c)}${rowNum}`, values: [['']] }));
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ valueInputOption: 'RAW', data }),
+      });
+      try { await recomputeSnapshotSummary(token, month); } catch (_) { /* 集計同期は致命的でない */ }
+      await appendHistory(token, [[jstStamp(), '月初区分除外', code, sname, `${cat} を ${month} 月初スナップから除外`, actorBy]]);
+      return new Response(JSON.stringify({ success: true, cleared: cols.length }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     if (action === 'snapshot_list') {

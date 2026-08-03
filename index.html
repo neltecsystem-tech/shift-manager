@@ -324,7 +324,7 @@ tbody tr:hover { background:var(--primary-light); }
           <label style="font-size:12px;color:var(--text-sub)">最終納品日 *</label>
           <input type="date" id="smc-last-deliver" onchange="smCloseAutoDate('deliver')" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;">
         </div>
-        <p style="font-size:12px;color:var(--text-sub);margin-bottom:12px;">※最終納品日の翌月20日を過ぎると、コース名が自動でクリアされ、営業所に「納品中止」が追加されます。</p>
+        <p style="font-size:12px;color:var(--text-sub);margin-bottom:12px;">※最終納品日の<b>翌日</b>に、コース名が自動でクリアされ、営業所に「納品中止」が追加されます(即時反映)。請求は月初スナップ基準なので当月請求には影響しません。</p>
         <button onclick="smCloseSave()" id="smc-submit" style="width:100%;background:var(--danger);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">閉店情報を保存</button>
       </div>
     </div>
@@ -7023,7 +7023,7 @@ async function smCloseSave(){
   try{
     await smPost({action:'update',row_number:parseInt(rowNum),record});
     document.getElementById('sm-close-modal').style.display='none';
-    alert('閉店情報を保存しました。翌月20日以降にコース名が自動クリアされます。');
+    alert('閉店情報を保存しました。最終納品日の翌日にコース名が自動クリアされます(請求は月初スナップ基準)。');
     await smLoad(true);
   }catch(e){alert('エラー: '+e.message);}
   btn.textContent='閉店情報を保存';btn.disabled=false;
@@ -15775,7 +15775,7 @@ function admShopListRender(){
           let act='<span style="color:#cbd5e1;font-size:11px;">—</span>';
           if(snapM){
             if(String(s.kind).indexOf('荷主のみ')===0)act=`<button onclick="admSlSnapSync('${esc(s.code)}')" title="月初に居た店ならスナップ(=請求)に追加。現行マスタの値をコピー" style="background:#15803d;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;">📌 月初に反映</button>`;
-            else if(String(s.kind).indexOf('マスタのみ')===0)act=`<button onclick="admSlSnapRemove('${esc(s.code)}','${esc((s.name||'').replace(/'/g,''))}')" title="月初に居なかった店ならスナップ(=請求)から除外。現行マスタは触らない" style="background:#dc2626;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;">🚫 月初から除外</button>`;
+            else if(String(s.kind).indexOf('マスタのみ')===0)act=`<button onclick="admSlSnapPurgeCourse('${esc(s.code)}','${esc((s.name||'').replace(/'/g,''))}','${esc(dc)}')" title="この区分(${esc(dc)})だけ月初スナップから除外。他区分(朝刊など)は残す=部分中止の突合解消用" style="background:#c2410c;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;">🚫 ${esc(dc)}だけ除外</button> <button onclick="admSlSnapRemove('${esc(s.code)}','${esc((s.name||'').replace(/'/g,''))}')" title="店舗ごとスナップから除外(全区分)。月初に居なかった店用" style="background:#fff;color:#dc2626;border:1px solid #fca5a5;padding:3px 7px;border-radius:6px;cursor:pointer;font-size:10px;font-weight:600;">店舗ごと</button>`;
           }
           html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;font-weight:600;color:${s.color};">${esc(s.kind)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${act}</td></tr>`;
         });
@@ -15878,6 +15878,20 @@ async function admSlSnapRemove(code,name){
     alert(`✓ ${month} の月初スナップから除外しました（${j.removed}件）。現行マスタはそのままです。`);
     admSlMaster=null;await admShopListEnsureMaster();admShopListAnalyze();
   }catch(e){alert('除外エラー: '+e.message);}
+}
+
+// 月初の訂正(区分別): 指定店の「その区分だけ」を月初スナップから除外(他区分は残す)。部分中止の突合解消用。
+async function admSlSnapPurgeCourse(code,name,cat){
+  const month=admSlSnapMonth();
+  if(!month){alert('いまライブ突合中のため月初スナップがありません。');return;}
+  if(!confirm(`「${name||code}」の「${cat}」だけを ${month} の月初スナップから除外します(他区分は残ります)。\n\n${cat}を取扱中止したのに月初スナップに残っている場合に実行してください。\nよろしいですか？`))return;
+  try{
+    const resp=await smPost({action:'snapshot_purge_store_course',month,code:String(code),cat});
+    const j=await resp.json();
+    if(j.error)throw new Error(j.error);
+    alert(`✓ ${month} 月初スナップから「${cat}」を除外しました。`);
+    admSlMaster=null;await admShopListEnsureMaster();admShopListAnalyze();
+  }catch(e){alert('除外エラー: '+(e.message||e));}
 }
 
 // コード相違(同一店・コードのみ違う)を 区分ごと一括で マスタの店舗コードに反映。
