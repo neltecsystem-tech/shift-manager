@@ -17,6 +17,7 @@ const SNAP_PREFIX = '月初_';   // タブ名 例: 月初_2026-06
 const SNAP_KEEP = 4;           // 直近4ヶ月分のスナップタブを保持(先月/今月+予備)
 const SNAP_RE = /^月初_\d{4}-\d{2}$/;
 const SUMMARY_SHEET = '月初集計'; // 4ヶ月超で実体タブを消しても残す請求店舗数の簡易履歴
+const HISTORY_SHEET = '変更履歴'; // 店舗マスタの追加/編集の監査ログ(going-forward)。列: 日時/種別/店舗コード/店舗名/変更内容/実行者
 const COL_END = 'AO';
 const N_COLS = 41;
 // AM=38 休店中(チェック), AN=39 休店開始日, AO=40 休店終了日 (休店終了日経過で cleanup-closed-shops が自動クリア)
@@ -302,12 +303,41 @@ async function reorderEdition(token: string, edition: { courseCol: number; order
   return { updated: data.length, course, total: targets.length };
 }
 
+// ── 変更履歴(going-forward 監査ログ)。店舗マスタSSの「変更履歴」タブへ best-effort 追記 ──
+function jstStamp(): string {
+  return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+}
+async function appendHistory(token: string, rows: string[][]) {
+  if (!rows.length) return;
+  try {
+    // タブが無ければヘッダ付きで作成
+    const metaResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties(title)`, { headers: { 'Authorization': `Bearer ${token}` } });
+    const props = ((await metaResp.json()).sheets || []).map((s: any) => s.properties);
+    if (!props.find((p: any) => p?.title === HISTORY_SHEET)) {
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requests: [{ addSheet: { properties: { title: HISTORY_SHEET, gridProperties: { rowCount: 20000, columnCount: 6 } } } }] }),
+      });
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(HISTORY_SHEET)}!A1?valueInputOption=RAW`, {
+        method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [['日時', '種別', '店舗コード', '店舗名', '変更内容', '実行者']] }),
+      });
+    }
+    const appendRange = encodeURIComponent(`'${HISTORY_SHEET}'!A:F`);
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${appendRange}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+      method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: rows }),
+    });
+  } catch (_) { /* 履歴は best-effort。失敗しても本処理は成功扱い */ }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
     const reqBody = await req.json();
     const { action, record, row_number, updates } = reqBody;
+    const actorBy = (reqBody.by && String(reqBody.by).trim()) || '—'; // 変更履歴の実行者(フロントが送信)
 
     // ---- 書き込み系は認証必須 (無認証の第三者による店舗マスタ改変を遮断) ----
     if (ADMIN_WRITE_ACTIONS.has(action) || AUTHED_WRITE_ACTIONS.has(action)) {
@@ -338,6 +368,20 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ areas, courses }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // ── 変更履歴の読み取り(認証不要・読み取りのみ)。code指定で店舗コード/店舗名で絞り込み ──
+    if (action === 'history_read') {
+      const metaResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties(title)`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const exists = ((await metaResp.json()).sheets || []).some((s: any) => s.properties?.title === HISTORY_SHEET);
+      if (!exists) return new Response(JSON.stringify({ rows: [] }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(HISTORY_SHEET)}!A2:F20000`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const vals = ((await r.json()).values ?? []) as string[][];
+      const q = (reqBody.code || '').toString().trim();
+      let rows = vals.map((v) => ({ at: v[0] || '', type: v[1] || '', code: v[2] || '', name: v[3] || '', detail: v[4] || '', by: v[5] || '' }));
+      if (q) rows = rows.filter((x) => x.code === q || x.code.includes(q) || x.name.includes(q));
+      rows.reverse(); // 新しい順
+      return new Response(JSON.stringify({ rows }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // ── 月初スナップショット ──
@@ -801,6 +845,7 @@ Deno.serve(async (req: Request) => {
       const rowResult = await rowResp.json();
       const currentRow = (rowResult.values?.[0] ?? []) as string[];
       while (currentRow.length < N_COLS) currentRow.push('');
+      const beforeRow = [...currentRow]; // 変更履歴の差分用に更新前を退避
       // 更新前のコース値を退避 (コース変更時に旧コースも再採番するため)
       const oldCourses = EDITION_COLS.map(e => ({ name: e.name, oldCourse: (currentRow[e.courseCol] || '').trim() }));
       Object.entries(record).forEach(([key, val]) => {
@@ -828,6 +873,19 @@ Deno.serve(async (req: Request) => {
           reorderResults.push({ edition: ed.name, ...r });
         }
       }
+      // 変更履歴: 変更されたセルの 前→後 を記録(ヘッダ名でラベル)
+      try {
+        const hdrResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A2:${COL_END}2`, { headers: { 'Authorization': `Bearer ${token}` } });
+        const hdrs = ((await hdrResp.json()).values?.[0] ?? []) as string[];
+        const changes: string[] = [];
+        Object.keys(record).forEach((k) => {
+          const m = k.match(/^col_(\d+)$/); if (!m) return;
+          const j = parseInt(m[1]);
+          const b = (beforeRow[j] ?? '').toString(); const a = (currentRow[j] ?? '').toString();
+          if (b !== a) changes.push(`${hdrs[j] || ('列' + j)}: 「${b || '空'}」→「${a || '空'}」`);
+        });
+        if (changes.length) await appendHistory(token, [[jstStamp(), '編集', currentRow[1] || '', currentRow[2] || '', changes.join(' / '), actorBy]]);
+      } catch (_) { /* 履歴は best-effort */ }
       return new Response(JSON.stringify({ success: true, reorder: reorderResults }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -866,6 +924,7 @@ Deno.serve(async (req: Request) => {
         const r = await reorderEdition(token, ed, course);
         reorderResults.push({ edition: ed.name, ...r });
       }
+      await appendHistory(token, [[jstStamp(), '追加', row[1] || '', row[2] || '', '新規登録', actorBy]]);
       return new Response(JSON.stringify({ success: true, updates: appendResult.updates ?? null, reorder: reorderResults }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -908,6 +967,7 @@ Deno.serve(async (req: Request) => {
         await reorderEdition(token, ed, course);
         reordered++;
       }
+      await appendHistory(token, rows.map((r) => [jstStamp(), '一括追加', r[1] || '', r[2] || '', 'CSV一括登録', actorBy]));
       return new Response(JSON.stringify({ success: true, added: rows.length, reordered }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

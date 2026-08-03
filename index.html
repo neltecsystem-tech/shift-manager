@@ -645,6 +645,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('shopcount')" id="adm-tab-shopcount" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📊 店舗集計</button>
         <button onclick="adminTab('billstats')" id="adm-tab-billstats" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📈 確定統計</button>
         <button onclick="adminTab('snapshot')" id="adm-tab-snapshot" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📌 月初スナップ</button>
+        <button onclick="adminTab('history')" id="adm-tab-history" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📝 変更履歴</button>
         <button onclick="adminTab('revenue')" id="adm-tab-revenue" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💰 収支管理</button>
         <button onclick="adminTab('billcond')" id="adm-tab-billcond" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 請求条件</button>
         <button onclick="adminTab('paystatement')" id="adm-tab-paystatement" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💴 支払い明細</button>
@@ -986,6 +987,20 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="admShopListSwitchTab('match')" id="adm-sl-tab-match" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">✅ 一致</button>
         </div>
         <div id="adm-sl-result" class="table-wrap"></div>
+      </div>
+
+      <!-- 📝 変更履歴 (店舗マスタの追加/編集ログ・going-forward) -->
+      <div id="adm-history" class="adm-panel" style="display:none;">
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:#166534;line-height:1.6;">
+          店舗マスタの<b>追加・編集</b>を記録した履歴です(この機能の導入以降に記録・過去分は含まれません)。<br>
+          「この店はいつ登録されたか」「月初スナップ後に変更されたか」等の確認に使えます。
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+          <input id="adm-hist-q" type="text" placeholder="店舗コード / 店舗名で絞り込み" style="flex:1;min-width:200px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;" onkeydown="if(event.key==='Enter')admHistoryLoad()">
+          <button onclick="admHistoryLoad()" style="padding:8px 16px;border-radius:8px;border:none;cursor:pointer;font-weight:600;background:var(--primary);color:#fff;">🔍 検索</button>
+          <button onclick="document.getElementById('adm-hist-q').value='';admHistoryLoad()" style="padding:8px 16px;border-radius:8px;border:1px solid #cbd5e1;cursor:pointer;font-weight:600;background:#fff;color:var(--text-sub);">全件</button>
+        </div>
+        <div id="adm-hist-result" class="table-wrap"><p style="text-align:center;padding:30px;color:var(--text-sub);">読み込み中...</p></div>
       </div>
 
       <!-- 🎁 特別日当 (特別単価: 日当=金額置換 / 日当+=金額加算) -->
@@ -3388,7 +3403,8 @@ const SM_PASSWORD='neltec2026';
 // 全ての write 呼び出しはこの smPost 経由にすること(読み取りは素の fetch でも可)。
 function smPost(payload){
   const tok=(typeof invAuthToken!=='undefined'&&invAuthToken)?invAuthToken:'';
-  return fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,auth_token:tok})});
+  const by=(typeof sysUserName!=='undefined'&&sysUserName)?sysUserName:'';
+  return fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,auth_token:tok,by})});
 }
 
 // 共通: 店舗マスタ list キャッシュ (TTL 5分 / Promise重複排除 / 429自動リトライ)
@@ -7098,6 +7114,38 @@ function admFeatureVisToggleAll(on){
   cont.querySelectorAll('input[data-feat]').forEach(el=>{el.checked=on;});
 }
 
+// ── 📝 変更履歴 (店舗マスタの追加/編集ログ) ──
+function admHistoryInit(){ admHistoryLoad(); }
+function admHistoryLoad(){
+  const box=document.getElementById('adm-hist-result');
+  const q=(document.getElementById('adm-hist-q').value||'').trim();
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  box.innerHTML='<p style="text-align:center;padding:30px;color:var(--text-sub);">読み込み中...</p>';
+  fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'history_read',code:q})})
+    .then(r=>r.json())
+    .then(j=>{
+      const rows=j.rows||[];
+      if(!rows.length){box.innerHTML='<p style="text-align:center;padding:30px;color:var(--text-sub);">'+(q?'該当する履歴がありません':'まだ変更履歴がありません(この機能の導入後の追加/編集から記録されます)')+'</p>';return;}
+      const badge=t=>{const m={'追加':'#dbeafe|#1e40af','一括追加':'#e0e7ff|#3730a3','編集':'#fef3c7|#92400e','削除':'#fee2e2|#991b1b'};const c=(m[t]||'#f1f5f9|#475569').split('|');return '<span style="background:'+c[0]+';color:'+c[1]+';padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;white-space:nowrap;">'+esc(t)+'</span>';};
+      let h='<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f8fafc;">'
+        +'<th style="text-align:left;padding:8px;border-bottom:2px solid #e2e8f0;white-space:nowrap;">日時</th>'
+        +'<th style="text-align:left;padding:8px;border-bottom:2px solid #e2e8f0;">種別</th>'
+        +'<th style="text-align:left;padding:8px;border-bottom:2px solid #e2e8f0;">店舗コード</th>'
+        +'<th style="text-align:left;padding:8px;border-bottom:2px solid #e2e8f0;">店舗名</th>'
+        +'<th style="text-align:left;padding:8px;border-bottom:2px solid #e2e8f0;">変更内容</th>'
+        +'<th style="text-align:left;padding:8px;border-bottom:2px solid #e2e8f0;">実行者</th></tr></thead><tbody>';
+      rows.forEach(r=>{h+='<tr style="border-bottom:1px solid #f1f5f9;">'
+        +'<td style="padding:8px;white-space:nowrap;color:var(--text-sub);">'+esc(r.at)+'</td>'
+        +'<td style="padding:8px;">'+badge(r.type)+'</td>'
+        +'<td style="padding:8px;font-weight:600;">'+esc(r.code)+'</td>'
+        +'<td style="padding:8px;">'+esc(r.name)+'</td>'
+        +'<td style="padding:8px;color:#475569;">'+esc(r.detail)+'</td>'
+        +'<td style="padding:8px;white-space:nowrap;">'+esc(r.by)+'</td></tr>';});
+      h+='</tbody></table>';
+      box.innerHTML='<div style="margin-bottom:8px;font-size:12px;color:var(--text-sub);">'+rows.length+'件</div>'+h;
+    })
+    .catch(e=>{box.innerHTML='<p style="text-align:center;padding:30px;color:#dc2626;">読み込みエラー: '+esc(e&&e.message||e)+'</p>';});
+}
 function adminTab(t){
   document.querySelectorAll('.adm-panel').forEach(p=>p.style.display='none');
   document.querySelectorAll('.adm-tab').forEach(b=>{b.style.background='#f1f5f9';b.style.color='var(--text-sub)';});
@@ -7127,6 +7175,7 @@ function adminTab(t){
   if(t==='mymaps')admMmInit();
   if(t==='storemap')admStoreMapInit();
   if(t==='snapshot')admSnapInit();
+  if(t==='history')admHistoryInit();
   if(t==='syshealth')admSysHealthInit();
 }
 function admSnapInit(){smLoadSnapshotInfo();smLoadSnapshotHistory();}
