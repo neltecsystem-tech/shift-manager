@@ -18,6 +18,8 @@ const SNAP_KEEP = 4;           // 直近4ヶ月分のスナップタブを保持
 const SNAP_RE = /^月初_\d{4}-\d{2}$/;
 const SUMMARY_SHEET = '月初集計'; // 4ヶ月超で実体タブを消しても残す請求店舗数の簡易履歴
 const HISTORY_SHEET = '変更履歴'; // 店舗マスタの追加/編集の監査ログ(going-forward)。列: 日時/種別/店舗コード/店舗名/変更内容/実行者
+const PARTIAL_SHEET = '取扱中止予約'; // 区分別の取扱中止予約。cleanup-closed-shops cronが最終納品日到来でその区分コースを自動クリア
+// 列(A..J): id / 店舗コード / 店舗名 / 区分(朝刊・夕刊・競馬・全部) / 最終納品日 / 最終回収日 / 状態(予約中・適用済・取消) / 登録日時 / 登録者 / 適用日時
 const COL_END = 'AO';
 const N_COLS = 41;
 // AM=38 休店中(チェック), AN=39 休店開始日, AO=40 休店終了日 (休店終了日経過で cleanup-closed-shops が自動クリア)
@@ -110,6 +112,7 @@ const ADMIN_WRITE_ACTIONS = new Set([
   'batch_update_placeid','fix_validation','bulk_lock_gps','apply_new_pm_courses',
   'snapshot_purge_course','snapshot_remove_store','snapshot_update_cells','snapshot_sync_store',
   'create_place_id_helper_tab','apply_place_id_helper_tab',
+  'partial_stop_add','partial_stop_cancel',
 ]);
 // driver: 測定中にドライバーが書く GPS/判定 → ログイン済みなら誰でも可(role不問)。
 const AUTHED_WRITE_ACTIONS = new Set(['batch_update_latlng','batch_update_verify']);
@@ -331,6 +334,21 @@ async function appendHistory(token: string, rows: string[][]) {
   } catch (_) { /* 履歴は best-effort。失敗しても本処理は成功扱い */ }
 }
 
+// 取扱中止予約タブが無ければヘッダ付きで作成
+async function ensurePartialTab(token: string): Promise<void> {
+  const metaResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties(title)`, { headers: { 'Authorization': `Bearer ${token}` } });
+  const props = ((await metaResp.json()).sheets || []).map((s: any) => s.properties);
+  if (props.find((p: any) => p?.title === PARTIAL_SHEET)) return;
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`, {
+    method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requests: [{ addSheet: { properties: { title: PARTIAL_SHEET, gridProperties: { rowCount: 10000, columnCount: 10 } } } }] }),
+  });
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(PARTIAL_SHEET)}!A1?valueInputOption=RAW`, {
+    method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: [['id', '店舗コード', '店舗名', '区分', '最終納品日', '最終回収日', '状態', '登録日時', '登録者', '適用日時']] }),
+  });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -382,6 +400,62 @@ Deno.serve(async (req: Request) => {
       if (q) rows = rows.filter((x) => x.code === q || x.code.includes(q) || x.name.includes(q));
       rows.reverse(); // 新しい順
       return new Response(JSON.stringify({ rows }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // ── 取扱中止予約(区分別) ────────────────────────────────
+    if (action === 'partial_stop_list') {
+      const metaResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties(title)`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const exists = ((await metaResp.json()).sheets || []).some((s: any) => s.properties?.title === PARTIAL_SHEET);
+      if (!exists) return new Response(JSON.stringify({ rows: [] }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(PARTIAL_SHEET)}!A2:J10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const vals = ((await r.json()).values ?? []) as string[][];
+      const code = (reqBody.code || '').toString().trim();
+      const status = (reqBody.status || '').toString().trim(); // 例 '予約中'
+      let rows = vals.map((v) => ({ id: v[0] || '', code: v[1] || '', name: v[2] || '', edition: v[3] || '', last_delivery: v[4] || '', last_collect: v[5] || '', status: v[6] || '', created_at: v[7] || '', by: v[8] || '', applied_at: v[9] || '' }));
+      if (code) rows = rows.filter((x) => x.code === code);
+      if (status) rows = rows.filter((x) => x.status === status);
+      rows.reverse();
+      return new Response(JSON.stringify({ rows }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    if (action === 'partial_stop_add') {
+      const rec = record || {};
+      const code = String(rec.code || '').trim();
+      const name = String(rec.name || '').trim();
+      const edition = String(rec.edition || '').trim(); // 朝刊/夕刊/競馬/全部
+      const lastDelivery = String(rec.last_delivery || '').trim().replace(/-/g, '/');
+      const lastCollect = String(rec.last_collect || '').trim().replace(/-/g, '/');
+      if (!code || !edition || !lastDelivery) {
+        return new Response(JSON.stringify({ error: 'code / edition / last_delivery は必須です' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      if (!['朝刊', '夕刊', '競馬', '全部'].includes(edition)) {
+        return new Response(JSON.stringify({ error: '区分は 朝刊/夕刊/競馬/全部 のいずれか' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      await ensurePartialTab(token);
+      const id = 'ps' + Date.now();
+      const row = [id, code, name, edition, lastDelivery, lastCollect, '予約中', jstStamp(), actorBy, ''];
+      const appendRange = encodeURIComponent(`'${PARTIAL_SHEET}'!A:J`);
+      const ar = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${appendRange}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [row] }),
+      });
+      if (!ar.ok) return new Response(JSON.stringify({ error: '予約の保存に失敗: ' + ar.status }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      await appendHistory(token, [[jstStamp(), '中止予約', code, name, `${edition} 最終納品日 ${lastDelivery}`, actorBy]]);
+      return new Response(JSON.stringify({ success: true, id }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    if (action === 'partial_stop_cancel') {
+      const id = String((record && record.id) || reqBody.id || '').trim();
+      if (!id) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(PARTIAL_SHEET)}!A2:J10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const vals = ((await r.json()).values ?? []) as string[][];
+      const idx = vals.findIndex((v) => (v[0] || '') === id);
+      if (idx < 0) return new Response(JSON.stringify({ error: '予約が見つかりません' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const rowNum = idx + 2;
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(PARTIAL_SHEET)}!G${rowNum}?valueInputOption=USER_ENTERED`, {
+        method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [['取消']] }),
+      });
+      await appendHistory(token, [[jstStamp(), '予約取消', vals[idx][1] || '', vals[idx][2] || '', `${vals[idx][3] || ''} の中止予約を取消`, actorBy]]);
+      return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // ── 月初スナップショット ──

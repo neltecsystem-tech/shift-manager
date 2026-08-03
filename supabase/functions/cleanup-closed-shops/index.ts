@@ -8,6 +8,7 @@ const corsHeaders = {
 // 店舗マスタは専用スプレッドシートへ独立 (2026-06-30)
 const SPREADSHEET_ID = '1KvMbiLMeUmUOiUwzcilp-6u2xzZXs68HcvtWuWqT70M';
 const SHEET_NAME = '店舗マスタ';
+const PARTIAL_SHEET = '取扱中止予約'; // 区分別の取扱中止予約(shop-master EFが登録)。最終納品日到来でその区分コースを自動クリア
 
 const SERVICE_ACCOUNT = JSON.parse(Deno.env.get('GOOGLE_SERVICE_ACCOUNT_KEY')!);
 
@@ -180,6 +181,76 @@ Deno.serve(async (req: Request) => {
       cleared++;
     }
 
+    // ── 部分中止(区分別)予約の適用 ──
+    // 取扱中止予約タブを読み、最終納品日を過ぎた"予約中"の該当区分コースだけを空にする(例: 夕刊・競馬だけ中止・朝刊は残す)。
+    const jstNow = new Date(now.getTime() + 9 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    const EDITION_BY_NAME: Record<string, { courseCol: number; orderCol: number; timeCol: number }> = {
+      '朝刊': EDITIONS[0], '夕刊': EDITIONS[1], '競馬': EDITIONS[2],
+    };
+    let partialCleared = 0;
+    try {
+      const psResp = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(PARTIAL_SHEET)}!A2:J10000`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      const psRows: string[][] = psResp.ok ? ((await psResp.json()).values ?? []) : [];
+      if (psRows.length) {
+        const codeToRow = new Map<string, number>(); // 店舗コード(C=2) → master rowNum
+        rows.forEach((row: string[], i: number) => { const c = (row[2] ?? '').trim(); if (c && !codeToRow.has(c)) codeToRow.set(c, i + 3); });
+        const cellUpdates: { range: string; values: string[][] }[] = [];
+        const statusUpdates: { range: string; values: string[][] }[] = [];
+        psRows.forEach((pr: string[], pi: number) => {
+          if ((pr[6] ?? '').trim() !== '予約中') return;
+          const lastDate = parseDate(pr[4] ?? '');
+          if (!lastDate) return;
+          if (todayMid <= lastDate) return; // まだ最終納品日を過ぎていない
+          const code = (pr[1] ?? '').trim();
+          const edition = (pr[3] ?? '').trim();
+          const rowNum = codeToRow.get(code);
+          const psRowNum = pi + 2;
+          if (!rowNum) return; // 店舗が見つからない → 放置(手動確認)
+          const mrow = rows[rowNum - 3] || [];
+          const clearEd = (ed: { courseCol: number; orderCol: number; timeCol: number }) => {
+            const c = (mrow[ed.courseCol] ?? '').trim();
+            if (c) affected[EDITIONS.indexOf(ed)].add(c); // 順番詰め直し対象に追加
+            cellUpdates.push({ range: `'${SHEET_NAME}'!${colLetter(ed.courseCol)}${rowNum}`, values: [['']] });
+            cellUpdates.push({ range: `'${SHEET_NAME}'!${colLetter(ed.orderCol)}${rowNum}`, values: [['']] });
+            cellUpdates.push({ range: `'${SHEET_NAME}'!${colLetter(ed.timeCol)}${rowNum}`, values: [['']] });
+            mrow[ed.courseCol] = ''; mrow[ed.orderCol] = ''; mrow[ed.timeCol] = '';
+          };
+          if (edition === '全部') {
+            EDITIONS.forEach(ed => clearEd(ed));
+            const area = (mrow[1] ?? '').trim();
+            if (!area.includes('納品中止')) { const na = area ? `${area}、納品中止` : '納品中止'; cellUpdates.push({ range: `'${SHEET_NAME}'!${colLetter(1)}${rowNum}`, values: [[na]] }); mrow[1] = na; }
+          } else {
+            const ed = EDITION_BY_NAME[edition];
+            if (!ed) return;
+            clearEd(ed);
+            // 夕刊は「新夕刊コース(AJ=35)」も突合(平日夕刊)で参照されるため一緒にクリア(取りこぼし防止)
+            if (edition === '夕刊' && (mrow[35] ?? '').trim()) {
+              cellUpdates.push({ range: `'${SHEET_NAME}'!${colLetter(35)}${rowNum}`, values: [['']] });
+              mrow[35] = '';
+            }
+          }
+          // G:J = 状態/登録日時(保持)/登録者(保持)/適用日時
+          statusUpdates.push({ range: `'${PARTIAL_SHEET}'!G${psRowNum}:J${psRowNum}`, values: [['適用済', pr[7] ?? '', pr[8] ?? '', jstNow]] });
+          partialCleared++;
+        });
+        if (cellUpdates.length) {
+          await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+            method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data: cellUpdates }),
+          });
+        }
+        if (statusUpdates.length) {
+          await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, {
+            method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data: statusUpdates }),
+          });
+        }
+      }
+    } catch (_) { /* 部分中止の適用は best-effort */ }
+
     // 影響を受けたコースの順番を店着時間順で 1..N に詰め直す (閉店で空いた欠番を解消)
     let reordered = 0;
     if (affected.some(s => s.size > 0)) {
@@ -230,9 +301,10 @@ Deno.serve(async (req: Request) => {
 
     return new Response(JSON.stringify({
       success: true,
-      message: `${cleared}件の店舗を処理（コース名クリア + B列に納品中止追加）／順番 ${reordered}セルを詰め直し／休店終了 ${suspendCleared}件クリア`,
+      message: `${cleared}件の店舗を処理（コース名クリア + B列に納品中止追加）／部分中止 ${partialCleared}件（区分別コースクリア）／順番 ${reordered}セルを詰め直し／休店終了 ${suspendCleared}件クリア`,
       total_checked: rows.length,
       cleared,
+      partialCleared,
       reordered,
       suspendCleared,
     }), {

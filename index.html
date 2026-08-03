@@ -287,6 +287,7 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="smBulkLockGps()" style="background:#475569;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 GPSあり一括ロック</button>
           <button onclick="smShowReplace()" style="background:#f59e0b;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔄 コース一括置換</button>
           <button onclick="smShowClose()" style="background:var(--danger);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 閉店情報</button>
+          <button onclick="smShowPartial()" style="background:#c2410c;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🚫 区分中止予約</button>
           <button onclick="smShowAdd()" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🏪 新店登録</button>
           <button onclick="smCsvImport()" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📥 CSV一括登録</button>
         </div>
@@ -325,6 +326,42 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <p style="font-size:12px;color:var(--text-sub);margin-bottom:12px;">※最終納品日の翌月20日を過ぎると、コース名が自動でクリアされ、営業所に「納品中止」が追加されます。</p>
         <button onclick="smCloseSave()" id="smc-submit" style="width:100%;background:var(--danger);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">閉店情報を保存</button>
+      </div>
+    </div>
+
+    <!-- 区分中止予約モーダル (夕刊だけ/競馬だけ 等の部分中止を予約) -->
+    <div id="sm-partial-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:200;justify-content:center;align-items:center;padding:20px;">
+      <div style="background:#fff;border-radius:16px;padding:24px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;position:relative;">
+        <button onclick="document.getElementById('sm-partial-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;">✕</button>
+        <h3 style="color:#c2410c;margin-bottom:6px;">🚫 区分中止の予約</h3>
+        <p style="font-size:12px;color:var(--text-sub);margin-bottom:14px;line-height:1.6;">夕刊・競馬だけなど<b>一部の区分だけ取扱中止</b>を予約します。最終納品日を過ぎると、その区分のコースだけ自動でクリアされ、<b>他の区分(朝刊など)は残ります</b>。</p>
+        <div style="margin-bottom:12px;">
+          <label style="font-size:12px;color:var(--text-sub)">店舗を検索</label>
+          <input type="text" id="smp-search" placeholder="店舗名・コードで検索..." oninput="dbInput('smPartialSearch')" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" autocomplete="off">
+          <div id="smp-results" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:0 0 8px 8px;display:none;"></div>
+        </div>
+        <div id="smp-selected" style="display:none;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:12px;margin-bottom:12px;">
+          <input type="hidden" id="smp-row"><input type="hidden" id="smp-code"><input type="hidden" id="smp-name">
+          <div id="smp-info"></div>
+          <div style="margin-top:10px;">
+            <label style="font-size:12px;color:var(--text-sub)">中止する区分(複数選択可)</label>
+            <div id="smp-editions" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:12px;">
+          <div style="flex:1;"><label style="font-size:12px;color:var(--text-sub)">最終回収日</label>
+            <input type="date" id="smp-last-collect" onchange="smPartialAutoDate('collect')" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+          <div style="flex:1;"><label style="font-size:12px;color:var(--text-sub)">最終納品日 *</label>
+            <input type="date" id="smp-last-deliver" onchange="smPartialAutoDate('deliver')" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        </div>
+        <button onclick="smPartialSave()" id="smp-submit" style="width:100%;background:#c2410c;color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">区分中止を予約</button>
+        <div style="margin-top:18px;border-top:1px solid #f1f5f9;padding-top:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span style="font-size:13px;font-weight:700;color:#334155;">📋 予約中の一覧</span>
+            <button onclick="smPartialLoadList()" style="font-size:12px;background:#f1f5f9;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;">🔄 更新</button>
+          </div>
+          <div id="smp-list" style="font-size:12px;"></div>
+        </div>
       </div>
     </div>
 
@@ -6989,6 +7026,97 @@ async function smCloseSave(){
     await smLoad(true);
   }catch(e){alert('エラー: '+e.message);}
   btn.textContent='閉店情報を保存';btn.disabled=false;
+}
+
+// ── 区分中止予約(夕刊だけ/競馬だけ 等の部分中止) ──
+function smShowPartial(){
+  ['smp-search'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('smp-results').style.display='none';
+  document.getElementById('smp-selected').style.display='none';
+  ['smp-row','smp-code','smp-name','smp-last-collect','smp-last-deliver'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('sm-partial-modal').style.display='flex';
+  smPartialLoadList();
+}
+function smPartialSearch(){
+  const q=(document.getElementById('smp-search').value||'').trim().normalize('NFKC').toLowerCase();
+  const box=document.getElementById('smp-results');
+  if(q.length<2){box.style.display='none';return;}
+  const nIdx=smColMap.name??3,cIdx=smColMap.code??2,aIdx=smColMap.area??1;
+  const matches=smData.filter(r=>{
+    const name=(r[`col_${nIdx}`]||'').normalize('NFKC').toLowerCase();
+    const code=(r[`col_${cIdx}`]||'').normalize('NFKC').toLowerCase();
+    return name.includes(q)||code.includes(q);
+  }).slice(0,20);
+  if(!matches.length){box.innerHTML='<div style="padding:10px;color:var(--text-sub);font-size:13px;">該当なし</div>';box.style.display='block';return;}
+  box.innerHTML=matches.map(r=>{
+    const area=r[`col_${aIdx}`]||'',code=r[`col_${cIdx}`]||'',name=r[`col_${nIdx}`]||'';
+    return `<div onclick="smPartialSelect(${r.row_number},'${area.replace(/'/g,"\\'")}','${code.replace(/'/g,"\\'")}','${name.replace(/'/g,"\\'")}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;display:flex;justify-content:space-between;" onmouseover="this.style.background='#fff7ed'" onmouseout="this.style.background='#fff'"><span><b>${name}</b> (${code})</span><span class="badge ${bc(area)}">${area}</span></div>`;
+  }).join('');
+  box.style.display='block';
+}
+function smPartialSelect(rowNum,area,code,name){
+  document.getElementById('smp-row').value=rowNum;
+  document.getElementById('smp-code').value=code;
+  document.getElementById('smp-name').value=name;
+  const rec=smData.find(r=>r.row_number===rowNum)||{};
+  // 朝刊=col_5 / 夕刊=col_14(無ければAJ=col_35) / 競馬=col_19
+  const eds=[{k:'朝刊',c:rec.col_5},{k:'夕刊',c:rec.col_14||rec.col_35},{k:'競馬',c:rec.col_19}];
+  const has=eds.filter(e=>String(e.c||'').trim());
+  document.getElementById('smp-info').innerHTML=`<div style="font-size:15px;font-weight:bold;color:#1e293b;">${name}</div><div style="font-size:12px;color:var(--text-sub);">${area} / ${code} / 行${rowNum}</div><div style="font-size:12px;color:#64748b;margin-top:4px;">現在の取扱: ${has.length?has.map(e=>e.k+'('+e.c+')').join(' / '):'なし'}</div>`;
+  document.getElementById('smp-editions').innerHTML=has.length
+    ?has.map(e=>`<label style="display:flex;align-items:center;gap:4px;background:#fff;border:1px solid #fed7aa;border-radius:8px;padding:6px 10px;cursor:pointer;"><input type="checkbox" class="smp-ed" value="${e.k}">${e.k}</label>`).join('')
+    :'<span style="font-size:12px;color:#94a3b8;">この店舗に取扱区分がありません</span>';
+  document.getElementById('smp-selected').style.display='block';
+  document.getElementById('smp-results').style.display='none';
+  document.getElementById('smp-search').value=name;
+}
+function smPartialAutoDate(from){
+  const col=document.getElementById('smp-last-collect'),del=document.getElementById('smp-last-deliver');
+  if(!col||!del)return;
+  if(from==='collect'){ if(col.value&&!del.value) del.value=smCloseDateShift(col.value,-1); }
+  else{ if(del.value&&!col.value) col.value=smCloseDateShift(del.value,1); }
+}
+async function smPartialSave(){
+  const code=document.getElementById('smp-code').value;
+  const name=document.getElementById('smp-name').value;
+  const lastDeliver=document.getElementById('smp-last-deliver').value;
+  const lastCollect=document.getElementById('smp-last-collect').value;
+  const eds=[...document.querySelectorAll('.smp-ed:checked')].map(c=>c.value);
+  if(!code){alert('店舗を選択してください');return;}
+  if(!eds.length){alert('中止する区分を選択してください');return;}
+  if(!lastDeliver){alert('最終納品日は必須です');return;}
+  const btn=document.getElementById('smp-submit');btn.textContent='予約中...';btn.disabled=true;
+  try{
+    for(const ed of eds){ // 区分ごとに1件ずつ予約(部分中止=他区分は残す)
+      const resp=await smPost({action:'partial_stop_add',record:{code,name,edition:ed,last_delivery:lastDeliver,last_collect:lastCollect}});
+      const j=await resp.json();
+      if(j.error)throw new Error(j.error);
+    }
+    alert(eds.join('・')+'の取扱中止を予約しました。最終納品日('+lastDeliver+')を過ぎると該当区分のコースが自動クリアされます(他区分は残ります)。');
+    document.getElementById('smp-last-deliver').value='';document.getElementById('smp-last-collect').value='';
+    [...document.querySelectorAll('.smp-ed:checked')].forEach(c=>c.checked=false);
+    smPartialLoadList();
+  }catch(e){alert('エラー: '+(e.message||e));}
+  btn.textContent='区分中止を予約';btn.disabled=false;
+}
+async function smPartialLoadList(){
+  const box=document.getElementById('smp-list');if(!box)return;
+  box.innerHTML='<span style="color:var(--text-sub);">読み込み中...</span>';
+  try{
+    const resp=await smPost({action:'partial_stop_list',status:'予約中'});
+    const j=await resp.json();const rows=j.rows||[];
+    if(!rows.length){box.innerHTML='<span style="color:var(--text-sub);">予約中はありません</span>';return;}
+    const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    box.innerHTML=rows.map(r=>`<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9;padding:6px 0;"><span><b>${esc(r.name||r.code)}</b> <span style="background:#ffedd5;color:#9a3412;border-radius:6px;padding:1px 6px;font-weight:700;">${esc(r.edition)}</span> 最終納品 ${esc(r.last_delivery)}</span><button onclick="smPartialCancel('${esc(r.id)}')" style="font-size:11px;background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:6px;padding:2px 8px;cursor:pointer;">取消</button></div>`).join('');
+  }catch(e){box.innerHTML='<span style="color:#dc2626;">読み込みエラー</span>';}
+}
+async function smPartialCancel(id){
+  if(!confirm('この区分中止予約を取り消しますか？'))return;
+  try{
+    const resp=await smPost({action:'partial_stop_cancel',record:{id}});
+    const j=await resp.json();if(j.error)throw new Error(j.error);
+    smPartialLoadList();
+  }catch(e){alert('エラー: '+(e.message||e));}
 }
 
 // ===== 管理画面 =====
