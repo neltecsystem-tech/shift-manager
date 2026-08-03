@@ -15462,8 +15462,10 @@ async function admShopListUpload(event){
     wb.SheetNames.forEach(sn=>{
       const off=SL_OFFICES.find(o=>sn.startsWith(o));
       if(!off)return;
-      const cat=sn.slice(off.length);
-      if(!SL_CATS.includes(cat))return;
+      const catRaw=sn.slice(off.length);
+      // 区分名の揺れ吸収: シート名が「城北平日夕刊」等(末尾に夕刊付き)でも「平日」として扱う。6月は「城北平日」だった。
+      const cat=SL_CATS.find(c=>catRaw===c||catRaw.startsWith(c));
+      if(!cat)return;
       const rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:''});
       // ヘッダー行(STAND/店舗コード/売店名 を含む行)を検出。
       // ※列名ヘッダーが無く2行目からデータのシート(川越朝出し等)もあるため、見つからなければhdr空+デフォルト列。
