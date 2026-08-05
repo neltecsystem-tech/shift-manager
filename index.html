@@ -1869,7 +1869,7 @@ function showView(v,btn){
 
 // ==== 🔑 鍵マップ (スマートタグ位置 + 営業所ジオフェンス) ====
 const KEYTAG_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/key-tag';
-let keytagMap=null, keytagMarkers=[], keytagCircles=[], keytagPlacing=false;
+let keytagMap=null, keytagMarkers=[], keytagCircles=[], keytagPlacing=false, keytagMoveId=null, keytagOfficeCache=[], keytagFitted=false;
 function ktEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function ktTime(s){if(!s)return '';try{return new Date(s).toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}catch(e){return String(s);}}
 async function ktApi(payload){
@@ -1924,6 +1924,16 @@ function keytagEnsureMap(){
   return keytagMap;
 }
 async function keytagMapClick(e){
+  // 既存営業所の位置変更モード
+  if(keytagMoveId!=null){
+    const id=keytagMoveId;
+    keytagMoveId=null;
+    document.getElementById('keytag-place-hint').style.display='none';
+    const j=await ktApi({action:'update_office',id:id,lat:e.latlng.lat,lng:e.latlng.lng});
+    if(j.error){alert('位置の変更に失敗: '+j.error);}
+    renderKeyTag();
+    return;
+  }
   if(!keytagPlacing)return;
   const name=(document.getElementById('kt-office-name').value||'').trim();
   if(!name){alert('先に営業所名を入力してください');return;}
@@ -1937,6 +1947,7 @@ async function keytagMapClick(e){
   renderKeyTag();
 }
 function keytagTogglePlacing(){
+  if(keytagMoveId!=null){keytagCancelMove();}
   const nameOk=(document.getElementById('kt-office-name').value||'').trim();
   if(!keytagPlacing && !nameOk){alert('先に営業所名を入力してください');return;}
   keytagPlacing=!keytagPlacing;
@@ -1949,6 +1960,72 @@ async function keytagDelOffice(id,name){
   await ktApi({action:'del_office',id:id});
   renderKeyTag();
 }
+// ---- 営業所の編集(名称/半径) ----
+function ktOfficeRowHtml(o){
+  return '<span>🏢 <b>'+ktEsc(o.name)+'</b> <span style="color:#888;font-size:12px;">（半径'+o.radius_m+'m）</span></span>'
+    +'<span style="display:flex;gap:6px;flex-wrap:wrap;">'
+      +'<button onclick="keytagEditOffice('+o.id+')" style="padding:4px 10px;border:1px solid #93c5fd;border-radius:6px;background:#fff;color:#2563eb;cursor:pointer;">✏️ 編集</button>'
+      +'<button onclick="keytagMoveOffice('+o.id+')" style="padding:4px 10px;border:1px solid #86efac;border-radius:6px;background:#fff;color:#16a34a;cursor:pointer;">📍 位置変更</button>'
+      +'<button onclick="keytagDelOffice('+o.id+',\''+ktEsc(o.name)+'\')" style="padding:4px 10px;border:1px solid #fca5a5;border-radius:6px;background:#fff;color:#ef4444;cursor:pointer;">削除</button>'
+    +'</span>';
+}
+function keytagEditOffice(id){
+  const o=keytagOfficeCache.find(x=>x.id===id); if(!o)return;
+  const row=document.getElementById('kt-office-row-'+id); if(!row)return;
+  row.innerHTML='<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
+      +'<span>🏢</span>'
+      +'<input id="kt-edit-name-'+id+'" value="'+ktEsc(o.name)+'" style="padding:5px;border:1px solid #cbd5e1;border-radius:6px;min-width:150px;">'
+      +'<label style="font-size:13px;color:#555;">半径</label>'
+      +'<input id="kt-edit-radius-'+id+'" type="number" min="10" max="5000" value="'+o.radius_m+'" style="width:80px;padding:5px;border:1px solid #cbd5e1;border-radius:6px;">'
+      +'<span style="font-size:13px;color:#555;">m</span>'
+    +'</span>'
+    +'<span style="display:flex;gap:6px;">'
+      +'<button onclick="keytagSaveOffice('+id+')" style="padding:4px 12px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;">保存</button>'
+      +'<button onclick="renderKeyTag()" style="padding:4px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#555;cursor:pointer;">キャンセル</button>'
+    +'</span>';
+  const ri=document.getElementById('kt-edit-radius-'+id);
+  const prev=ktPreviewCircle(o);
+  if(ri&&prev)ri.oninput=()=>{const v=parseInt(ri.value,10); if(v>=10&&v<=5000){try{prev.setRadius(v);}catch(e){}}};
+  document.getElementById('kt-edit-name-'+id).focus();
+}
+function ktPreviewCircle(o){
+  // 編集中の営業所の円を掴んで半径プレビューに使う
+  return keytagCircles.find(c=>c&&c.ktOfficeId===o.id&&typeof c.setRadius==='function')||null;
+}
+async function keytagSaveOffice(id){
+  const name=(document.getElementById('kt-edit-name-'+id).value||'').trim();
+  const radius=parseInt(document.getElementById('kt-edit-radius-'+id).value,10);
+  if(!name){alert('営業所名を入力してください');return;}
+  if(!(radius>=10&&radius<=5000)){alert('半径は10〜5000mで入力してください');return;}
+  const j=await ktApi({action:'update_office',id:id,name:name,radius_m:radius});
+  if(j.error){alert('保存に失敗: '+j.error);return;}
+  renderKeyTag();
+}
+function keytagMoveOffice(id){
+  if(keytagMoveId===id){keytagCancelMove();return;}
+  const o=keytagOfficeCache.find(x=>x.id===id); if(!o)return;
+  // 新規登録モードが動いていたら解除
+  if(keytagPlacing){
+    keytagPlacing=false;
+    document.getElementById('kt-office-place').textContent='📍 地図で位置を指定して登録';
+  }
+  keytagMoveId=id;
+  const hint=document.getElementById('keytag-place-hint');
+  hint.textContent='📍「'+o.name+'」の新しい位置を地図でクリックしてください（キャンセルは「📍位置変更」をもう一度）';
+  hint.style.display='block';
+  const map=keytagEnsureMap();
+  if(map){try{map.setView([o.lat,o.lng],Math.max(map.getZoom(),16));}catch(e){}}
+  const row=document.getElementById('kt-office-row-'+id);
+  if(row)row.style.background='#fef9c3';
+  try{document.getElementById('keytag-map').scrollIntoView({behavior:'smooth',block:'center'});}catch(e){}
+}
+function keytagCancelMove(){
+  keytagMoveId=null;
+  const hint=document.getElementById('keytag-place-hint');
+  hint.style.display='none';
+  hint.textContent='📍 地図上の営業所の位置をクリックしてください（キャンセルはもう一度ボタン）';
+  renderKeyTag();
+}
 async function renderKeyTag(){
   const listEl=document.getElementById('keytag-list');
   if(listEl)listEl.innerHTML='<div style="padding:12px;color:#888;">読み込み中...</div>';
@@ -1957,6 +2034,7 @@ async function renderKeyTag(){
     const [jp,jo,je]=await Promise.all([ktApi({action:'list'}),ktApi({action:'list_offices'}),ktApi({action:'list_events',limit:100})]);
     if(jp.error){if(listEl)listEl.innerHTML='<div style="padding:12px;color:#c00;">'+ktEsc(jp.error)+'（管理者ログインが必要です）</div>';return;}
     positions=jp.positions||[]; offices=jo.offices||[]; events=je.events||[];
+    keytagOfficeCache=offices;
   }catch(e){if(listEl)listEl.innerHTML='<div style="padding:12px;color:#c00;">取得に失敗しました</div>';return;}
 
   // 地図(タグマーカー + 営業所の円)
@@ -1967,7 +2045,16 @@ async function renderKeyTag(){
     const pts=[];
     offices.forEach(o=>{
       const c=L.circle([o.lat,o.lng],{radius:o.radius_m,color:'#16a34a',weight:1,fillColor:'#22c55e',fillOpacity:0.12}).addTo(map);
-      const mk=L.marker([o.lat,o.lng],{icon:L.divIcon({html:'<div style="font-size:26px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));">🏢</div>',className:'',iconSize:[26,26],iconAnchor:[13,24]})}).addTo(map).bindPopup('🏢 <b>'+ktEsc(o.name)+'</b>（半径'+o.radius_m+'m）');
+      c.ktOfficeId=o.id;
+      const mk=L.marker([o.lat,o.lng],{draggable:true,icon:L.divIcon({html:'<div style="font-size:26px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));">🏢</div>',className:'',iconSize:[26,26],iconAnchor:[13,24]})}).addTo(map).bindPopup('🏢 <b>'+ktEsc(o.name)+'</b>（半径'+o.radius_m+'m）');
+      mk.on('drag',ev=>{try{c.setLatLng(ev.target.getLatLng());}catch(e){}});
+      mk.on('dragend',async ev=>{
+        const ll=ev.target.getLatLng();
+        if(!confirm('「'+o.name+'」の位置をここに変更しますか？')){renderKeyTag();return;}
+        const j=await ktApi({action:'update_office',id:o.id,lat:ll.lat,lng:ll.lng});
+        if(j.error)alert('位置の変更に失敗: '+j.error);
+        renderKeyTag();
+      });
       keytagCircles.push(c,mk); pts.push([o.lat,o.lng]);
     });
     positions.forEach(p=>{
@@ -1975,7 +2062,8 @@ async function renderKeyTag(){
       const m=L.marker([p.lat,p.lng]).addTo(map).bindPopup('<b>🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b><br>'+(p.holder?('貸与先: '+ktEsc(p.holder)+'<br>'):'')+'最終測位: '+ktTime(p.reported_at));
       keytagMarkers.push(m); pts.push([p.lat,p.lng]);
     });
-    if(pts.length){try{map.fitBounds(pts,{padding:[40,40],maxZoom:16});}catch(e){}}
+    // 初回のみ全体表示(編集のたびに視点が戻らないように)
+    if(pts.length&&!keytagFitted){try{map.fitBounds(pts,{padding:[40,40],maxZoom:16});keytagFitted=true;}catch(e){}}
   }
 
   // 営業所一覧
@@ -1983,7 +2071,8 @@ async function renderKeyTag(){
   if(offEl){
     offEl.innerHTML = offices.length===0
       ? '<div style="color:#888;font-size:13px;">営業所は未登録です。名前を入れて「地図で位置を指定して登録」を押し、地図をクリックしてください。</div>'
-      : offices.map(o=>'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #eee;"><span>🏢 <b>'+ktEsc(o.name)+'</b> <span style="color:#888;font-size:12px;">（半径'+o.radius_m+'m）</span></span><button onclick="keytagDelOffice('+o.id+',\''+ktEsc(o.name)+'\')" style="padding:4px 10px;border:1px solid #fca5a5;border-radius:6px;background:#fff;color:#ef4444;cursor:pointer;">削除</button></div>').join('');
+      : offices.map(o=>'<div id="kt-office-row-'+o.id+'" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid #eee;'+(o.id===keytagMoveId?'background:#fef9c3;':'')+'">'+ktOfficeRowHtml(o)+'</div>').join('')
+        +'<div style="margin-top:8px;color:#888;font-size:12px;">💡 地図上の🏢アイコンをドラッグしても位置を変更できます。</div>';
   }
 
   // 出入り履歴
