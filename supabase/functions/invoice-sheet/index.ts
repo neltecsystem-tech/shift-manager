@@ -279,7 +279,7 @@ Deno.serve(async(req:Request)=>{
   if(req.method==='OPTIONS')return new Response('ok',{headers:corsHeaders});
   try{
     const body = await req.json();
-    const { action, record, row_number, row_numbers, updates, login_id, login_pw, measure_data, bill_prices, confirmed_sale, year_month, area, course, admin_password, auth_token } = body;
+    const { action, record, row_number, row_numbers, updates, login_id, login_pw, measure_data, bill_prices, bill_conditions, confirmed_sale, year_month, area, course, admin_password, auth_token } = body;
 
     // ---- 認証不要のアクション: login / admin_login ----
     if(action==='login'){
@@ -309,6 +309,11 @@ Deno.serve(async(req:Request)=>{
       }
       if(!row || !authOk) return jsonResp({success:false,error:'IDまたはパスワードが正しくありません'});
       const match=row;
+      // ⑤監査: 新聞ログイン権限(shift)を記録するだけ(ブロックしない)。
+      try{ await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/check-login-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system:'shift',login_id,source:'shift-login',log:true})}); }catch(_){ /* noop */ }
+      // 中央明細権限(meisai): 金額表示の制御に使う(明細を明示×にした人は必ず金額を隠す)。
+      let meisaiChk: any = { allowed: true, reason: 'default_allow' };
+      try{ meisaiChk = await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/check-login-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system:'meisai',login_id,source:'shift-money'})}).then(x=>x.json()); }catch(_){ /* noop */ }
       // claims 構築
       const name = match[0];
       const biz_type = match[11] || '';
@@ -322,8 +327,9 @@ Deno.serve(async(req:Request)=>{
       // permissions に 'admin' があれば EF レベルでも admin 扱い
       const tokenRole = has_admin ? 'admin' : 'staff';
       const allRates = parseRates(rateRows);
-      // 本人(corp-sub)の行に show_money があれば金額を見せる (メンバー個別制御)
-      const company_shows_money = is_corp_sub ? permList.includes('show_money') : true;
+      // 金額表示: 明細を明示×にした人は必ず非表示。それ以外は従来(corp-subはshow_money) or 明細許可。
+      const toolMoney = is_corp_sub ? permList.includes('show_money') : true;
+      const company_shows_money = meisaiChk?.reason === 'explicit_deny' ? false : ((meisaiChk?.allowed ?? true) || toolMoney);
       const sessionToken = await createToken({ role: tokenRole, name, biz_type, company, permissions, is_corp_sub, is_owner, company_shows_money });
       // 単価 + 稼働のスコープ: admin=全件 / corp-owner=同company全員 / それ以外=自分のみ
       // 稼働記録は認証には不要(表示用)なので、取得できなくてもログインは通す(空扱い)。
@@ -952,6 +958,42 @@ Deno.serve(async(req:Request)=>{
       const rows=(shops||[]).map((s:any)=>[date||'',course||'',type||'',start_time||'',end_time||'',s.name||'',s.time||'',staffName]);
       if(rows.length){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MEASURE_SHEET)}!A1:H1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:rows})});}
       return jsonResp({success:true,saved:rows.length});
+    }
+    // ── 請求条件(休刊日/朝刊なし/夕刊なし/同梱有無/競馬日 など) ───────────────
+    // 画面(localStorage)の billConditions を DB(bill_conditions)へ同期する。
+    // サーバ側の自動確定(finalize-shift)はこのテーブルしか見ないため、同期されていないと
+    // 休刊日などが無視された金額で確定されてしまう。月ごとに1行(月キー=YYYY-MM)。
+    if(action==='save_bill_conditions'){
+      if(!admin) return forbid();
+      if(!bill_conditions || typeof bill_conditions !== 'object') return jsonResp({error:'bill_conditions required'}, 400);
+      const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+      const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if(!SB_URL || !SRK) return jsonResp({error:'SUPABASE_URL / SERVICE_ROLE_KEY 未設定'}, 500);
+      const now = new Date().toISOString();
+      const rows = Object.keys(bill_conditions)
+        .filter((m)=>/^\d{4}-\d{2}$/.test(m) && bill_conditions[m] && typeof bill_conditions[m]==='object')
+        .map((m)=>({ month_val: m, conditions: bill_conditions[m], updated_at: now }));
+      if(!rows.length) return jsonResp({error:'保存できる月がありません(キーは YYYY-MM 形式)'}, 400);
+      const r = await fetch(`${SB_URL}/rest/v1/bill_conditions`, {
+        method: 'POST',
+        headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify(rows),
+      });
+      if(!r.ok) return jsonResp({error:'保存失敗: '+(await r.text()).slice(0,200)}, 500);
+      return jsonResp({success:true, saved: rows.length, months: rows.map((x)=>x.month_val).sort()});
+    }
+    if(action==='get_bill_conditions'){
+      if(!admin) return forbid();
+      const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+      const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if(!SB_URL || !SRK) return jsonResp({error:'SUPABASE_URL / SERVICE_ROLE_KEY 未設定'}, 500);
+      const q = year_month ? `&month_val=eq.${encodeURIComponent(year_month)}` : '';
+      const r = await fetch(`${SB_URL}/rest/v1/bill_conditions?select=month_val,conditions,updated_at${q}`, { headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } });
+      if(!r.ok) return jsonResp({error:'取得失敗: '+(await r.text()).slice(0,200)}, 500);
+      const arr = await r.json();
+      const out: any = {};
+      (arr||[]).forEach((x:any)=>{ out[x.month_val] = x.conditions || {}; });
+      return jsonResp({bill_conditions: out, months: Object.keys(out).sort()});
     }
     if(action==='get_bill_prices'){
       if(!admin) return forbid();
