@@ -18,7 +18,9 @@ concurrency:
 jobs:
   poll:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # タグ数 × LOCATE_TIMEOUT を超える余裕が要る。11個×60秒=11分 + 準備2分。
+    # 10分だと1個でも取りこぼした時点で必ず打ち切られていた。
+    timeout-minutes: 25
     steps:
       - name: Guard (secrets configured?)
         id: guard
@@ -43,6 +45,31 @@ jobs:
         run: |
           git clone https://github.com/leonboe1/GoogleFindMyTools.git tool
           cd tool && git checkout d46e952
+
+      # 同梱の firebase_messaging は、受信メッセージ由来の crypto_key / salt を
+      # パディング補正なしで base64 デコードするため、パディングの無いヘッダーが
+      # 届くと "binascii.Error: Incorrect padding" で受信クライアントごと停止する。
+      # (同じ関数内でも private / secret には "========" を足しており、そちらは無事)
+      # 2026-08-05 以降これで取得が全滅していたため、clone 後に補正を入れる。
+      - name: Patch firebase_messaging (base64 padding)
+        if: steps.guard.outputs.skip != '1'
+        run: |
+          python3 - <<'PY'
+          import io, sys
+          p = 'tool/Auth/firebase_messaging/fcmpushclient.py'
+          s = io.open(p, encoding='utf-8').read()
+          before = s
+          s = s.replace(
+              'crypto_key = urlsafe_b64decode(crypto_key_str.encode("ascii"))',
+              'crypto_key = urlsafe_b64decode(crypto_key_str.encode("ascii") + b"========")')
+          s = s.replace(
+              'salt = urlsafe_b64decode(salt_str.encode("ascii"))',
+              'salt = urlsafe_b64decode(salt_str.encode("ascii") + b"========")')
+          if s == before:
+              print('::error::パッチ対象が見つかりません(上流が変わった可能性)'); sys.exit(1)
+          io.open(p, 'w', encoding='utf-8').write(s)
+          print('patched:', p)
+          PY
 
       - name: Setup Python
         if: steps.guard.outputs.skip != '1'
@@ -71,5 +98,6 @@ jobs:
         env:
           INGEST_URL: https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/key-tag
           INGEST_SECRET: ${{ secrets.KEY_TAG_INGEST_SECRET }}
+          LOCATE_TIMEOUT: '60'
           # KEY_TAG_IDS: '6a6a55dd-0000-29d8-91a0-883d24f433d0'  # 明示したい場合
         run: python poller.py
