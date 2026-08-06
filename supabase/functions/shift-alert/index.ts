@@ -112,6 +112,24 @@ Deno.serve(async (req) => {
         return json({ ok: true, open: true, key, cnt });
       }
 
+      // 🔑鍵タグ: 位置の取得が止まっている。画面は古い位置を出し続けるため、気付けるようにする。
+      // stale_h = 最も新しい取得の経過時間、cnt = 古いタグ数(0で自動解消)
+      if (kind === 'key_tag_stale') {
+        const key = 'key_tag_stale';
+        const staleH = Math.round(Number(b.stale_h ?? 0));
+        const names: string[] = Array.isArray(b.names) ? b.names.map((x: unknown) => clip(x, 40)).filter(Boolean).slice(0, 100) : [];
+        const cnt = names.length;
+        if (cnt === 0) {
+          await sb.from('sm_active_alerts').update({ status: 'resolved', resolved_at: new Date().toISOString(), cnt: 0, updated_at: new Date().toISOString() }).eq('key', key).eq('status', 'open');
+          return json({ ok: true, resolved: true, key });
+        }
+        const nameStr = `：${names.slice(0, 8).join('、')}${names.length > 8 ? ` 他${names.length - 8}件` : ''}`;
+        const title = '🔑 鍵タグの位置取得が止まっています';
+        const body = `鍵タグ${cnt}個の位置が${staleH}時間以上更新されていません（通常は1時間ごと）。画面には当時の位置が出たままになるため、鍵の所在は信用できません。復旧には Google 認証情報（GitHub Actions の KEY_TAG_SECRETS_B64）の作り直しが必要な場合があります${nameStr}`;
+        await sb.from('sm_active_alerts').upsert({ key, app, kind, title, body, cnt, names, status: 'open', resolved_at: null, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+        return json({ ok: true, open: true, key, cnt });
+      }
+
       if (kind !== 'rate_missing') return json({ ok: false, error: 'unsupported kind' }, 400);
       const month = clip(b.month, 20);
       const key = `rate_missing:${month}`;

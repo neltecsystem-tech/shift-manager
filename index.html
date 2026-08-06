@@ -1872,6 +1872,11 @@ const KEYTAG_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/key-tag';
 let keytagMap=null, keytagMarkers=[], keytagCircles=[], keytagPlacing=false, keytagMoveId=null, keytagOfficeCache=[], keytagFitted=false;
 function ktEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function ktTime(s){if(!s)return '';try{return new Date(s).toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}catch(e){return String(s);}}
+// 取得が止まっていても画面は「外出中」と出てしまうため、古さを明示する。
+// 毎時取得なので3時間で注意、12時間で異常とみなす。
+const KT_WARN_H=3, KT_BAD_H=12;
+function ktAgeH(s){if(!s)return null;const t=Date.parse(s);if(isNaN(t))return null;return (Date.now()-t)/3600000;}
+function ktAgeText(h){if(h==null)return '';if(h<1)return Math.max(1,Math.round(h*60))+'分前';if(h<48)return Math.round(h)+'時間前';return Math.round(h/24)+'日前';}
 async function ktApi(payload){
   const r=await fetch(KEYTAG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({admin_password:adminPw},payload))});
   return r.json();
@@ -2097,9 +2102,29 @@ async function renderKeyTag(){
   if(positions.length===0){listEl.innerHTML='<div class="card" style="color:#888;">まだ位置データがありません。「⚡今すぐ更新」を押すか、タグを持ち出して待ってください。</div>';return;}
   const offName={}; offices.forEach(o=>offName[o.id]=o.name);
   const courseDl='<datalist id="kt-course-dl">'+ktCourseList().map(c=>'<option value="'+ktEsc(c)+'">').join('')+'</datalist>';
-  listEl.innerHTML=courseDl+positions.map(p=>{
+  // 取得が丸ごと止まっている(=全タグが古い)ときは、個別の警告だけだと気付きにくいので帯を出す
+  let banner='';
+  const ages=positions.map(p=>ktAgeH(p.updated_at)).filter(h=>h!=null);
+  const newestH=ages.length?Math.min.apply(null,ages):null;
+  if(newestH!=null&&newestH>=KT_WARN_H){
+    const sev=newestH>=KT_BAD_H;
+    banner='<div class="card" style="margin-bottom:10px;border-left:6px solid '+(sev?'#b91c1c':'#f59e0b')+';background:'+(sev?'#fef2f2':'#fffbeb')+';">'
+      +'<b style="color:'+(sev?'#b91c1c':'#b45309')+';">'+(sev?'🚨 位置の取得が止まっています':'⚠️ 位置の取得が遅れています')+'</b>'
+      +'<div style="font-size:13px;color:#555;margin-top:4px;">最も新しい取得でも <b>'+ktAgeText(newestH)+'</b> です（通常は1時間ごとに更新）。'
+      +'表示中の居場所は当時のもので、今の位置ではありません。</div>'
+      +(sev?'<div style="font-size:12px;color:#777;margin-top:6px;">「⚡今すぐ更新」で復旧しない場合、Google側の認証情報（GitHub Actions の KEY_TAG_SECRETS_B64）の作り直しが必要です。</div>':'')
+    +'</div>';
+  }
+  listEl.innerHTML=banner+courseDl+positions.map(p=>{
     const gmap=(p.lat!=null)?('https://www.google.com/maps/search/?api=1&query='+p.lat+','+p.lng):'';
-    const where=p.office_id?('🏢 '+ktEsc(offName[p.office_id]||'営業所')+'内'):'🚚 外出中';
+    // 取得が止まっている間は位置が動かないだけで「外出中」と表示され続けるため、
+    // 古いデータは居場所を断定せず「不明」と出す。
+    const ageH=ktAgeH(p.updated_at);
+    const stale=(ageH!=null&&ageH>=KT_WARN_H);
+    const bad=(ageH!=null&&ageH>=KT_BAD_H);
+    const where=stale
+      ? '<span style="color:'+(bad?'#b91c1c':'#b45309')+';font-weight:700;">⚠️ 位置不明（'+ktAgeText(ageH)+'の情報）</span>'
+      : (p.office_id?('🏢 '+ktEsc(offName[p.office_id]||'営業所')+'内'):'🚚 外出中');
     // 現在の担当を算出: 個人名(固定)が最優先 → 無ければコースからシフト算出
     let assignHtml='';
     if(p.holder){
@@ -2117,7 +2142,7 @@ async function renderKeyTag(){
     return '<div class="card" style="margin-bottom:10px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
         +'<div><b style="font-size:16px;">🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b> <span style="font-size:12px;color:#555;">'+where+'</span>'
-          +'<div style="color:#666;font-size:12px;">最終測位: '+(ktTime(p.reported_at)||'—')+' ／ 取得: '+(ktTime(p.updated_at)||'—')+'</div></div>'
+          +'<div style="color:'+(bad?'#b91c1c':(stale?'#b45309':'#666'))+';font-size:12px;">最終測位: '+(ktTime(p.reported_at)||'—')+' ／ 取得: '+(ktTime(p.updated_at)||'—')+(ageH!=null?'（'+ktAgeText(ageH)+'）':'')+'</div></div>'
         +(gmap?('<a href="'+gmap+'" target="_blank" style="text-decoration:none;padding:6px 12px;border-radius:8px;background:#0ea5e9;color:#fff;font-weight:700;">📍 地図で開く</a>'):'')
       +'</div>'
       +'<div style="margin-top:8px;">'+assignHtml+'</div>'

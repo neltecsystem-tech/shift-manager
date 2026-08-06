@@ -114,7 +114,11 @@ def main():
             print(f"{name}: 位置なし(タイムアウト/未報告)")
 
     if not positions:
-        print("送信対象なし"); return
+        # 1件も取れないのは異常(FCM受信が落ちている等)。ここで正常終了すると
+        # ワークフローが緑のまま何日も位置が止まり、誰も気付けない。
+        print(f"送信対象なし: {len(targets)}個すべてで位置を取得できませんでした。"
+              " Google認証(secrets.json)かFCM受信の異常が疑われます。", file=sys.stderr)
+        sys.exit(1)
     if not (INGEST_URL and INGEST_SECRET):
         print("INGEST未設定:", json.dumps(positions, ensure_ascii=False)); return
 
@@ -123,7 +127,13 @@ def main():
     try:
         print("ingest:", urllib.request.urlopen(req, timeout=30).read().decode()[:200])
     except urllib.error.HTTPError as e:
-        print("ingest HTTP", e.code, e.read().decode()[:300]); sys.exit(1)
+        print("ingest HTTP", e.code, e.read().decode()[:300], file=sys.stderr); sys.exit(1)
+    except Exception as e:
+        print("ingest 失敗:", e, file=sys.stderr); sys.exit(1)
+
+    # 一部しか取れていない場合も残しておく(全滅でなくても劣化に気付けるように)
+    if len(positions) < len(targets):
+        print(f"注意: {len(targets)}個中 {len(positions)}個しか取得できていません。", file=sys.stderr)
 
 
 if __name__ == "__main__":
