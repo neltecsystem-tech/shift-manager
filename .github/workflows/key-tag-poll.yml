@@ -8,7 +8,9 @@ name: key-tag poller
 
 on:
   schedule:
-    - cron: '0 * * * *'        # 毎時0分 (private repoの無料枠に収まるよう1時間毎)
+    # 1回あたり最大8分(poller側の打ち切り)。毎時だと無料枠(月2000分)を超えるため3時間毎。
+    # FCM認証が復旧して1〜2分で終わるようになったら毎時 '0 * * * *' に戻してよい。
+    - cron: '0 */3 * * *'
   workflow_dispatch: {}         # 手動実行(今すぐ更新)も可
 
 concurrency:

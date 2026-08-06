@@ -88,6 +88,14 @@ def get_tag_targets(device_list):
 
 
 def main():
+    # 全体の打ち切り。FCM受信が死ぬと個々の待機を抜けても延々と粘るため、
+    # ここで強制終了しないと毎時フルにActions時間を焼き続ける(無料枠の枯渇)。
+    budget = int(os.environ.get("TOTAL_BUDGET", "480"))
+    def _watchdog():
+        print(f"打ち切り: {budget}秒を超えました。FCM受信が機能していない可能性があります。", file=sys.stderr)
+        os._exit(1)
+    wd = threading.Timer(budget, _watchdog); wd.daemon = True; wd.start()
+
     result_hex = request_device_list()
     device_list = parse_device_list_protobuf(result_hex)
     try:
