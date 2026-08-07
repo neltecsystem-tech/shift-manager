@@ -49,28 +49,30 @@ jobs:
           git clone https://github.com/leonboe1/GoogleFindMyTools.git tool
           cd tool && git checkout d46e952
 
-      # 同梱の firebase_messaging は、受信メッセージ由来の crypto_key / salt を
-      # パディング補正なしで base64 デコードするため、パディングの無いヘッダーが
-      # 届くと "binascii.Error: Incorrect padding" で受信クライアントごと停止する。
-      # (同じ関数内でも private / secret には "========" を足しており、そちらは無事)
-      # 2026-08-05 以降これで取得が全滅していたため、clone 後に補正を入れる。
-      - name: Patch firebase_messaging (base64 padding)
+      # 同梱の firebase_messaging は、解釈できないプッシュが1通届くと復号に失敗し、
+      # その例外で受信クライアントごと停止する(以後どのタグの位置も取れない)。
+      # 実際に "Incorrect padding" → "Invalid EC key" と形を変えて発生し、
+      # 2026-08-05 以降 取得が全滅していた。位置の返信は正常に届いているので、
+      # 読めないメッセージは読み飛ばして受信を続けさせる。
+      - name: Patch firebase_messaging (skip undecryptable pushes)
         if: steps.guard.outputs.skip != '1'
         run: |
           python3 - <<'PY'
           import io, sys
           p = 'tool/Auth/firebase_messaging/fcmpushclient.py'
           s = io.open(p, encoding='utf-8').read()
-          before = s
-          s = s.replace(
-              'crypto_key = urlsafe_b64decode(crypto_key_str.encode("ascii"))',
-              'crypto_key = urlsafe_b64decode(crypto_key_str.encode("ascii") + b"========")')
-          s = s.replace(
-              'salt = urlsafe_b64decode(salt_str.encode("ascii"))',
-              'salt = urlsafe_b64decode(salt_str.encode("ascii") + b"========")')
-          if s == before:
+          old = """        if isinstance(msg, DataMessageStanza):
+            self._handle_data_message(msg)"""
+          new = """        if isinstance(msg, DataMessageStanza):
+            try:
+                self._handle_data_message(msg)
+            except Exception as _e:  # noqa: BLE001  (patched: 1通の失敗で受信を止めない)
+                _logger.warning("skip undecryptable push: %s: %s", type(_e).__name__, _e)"""
+          if old not in s:
               print('::error::パッチ対象が見つかりません(上流が変わった可能性)'); sys.exit(1)
+          s = s.replace(old, new, 1)
           io.open(p, 'w', encoding='utf-8').write(s)
+          import ast; ast.parse(s)
           print('patched:', p)
           PY
 
@@ -138,10 +140,11 @@ jobs:
           # KEY_TAG_IDS: '6a6a55dd-0000-29d8-91a0-883d24f433d0'  # 明示したい場合
         run: python poller.py
 
-      # 更新された認証情報を保存する。ここを飛ばすと次回また "Invalid EC key." になる。
-      # 取得に失敗した回でも認証だけは更新されていることがあるため always() で実行する。
+      # 更新された認証情報を保存し、次回に引き継ぐ(Actionsは毎回まっさらなため)。
+      # 🚨 失敗した回は保存しない。取得に失敗した実行では中途半端な再登録が
+      #    書かれていることがあり、それをDBに戻すと正常な値を上書きしてしまう。
       - name: Save updated FCM credentials to DB
-        if: always() && steps.guard.outputs.skip != '1'
+        if: success() && steps.guard.outputs.skip != '1'
         env:
           INGEST_URL: https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/key-tag
           INGEST_SECRET: ${{ secrets.KEY_TAG_INGEST_SECRET }}
