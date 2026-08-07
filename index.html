@@ -610,7 +610,9 @@ tbody tr:hover { background:var(--primary-light); }
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <h2 style="margin:0;">🔑 鍵マップ <span style="font-size:13px;color:var(--text-sub);font-weight:normal;">ドライバーに預けた鍵(スマートタグ)の最新位置</span></h2>
         <div style="display:flex;gap:8px;">
-          <button onclick="keytagRefreshNow(this)" style="padding:7px 14px;border:none;border-radius:8px;background:#f59e0b;color:#fff;font-weight:700;cursor:pointer;">⚡ 今すぐ更新</button>
+          <!-- 「今すぐ更新」はGoogleへの問い合わせを発生させる(回し過ぎるとアカウントが
+               止められる恐れがある)。押せるのはシステム担当だけに絞る。 -->
+          <button id="kt-refresh-btn" onclick="keytagRefreshNow(this)" style="display:none;padding:7px 14px;border:none;border-radius:8px;background:#f59e0b;color:#fff;font-weight:700;cursor:pointer;">⚡ 今すぐ更新</button>
           <button onclick="renderKeyTag()" style="padding:7px 14px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;">🔄 再読み込み</button>
         </div>
       </div>
@@ -628,6 +630,14 @@ tbody tr:hover { background:var(--primary-light); }
         <button id="kt-office-place" onclick="keytagTogglePlacing()" style="padding:6px 12px;border:none;border-radius:6px;background:#22c55e;color:#fff;font-weight:700;cursor:pointer;">📍 地図で位置を指定して登録</button>
       </div>
       <div id="keytag-offices" style="margin-top:10px;"></div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <h3 style="margin:0 0 4px 0;">🗓 監視スケジュール</h3>
+      <p style="margin:0 0 10px 0;font-size:12px;color:var(--text-sub);">
+        この時間帯だけ位置を取りに行きます。時間帯の外では1件も問い合わせません。
+        非公式の仕組みのため、必要な時間帯だけに絞ってください。
+      </p>
+      <div id="keytag-schedule"></div>
     </div>
     <div class="card" style="margin-top:12px;">
       <h3 style="margin:0 0 8px 0;">🕐 出入り履歴</h3>
@@ -2039,7 +2049,83 @@ function keytagCancelMove(){
   hint.textContent='📍 地図上の営業所の位置をクリックしてください（キャンセルはもう一度ボタン）';
   renderKeyTag();
 }
+// ⚡今すぐ更新 と 監視スケジュールの編集は、Googleへの問い合わせ回数に直結する。
+// 回し過ぎると非公式APIの利用が止められる恐れがあるため、システム担当のみに開放する。
+const KT_OPERATOR='小林雄太';
+function ktIsOperator(){
+  const n=(typeof sysUserName!=='undefined'&&sysUserName)||'';
+  return String(n).replace(/[\s　]/g,'')===KT_OPERATOR;
+}
+
+// ── 監視スケジュール ──────────────────────────────
+let keytagSchedule=[], keytagPosCount=0;
+const ktHHMM=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+const ktToMin=s=>{const m=/^(\d{1,2}):(\d{2})$/.exec(String(s).trim());return m?(+m[1])*60+(+m[2]):null;};
+async function ktRenderSchedule(){
+  const el=document.getElementById('keytag-schedule');
+  if(!el)return;
+  const j=await ktApi({action:'schedule_get'});
+  if(j.error){el.innerHTML='<div style="color:#c00;font-size:13px;">'+ktEsc(j.error)+'</div>';return;}
+  keytagSchedule=j.schedule||[];
+  ktDrawSchedule();
+}
+function ktDrawSchedule(){
+  const el=document.getElementById('keytag-schedule');
+  if(!el)return;
+  const editable=ktIsOperator();
+  const dis=editable?'':' disabled';
+  const rows=keytagSchedule.map((r,i)=>
+    '<tr>'
+    +'<td style="padding:5px 6px;"><input value="'+ktEsc(r.label||'')+'" oninput="keytagSchedule['+i+'].label=this.value"'+dis+' style="width:110px;padding:5px;border:1px solid #cbd5e1;border-radius:5px;"></td>'
+    +'<td style="padding:5px 6px;"><select onchange="keytagSchedule['+i+'].kind=this.value"'+dis+' style="padding:5px;border:1px solid #cbd5e1;border-radius:5px;">'
+      +'<option value="depart"'+(r.kind==='depart'?' selected':'')+'>出庫</option>'
+      +'<option value="return"'+(r.kind!=='depart'?' selected':'')+'>帰庫</option></select></td>'
+    +'<td style="padding:5px 6px;"><input value="'+ktHHMM(r.start_min)+'" oninput="keytagSchedule['+i+'].start_min=ktToMin(this.value)"'+dis+' style="width:62px;padding:5px;border:1px solid #cbd5e1;border-radius:5px;text-align:center;"></td>'
+    +'<td style="padding:5px 6px;text-align:center;color:#999;">〜</td>'
+    +'<td style="padding:5px 6px;"><input value="'+ktHHMM(r.end_min)+'" oninput="keytagSchedule['+i+'].end_min=ktToMin(this.value)"'+dis+' style="width:62px;padding:5px;border:1px solid #cbd5e1;border-radius:5px;text-align:center;"></td>'
+    +'<td style="padding:5px 6px;"><input type="number" min="5" max="240" step="5" value="'+(r.interval_min||30)+'" oninput="keytagSchedule['+i+'].interval_min=+this.value"'+dis+' style="width:62px;padding:5px;border:1px solid #cbd5e1;border-radius:5px;text-align:center;">分</td>'
+    +'<td style="padding:5px 6px;text-align:center;"><input type="checkbox" '+(r.enabled!==false?'checked':'')+' onchange="keytagSchedule['+i+'].enabled=this.checked"'+dis+'></td>'
+    +'<td style="padding:5px 6px;">'+(editable?'<button onclick="ktSchedDel('+i+')" style="padding:4px 9px;border:none;border-radius:5px;background:#fee2e2;color:#b91c1c;font-weight:700;cursor:pointer;">削除</button>':'')+'</td>'
+    +'</tr>').join('');
+  const est=keytagSchedule.filter(r=>r.enabled!==false&&r.start_min!=null&&r.end_min!=null&&r.end_min>r.start_min)
+    .reduce((s,r)=>s+Math.floor((r.end_min-r.start_min)/(r.interval_min||30))+1,0);
+  el.innerHTML=
+    '<div style="overflow-x:auto;"><table style="border-collapse:collapse;font-size:13px;min-width:560px;">'
+    +'<tr style="color:#64748b;font-size:11px;"><th style="text-align:left;padding:0 6px;">名前</th><th style="text-align:left;padding:0 6px;">種別</th>'
+    +'<th style="text-align:left;padding:0 6px;">開始</th><th></th><th style="text-align:left;padding:0 6px;">終了</th>'
+    +'<th style="text-align:left;padding:0 6px;">間隔</th><th style="padding:0 6px;">有効</th><th></th></tr>'
+    +rows+'</table></div>'
+    +'<div style="margin-top:8px;font-size:12px;color:#64748b;">1日あたりの取得回数: <b>約'+est+'回</b>（タグ'+(keytagPosCount||25)+'個なら約'+(est*(keytagPosCount||25))+'回の問い合わせ）</div>'
+    +(editable
+      ? '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">'
+        +'<button onclick="ktSchedAdd()" style="padding:6px 14px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;font-weight:700;cursor:pointer;">＋ 時間帯を追加</button>'
+        +'<button onclick="ktSchedSave(this)" style="padding:6px 18px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;">保存</button>'
+        +'</div>'
+      : '<div style="margin-top:8px;font-size:12px;color:#94a3b8;">変更できるのはシステム担当のみです。</div>');
+}
+function ktSchedAdd(){
+  keytagSchedule.push({label:'新しい時間帯',kind:'return',start_min:540,end_min:600,interval_min:30,enabled:true});
+  ktDrawSchedule();
+}
+function ktSchedDel(i){ keytagSchedule.splice(i,1); ktDrawSchedule(); }
+async function ktSchedSave(btn){
+  for(const r of keytagSchedule){
+    if(r.start_min==null||r.end_min==null){ alert('時刻は HH:MM の形式で入力してください'); return; }
+    if(r.end_min<=r.start_min){ alert('「'+(r.label||'')+'」の終了時刻は開始より後にしてください'); return; }
+  }
+  btn.disabled=true; const t=btn.textContent; btn.textContent='保存中...';
+  try{
+    const rows=keytagSchedule.map((r,i)=>Object.assign({},r,{sort_order:i+1}));
+    const j=await ktApi({action:'schedule_set',rows});
+    if(j.error){alert('保存に失敗しました: '+j.error);}
+    else{alert('保存しました。次の実行から反映されます。');}
+  }finally{ btn.disabled=false; btn.textContent=t; await ktRenderSchedule(); }
+}
+
 async function renderKeyTag(){
+  const rb=document.getElementById('kt-refresh-btn');
+  if(rb)rb.style.display=ktIsOperator()?'':'none';
+  ktRenderSchedule();
   const listEl=document.getElementById('keytag-list');
   if(listEl)listEl.innerHTML='<div style="padding:12px;color:#888;">読み込み中...</div>';
   let positions=[],offices=[],events=[];
@@ -2047,6 +2133,7 @@ async function renderKeyTag(){
     const [jp,jo,je]=await Promise.all([ktApi({action:'list'}),ktApi({action:'list_offices'}),ktApi({action:'list_events',limit:100})]);
     if(jp.error){if(listEl)listEl.innerHTML='<div style="padding:12px;color:#c00;">'+ktEsc(jp.error)+'（管理者ログインが必要です）</div>';return;}
     positions=jp.positions||[]; offices=jo.offices||[]; events=je.events||[];
+    keytagPosCount=positions.length;
     keytagOfficeCache=offices;
   }catch(e){if(listEl)listEl.innerHTML='<div style="padding:12px;color:#c00;">取得に失敗しました</div>';return;}
 

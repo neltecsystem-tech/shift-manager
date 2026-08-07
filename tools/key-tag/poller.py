@@ -13,6 +13,57 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+INGEST_URL = os.environ.get("INGEST_URL", "").strip()
+INGEST_SECRET = os.environ.get("INGEST_SECRET", "").strip()
+KEY_TAG_IDS = [x.strip() for x in os.environ.get("KEY_TAG_IDS", "").split(",") if x.strip()]
+LOCATE_TIMEOUT = int(os.environ.get("LOCATE_TIMEOUT", "90"))
+
+def in_schedule():
+    """画面で設定した監視時間帯(JST)の中か。枠外なら1件もGoogleに問い合わせない。
+       設定が取れないときは、止めてしまうより動かす方が安全なので True を返す。
+       FORCE_RUN=1(手動実行)は時間帯を無視する。"""
+    if os.environ.get("FORCE_RUN") == "1":
+        print("手動実行のため時間帯の判定を省略します")
+        return True
+    if not (INGEST_URL and INGEST_SECRET):
+        return True
+    try:
+        body = json.dumps({"action": "schedule_get", "secret": INGEST_SECRET}).encode()
+        req = urllib.request.Request(INGEST_URL, data=body,
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        rows = json.loads(urllib.request.urlopen(req, timeout=20).read().decode()).get("schedule") or []
+    except Exception as e:
+        print(f"(監視時間帯を取得できませんでした: {e} → 実行します)")
+        return True
+    if not rows:
+        print("(監視時間帯の設定が空 → 実行します)")
+        return True
+
+    from datetime import timezone, timedelta
+    now = datetime.now(timezone(timedelta(hours=9)))
+    t = now.hour * 60 + now.minute
+    for r in rows:
+        if not r.get("enabled", True):
+            continue
+        s, e = int(r["start_min"]), int(r["end_min"])
+        iv = max(5, int(r.get("interval_min") or 30))
+        if not (s <= t <= e):
+            continue
+        # 枠の開始からinterval間隔の時刻だけ動かす(cronは細かく回しておく)
+        if (t - s) % iv <= 7:
+            print(f"監視時間帯「{r.get('label')}」({s//60}:{s%60:02d}-{e//60}:{e%60:02d} / {iv}分間隔) に該当します")
+            return True
+    print(f"監視時間帯外のため実行しません (現在 {now.hour}:{now.minute:02d} JST)")
+    return False
+
+
+
+# 枠外なら、Googleのモジュールを読み込む前にここで終了する
+# (import の時点で通信や認証が走る可能性があるため、判定は必ず先に行う)
+if not in_schedule():
+    sys.exit(0)
+
+
 # 解釈できないプッシュが1通届くと、同梱のfirebase_messagingは復号例外で
 # 受信クライアントごと停止し、以後どのタグの位置も取れなくなる
 # (実際に "Incorrect padding" → "Invalid EC key" と形を変えて発生し、
@@ -38,11 +89,6 @@ from NovaApi.ListDevices.nbe_list_devices import request_device_list
 from ProtoDecoders.decoder import parse_device_list_protobuf, get_canonic_ids
 from SpotApi.UploadPrecomputedPublicKeyIds.upload_precomputed_public_key_ids import refresh_custom_trackers
 from NovaApi.ExecuteAction.LocateTracker.location_request import get_location_data_for_device
-
-INGEST_URL = os.environ.get("INGEST_URL", "").strip()
-INGEST_SECRET = os.environ.get("INGEST_SECRET", "").strip()
-KEY_TAG_IDS = [x.strip() for x in os.environ.get("KEY_TAG_IDS", "").split(",") if x.strip()]
-LOCATE_TIMEOUT = int(os.environ.get("LOCATE_TIMEOUT", "90"))
 
 LAT = re.compile(r"Latitude:\s*(-?\d+\.?\d*)")
 LNG = re.compile(r"Longitude:\s*(-?\d+\.?\d*)")
