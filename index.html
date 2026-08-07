@@ -2186,6 +2186,22 @@ function ktGroupOf(name){
   for(const k of keys){ if(n.indexOf(k)===0) return k; }
   return null;
 }
+// 所属営業所は手動指定が最優先。未指定のときだけ鍵の名前から推測する。
+function ktOfficeById(id){ return (keytagOfficeCache||[]).find(o=>o.id===id)||null; }
+function ktTagGroup(p){
+  if(p&&p.home_office_id!=null){
+    const o=ktOfficeById(p.home_office_id);
+    if(o)return ktOfficePrefix(o);
+  }
+  return ktGroupOf(p&&p.tag_name);
+}
+function ktTagColor(p){
+  if(p&&p.home_office_id!=null){
+    const o=ktOfficeById(p.home_office_id);
+    if(o)return String(o.color||'').trim()||keytagGroupColor[ktOfficePrefix(o)]||'#64748b';
+  }
+  return ktPinColor(p&&p.tag_name);
+}
 function ktPinColor(name){ const g=ktGroupOf(name); return g?keytagGroupColor[g]:'#64748b'; }
 function ktPinIcon(color){
   return L.divIcon({className:'',iconSize:[22,30],iconAnchor:[11,29],popupAnchor:[0,-26],
@@ -2233,14 +2249,14 @@ async function renderKeyTag(){
     });
     positions.forEach(p=>{
       if(p.lat==null||p.lng==null)return;
-      const m=L.marker([p.lat,p.lng],{icon:ktPinIcon(ktPinColor(p.tag_name))}).addTo(map).bindPopup('<b>🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b><br>'+(p.holder?('貸与先: '+ktEsc(p.holder)+'<br>'):'')+'最終測位: '+ktTime(p.reported_at));
+      const m=L.marker([p.lat,p.lng],{icon:ktPinIcon(ktTagColor(p))}).addTo(map).bindPopup('<b>🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b><br>'+(p.holder?('貸与先: '+ktEsc(p.holder)+'<br>'):'')+'最終測位: '+ktTime(p.reported_at));
       keytagMarkers.push(m); pts.push([p.lat,p.lng]);
     });
     // 凡例: どの色がどの営業所か。該当しない鍵は灰色でまとめる
     const lg=document.getElementById('keytag-legend');
     if(lg){
       const cnt={};
-      positions.forEach(p=>{ const g=ktGroupOf(p.tag_name)||'その他'; cnt[g]=(cnt[g]||0)+1; });
+      positions.forEach(p=>{ const g=ktTagGroup(p)||'その他'; cnt[g]=(cnt[g]||0)+1; });
       const items=Object.keys(keytagGroupColor).filter(g=>cnt[g])
         .map(g=>({name:g,color:keytagGroupColor[g],n:cnt[g]}));
       if(cnt['その他'])items.push({name:'その他',color:'#64748b',n:cnt['その他']});
@@ -2326,7 +2342,7 @@ async function renderKeyTag(){
     }
     return '<div class="card" style="margin-bottom:10px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
-        +'<div><b style="font-size:16px;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+ktPinColor(p.tag_name)+';margin-right:6px;"></span>🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b> <span style="font-size:12px;color:#555;">'+where+'</span>'
+        +'<div><b style="font-size:16px;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+ktTagColor(p)+';margin-right:6px;"></span>🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b> <span style="font-size:12px;color:#555;">'+where+'</span>'
           +(ktIsOperator()
               ? '<button onclick="ktToggleMonitor('+pi+',this)" title="監視を切り替える" style="margin-left:8px;padding:2px 9px;border-radius:10px;border:1px solid '+(p.monitor_enabled===false?'#cbd5e1':'#86efac')+';background:'+(p.monitor_enabled===false?'#f1f5f9':'#dcfce7')+';color:'+(p.monitor_enabled===false?'#64748b':'#15803d')+';font-size:11px;font-weight:700;cursor:pointer;">'+(p.monitor_enabled===false?'監視OFF':'監視ON')+'</button>'
               : (p.monitor_enabled===false?'<span style="margin-left:8px;padding:2px 9px;border-radius:10px;background:#f1f5f9;color:#64748b;font-size:11px;font-weight:700;">監視OFF</span>':''))
@@ -2335,6 +2351,14 @@ async function renderKeyTag(){
       +'</div>'
       +'<div style="margin-top:8px;">'+assignHtml+'</div>'
       +'<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+        +'<label style="font-size:13px;color:#555;min-width:88px;">🏢所属:</label>'
+        +'<select onchange="ktSetHomeOffice('+pi+',this.value)" style="min-width:150px;padding:6px;border:1px solid #cbd5e1;border-radius:6px;">'
+          +'<option value=""'+(p.home_office_id==null?' selected':'')+'>自動（鍵の名前から判定）</option>'
+          +(keytagOfficeCache||[]).map(o=>'<option value="'+o.id+'"'+(p.home_office_id===o.id?' selected':'')+'>'+ktEsc(o.name)+'</option>').join('')
+        +'</select>'
+        +'<span style="font-size:11px;color:#94a3b8;">'+(p.home_office_id==null?'自動判定: '+(ktGroupOf(p.tag_name)||'該当なし'):'手動で指定')+'</span>'
+      +'</div>'
+      +'<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
         +'<label style="font-size:13px;color:#555;min-width:88px;">🚩コース:</label>'
         +'<input id="kt-course-'+ktEsc(p.tag_id)+'" list="kt-course-dl" value="'+ktEsc(p.course||'')+'" placeholder="例: 立川12" style="min-width:120px;max-width:180px;padding:6px;border:1px solid #cbd5e1;border-radius:6px;">'
         +'<button onclick="keytagSaveCourse(\''+ktEsc(p.tag_id)+'\')" style="padding:6px 14px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;">保存</button>'
@@ -2348,6 +2372,13 @@ async function renderKeyTag(){
     +'</div>';
   }).join('');
 }
+async function ktSetHomeOffice(pi,val){
+  const p=keytagPositions[pi]; if(!p)return;
+  const j=await ktApi({action:'set_home_office',tag_id:p.tag_id,office_id:val===''?null:parseInt(val,10)});
+  if(j.error){alert('保存に失敗しました: '+j.error);return;}
+  await renderKeyTag();
+}
+
 async function ktToggleMonitor(pi,btn){
   if(!ktIsOperator())return;
   const p=keytagPositions[pi]; if(!p)return;
