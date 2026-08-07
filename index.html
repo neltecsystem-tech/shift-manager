@@ -1873,9 +1873,16 @@ let keytagMap=null, keytagMarkers=[], keytagCircles=[], keytagPlacing=false, key
 function ktEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function ktTime(s){if(!s)return '';try{return new Date(s).toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}catch(e){return String(s);}}
 // 取得が止まっていても画面は「外出中」と出てしまうため、古さを明示する。
-// 19:00〜23:00 JST は取得を止めており、18:00の次は0:00で最大6時間空く。
-// その間に誤警告しないよう、注意は7時間から。
-const KT_WARN_H=7, KT_BAD_H=12;
+// 取得は鍵の動く時間帯だけ(帰庫1:30/2:30・出庫3:00-4:15・帰庫5:30-8:30・帰庫11:00-13:00)。
+// 13:00〜翌1:30は意図的に止めており最大12時間半空くので、
+// 一律のしきい値だと毎晩「止まっている」と誤警告になる。時間帯で切り替える。
+const KT_WINDOWS=[[90,270],[330,510],[660,780]];  // 分単位: 1:30-4:30 / 5:30-8:30 / 11:00-13:00
+function ktInWindow(){
+  const n=new Date(), t=((n.getUTCHours()+9)%24)*60+n.getUTCMinutes();
+  return KT_WINDOWS.some(([a,b])=>t>=a&&t<=b);
+}
+// 監視中は1時間ごとに来るはずなので3時間で注意。停止中は12時間半空くのが正常。
+function ktThresholds(){ return ktInWindow()?{warn:3,bad:6}:{warn:14,bad:26}; }
 function ktAgeH(s){if(!s)return null;const t=Date.parse(s);if(isNaN(t))return null;return (Date.now()-t)/3600000;}
 function ktAgeText(h){if(h==null)return '';if(h<1)return Math.max(1,Math.round(h*60))+'分前';if(h<48)return Math.round(h)+'時間前';return Math.round(h/24)+'日前';}
 async function ktApi(payload){
@@ -2107,11 +2114,12 @@ async function renderKeyTag(){
   let banner='';
   const ages=positions.map(p=>ktAgeH(p.updated_at)).filter(h=>h!=null);
   const newestH=ages.length?Math.min.apply(null,ages):null;
-  if(newestH!=null&&newestH>=KT_WARN_H){
-    const sev=newestH>=KT_BAD_H;
+  const KT=ktThresholds();
+  if(newestH!=null&&newestH>=KT.warn){
+    const sev=newestH>=KT.bad;
     banner='<div class="card" style="margin-bottom:10px;border-left:6px solid '+(sev?'#b91c1c':'#f59e0b')+';background:'+(sev?'#fef2f2':'#fffbeb')+';">'
       +'<b style="color:'+(sev?'#b91c1c':'#b45309')+';">'+(sev?'🚨 位置の取得が止まっています':'⚠️ 位置の取得が遅れています')+'</b>'
-      +'<div style="font-size:13px;color:#555;margin-top:4px;">最も新しい取得でも <b>'+ktAgeText(newestH)+'</b> です（通常は1時間ごとに更新）。'
+      +'<div style="font-size:13px;color:#555;margin-top:4px;">最も新しい取得でも <b>'+ktAgeText(newestH)+'</b> です（'+(ktInWindow()?'いまは監視時間帯で、通常は1時間以内に更新されます':'いまは監視の対象外時間です')+'）。'
       +'表示中の居場所は当時のもので、今の位置ではありません。</div>'
       +(sev?'<div style="font-size:12px;color:#777;margin-top:6px;">「⚡今すぐ更新」で復旧しない場合、Google側の認証情報（GitHub Actions の KEY_TAG_SECRETS_B64）の作り直しが必要です。</div>':'')
     +'</div>';
@@ -2121,8 +2129,8 @@ async function renderKeyTag(){
     // 取得が止まっている間は位置が動かないだけで「外出中」と表示され続けるため、
     // 古いデータは居場所を断定せず「不明」と出す。
     const ageH=ktAgeH(p.updated_at);
-    const stale=(ageH!=null&&ageH>=KT_WARN_H);
-    const bad=(ageH!=null&&ageH>=KT_BAD_H);
+    const stale=(ageH!=null&&ageH>=KT.warn);
+    const bad=(ageH!=null&&ageH>=KT.bad);
     const where=stale
       ? '<span style="color:'+(bad?'#b91c1c':'#b45309')+';font-weight:700;">⚠️ 位置不明（'+ktAgeText(ageH)+'の情報）</span>'
       : (p.office_id?('🏢 '+ktEsc(offName[p.office_id]||'営業所')+'内'):'🚚 外出中');
