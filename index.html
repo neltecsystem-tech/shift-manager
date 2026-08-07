@@ -519,6 +519,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">夕刊/競馬(日) <span style="color:#f59e0b;font-size:11px;">※未入力なら金-土と同額</span></label><input type="number" id="inv-re-pm-sun" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="未入力=金-土と同額"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">庫内朝刊</label><input type="number" id="inv-re-wh-am" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">庫内夕刊</label><input type="number" id="inv-re-wh-pm" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
+        <div style="margin-bottom:10px;background:#f0fdfa;border:1px solid #14b8a6;border-radius:8px;padding:10px 12px;"><label style="font-size:12px;color:#0f766e;font-weight:600;">🧭 プランナー手当 (月額)</label><input type="number" id="inv-re-planner" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;margin-top:4px;" placeholder="未入力=なし" min="0" step="1000"><div style="font-size:11px;color:#0f766e;margin-top:4px;">支払明細の <b>朝刊合計＋夕刊合計＋プランナー手当</b> が月合計になります (稼働のある月のみ加算)</div></div>
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:#6366f1;font-weight:600;">朝刊 計算方式</label></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">朝刊 計算方式</label><select id="inv-re-calc" onchange="document.getElementById('inv-re-unit-wrap').style.display=this.value==='個数'?'block':'none'" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="固定">固定</option><option value="個数">個数制</option><option value="個建">個建制</option></select></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-unit-wrap"><label style="font-size:12px;color:var(--text-sub)">朝刊 個数単価</label><input type="number" id="inv-re-unit" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
@@ -6844,7 +6845,7 @@ function invUpdateNameSelect(selectedName,excludeRegistered){
 function invAddRate(){
   document.getElementById('inv-re-row').value='';
   document.getElementById('inv-re-title').textContent='単価を追加';
-  ['inv-re-am-wd','inv-re-am-we','inv-re-am-sun','inv-re-pm-wd','inv-re-pm-we','inv-re-pm-sun','inv-re-wh-am','inv-re-wh-pm','inv-re-unit','inv-re-unit-pm','inv-re-loginid','inv-re-loginpw'].forEach(id=>document.getElementById(id).value='');
+  ['inv-re-am-wd','inv-re-am-we','inv-re-am-sun','inv-re-pm-wd','inv-re-pm-we','inv-re-pm-sun','inv-re-wh-am','inv-re-wh-pm','inv-re-unit','inv-re-unit-pm','inv-re-loginid','inv-re-loginpw','inv-re-planner'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('inv-re-biztype').value='';
   document.getElementById('inv-re-company').value='';
   document.getElementById('inv-re-company-wrap').style.display='none';
@@ -6888,6 +6889,7 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-pm-sun').value=r.pm_sunday||'';
   document.getElementById('inv-re-wh-am').value=r.warehouse_am;
   document.getElementById('inv-re-wh-pm').value=r.warehouse_pm;
+  document.getElementById('inv-re-planner').value=r.planner_allowance||'';
   document.getElementById('inv-re-calc').value=r.calc_type||'固定';
   document.getElementById('inv-re-unit').value=r.unit_price;
   document.getElementById('inv-re-unit-wrap').style.display=r.calc_type==='個数'?'block':'none';
@@ -6976,7 +6978,7 @@ async function invSaveRate(){
   const perms=permArr.join(',');
   const kwAmDaily=['mon','tue','wed','thu','fri','sat','sun'].map(d=>document.getElementById('inv-re-kw-'+d).value).join(',');
   const kwPattern=document.getElementById('inv-re-kw-pattern').value;
-  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,am_sunday:document.getElementById('inv-re-am-sun').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,pm_sunday:document.getElementById('inv-re-pm-sun').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value,calc_type_pm:document.getElementById('inv-re-calc-pm').value,unit_price_pm:document.getElementById('inv-re-unit-pm').value,permissions:perms,kw_am_daily:kwAmDaily.replace(/^,+$/,''),kw_pattern:kwPattern,monthly_salary:document.getElementById('inv-re-salary').value||'',invoice_number:document.getElementById('inv-re-invoice').value.trim(),rate_effective_from:document.getElementById('inv-re-effective').value||''};
+  const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,am_sunday:document.getElementById('inv-re-am-sun').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,pm_sunday:document.getElementById('inv-re-pm-sun').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value,calc_type_pm:document.getElementById('inv-re-calc-pm').value,unit_price_pm:document.getElementById('inv-re-unit-pm').value,permissions:perms,kw_am_daily:kwAmDaily.replace(/^,+$/,''),kw_pattern:kwPattern,monthly_salary:document.getElementById('inv-re-salary').value||'',invoice_number:document.getElementById('inv-re-invoice').value.trim(),rate_effective_from:document.getElementById('inv-re-effective').value||'',planner_allowance:document.getElementById('inv-re-planner').value||''};
   const isNewStaff=!rowNum;
   await invApi({action:'save_rate',record,row_number:rowNum?parseInt(rowNum):undefined});
   // 新規スタッフ時は人員名簿シートにも氏名のみで自動追加 (既存の同名行があればスキップ)
@@ -14765,6 +14767,7 @@ function admPayBuildSaveBar(items,y,m,monthLabel){
       month:m,
       am_sum:stmt.amSum,
       pm_sum:stmt.pmSum,
+      planner_allowance:stmt.plannerAllowance||0,
       grand_total:stmt.grandTotal,
       rows:stmt.rows,
       calc_type:rate.calc_type||null,
@@ -14847,7 +14850,7 @@ async function admPayFinalizeAll(){
     if(!stmt||!((stmt.rows&&stmt.rows.length)||stmt.grandTotal>0)){skippedEmpty.push(rate.name);return;}
     targets.push({
       staff_name:rate.name, phone:getPhone(rate.name)||'', year:y, month:m,
-      am_sum:stmt.amSum, pm_sum:stmt.pmSum, grand_total:stmt.grandTotal, rows:stmt.rows,
+      am_sum:stmt.amSum, pm_sum:stmt.pmSum, planner_allowance:stmt.plannerAllowance||0, grand_total:stmt.grandTotal, rows:stmt.rows,
       calc_type:rate.calc_type||null, calc_type_pm:rate.calc_type_pm||null,
       biz_type:rate.biz_type||null, company_name:rate.company||null,
       primary_area:admPayGetPrimaryArea(monthLabel,rate.name)||null,
@@ -14940,7 +14943,9 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
     amSum+=amAmount;pmSum+=pmAmount;
     rows.push({d:`${String(m).padStart(2,'0')}月${String(d).padStart(2,'0')}日`,ymd,dow:dowJp,am_course:sh.am_course,am:amAmount,am_detail:amDetail,pm_course:sh.pm_course,pm:pmAmount,pm_detail:pmDetail,total:amAmount+pmAmount});
   }
-  const grandTotal=amSum+pmSum;
+  // 🧭 プランナー手当 (単価マスタの月額)。稼働のある月のみ加算 (無稼働の月に手当だけ発生させない)
+  const plannerAllowance=(amSum+pmSum)>0?(Number(rate.planner_allowance)||0):0;
+  const grandTotal=amSum+pmSum+plannerAllowance;
   const reiwa=y-2018;
   const era=reiwa>=1?`令和${reiwa===1?'元':reiwa}年`:`西暦${y}年`;
 
@@ -14980,6 +14985,12 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
      +`<td style="border:1px solid #94a3b8;padding:3px 6px;text-align:right;font-weight:bold;">¥${r.total.toLocaleString()}</td>`
      +'</tr>';
   });
+  if(plannerAllowance){
+    h+=`<tr style="background:#f0fdfa;">`
+     +`<td colspan="6" style="border:1px solid #94a3b8;padding:4px 8px;color:#0f766e;font-weight:bold;">🧭 プランナー手当 (月額)</td>`
+     +`<td style="border:1px solid #94a3b8;padding:4px 6px;text-align:right;font-weight:bold;color:#0f766e;">¥${plannerAllowance.toLocaleString()}</td>`
+     +`</tr>`;
+  }
   h+=`<tr style="background:#f8fafc;font-weight:bold;">`
    +`<td colspan="3" style="border:1px solid #94a3b8;padding:4px;text-align:center;">合計</td>`
    +`<td style="border:1px solid #94a3b8;padding:4px;text-align:right;">¥${amSum.toLocaleString()}</td>`
@@ -14989,7 +15000,7 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
    +`</tr>`;
   h+='</tbody></table>';
   h+='</div>';
-  return {html:h,amSum,pmSum,grandTotal,rows};
+  return {html:h,amSum,pmSum,plannerAllowance,grandTotal,rows};
 }
 
 // 法人 (同一会社) の支払いサマリーページ
@@ -14997,6 +15008,7 @@ function admPayBuildSummaryHtml(companyName,monthVal,drivers){
   // drivers: [{name, amSum, pmSum, grandTotal}]
   const totalAm=drivers.reduce((s,d)=>s+d.amSum,0);
   const totalPm=drivers.reduce((s,d)=>s+d.pmSum,0);
+  const totalPlanner=drivers.reduce((s,d)=>s+(d.plannerAllowance||0),0);
   const totalGrand=drivers.reduce((s,d)=>s+d.grandTotal,0);
   const [y,m]=monthVal.split('-').map(Number);
   const reiwa=y-2018;
@@ -15012,13 +15024,17 @@ function admPayBuildSummaryHtml(companyName,monthVal,drivers){
   h+=`<div style="display:flex;gap:10px;margin-bottom:14px;">`;
   h+=`<div style="flex:1;background:#dbeafe;border-radius:8px;padding:12px;text-align:center;"><div style="font-size:11px;color:#1d4ed8;">朝刊合計</div><div style="font-size:18px;font-weight:bold;color:#1d4ed8;">¥${totalAm.toLocaleString()}</div></div>`;
   h+=`<div style="flex:1;background:#fae8ff;border-radius:8px;padding:12px;text-align:center;"><div style="font-size:11px;color:#9333ea;">夕刊合計</div><div style="font-size:18px;font-weight:bold;color:#9333ea;">¥${totalPm.toLocaleString()}</div></div>`;
+  if(totalPlanner)h+=`<div style="flex:1;background:#ccfbf1;border-radius:8px;padding:12px;text-align:center;"><div style="font-size:11px;color:#0f766e;">プランナー手当</div><div style="font-size:18px;font-weight:bold;color:#0f766e;">¥${totalPlanner.toLocaleString()}</div></div>`;
   h+=`<div style="flex:1;background:#fef3c7;border:2px solid #f59e0b;border-radius:8px;padding:12px;text-align:center;"><div style="font-size:11px;color:#92400e;">総支払額</div><div style="font-size:20px;font-weight:bold;color:#92400e;">¥${totalGrand.toLocaleString()}</div></div>`;
   h+=`</div>`;
-  h+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #94a3b8;padding:6px;">ドライバー</th><th style="border:1px solid #94a3b8;padding:6px;text-align:right;">朝刊小計</th><th style="border:1px solid #94a3b8;padding:6px;text-align:right;">夕刊小計</th><th style="border:1px solid #94a3b8;padding:6px;text-align:right;">月合計</th></tr></thead><tbody>`;
+  const pCol=totalPlanner?`<th style="border:1px solid #94a3b8;padding:6px;text-align:right;">プランナー手当</th>`:'';
+  h+=`<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="border:1px solid #94a3b8;padding:6px;">ドライバー</th><th style="border:1px solid #94a3b8;padding:6px;text-align:right;">朝刊小計</th><th style="border:1px solid #94a3b8;padding:6px;text-align:right;">夕刊小計</th>${pCol}<th style="border:1px solid #94a3b8;padding:6px;text-align:right;">月合計</th></tr></thead><tbody>`;
   drivers.forEach(d=>{
-    h+=`<tr><td style="border:1px solid #94a3b8;padding:5px;">${d.name}</td><td style="border:1px solid #94a3b8;padding:5px;text-align:right;">¥${d.amSum.toLocaleString()}</td><td style="border:1px solid #94a3b8;padding:5px;text-align:right;">¥${d.pmSum.toLocaleString()}</td><td style="border:1px solid #94a3b8;padding:5px;text-align:right;font-weight:bold;">¥${d.grandTotal.toLocaleString()}</td></tr>`;
+    const pc=totalPlanner?`<td style="border:1px solid #94a3b8;padding:5px;text-align:right;color:#0f766e;">${(d.plannerAllowance||0)?'¥'+(d.plannerAllowance||0).toLocaleString():'−'}</td>`:'';
+    h+=`<tr><td style="border:1px solid #94a3b8;padding:5px;">${d.name}</td><td style="border:1px solid #94a3b8;padding:5px;text-align:right;">¥${d.amSum.toLocaleString()}</td><td style="border:1px solid #94a3b8;padding:5px;text-align:right;">¥${d.pmSum.toLocaleString()}</td>${pc}<td style="border:1px solid #94a3b8;padding:5px;text-align:right;font-weight:bold;">¥${d.grandTotal.toLocaleString()}</td></tr>`;
   });
-  h+=`<tr style="background:#fef3c7;font-weight:bold;"><td style="border:1px solid #94a3b8;padding:6px;">合計</td><td style="border:1px solid #94a3b8;padding:6px;text-align:right;">¥${totalAm.toLocaleString()}</td><td style="border:1px solid #94a3b8;padding:6px;text-align:right;">¥${totalPm.toLocaleString()}</td><td style="border:1px solid #94a3b8;padding:6px;text-align:right;font-size:15px;color:#92400e;">¥${totalGrand.toLocaleString()}</td></tr>`;
+  const pcTot=totalPlanner?`<td style="border:1px solid #94a3b8;padding:6px;text-align:right;color:#0f766e;">¥${totalPlanner.toLocaleString()}</td>`:'';
+  h+=`<tr style="background:#fef3c7;font-weight:bold;"><td style="border:1px solid #94a3b8;padding:6px;">合計</td><td style="border:1px solid #94a3b8;padding:6px;text-align:right;">¥${totalAm.toLocaleString()}</td><td style="border:1px solid #94a3b8;padding:6px;text-align:right;">¥${totalPm.toLocaleString()}</td>${pcTot}<td style="border:1px solid #94a3b8;padding:6px;text-align:right;font-size:15px;color:#92400e;">¥${totalGrand.toLocaleString()}</td></tr>`;
   h+=`</tbody></table>`;
   h+='</div>';
   return h;
@@ -15366,7 +15382,7 @@ async function admPayBulk(){
   [...companyGroups.entries()].sort(([a],[b])=>a.localeCompare(b,'ja')).forEach(([company,rates])=>{
     const driverData=rates.map(rate=>{
       const c=stmtCache.get(rate.name);
-      return {name:rate.name,amSum:c.amSum,pmSum:c.pmSum,grandTotal:c.grandTotal,rate};
+      return {name:rate.name,amSum:c.amSum,pmSum:c.pmSum,plannerAllowance:c.plannerAllowance||0,grandTotal:c.grandTotal,rate};
     });
     if(rates.length>1){
       // サマリーページ

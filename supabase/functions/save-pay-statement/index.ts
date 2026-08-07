@@ -26,6 +26,7 @@ interface StatementPayload {
   month: number;
   am_sum: number;
   pm_sum: number;
+  planner_allowance?: number | null;
   grand_total: number;
   rows: StatementRow[];
   calc_type?: string | null;
@@ -142,6 +143,7 @@ Deno.serve(async (req: Request) => {
         month: s.month,
         am_sum: Math.round(s.am_sum || 0),
         pm_sum: Math.round(s.pm_sum || 0),
+        planner_allowance: Math.round(Number(s.planner_allowance) || 0),
         grand_total: Math.round(s.grand_total || 0),
         rows: s.rows,
         calc_type: s.calc_type ?? null,

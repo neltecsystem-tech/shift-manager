@@ -46,6 +46,15 @@ function nmKey(s: string): string {
   return out;
 }
 
+// 会社名キー: nmKey に加えて法人格(株式会社/㈱/(株)等)と記号(・/中点/ハイフン/括弧)を除去し、
+// ツール間の会社名表記ゆれ(半角㈱ vs 全角株式会社 等)を吸収する。会社名照合はこれで統一。
+function coKey(s: string): string {
+  return nmKey(s)
+    .replace(/株式会社|有限会社|合同会社|合資会社|\(株\)|\(有\)|\(合\)|㈱|㈲/g, '')
+    .replace(/[\s　・,，.。\-—–ー'"`（）()]/g, '')
+    .toLowerCase();
+}
+
 // 氏名照合(電話番号未登録者の明細取得)は管理者のみ許可。
 // shift EF は NexPort と同一プロジェクト(workchat)上なので、admin クライアントで
 // caller の JWT を検証し profiles.role を確認できる。
@@ -65,15 +74,32 @@ async function callerIsAdmin(admin: any, authToken: string | undefined): Promise
   }
 }
 
+// 🔒 公開タイミング = 支払通知メールの発行に合わせる(2026-08〜)。確定しただけの明細は本人にも見せない。
+//   公開条件: ① 自分宛の支払通知が発行済み(pay_statement_acceptance.issued_at) または
+//            ② 実績月の翌月11日 9:00 JST を過ぎた(=2回目の送信cron)。
+//   ②は保険。支払0円・メール未登録・明細停止などで通知が出ない人が、いつまでも自分の明細を
+//   見られなくなるのを防ぐ。管理者(admin/super_admin)は従来どおり常に閲覧できる。
+const PUBLISH_MSG = 'この月の明細は、支払通知書の発行後に公開されます（毎月1日・11日の朝に発行）。もうしばらくお待ちください。';
+function publishOpenAt(ym: string): number {
+  const [y, m] = ym.split('-').map(Number);
+  return Date.UTC(y, m, 11, 0, 0, 0); // 翌月11日 00:00 UTC = 09:00 JST
+}
+async function noticePublished(nx: any, profileId: string, ym: string): Promise<boolean> {
+  if (Date.now() >= publishOpenAt(ym)) return true;
+  if (!profileId) return false;
+  const { data } = await nx.from('pay_statement_acceptance').select('issued_at').eq('month', ym).eq('profile_id', profileId).maybeSingle();
+  return !!(data as any)?.issued_at;
+}
+
 // 呼び出し元(本人)の role/phone/オーナー情報。電話番号での明細取得を「本人/管理者/自社オーナー」に限定するため。
-async function getCaller(admin: any, authToken: string | undefined): Promise<{ role: string; phone: string; is_company_owner: boolean; company: string } | null> {
+async function getCaller(admin: any, authToken: string | undefined): Promise<{ role: string; phone: string; is_company_owner: boolean; company: string; uid: string } | null> {
   if (!authToken) return null;
   try {
     const { data: { user } } = await admin.auth.getUser(authToken);
     if (!user) return null;
     const { data: prof } = await admin.from('profiles').select('role, phone, is_company_owner, company').eq('id', user.id).maybeSingle();
     if (!prof) return null;
-    return { role: prof.role, phone: normalizePhone(prof.phone || ''), is_company_owner: !!prof.is_company_owner, company: String(prof.company || '') };
+    return { role: prof.role, phone: normalizePhone(prof.phone || ''), is_company_owner: !!prof.is_company_owner, company: String(prof.company || ''), uid: user.id };
   } catch (_) { return null; }
 }
 
@@ -105,6 +131,35 @@ Deno.serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
+    // 🔒 明細ビューア: 中央 login_access(meisai) で判定(管理者/明示停止/法人配下)。会計マトリクスに一本化。
+    {
+      const { data: { user: cu } } = await admin.auth.getUser(body.auth_token || '').catch(() => ({ data: { user: null } } as any));
+      if (cu) {
+        const chk = await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/check-login-access', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ system: 'meisai', profile_id: cu.id, source: 'viewer-shift' }),
+        }).then((x) => x.json()).catch(() => null);
+        if (chk && chk.allowed === false) {
+          const corp = chk.reason === 'corp_sub_denied';
+          return json({ error: corp ? '法人配下の方の明細は、法人のオーナー/担当者がご確認ください。' : 'この明細ビューアのご利用は停止されています。担当者にお問い合わせください。', code: corp ? 'CORP_SUB_DENIED' : 'VIEWER_DISABLED' }, 403);
+        }
+      }
+    }
+
+    // 表示対象月の制限: 統合ビューア/通知運用は2026年7月開始。それより前の月は非管理者に表示しない。
+    const MIN_YM = '2026-07';
+    if (ym < MIN_YM && !listAll) {
+      if (!(await callerIsAdmin(admin, body.auth_token)))
+        return json({ source: 'shift', found: false, reason: 'month_not_available', message: '2026年7月分より前は表示対象外です' });
+    }
+
+    // 🔒 公開タイミングを支払通知メールに合わせる。確定しただけの明細は本人にも出さない。
+    if (!listAll && !(await callerIsAdmin(admin, body.auth_token))) {
+      const { data: { user: cu } } = await admin.auth.getUser(body.auth_token || '').catch(() => ({ data: { user: null } } as any));
+      if (!(await noticePublished(admin, cu?.id ?? '', ym)))
+        return json({ source: 'shift', found: false, reason: 'not_published', message: PUBLISH_MSG });
+    }
+
     // 法人=会社名(company_name)で照合 / 個人=氏名(staff_name) or 電話。氏名・会社名照合は管理者限定。
     const byCompany = !listAll && !phoneInput && !nameInput && !!companyInput;
     const byName = !listAll && !phoneInput && !!nameInput && !companyInput;
@@ -132,12 +187,14 @@ Deno.serve(async (req: Request) => {
         let isOwnerOrContact = !!caller?.is_company_owner;
         const companies: string[] = [];
         if (caller?.company) companies.push(caller.company);
-        if (caller?.phone) {
-          const { data: sm } = await admin.from('staff_master').select('company_name, is_company_owner, is_company_contact').eq('phone', caller.phone).maybeSingle();
-          if (sm) { if ((sm as any).company_name) companies.push(String((sm as any).company_name)); if ((sm as any).is_company_owner || (sm as any).is_company_contact) isOwnerOrContact = true; }
+        // staff_master を 電話 or profile_id で照合(電話未登録のオーナー/担当でもアカウントで自社特定)。
+        const smOr = [caller?.phone ? `phone.eq.${caller.phone}` : '', caller?.uid ? `profile_id.eq.${caller.uid}` : ''].filter(Boolean).join(',');
+        if (smOr) {
+          const { data: sms } = await admin.from('staff_master').select('company_name, is_company_owner, is_company_contact').or(smOr);
+          for (const sm of (sms ?? [])) { if ((sm as any).company_name) companies.push(String((sm as any).company_name)); if ((sm as any).is_company_owner || (sm as any).is_company_contact) isOwnerOrContact = true; }
         }
-        const cKey = nmKey(companyInput);
-        const companyMatch = !!cKey && companies.some((c) => nmKey(c) === cKey);
+        const cKey = coKey(companyInput);
+        const companyMatch = !!cKey && companies.some((c) => coKey(c) === cKey);
         if (!(isOwnerOrContact && companyMatch))
           return json({ error: 'forbidden (自社の会社集計のみ閲覧できます)', code: 'FORBIDDEN' }, 403);
       }
@@ -148,8 +205,8 @@ Deno.serve(async (req: Request) => {
         .eq('month', month);
       if (error) return json({ error: 'fetch failed: ' + error.message }, 500);
       if (byCompany) {
-        const ckey = nmKey(companyInput);
-        rows = (data ?? []).filter((s) => ckey && nmKey(s.company_name ?? '').includes(ckey));
+        const ckey = coKey(companyInput);
+        rows = (data ?? []).filter((s) => ckey && coKey(s.company_name ?? '').includes(ckey));
       } else {
         const key = nmKey(nameInput);
         rows = (data ?? []).filter((s) => nmKey(s.staff_name ?? '') === key);
@@ -194,6 +251,7 @@ Deno.serve(async (req: Request) => {
         primary_area: s.primary_area,
         am_sum: s.am_sum,
         pm_sum: s.pm_sum,
+        planner_allowance: s.planner_allowance ?? 0,
         grand_total: s.grand_total,
         rows: s.rows,
         finalized_at: s.finalized_at,
