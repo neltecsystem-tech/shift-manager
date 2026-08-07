@@ -1873,8 +1873,9 @@ let keytagMap=null, keytagMarkers=[], keytagCircles=[], keytagPlacing=false, key
 function ktEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function ktTime(s){if(!s)return '';try{return new Date(s).toLocaleString('ja-JP',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}catch(e){return String(s);}}
 // 取得が止まっていても画面は「外出中」と出てしまうため、古さを明示する。
-// 19:00〜22:00 JST は取得を止めているので、その4時間で誤警告しないよう注意は5時間から。
-const KT_WARN_H=5, KT_BAD_H=12;
+// 19:00〜23:00 JST は取得を止めており、18:00の次は0:00で最大6時間空く。
+// その間に誤警告しないよう、注意は7時間から。
+const KT_WARN_H=7, KT_BAD_H=12;
 function ktAgeH(s){if(!s)return null;const t=Date.parse(s);if(isNaN(t))return null;return (Date.now()-t)/3600000;}
 function ktAgeText(h){if(h==null)return '';if(h<1)return Math.max(1,Math.round(h*60))+'分前';if(h<48)return Math.round(h)+'時間前';return Math.round(h/24)+'日前';}
 async function ktApi(payload){
