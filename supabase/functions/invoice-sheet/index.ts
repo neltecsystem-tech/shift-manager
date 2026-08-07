@@ -725,8 +725,12 @@ Deno.serve(async(req:Request)=>{
       return jsonResp({success:true});
     }
     if(action==='get_rates'){
-      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      const all = parseRates((await resp.json()).values||[]);
+      // Sheets の一時失敗(429/5xx)で単価が"静かに0件"になると、自動確定が全断する。
+      // → 軽リトライ付きで取得し、それでも駄目なら 503 を返して呼び出し側に失敗を伝える。
+      let rateRows: any[];
+      try{ rateRows = await fetchSheetValuesWithRetry('単価マスタ!2:200', async()=>sheetsToken); }
+      catch(e){ return jsonResp({error:'単価マスタの取得に失敗しました(Sheets一時エラー)。少し待って再実行してください。', detail:String((e as any)?.message||e)}, 503); }
+      const all = parseRates(rateRows);
       if (admin) return jsonResp({rates: all});
       // staff/owner: scopeNames に含まれる行のみ。corp-sub は金額系も剥がす (自社オーナーが show_money ON なら剥がさない=ライブ判定)
       const csm = !corpSub || memberShowsMoney(all, callerName);
