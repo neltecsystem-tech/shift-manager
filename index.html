@@ -624,6 +624,7 @@ tbody tr:hover { background:var(--primary-light); }
            指定しないと上部メニュー(.nav は z-index:100)の上に地図が乗ってしまう。
            測定ナビの #msr-map と同じ対処。 -->
       <div id="keytag-map" style="height:420px;border-radius:10px;margin-top:12px;background:#eef;position:relative;z-index:1;"></div>
+      <div id="keytag-legend" style="margin-top:8px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:12px;"></div>
       <div id="keytag-place-hint" style="display:none;margin-top:8px;color:#b45309;font-weight:700;">📍 地図上の営業所の位置をクリックしてください（キャンセルはもう一度ボタン）</div>
     </div>
     <div class="card" style="margin-top:12px;">
@@ -2153,6 +2154,29 @@ async function ktSchedSave(btn){
   }finally{ btn.disabled=false; btn.textContent=t; await ktRenderSchedule(); }
 }
 
+// 鍵の名前(立川8-1 / 川越10 / 川崎高津1 …)の頭にある営業所名で色を分ける。
+// 営業所の登録名から「営業所」を外したものと前方一致で判定し、
+// 「川崎高津」と「川越」のように頭が同じものがあるため長い名前から先に見る。
+const KT_GROUP_COLORS=['#2563eb','#dc2626','#16a34a','#9333ea','#ea580c','#0891b2','#db2777','#65a30d'];
+let keytagGroupColor={};
+function ktBuildGroupColors(offices){
+  keytagGroupColor={};
+  const names=(offices||[]).map(o=>String(o.name||'').replace(/営業所$/,'').trim()).filter(Boolean);
+  names.sort((a,b)=>b.length-a.length).forEach((n,i)=>{ keytagGroupColor[n]=KT_GROUP_COLORS[i%KT_GROUP_COLORS.length]; });
+}
+function ktGroupOf(name){
+  const n=String(name||'');
+  const keys=Object.keys(keytagGroupColor).sort((a,b)=>b.length-a.length);
+  for(const k of keys){ if(n.indexOf(k)===0) return k; }
+  return null;
+}
+function ktPinColor(name){ const g=ktGroupOf(name); return g?keytagGroupColor[g]:'#64748b'; }
+function ktPinIcon(color){
+  return L.divIcon({className:'',iconSize:[22,30],iconAnchor:[11,29],popupAnchor:[0,-26],
+    html:'<svg width="22" height="30" viewBox="0 0 22 30" style="filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));">'
+      +'<path d="M11 0C4.9 0 0 4.9 0 11c0 8.2 11 19 11 19s11-10.8 11-19C22 4.9 17.1 0 11 0z" fill="'+color+'"/>'
+      +'<circle cx="11" cy="11" r="4.2" fill="#fff"/></svg>'});
+}
 async function renderKeyTag(){
   const rb=document.getElementById('kt-refresh-btn');
   if(rb)rb.style.display=ktIsOperator()?'':'none';
@@ -2171,6 +2195,7 @@ async function renderKeyTag(){
   // 地図(タグマーカー + 営業所の円)
   const map=keytagEnsureMap();
   if(map){
+    ktBuildGroupColors(offices);
     keytagMarkers.forEach(m=>map.removeLayer(m)); keytagMarkers=[];
     keytagCircles.forEach(c=>map.removeLayer(c)); keytagCircles=[];
     const pts=[];
@@ -2190,9 +2215,22 @@ async function renderKeyTag(){
     });
     positions.forEach(p=>{
       if(p.lat==null||p.lng==null)return;
-      const m=L.marker([p.lat,p.lng]).addTo(map).bindPopup('<b>🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b><br>'+(p.holder?('貸与先: '+ktEsc(p.holder)+'<br>'):'')+'最終測位: '+ktTime(p.reported_at));
+      const m=L.marker([p.lat,p.lng],{icon:ktPinIcon(ktPinColor(p.tag_name))}).addTo(map).bindPopup('<b>🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b><br>'+(p.holder?('貸与先: '+ktEsc(p.holder)+'<br>'):'')+'最終測位: '+ktTime(p.reported_at));
       keytagMarkers.push(m); pts.push([p.lat,p.lng]);
     });
+    // 凡例: どの色がどの営業所か。該当しない鍵は灰色でまとめる
+    const lg=document.getElementById('keytag-legend');
+    if(lg){
+      const cnt={};
+      positions.forEach(p=>{ const g=ktGroupOf(p.tag_name)||'その他'; cnt[g]=(cnt[g]||0)+1; });
+      const items=Object.keys(keytagGroupColor).filter(g=>cnt[g])
+        .map(g=>({name:g,color:keytagGroupColor[g],n:cnt[g]}));
+      if(cnt['その他'])items.push({name:'その他',color:'#64748b',n:cnt['その他']});
+      lg.innerHTML=items.map(it=>
+        '<span style="display:inline-flex;align-items:center;gap:5px;">'
+        +'<span style="width:11px;height:11px;border-radius:50%;background:'+it.color+';display:inline-block;"></span>'
+        +ktEsc(it.name)+' <span style="color:#94a3b8;">'+it.n+'</span></span>').join('');
+    }
     // 初回のみ全体表示(編集のたびに視点が戻らないように)
     if(pts.length&&!keytagFitted){try{map.fitBounds(pts,{padding:[40,40],maxZoom:16});keytagFitted=true;}catch(e){}}
   }
@@ -2270,7 +2308,7 @@ async function renderKeyTag(){
     }
     return '<div class="card" style="margin-bottom:10px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
-        +'<div><b style="font-size:16px;">🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b> <span style="font-size:12px;color:#555;">'+where+'</span>'
+        +'<div><b style="font-size:16px;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+ktPinColor(p.tag_name)+';margin-right:6px;"></span>🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b> <span style="font-size:12px;color:#555;">'+where+'</span>'
           +(ktIsOperator()
               ? '<button onclick="ktToggleMonitor('+pi+',this)" title="監視を切り替える" style="margin-left:8px;padding:2px 9px;border-radius:10px;border:1px solid '+(p.monitor_enabled===false?'#cbd5e1':'#86efac')+';background:'+(p.monitor_enabled===false?'#f1f5f9':'#dcfce7')+';color:'+(p.monitor_enabled===false?'#64748b':'#15803d')+';font-size:11px;font-weight:700;cursor:pointer;">'+(p.monitor_enabled===false?'監視OFF':'監視ON')+'</button>'
               : (p.monitor_enabled===false?'<span style="margin-left:8px;padding:2px 9px;border-radius:10px;background:#f1f5f9;color:#64748b;font-size:11px;font-weight:700;">監視OFF</span>':''))
