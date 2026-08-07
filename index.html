@@ -633,10 +633,7 @@ tbody tr:hover { background:var(--primary-light); }
     </div>
     <div class="card" style="margin-top:12px;">
       <h3 style="margin:0 0 4px 0;">🗓 監視スケジュール</h3>
-      <p style="margin:0 0 10px 0;font-size:12px;color:var(--text-sub);">
-        この時間帯だけ位置を取りに行きます。時間帯の外では1件も問い合わせません。
-        非公式の仕組みのため、必要な時間帯だけに絞ってください。
-      </p>
+      <p id="keytag-schedule-note" style="margin:0 0 10px 0;font-size:12px;color:var(--text-sub);"></p>
       <div id="keytag-schedule"></div>
     </div>
     <div class="card" style="margin-top:12px;">
@@ -2073,7 +2070,12 @@ function ktDrawSchedule(){
   const el=document.getElementById('keytag-schedule');
   if(!el)return;
   const editable=ktIsOperator();
-  const dis=editable?'':' disabled';
+  const note=document.getElementById('keytag-schedule-note');
+  if(note)note.textContent=editable
+    ? 'この時間帯だけ位置を取りに行きます。時間帯の外では1件も問い合わせません。非公式の仕組みのため、必要な時間帯だけに絞ってください。'
+    : '鍵の位置を確認している時間帯です。この時間帯の外では位置は更新されません（設定の変更はシステム担当のみ）。';
+  if(!editable){ el.innerHTML=ktScheduleReadonly(); return; }
+  const dis='';
   const rows=keytagSchedule.map((r,i)=>
     '<tr>'
     +'<td style="padding:5px 6px;"><input value="'+ktEsc(r.label||'')+'" oninput="keytagSchedule['+i+'].label=this.value"'+dis+' style="width:110px;padding:5px;border:1px solid #cbd5e1;border-radius:5px;"></td>'
@@ -2102,6 +2104,29 @@ function ktDrawSchedule(){
         +'<button onclick="ktSchedSave(this)" style="padding:6px 18px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;">保存</button>'
         +'</div>'
       : '<div style="margin-top:8px;font-size:12px;color:#94a3b8;">変更できるのはシステム担当のみです。</div>');
+}
+// 担当者以外は「いつ監視しているか」が分かれば十分なので、入力欄ではなく一覧で見せる
+function ktScheduleReadonly(){
+  const now=new Date(), t=((now.getUTCHours()+9)%24)*60+now.getUTCMinutes();
+  const on=keytagSchedule.filter(r=>r.enabled!==false&&r.start_min!=null&&r.end_min!=null);
+  if(!on.length)return '<div style="font-size:13px;color:#94a3b8;">監視の時間帯が設定されていません。</div>';
+  const rows=on.sort((a,b)=>a.start_min-b.start_min).map(r=>{
+    const live=(t>=r.start_min&&t<=r.end_min);
+    const dep=(r.kind==='depart');
+    return '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f1f5f9;">'
+      +'<span style="min-width:104px;font-weight:700;color:#0f172a;">'+ktHHMM(r.start_min)+' 〜 '+ktHHMM(r.end_min)+'</span>'
+      +'<span style="padding:2px 9px;border-radius:10px;font-size:11px;font-weight:700;color:#fff;background:'+(dep?'#f59e0b':'#22c55e')+';">'+(dep?'出庫':'帰庫')+'</span>'
+      +'<span style="color:#475569;font-size:13px;">'+ktEsc(r.label||'')+'</span>'
+      +'<span style="color:#94a3b8;font-size:12px;">'+(r.interval_min||30)+'分ごと</span>'
+      +(live?'<span style="margin-left:auto;padding:2px 9px;border-radius:10px;background:#dbeafe;color:#1d4ed8;font-size:11px;font-weight:700;">いま監視中</span>':'')
+    +'</div>';
+  }).join('');
+  const nextS=on.map(r=>r.start_min).filter(m=>m>t).sort((a,b)=>a-b)[0];
+  const inNow=on.some(r=>t>=r.start_min&&t<=r.end_min);
+  return rows
+    +'<div style="margin-top:10px;font-size:12px;color:#64748b;">'
+    +(inNow?'いまは監視時間帯です。':'いまは監視していません。'+(nextS!=null?'次は '+ktHHMM(nextS)+' から。':'次は明日の '+ktHHMM(Math.min.apply(null,on.map(r=>r.start_min)))+' から。'))
+    +'</div>';
 }
 function ktSchedAdd(){
   keytagSchedule.push({label:'新しい時間帯',kind:'return',start_min:540,end_min:600,interval_min:30,enabled:true});
