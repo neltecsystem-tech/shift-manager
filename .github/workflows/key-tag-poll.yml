@@ -95,6 +95,32 @@ jobs:
           printf '%s' "$SECRETS_B64" | base64 -d > tool/Auth/secrets.json
           test -s tool/Auth/secrets.json || { echo "secrets.json が空です(base64を確認)"; exit 1; }
 
+      # FCM認証は接続のたびに更新される。Actionsは毎回まっさらなので、
+      # 前回の更新分をDBから引き継がないと "Invalid EC key." で必ず落ちる。
+      # (GitHub Secretは初回のブートストラップ用。以降はDB側が正)
+      - name: Restore latest FCM credentials from DB
+        if: steps.guard.outputs.skip != '1'
+        env:
+          INGEST_URL: https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/key-tag
+          INGEST_SECRET: ${{ secrets.KEY_TAG_INGEST_SECRET }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          url, sec = os.environ['INGEST_URL'], os.environ['INGEST_SECRET']
+          body = json.dumps({"action": "creds_get", "secret": sec}).encode()
+          req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+          try:
+              r = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
+          except Exception as e:
+              print("creds_get 失敗(GitHub Secretの値で続行):", e); raise SystemExit(0)
+          if r.get("found") and r.get("data"):
+              with open("tool/Auth/secrets.json", "w", encoding="utf-8") as f:
+                  json.dump(r["data"], f, ensure_ascii=False)
+              print("DBの認証情報を使用します (updated_at:", r.get("updated_at"), ")")
+          else:
+              print("DBに保存が無いためGitHub Secretの値で起動します(初回)")
+          PY
+
       - name: Run poller
         if: steps.guard.outputs.skip != '1'
         working-directory: tool
@@ -104,3 +130,28 @@ jobs:
           LOCATE_TIMEOUT: '60'
           # KEY_TAG_IDS: '6a6a55dd-0000-29d8-91a0-883d24f433d0'  # 明示したい場合
         run: python poller.py
+
+      # 更新された認証情報を保存する。ここを飛ばすと次回また "Invalid EC key." になる。
+      # 取得に失敗した回でも認証だけは更新されていることがあるため always() で実行する。
+      - name: Save updated FCM credentials to DB
+        if: always() && steps.guard.outputs.skip != '1'
+        env:
+          INGEST_URL: https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/key-tag
+          INGEST_SECRET: ${{ secrets.KEY_TAG_INGEST_SECRET }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          try:
+              d = json.load(open("tool/Auth/secrets.json", encoding="utf-8"))
+          except Exception as e:
+              print("secrets.json を読めません:", e); raise SystemExit(0)
+          if not d.get("fcm_credentials") or not d.get("aas_token"):
+              print("内容が不十分なため保存しません"); raise SystemExit(0)
+          url, sec = os.environ['INGEST_URL'], os.environ['INGEST_SECRET']
+          body = json.dumps({"action": "creds_set", "secret": sec, "data": d}).encode()
+          req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+          try:
+              print("creds_set:", urllib.request.urlopen(req, timeout=30).read().decode()[:200])
+          except Exception as e:
+              print("creds_set 失敗:", e)
+          PY
