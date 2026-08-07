@@ -117,7 +117,19 @@ def main():
         os._exit(1)
     wd = threading.Timer(budget, _watchdog); wd.daemon = True; wd.start()
 
-    result_hex = request_device_list()
+    # 非公式APIのため、回し過ぎるとGoogle側に拒否される可能性がある。
+    # 401/403/429 が出たら回数を増やしたことが原因の可能性が高いので、
+    # 気付けるように明示して止める(黙って0件になると原因を追いにくい)。
+    try:
+        result_hex = request_device_list()
+    except Exception as e:
+        msg = str(e)
+        if any(c in msg for c in ("401", "403", "429", "quota", "Too Many")):
+            print(f"🚨 Google側に拒否されました({msg[:120]})。"
+                  " 実行間隔を空けるか、認証をやり直してください。", file=sys.stderr)
+        else:
+            print(f"デバイス一覧の取得に失敗: {msg[:200]}", file=sys.stderr)
+        sys.exit(1)
     device_list = parse_device_list_protobuf(result_hex)
     try:
         refresh_custom_trackers(device_list)
