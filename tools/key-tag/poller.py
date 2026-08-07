@@ -17,6 +17,7 @@ INGEST_URL = os.environ.get("INGEST_URL", "").strip()
 INGEST_SECRET = os.environ.get("INGEST_SECRET", "").strip()
 KEY_TAG_IDS = [x.strip() for x in os.environ.get("KEY_TAG_IDS", "").split(",") if x.strip()]
 LOCATE_TIMEOUT = int(os.environ.get("LOCATE_TIMEOUT", "90"))
+DISABLED_TAGS = set()   # 画面で監視OFFにしたタグ(問い合わせない)
 
 def in_schedule():
     """画面で設定した監視時間帯(JST)の中か。枠外なら1件もGoogleに問い合わせない。
@@ -31,7 +32,9 @@ def in_schedule():
         body = json.dumps({"action": "schedule_get", "secret": INGEST_SECRET}).encode()
         req = urllib.request.Request(INGEST_URL, data=body,
                                      headers={"Content-Type": "application/json"}, method="POST")
-        rows = json.loads(urllib.request.urlopen(req, timeout=20).read().decode()).get("schedule") or []
+        res = json.loads(urllib.request.urlopen(req, timeout=20).read().decode())
+        rows = res.get("schedule") or []
+        globals()["DISABLED_TAGS"] = set(res.get("disabled_tags") or [])
     except Exception as e:
         print(f"(監視時間帯を取得できませんでした: {e} → 実行します)")
         return True
@@ -188,6 +191,11 @@ def main():
         targets = [(n, c) for (n, c) in canonic_ids if c in KEY_TAG_IDS]
     else:
         targets = get_tag_targets(device_list)
+    if DISABLED_TAGS:
+        skipped = [n for n, c in targets if c in DISABLED_TAGS]
+        targets = [(n, c) for (n, c) in targets if c not in DISABLED_TAGS]
+        if skipped:
+            print(f"監視OFFのため除外({len(skipped)}個): {', '.join(skipped)}")
     if not targets:
         print("追跡対象なし"); return
 

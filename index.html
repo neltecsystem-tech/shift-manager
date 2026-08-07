@@ -2058,7 +2058,7 @@ function ktIsOperator(){
 }
 
 // ── 監視スケジュール ──────────────────────────────
-let keytagSchedule=[], keytagPosCount=0;
+let keytagSchedule=[], keytagPosCount=0, keytagPositions=[];
 const ktHHMM=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
 const ktToMin=s=>{const m=/^(\d{1,2}):(\d{2})$/.exec(String(s).trim());return m?(+m[1])*60+(+m[2]):null;};
 async function ktRenderSchedule(){
@@ -2133,7 +2133,7 @@ async function renderKeyTag(){
     const [jp,jo,je]=await Promise.all([ktApi({action:'list'}),ktApi({action:'list_offices'}),ktApi({action:'list_events',limit:100})]);
     if(jp.error){if(listEl)listEl.innerHTML='<div style="padding:12px;color:#c00;">'+ktEsc(jp.error)+'（管理者ログインが必要です）</div>';return;}
     positions=jp.positions||[]; offices=jo.offices||[]; events=je.events||[];
-    keytagPosCount=positions.length;
+    keytagPosCount=positions.filter(p=>p.monitor_enabled!==false).length;
     keytagOfficeCache=offices;
   }catch(e){if(listEl)listEl.innerHTML='<div style="padding:12px;color:#c00;">取得に失敗しました</div>';return;}
 
@@ -2199,7 +2199,7 @@ async function renderKeyTag(){
   const courseDl='<datalist id="kt-course-dl">'+ktCourseList().map(c=>'<option value="'+ktEsc(c)+'">').join('')+'</datalist>';
   // 取得が丸ごと止まっている(=全タグが古い)ときは、個別の警告だけだと気付きにくいので帯を出す
   let banner='';
-  const ages=positions.map(p=>ktAgeH(p.updated_at)).filter(h=>h!=null);
+  const ages=positions.filter(p=>p.monitor_enabled!==false).map(p=>ktAgeH(p.updated_at)).filter(h=>h!=null);
   const newestH=ages.length?Math.min.apply(null,ages):null;
   const KT=ktThresholds();
   if(newestH!=null&&newestH>=KT.warn){
@@ -2211,12 +2211,14 @@ async function renderKeyTag(){
       +(sev?'<div style="font-size:12px;color:#777;margin-top:6px;">「⚡今すぐ更新」で復旧しない場合、Google側の認証情報（GitHub Actions の KEY_TAG_SECRETS_B64）の作り直しが必要です。</div>':'')
     +'</div>';
   }
-  listEl.innerHTML=banner+courseDl+positions.map(p=>{
+  keytagPositions=positions;
+  listEl.innerHTML=banner+courseDl+positions.map((p,pi)=>{
     const gmap=(p.lat!=null)?('https://www.google.com/maps/search/?api=1&query='+p.lat+','+p.lng):'';
     // 取得が止まっている間は位置が動かないだけで「外出中」と表示され続けるため、
     // 古いデータは居場所を断定せず「不明」と出す。
     const ageH=ktAgeH(p.updated_at);
-    const stale=(ageH!=null&&ageH>=KT.warn);
+    // 監視OFFのタグは取りに行っていないので、古くても異常ではない
+    const stale=(p.monitor_enabled!==false)&&(ageH!=null&&ageH>=KT.warn);
     const bad=(ageH!=null&&ageH>=KT.bad);
     const where=stale
       ? '<span style="color:'+(bad?'#b91c1c':'#b45309')+';font-weight:700;">⚠️ 位置不明（'+ktAgeText(ageH)+'の情報）</span>'
@@ -2238,6 +2240,9 @@ async function renderKeyTag(){
     return '<div class="card" style="margin-bottom:10px;">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
         +'<div><b style="font-size:16px;">🔑 '+ktEsc(p.tag_name||p.tag_id)+'</b> <span style="font-size:12px;color:#555;">'+where+'</span>'
+          +(ktIsOperator()
+              ? '<button onclick="ktToggleMonitor('+pi+',this)" title="監視を切り替える" style="margin-left:8px;padding:2px 9px;border-radius:10px;border:1px solid '+(p.monitor_enabled===false?'#cbd5e1':'#86efac')+';background:'+(p.monitor_enabled===false?'#f1f5f9':'#dcfce7')+';color:'+(p.monitor_enabled===false?'#64748b':'#15803d')+';font-size:11px;font-weight:700;cursor:pointer;">'+(p.monitor_enabled===false?'監視OFF':'監視ON')+'</button>'
+              : (p.monitor_enabled===false?'<span style="margin-left:8px;padding:2px 9px;border-radius:10px;background:#f1f5f9;color:#64748b;font-size:11px;font-weight:700;">監視OFF</span>':''))
           +'<div style="color:'+(bad?'#b91c1c':(stale?'#b45309':'#666'))+';font-size:12px;">最終測位: '+(ktTime(p.reported_at)||'—')+' ／ 取得: '+(ktTime(p.updated_at)||'—')+(ageH!=null?'（'+ktAgeText(ageH)+'）':'')+'</div></div>'
         +(gmap?('<a href="'+gmap+'" target="_blank" style="text-decoration:none;padding:6px 12px;border-radius:8px;background:#0ea5e9;color:#fff;font-weight:700;">📍 地図で開く</a>'):'')
       +'</div>'
@@ -2256,6 +2261,15 @@ async function renderKeyTag(){
     +'</div>';
   }).join('');
 }
+async function ktToggleMonitor(pi,btn){
+  if(!ktIsOperator())return;
+  const p=keytagPositions[pi]; if(!p)return;
+  btn.disabled=true;
+  const j=await ktApi({action:'set_monitor',tag_id:p.tag_id,enabled:(p.monitor_enabled===false)});
+  if(j.error){alert('切り替えに失敗しました: '+j.error);btn.disabled=false;return;}
+  await renderKeyTag();
+}
+
 async function keytagRefreshNow(btn){
   const old=btn.textContent;
   btn.disabled=true; btn.textContent='更新要求中...';
