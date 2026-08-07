@@ -1989,7 +1989,10 @@ async function keytagDelOffice(id,name){
 }
 // ---- 営業所の編集(名称/半径) ----
 function ktOfficeRowHtml(o){
-  return '<span>🏢 <b>'+ktEsc(o.name)+'</b> <span style="color:#888;font-size:12px;">（半径'+o.radius_m+'m）</span></span>'
+  const col=String(o.color||'').trim()||'#94a3b8';
+  const pre=ktOfficePrefix(o);
+  return '<span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:'+col+';margin-right:6px;vertical-align:middle;"></span>'
+    +'🏢 <b>'+ktEsc(o.name)+'</b> <span style="color:#888;font-size:12px;">（半径'+o.radius_m+'m'+(pre?' / 鍵名「'+ktEsc(pre)+'」':'')+'）</span></span>'
     +'<span style="display:flex;gap:6px;flex-wrap:wrap;">'
       +'<button onclick="keytagEditOffice('+o.id+')" style="padding:4px 10px;border:1px solid #93c5fd;border-radius:6px;background:#fff;color:#2563eb;cursor:pointer;">✏️ 編集</button>'
       +'<button onclick="keytagMoveOffice('+o.id+')" style="padding:4px 10px;border:1px solid #86efac;border-radius:6px;background:#fff;color:#16a34a;cursor:pointer;">📍 位置変更</button>'
@@ -2005,6 +2008,10 @@ function keytagEditOffice(id){
       +'<label style="font-size:13px;color:#555;">半径</label>'
       +'<input id="kt-edit-radius-'+id+'" type="number" min="10" max="5000" value="'+o.radius_m+'" style="width:80px;padding:5px;border:1px solid #cbd5e1;border-radius:6px;">'
       +'<span style="font-size:13px;color:#555;">m</span>'
+      +'<label style="font-size:13px;color:#555;">色</label>'
+      +'<input id="kt-edit-color-'+id+'" type="color" value="'+(String(o.color||'').trim()||'#2563eb')+'" style="width:42px;height:30px;padding:1px;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer;">'
+      +'<label style="font-size:13px;color:#555;" title="鍵の名前がこの文字で始まればこの営業所の鍵とみなします">鍵名</label>'
+      +'<input id="kt-edit-prefix-'+id+'" value="'+ktEsc(o.tag_prefix||'')+'" placeholder="'+ktEsc(String(o.name||'').replace(/営業所$/,''))+'" style="width:110px;padding:5px;border:1px solid #cbd5e1;border-radius:6px;">'
     +'</span>'
     +'<span style="display:flex;gap:6px;">'
       +'<button onclick="keytagSaveOffice('+id+')" style="padding:4px 12px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;">保存</button>'
@@ -2024,7 +2031,9 @@ async function keytagSaveOffice(id){
   const radius=parseInt(document.getElementById('kt-edit-radius-'+id).value,10);
   if(!name){alert('営業所名を入力してください');return;}
   if(!(radius>=10&&radius<=5000)){alert('半径は10〜5000mで入力してください');return;}
-  const j=await ktApi({action:'update_office',id:id,name:name,radius_m:radius});
+  const color=(document.getElementById('kt-edit-color-'+id)||{}).value||'';
+  const prefix=((document.getElementById('kt-edit-prefix-'+id)||{}).value||'').trim();
+  const j=await ktApi({action:'update_office',id:id,name:name,radius_m:radius,color:color,tag_prefix:prefix});
   if(j.error){alert('保存に失敗: '+j.error);return;}
   renderKeyTag();
 }
@@ -2159,10 +2168,17 @@ async function ktSchedSave(btn){
 // 「川崎高津」と「川越」のように頭が同じものがあるため長い名前から先に見る。
 const KT_GROUP_COLORS=['#2563eb','#dc2626','#16a34a','#9333ea','#ea580c','#0891b2','#db2777','#65a30d'];
 let keytagGroupColor={};
+function ktOfficePrefix(o){
+  return String(o.tag_prefix||'').trim() || String(o.name||'').replace(/営業所$/,'').trim();
+}
 function ktBuildGroupColors(offices){
   keytagGroupColor={};
-  const names=(offices||[]).map(o=>String(o.name||'').replace(/営業所$/,'').trim()).filter(Boolean);
-  names.sort((a,b)=>b.length-a.length).forEach((n,i)=>{ keytagGroupColor[n]=KT_GROUP_COLORS[i%KT_GROUP_COLORS.length]; });
+  (offices||[]).forEach((o,i)=>{
+    const key=ktOfficePrefix(o);
+    if(!key)return;
+    // 色は営業所ごとに設定でき、未設定なら並び順で自動割当
+    keytagGroupColor[key]=String(o.color||'').trim()||KT_GROUP_COLORS[i%KT_GROUP_COLORS.length];
+  });
 }
 function ktGroupOf(name){
   const n=String(name||'');
@@ -2200,7 +2216,9 @@ async function renderKeyTag(){
     keytagCircles.forEach(c=>map.removeLayer(c)); keytagCircles=[];
     const pts=[];
     offices.forEach(o=>{
-      const c=L.circle([o.lat,o.lng],{radius:o.radius_m,color:'#16a34a',weight:1,fillColor:'#22c55e',fillOpacity:0.12}).addTo(map);
+      // 円も営業所の色に合わせる(鍵のピンと対応が付くように)
+      const oc=String(o.color||'').trim()||'#16a34a';
+      const c=L.circle([o.lat,o.lng],{radius:o.radius_m,color:oc,weight:1,fillColor:oc,fillOpacity:0.12}).addTo(map);
       c.ktOfficeId=o.id;
       const mk=L.marker([o.lat,o.lng],{draggable:true,icon:L.divIcon({html:'<div style="font-size:26px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));">🏢</div>',className:'',iconSize:[26,26],iconAnchor:[13,24]})}).addTo(map).bindPopup('🏢 <b>'+ktEsc(o.name)+'</b>（半径'+o.radius_m+'m）');
       mk.on('drag',ev=>{try{c.setLatLng(ev.target.getLatLng());}catch(e){}});
