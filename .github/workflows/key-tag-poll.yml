@@ -49,32 +49,9 @@ jobs:
           git clone https://github.com/leonboe1/GoogleFindMyTools.git tool
           cd tool && git checkout d46e952
 
-      # 同梱の firebase_messaging は、解釈できないプッシュが1通届くと復号に失敗し、
-      # その例外で受信クライアントごと停止する(以後どのタグの位置も取れない)。
-      # 実際に "Incorrect padding" → "Invalid EC key" と形を変えて発生し、
-      # 2026-08-05 以降 取得が全滅していた。位置の返信は正常に届いているので、
-      # 読めないメッセージは読み飛ばして受信を続けさせる。
-      - name: Patch firebase_messaging (skip undecryptable pushes)
-        if: steps.guard.outputs.skip != '1'
-        run: |
-          python3 - <<'PY'
-          import io, sys
-          p = 'tool/Auth/firebase_messaging/fcmpushclient.py'
-          s = io.open(p, encoding='utf-8').read()
-          old = """        if isinstance(msg, DataMessageStanza):
-            self._handle_data_message(msg)"""
-          new = """        if isinstance(msg, DataMessageStanza):
-            try:
-                self._handle_data_message(msg)
-            except Exception as _e:  # noqa: BLE001  (patched: 1通の失敗で受信を止めない)
-                _logger.warning("skip undecryptable push: %s: %s", type(_e).__name__, _e)"""
-          if old not in s:
-              print('::error::パッチ対象が見つかりません(上流が変わった可能性)'); sys.exit(1)
-          s = s.replace(old, new, 1)
-          io.open(p, 'w', encoding='utf-8').write(s)
-          import ast; ast.parse(s)
-          print('patched:', p)
-          PY
+      # ※ 読めないプッシュで受信が止まる問題への対処は poller.py 側で
+      #    実行時に差し替えている(ライブラリのファイル書き換えは上流の変更で
+      #    当たらなくなるため)。
 
       - name: Setup Python
         if: steps.guard.outputs.skip != '1'

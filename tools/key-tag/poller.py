@@ -13,6 +13,27 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# 解釈できないプッシュが1通届くと、同梱のfirebase_messagingは復号例外で
+# 受信クライアントごと停止し、以後どのタグの位置も取れなくなる
+# (実際に "Incorrect padding" → "Invalid EC key" と形を変えて発生し、
+#  2026-08-05以降 取得が全滅した)。位置の返信自体は正常に届いているので、
+# 読めないメッセージは読み飛ばして受信を続けさせる。
+# ライブラリのファイルを書き換えると上流の変更で当たらなくなるため、
+# ここで実行時に差し替える。
+try:
+    from Auth.firebase_messaging.fcmpushclient import FcmPushClient as _FPC
+    _orig_handle = _FPC._handle_data_message
+
+    def _handle_data_message_safe(self, msg):
+        try:
+            return _orig_handle(self, msg)
+        except Exception as e:
+            print(f"(読めないプッシュを読み飛ばしました: {type(e).__name__}: {e})")
+    _FPC._handle_data_message = _handle_data_message_safe
+    print("FCM受信: 復号失敗を読み飛ばす設定を適用しました")
+except Exception as e:
+    print(f"(受信パッチを適用できませんでした: {e})")
+
 from NovaApi.ListDevices.nbe_list_devices import request_device_list
 from ProtoDecoders.decoder import parse_device_list_protobuf, get_canonic_ids
 from SpotApi.UploadPrecomputedPublicKeyIds.upload_precomputed_public_key_ids import refresh_custom_trackers
