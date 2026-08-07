@@ -84,7 +84,14 @@ jobs:
 
       - name: Install deps
         if: steps.guard.outputs.skip != '1'
-        run: pip install -r tool/requirements.txt
+        run: |
+          pip install -r tool/requirements.txt
+          # requirements.txt がバージョン無指定のため毎回最新が入る。
+          # cryptography 50.0.0 は FCM の EC 秘密鍵を受け付けず
+          # "ValueError: Invalid EC key." で受信クライアントごと停止する。
+          # ローカルで正常に動いている 49 系に固定する。
+          pip install 'cryptography<50'
+          python -c "import cryptography; print('cryptography', cryptography.__version__)"
 
       - name: Place poller + secrets
         if: steps.guard.outputs.skip != '1'
