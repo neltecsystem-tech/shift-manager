@@ -20,6 +20,9 @@
 :root { --primary:#1a56db; --primary-light:#e8eefb; --bg:#f5f6fa; --card:#fff; --border:#dde1e8; --text:#1e293b; --text-sub:#64748b; --danger:#dc2626; }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:'Segoe UI','Meiryo',sans-serif; background:var(--bg); color:var(--text); font-size:14px; }
+/* Leafletは内部で最大1000程度のz-indexを使うため、そのままだと上部メニュー(.nav=100)の
+   上に地図やズームボタンが乗ってしまう。地図ごとに重なり順を閉じ込める。 */
+.leaflet-container { z-index:1; position:relative; }
 .nav { background:var(--primary); color:#fff; padding:0 20px; display:flex; align-items:center; height:52px; position:sticky; top:0; z-index:100; box-shadow:0 2px 8px rgba(0,0,0,.15); }
 .nav h1 { font-size:16px; font-weight:600; margin-right:32px; white-space:nowrap; }
 .nav-links { display:flex; gap:4px; overflow-x:auto; align-items:center; }
@@ -617,7 +620,10 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
       </div>
       <div style="color:var(--text-sub);font-size:12px;margin-top:4px;">位置は約1時間ごとに自動更新。タグはドライバーのスマホが近くにある時ほど頻繁に更新されます。</div>
-      <div id="keytag-map" style="height:420px;border-radius:10px;margin-top:12px;background:#eef;"></div>
+      <!-- z-index:1 で重なり順を閉じ込める。Leafletは内部で最大1000程度を使うため、
+           指定しないと上部メニュー(.nav は z-index:100)の上に地図が乗ってしまう。
+           測定ナビの #msr-map と同じ対処。 -->
+      <div id="keytag-map" style="height:420px;border-radius:10px;margin-top:12px;background:#eef;position:relative;z-index:1;"></div>
       <div id="keytag-place-hint" style="display:none;margin-top:8px;color:#b45309;font-weight:700;">📍 地図上の営業所の位置をクリックしてください（キャンセルはもう一度ボタン）</div>
     </div>
     <div class="card" style="margin-top:12px;">
