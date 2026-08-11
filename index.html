@@ -1478,6 +1478,22 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="smSnapshotNow()" id="sm-snap-btn" title="現在の店舗マスタを当月の月初スナップとして固定。請求・突合はこのスナップで計算されます。" style="background:#7c3aed;color:#fff;border:none;padding:10px 22px;border-radius:8px;cursor:pointer;font-weight:700;font-size:14px;margin-bottom:14px;">📌 今すぐ月初スナップを作成（手動）</button>
         <div id="sm-snap-info" style="margin-bottom:10px;font-size:13px;color:var(--text-sub);"></div>
         <div id="sm-snap-history"></div>
+        <!-- スナップの中身(店舗単位)を確認する。上の店舗数がどの店で構成されているかを追える。 -->
+        <div style="margin-top:20px;border-top:1px solid #e2e8f0;padding-top:14px;">
+          <div style="font-size:13px;font-weight:700;color:#6d28d9;margin-bottom:8px;">🔍 スナップの店舗詳細（この月の請求はこの構成で計算されています）</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px;">
+            <select id="sm-snapd-month" onchange="smSnapDetailLoad()" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;"></select>
+            <select id="sm-snapd-area" onchange="smSnapDetailRender()" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;"><option value="">全営業所</option></select>
+            <select id="sm-snapd-kubun" onchange="smSnapDetailRender()" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;">
+              <option value="">全区分</option><option value="am">朝刊あり</option><option value="pm">夕刊あり</option><option value="keiba">競馬あり</option>
+            </select>
+            <input id="sm-snapd-q" oninput="smSnapDetailRender()" placeholder="店舗コード / 店舗名 / コース名で検索" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;min-width:230px;">
+            <label style="font-size:12px;color:var(--text-sub);cursor:pointer;"><input type="checkbox" id="sm-snapd-billonly" checked onchange="smSnapDetailRender()"> 請求対象のみ</label>
+            <button onclick="smSnapDetailCsv()" style="background:#7c3aed;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;">⬇ CSV</button>
+          </div>
+          <div id="sm-snapd-info" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
+          <div id="sm-snapd-table" style="overflow:auto;max-height:560px;border:1px solid #e2e8f0;border-radius:8px;"></div>
+        </div>
       </div>
       <div id="adm-settings" class="adm-panel" style="display:none;">
         <div style="margin-bottom:24px;">
@@ -4002,6 +4018,139 @@ async function smLoadSnapshotHistory(){
     smRenderSnapHistory();
   }catch(_){el.innerHTML='';}
 }
+// ===== 月初スナップの店舗詳細 =====
+// 上の「請求店舗数」が どの店で構成されているか を店舗単位で確認する。
+// 数字の照合に使うので、絞り込みは EF の集計(writeSnapshotSummary)と同じルールに揃える。
+let smSnapDetail=null; // {month, records, headers, cols}
+async function smSnapDetailInit(){
+  const sel=document.getElementById('sm-snapd-month');if(!sel)return;
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_list'})});
+    const months=((await resp.json())||{}).months||[];
+    if(!months.length){document.getElementById('sm-snapd-info').textContent='月初スナップがまだありません。';return;}
+    sel.innerHTML=months.map(m=>`<option value="${m}">${m}</option>`).join('');
+    smSnapDetailLoad();
+  }catch(e){document.getElementById('sm-snapd-info').textContent='月一覧の取得に失敗: '+e.message;}
+}
+async function smSnapDetailLoad(){
+  const month=document.getElementById('sm-snapd-month').value;if(!month)return;
+  const info=document.getElementById('sm-snapd-info');
+  const tbl=document.getElementById('sm-snapd-table');
+  info.textContent='読み込み中...';tbl.innerHTML='';
+  try{
+    const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_read',month})});
+    const json=await resp.json();
+    if(json.error)throw new Error(json.error);
+    const headers=json.headers||[];
+    const cols={};
+    headers.forEach((h,i)=>{
+      if(h.includes('営業所'))cols.area=i;
+      if(h.includes('店舗コード'))cols.code=i;
+      if(h.includes('店舗名')&&h!=='正式店舗名')cols.name=i;
+      if(h.includes('開店日'))cols.open=i;
+      if(h.includes('朝刊コース'))cols.am=i;
+      if(h==='旧夕刊コース')cols.pmOld=i; else if(h.includes('夕刊コース'))cols.pm=i;
+      if(h.includes('競馬コース'))cols.keiba=i;
+      if(h==='朝刊特殊納品')cols.amT=i;
+      if(h==='夕刊特殊納品')cols.pmT=i;
+      if(h==='競馬特殊納品')cols.keibaT=i;
+      if(h==='雑誌')cols.zasshi=i;
+      if(h==='夕刊同梱')cols.dokkon=i;
+      if(h==='距離増')cols.kyori=i;
+    });
+    smSnapDetail={month,records:json.records||[],headers,cols};
+    // 営業所セレクタを実データから作る(池袋など請求で統合される表記も素のまま選べるように)
+    const areaSel=document.getElementById('sm-snapd-area');
+    const cur=areaSel.value;
+    const areas=[...new Set(smSnapDetail.records.map(r=>String(r[`col_${cols.area}`]||'').split(',')[0].trim()).filter(Boolean))].sort();
+    areaSel.innerHTML='<option value="">全営業所</option>'+areas.map(a=>`<option${a===cur?' selected':''}>${a}</option>`).join('');
+    smSnapDetailRender();
+  }catch(e){info.textContent='読み込み失敗: '+e.message;}
+}
+// 請求集計の対象になる行か (EF writeSnapshotSummary と同じ判定)
+function smSnapdIsBillable(r,cols,month){
+  const code=String(r[`col_${cols.code}`]||''),name=String(r[`col_${cols.name}`]||'');
+  if(!code&&!name)return false;
+  const area=String(r[`col_${cols.area}`]||'').split(',')[0].trim();
+  if(!area||area.includes('納品中止'))return false;
+  const od=String(r[`col_${cols.open}`]||'').trim().replace(/\//g,'-');
+  if(od&&/^\d{4}-\d{1,2}-\d{1,2}/.test(od)){
+    const p=od.split('-');
+    const ymd=`${p[0]}-${String(p[1]).padStart(2,'0')}-${String(p[2]).slice(0,2).padStart(2,'0')}`;
+    if(ymd>month+'-01')return false; // 月初時点で未開店
+  }
+  return true;
+}
+function smSnapdRows(){
+  if(!smSnapDetail)return[];
+  const {records,cols,month}=smSnapDetail;
+  const billOnly=document.getElementById('sm-snapd-billonly').checked;
+  const area=document.getElementById('sm-snapd-area').value;
+  const kubun=document.getElementById('sm-snapd-kubun').value;
+  const q=document.getElementById('sm-snapd-q').value.trim().toLowerCase();
+  const v=(r,k)=>String(r[`col_${cols[k]}`]||'').trim();
+  return records.filter(r=>{
+    if(!v(r,'code')&&!v(r,'name'))return false;
+    if(billOnly&&!smSnapdIsBillable(r,cols,month))return false;
+    if(area&&v(r,'area').split(',')[0].trim()!==area)return false;
+    if(kubun&&!v(r,kubun))return false;
+    if(q){
+      const hay=[v(r,'code'),v(r,'name'),v(r,'am'),v(r,'pm'),v(r,'keiba'),v(r,'area')].join(' ').toLowerCase();
+      if(hay.indexOf(q)<0)return false;
+    }
+    return true;
+  });
+}
+function smSnapDetailRender(){
+  const info=document.getElementById('sm-snapd-info');
+  const tbl=document.getElementById('sm-snapd-table');
+  if(!smSnapDetail){info.textContent='';tbl.innerHTML='';return;}
+  const {cols,month}=smSnapDetail;
+  const rows=smSnapdRows();
+  const v=(r,k)=>String(r[`col_${cols[k]}`]||'').trim();
+  const flag=(r,k)=>v(r,k)==='TRUE'?'○':'';
+  // 上の「請求店舗数」と突き合わせられるよう、絞り込み後の区分別件数を出す
+  const cAm=rows.filter(r=>v(r,'am')).length,cPm=rows.filter(r=>v(r,'pm')).length,cK=rows.filter(r=>v(r,'keiba')).length;
+  info.innerHTML=`<b style="color:#6d28d9;">${month}</b> ／ 該当 <b>${rows.length}</b> 店舗　`
+    +`朝刊 <b>${cAm}</b>・夕刊 <b>${cPm}</b>・競馬 <b>${cK}</b>（計 <b>${cAm+cPm+cK}</b>）`
+    +`<span style="color:#94a3b8;">　※「請求対象のみ」ONで上の請求店舗数と一致します（納品中止・月初時点で未開店を除外）</span>`;
+  if(!rows.length){tbl.innerHTML='<p style="padding:16px;color:var(--text-sub);font-size:13px;">該当する店舗がありません。</p>';return;}
+  const LIMIT=800;
+  const shown=rows.slice(0,LIMIT);
+  const th=(t)=>`<th style="position:sticky;top:0;background:#f5f3ff;border-bottom:2px solid #ddd6fe;padding:6px 8px;font-size:11.5px;color:#5b21b6;white-space:nowrap;">${t}</th>`;
+  const td=(t,extra='')=>`<td style="border-bottom:1px solid #f1f5f9;padding:5px 8px;font-size:12px;white-space:nowrap;${extra}">${t}</td>`;
+  let h='<table style="border-collapse:collapse;width:100%;"><thead><tr>'
+    +['営業所','店舗コード','店舗名','朝刊コース','夕刊コース','競馬コース','朝特殊','夕特殊','競特殊','雑誌','同梱','距離増','開店日'].map(th).join('')
+    +'</tr></thead><tbody>';
+  shown.forEach(r=>{
+    const stopped=v(r,'area').includes('納品中止');
+    h+=`<tr${stopped?' style="background:#fef2f2;"':''}>`
+      +td(v(r,'area'))+td(v(r,'code'))+td(v(r,'name'),'white-space:normal;')
+      +td(v(r,'am'))+td(v(r,'pm'))+td(v(r,'keiba'))
+      +td(flag(r,'amT'))+td(flag(r,'pmT'))+td(flag(r,'keibaT'))
+      +td(flag(r,'zasshi'))+td(flag(r,'dokkon'))+td(flag(r,'kyori'))
+      +td(v(r,'open'))+'</tr>';
+  });
+  h+='</tbody></table>';
+  if(rows.length>LIMIT)h+=`<p style="padding:8px;font-size:12px;color:#b45309;">※ 表示は先頭 ${LIMIT} 件のみです（該当 ${rows.length} 件）。絞り込むか CSV でご確認ください。</p>`;
+  tbl.innerHTML=h;
+}
+function smSnapDetailCsv(){
+  if(!smSnapDetail){alert('先にスナップを読み込んでください');return;}
+  const {cols,month}=smSnapDetail;
+  const rows=smSnapdRows();
+  const v=(r,k)=>String(r[`col_${cols[k]}`]||'').trim();
+  const flag=(r,k)=>v(r,k)==='TRUE'?'○':'';
+  const out=[['営業所','店舗コード','店舗名','朝刊コース','夕刊コース','競馬コース','朝刊特殊納品','夕刊特殊納品','競馬特殊納品','雑誌','夕刊同梱','距離増','開店日']];
+  rows.forEach(r=>out.push([v(r,'area'),v(r,'code'),v(r,'name'),v(r,'am'),v(r,'pm'),v(r,'keiba'),flag(r,'amT'),flag(r,'pmT'),flag(r,'keibaT'),flag(r,'zasshi'),flag(r,'dokkon'),flag(r,'kyori'),v(r,'open')]));
+  const csv='﻿'+out.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download=`月初スナップ_${month}.csv`;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
 function smRenderSnapHistory(){
   const body=document.getElementById('sm-snap-hist-body');const caret=document.getElementById('sm-snap-hist-caret');
   if(!body)return;
@@ -7744,7 +7893,7 @@ function adminTab(t){
   if(t==='history')admHistoryInit();
   if(t==='syshealth')admSysHealthInit();
 }
-function admSnapInit(){smLoadSnapshotInfo();smLoadSnapshotHistory();}
+function admSnapInit(){smLoadSnapshotInfo();smLoadSnapshotHistory();smSnapDetailInit();}
 
 // ===== 🎁 特別日当 (特別単価: 日当/日当+) 管理 =====
 function admSpEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
