@@ -1072,6 +1072,14 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <input type="hidden" id="adm-sp-editrow" value="">
         <div id="adm-sp-msg" style="margin-bottom:10px;font-size:13px;color:var(--text-sub);"></div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+          <label style="font-size:12px;color:var(--text-sub);font-weight:600;">表示月</label>
+          <button onclick="admSpShiftMonth(-1)" style="background:#e2e8f0;color:#334155;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px;">◀ 前月</button>
+          <input type="month" id="adm-sp-month" onchange="admSpRender()" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
+          <button onclick="admSpShiftMonth(1)" style="background:#e2e8f0;color:#334155;border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px;">翌月 ▶</button>
+          <button onclick="admSpSetMonth('')" style="background:#f1f5f9;color:#334155;border:1px solid var(--border);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;">全期間</button>
+          <span id="adm-sp-count" style="font-size:12px;color:var(--text-sub);margin-left:4px;"></span>
+        </div>
         <div id="adm-sp-content" style="overflow:auto;max-height:65vh;border:1px solid var(--border);border-radius:8px;background:#fff;"></div>
       </div>
 
@@ -1806,6 +1814,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-08-11', tag:'新機能', title:'管理: 「🎁 特別日当」に表示月の切り替えを追加（先月分が見られます）',
+   desc:'特別日当タブに「表示月」を追加しました。◀前月／翌月▶で月を送れ、初期表示は先月です。「全期間」ボタンで全件表示に戻せます。件数と最新の適用日も表示するので、その月に登録が無いのか、そもそも登録が無いのかが区別できます。あわせて、Googleフォーム経由（2026/06/12 形式）と管理画面追加（2026-06-12 形式）で日付の書式が混在していた点を統一し、並べ替えと編集時の日付読み込みが正しく動くようにしました。'},
   {date:'2026-08-07', tag:'新機能', title:'単価設定に「🧭 プランナー手当（月額）」を追加',
    desc:'管理＞スタッフ管理の単価編集に「プランナー手当（月額）」を追加しました。入力すると、その方の支払明細が「朝刊合計＋夕刊合計＋プランナー手当＝月合計」で計算されます（稼働のある月のみ加算）。法人の会社サマリー、統合明細ビューア（支払通知書・PDF）にも反映されます。'},
   {date:'2026-07-29', tag:'新機能', title:'管理: 「🎁 特別日当」タブから特別日当を直接入力',
@@ -7676,26 +7686,72 @@ function admSnapInit(){smLoadSnapshotInfo();smLoadSnapshotHistory();}
 
 // ===== 🎁 特別日当 (特別単価: 日当/日当+) 管理 =====
 function admSpEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+// 日付の表記ゆれ吸収: Googleフォーム経由は "2026/06/12"、管理画面追加は "2026-06-12"。
+// 月フィルタ/並べ替えのため YYYY-MM-DD に正規化する (不正値は空文字)。
+function admSpNormDate(v){
+  const s=String(v==null?'':v).trim();
+  const m=s.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
+  if(!m)return '';
+  return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+}
+function admSpSetMonth(ym){const el=document.getElementById('adm-sp-month');if(el)el.value=ym;admSpRender();}
+function admSpShiftMonth(delta){
+  const el=document.getElementById('adm-sp-month');if(!el)return;
+  // 「全期間」状態から前月/翌月を押したら、今月を起点にする
+  let ym=el.value;
+  if(!ym){const n=new Date();ym=`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;}
+  const [y,mo]=ym.split('-').map(Number);
+  const d=new Date(y,mo-1+delta,1);
+  el.value=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  admSpRender();
+}
 async function admSpInit(){
   const msg=document.getElementById('adm-sp-msg');
   if(msg){msg.textContent='読み込み中...';msg.style.color='#3b82f6';}
   try{
     const sp=await invApi({action:'get_special_rates'});
-    invSpecial=sp.records||[];
+    // 取得失敗を「登録0件」と誤表示しないこと。 sp.records||[] だけだと、 サーバが
+    // {error:...} を返しても空配列になり、 原因不明の「登録はありません」になる。
+    if(!sp||sp.error||!Array.isArray(sp.records))
+      throw new Error(sp&&sp.error?String(sp.error):'サーバ応答に records がありません: '+JSON.stringify(sp).slice(0,200));
+    invSpecial=sp.records;
     // 氏名候補(datalist)を単価マスタから
     try{
       if(!invRates.length){const r=await invApi({action:'get_rates'});invRates=r.rates||[];}
       const dl=document.getElementById('adm-sp-name-dl');
       if(dl)dl.innerHTML=[...new Set(invRates.map(r=>r.name).filter(Boolean))].sort().map(n=>`<option value="${admSpEsc(n)}">`).join('');
     }catch(_){}
+    // 既定は「先月」(支払い確定の確認は先月分を見ることが多いため)。ユーザー操作後は維持。
+    const mEl=document.getElementById('adm-sp-month');
+    if(mEl&&!mEl.value&&!mEl.dataset.touched){
+      const n=new Date();const d=new Date(n.getFullYear(),n.getMonth()-1,1);
+      mEl.value=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      mEl.dataset.touched='1';
+    }
     admSpRender();
     if(msg){msg.textContent='';}
   }catch(e){ if(msg){msg.innerHTML='<span style="color:var(--danger);">読み込み失敗: '+admSpEsc(e.message||String(e))+'</span>';} }
 }
 function admSpRender(){
   const cont=document.getElementById('adm-sp-content');if(!cont)return;
-  const list=(invSpecial||[]).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));
-  if(!list.length){cont.innerHTML='<p style="text-align:center;padding:36px;color:var(--text-sub);">特別日当の登録はありません。上のフォームから追加してください。</p>';return;}
+  const all=(invSpecial||[]).map(s=>({...s,_d:admSpNormDate(s.date)}))
+    .sort((a,b)=>String(b._d||b.date).localeCompare(String(a._d||a.date)));
+  const ym=(document.getElementById('adm-sp-month')||{}).value||'';
+  const list=ym?all.filter(s=>s._d.slice(0,7)===ym):all;
+  // 件数表示: 該当月が0件でも「全体で何件あるか/最新はいつか」が分かるようにする
+  const cEl=document.getElementById('adm-sp-count');
+  if(cEl){
+    const latest=all.find(s=>s._d);
+    cEl.textContent=`${ym?`${ym}: ${list.length}件`:`全期間: ${all.length}件`} / 全体 ${all.length}件`
+      +(latest?`（最新の適用日 ${latest._d}）`:'');
+  }
+  if(!list.length){
+    cont.innerHTML=`<p style="text-align:center;padding:36px;color:var(--text-sub);">`
+      +(ym?`${admSpEsc(ym)} の特別日当はありません。<br><span style="font-size:12px;">「全期間」を押すと全件表示できます（全体 ${all.length}件）。</span>`
+          :'特別日当の登録はありません。上のフォームから追加してください。')
+      +`</p>`;
+    return;
+  }
   let h='<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;position:sticky;top:0;">';
   ['日付','氏名','種別','金額','理由','申請者',''].forEach(t=>h+=`<th style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap;">${t}</th>`);
   h+='</tr></thead><tbody>';
@@ -7703,7 +7759,7 @@ function admSpRender(){
     const amt=Number(String(s.amount||'').replace(/,/g,''))||0;
     const typeBadge=s.type==='日当+'?'<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:11px;">日当+</span>':'<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:10px;font-size:11px;">日当</span>';
     h+=`<tr style="border-bottom:1px solid #f1f5f9;">`;
-    h+=`<td style="padding:8px 10px;white-space:nowrap;">${admSpEsc(s.date||'')}</td>`;
+    h+=`<td style="padding:8px 10px;white-space:nowrap;">${admSpEsc(s._d||s.date||'')}</td>`;
     h+=`<td style="padding:8px 10px;white-space:nowrap;">${admSpEsc(s.name||'')}</td>`;
     h+=`<td style="padding:8px 10px;">${typeBadge}</td>`;
     h+=`<td style="padding:8px 10px;text-align:right;white-space:nowrap;">¥${amt.toLocaleString()}</td>`;
@@ -7726,7 +7782,8 @@ function admSpClearForm(){
 }
 function admSpEdit(rowNum){
   const s=(invSpecial||[]).find(x=>x.row_number===rowNum);if(!s)return;
-  document.getElementById('adm-sp-date').value=s.date||'';
+  // <input type="date"> は "2026/06/12" 形式を受け付けないので正規化して入れる
+  document.getElementById('adm-sp-date').value=admSpNormDate(s.date)||s.date||'';
   document.getElementById('adm-sp-name').value=s.name||'';
   document.getElementById('adm-sp-type').value=s.type==='日当+'?'日当+':'日当';
   document.getElementById('adm-sp-amount').value=String(s.amount||'').replace(/,/g,'');
