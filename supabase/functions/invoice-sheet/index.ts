@@ -11,6 +11,10 @@ const ROSTER_SHEET_ID = '1yVKQLSmdc9RZ2U5m4CIPqAl4JqP9siiSeSRP0z3SEEM';
 const ROSTER_SHEET_NAME = '人員名簿';
 const SPECIAL_SHEET_ID = '1Owv83TGxSl15pqO0MaaF4AaLeslye0frfKAuo62TlGY';
 const SPECIAL_SHEET_NAME = 'フォームの回答 1';
+// 特別日当の短期キャッシュ(isolate内)。 Sheets の読取上限(429)対策。
+// 追加/更新/削除時は必ず破棄して、保存直後の再取得が古い値を返さないようにする。
+const SPECIAL_CACHE_TTL_MS = 60 * 1000;
+let _specialCache: { t: number; rows: any[] } | null = null;
 const MEASURE_SHEET = '測定記録';
 const BILL_PRICE_SHEET = '請求単価設定';
 const CONFIRMED_SALES_SHEET = '売上確定';
@@ -164,14 +168,17 @@ async function getAccessToken(): Promise<string> {
 
 // Sheets値取得を一時失敗(429/5xx/トークン切れ/ネットワーク)に強くする軽リトライ。
 // 成功時は values 配列を返す。全リトライ失敗時は例外を投げる(呼び出し側で503応答)。
-async function fetchSheetValuesWithRetry(range: string, tokenGetter: ()=>Promise<string>, tries=3): Promise<any[]> {
+async function fetchSheetValuesWithRetry(range: string, tokenGetter: ()=>Promise<string>, tries=3, ssId: string = SPREADSHEET_ID): Promise<any[]> {
   let lastErr: any=null;
   for(let i=0;i<tries;i++){
     try{
       const token=await tokenGetter();
-      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}`,{headers:{'Authorization':`Bearer ${token}`}});
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${ssId}/values/${encodeURIComponent(range)}`,{headers:{'Authorization':`Bearer ${token}`}});
       if(resp.ok){ const j=await resp.json().catch(()=>({})); return j.values||[]; }
-      lastErr=new Error(`sheet_http_${resp.status}`);
+      const body=await resp.text().catch(()=>'');
+      lastErr=new Error(`sheet_http_${resp.status}${resp.status===429?' (Sheetsの読み取り上限。少し待つと回復します)':''}: ${body.slice(0,200)}`);
+      // 429 は「1分あたりの読取上限」なので短い待ちでは明けない。 段階的に長く待つ。
+      if(resp.status===429 && i<tries-1){ await new Promise(r=>setTimeout(r, 1200*(i+1))); continue; }
     }catch(e){ lastErr=e; }
     if(i<tries-1) await new Promise(r=>setTimeout(r, 300*Math.pow(2,i))); // 300ms,600ms
   }
@@ -714,12 +721,23 @@ Deno.serve(async(req:Request)=>{
     }
     if(action==='get_special_rates'){
       if(!admin) return forbid();
-      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      // Sheets がエラー(タブ名不一致/権限/一時障害)を返しても body に values が無いだけなので、
-      // ||[] で握り潰すと「登録0件」と区別が付かない。 失敗はそのまま呼び出し側に返す。
-      const body=await resp.json();
-      if(!resp.ok) return jsonResp({error:`特別日当シートの読み取りに失敗しました (Sheets ${resp.status}): ${JSON.stringify(body?.error?.message||body).slice(0,300)}`, sheet:SPECIAL_SHEET_NAME}, 502);
-      const raw=(body.values||[]);
+      // 特別日当は複数画面から何度も読まれ、Sheets の「1分あたり読取上限」に当たりやすい。
+      // 実際に 429 が空配列に化けて「登録0件」に見える事象が起きたため、
+      // ①短期キャッシュで読取回数を減らし ②429 はリトライ ③それでも駄目なら 502 で理由を返す。
+      let raw: any[];
+      const nowMs=Date.now();
+      if(_specialCache && nowMs-_specialCache.t < SPECIAL_CACHE_TTL_MS){
+        raw=_specialCache.rows;
+      }else{
+        try{
+          raw=await fetchSheetValuesWithRetry(`${SPECIAL_SHEET_NAME}!A2:J5000`, async()=>sheetsToken, 3, SPECIAL_SHEET_ID);
+          _specialCache={t:nowMs, rows:raw};
+        }catch(e){
+          // 取得できないが古いキャッシュがあるなら、それで凌ぐ(空表示にはしない)
+          if(_specialCache) raw=_specialCache.rows;
+          else return jsonResp({error:`特別日当シートの読み取りに失敗しました: ${String((e as any)?.message||e).slice(0,300)}`, sheet:SPECIAL_SHEET_NAME}, 502);
+        }
+      }
       const records=raw.map((r:string[],i:number)=>({row_number:i+2,timestamp:r[0]||'',date:r[1]||'',name:r[2]||'',amount:r[3]||'',reason:r[4]||'',applicant:r[5]||'',category:r[6]||'',type:r[7]||'',office:r[8]||''})).filter((r:any)=>r.date&&r.name);
       return jsonResp({records});
     }
@@ -731,12 +749,14 @@ Deno.serve(async(req:Request)=>{
       const row=[ts, record.date||'', record.name||'', record.amount||'', record.reason||'', record.applicant||'管理画面', record.category||'', record.type||'日当', record.office||''];
       if(row_number){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A${row_number}:I${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
       else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A1:I1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
+      _specialCache=null; // 保存したら次の取得は必ずシートから
       return jsonResp({success:true});
     }
     if(action==='delete_special_rate'){
       if(!admin) return forbid();
       if(!row_number) return jsonResp({error:'row_number required'},400);
       await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A${row_number}:I${row_number}:clear`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      _specialCache=null; // 削除したら次の取得は必ずシートから
       return jsonResp({success:true});
     }
     if(action==='get_rates'){
