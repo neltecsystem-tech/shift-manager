@@ -7867,7 +7867,12 @@ async function admSpSave(){
   const btn=document.getElementById('adm-sp-save-btn');if(btn)btn.disabled=true;
   msg.textContent='保存中...';msg.style.color='#3b82f6';
   try{
-    const rec={date,name,type,amount:String(amount),reason,applicant:'管理画面'};
+    // 申請者はログイン中の氏名を記録する (以前は一律「管理画面」で誰が入れたか分からなかった)
+    // 編集時は元の申請者を維持する (誰が申請したかの記録なので、直した人で上書きしない)
+    const orig=editRow?(invSpecial||[]).find(x=>x.row_number===Number(editRow)):null;
+    const who=(orig&&String(orig.applicant||'').trim())
+      ||(typeof sysUserName!=='undefined'&&sysUserName)||(typeof invStaffName!=='undefined'&&invStaffName)||'管理画面';
+    const rec={date,name,type,amount:String(amount),reason,applicant:who};
     const payload={action:'save_special_rate',record:rec};
     if(editRow)payload.row_number=Number(editRow);
     const res=await invApi(payload);

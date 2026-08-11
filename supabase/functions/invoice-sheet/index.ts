@@ -11,10 +11,46 @@ const ROSTER_SHEET_ID = '1yVKQLSmdc9RZ2U5m4CIPqAl4JqP9siiSeSRP0z3SEEM';
 const ROSTER_SHEET_NAME = '人員名簿';
 const SPECIAL_SHEET_ID = '1Owv83TGxSl15pqO0MaaF4AaLeslye0frfKAuo62TlGY';
 const SPECIAL_SHEET_NAME = 'フォームの回答 1';
-// 特別日当の短期キャッシュ(isolate内)。 Sheets の読取上限(429)対策。
-// 追加/更新/削除時は必ず破棄して、保存直後の再取得が古い値を返さないようにする。
-const SPECIAL_CACHE_TTL_MS = 60 * 1000;
-let _specialCache: { t: number; rows: any[] } | null = null;
+// 特別日当の DBキャッシュ (sm_kv_cache)。 単価マスタと同じ方式。
+// isolate内キャッシュだと新しい isolate が毎回 Sheets を叩いてしまい、
+// 「1分あたりの読取上限(429)」を解消できなかったため、全 isolate 共有のDBに置く。
+// 追加/更新/削除時は破棄して、保存直後の再取得が古い値を返さないようにする。
+const SPECIAL_CACHE_TTL_MS = 5 * 60 * 1000; // 5分
+async function getSpecialRowsCached(): Promise<any[][]> {
+  const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  let cached: any = null;
+  if (SB_URL && SRK) {
+    try {
+      const r = await fetch(`${SB_URL}/rest/v1/sm_kv_cache?select=data,updated_at&key=eq.special_rates`, { headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } });
+      if (r.ok) { const a = await r.json(); cached = Array.isArray(a) && a[0] ? a[0] : null; }
+    } catch (_) { /* noop */ }
+  }
+  if (cached && cached.updated_at && Array.isArray(cached.data)
+    && (Date.now() - new Date(cached.updated_at).getTime() < SPECIAL_CACHE_TTL_MS)) return cached.data as any[][];
+  try {
+    const rows = await fetchSheetValuesWithRetry(`${SPECIAL_SHEET_NAME}!A2:J5000`, getAccessToken, 3, SPECIAL_SHEET_ID);
+    if (SB_URL && SRK) {
+      try {
+        await fetch(`${SB_URL}/rest/v1/sm_kv_cache`, {
+          method: 'POST',
+          headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify([{ key: 'special_rates', data: rows, updated_at: new Date().toISOString() }]),
+        });
+      } catch (_) { /* キャッシュ更新失敗は無視 */ }
+    }
+    return rows;
+  } catch (e) {
+    if (cached && Array.isArray(cached.data)) return cached.data as any[][]; // 期限切れでもキャッシュで凌ぐ
+    throw e;
+  }
+}
+async function invalidateSpecialCache(): Promise<void> {
+  const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!SB_URL || !SRK) return;
+  try { await fetch(`${SB_URL}/rest/v1/sm_kv_cache?key=eq.special_rates`, { method: 'DELETE', headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } }); } catch (_) { /* noop */ }
+}
 const MEASURE_SHEET = '測定記録';
 const BILL_PRICE_SHEET = '請求単価設定';
 const CONFIRMED_SALES_SHEET = '売上確定';
@@ -725,18 +761,10 @@ Deno.serve(async(req:Request)=>{
       // 実際に 429 が空配列に化けて「登録0件」に見える事象が起きたため、
       // ①短期キャッシュで読取回数を減らし ②429 はリトライ ③それでも駄目なら 502 で理由を返す。
       let raw: any[];
-      const nowMs=Date.now();
-      if(_specialCache && nowMs-_specialCache.t < SPECIAL_CACHE_TTL_MS){
-        raw=_specialCache.rows;
-      }else{
-        try{
-          raw=await fetchSheetValuesWithRetry(`${SPECIAL_SHEET_NAME}!A2:J5000`, async()=>sheetsToken, 3, SPECIAL_SHEET_ID);
-          _specialCache={t:nowMs, rows:raw};
-        }catch(e){
-          // 取得できないが古いキャッシュがあるなら、それで凌ぐ(空表示にはしない)
-          if(_specialCache) raw=_specialCache.rows;
-          else return jsonResp({error:`特別日当シートの読み取りに失敗しました: ${String((e as any)?.message||e).slice(0,300)}`, sheet:SPECIAL_SHEET_NAME}, 502);
-        }
+      try{
+        raw = await getSpecialRowsCached();
+      }catch(e){
+        return jsonResp({error:`特別日当シートの読み取りに失敗しました: ${String((e as any)?.message||e).slice(0,300)}`, sheet:SPECIAL_SHEET_NAME}, 502);
       }
       const records=raw.map((r:string[],i:number)=>({row_number:i+2,timestamp:r[0]||'',date:r[1]||'',name:r[2]||'',amount:r[3]||'',reason:r[4]||'',applicant:r[5]||'',category:r[6]||'',type:r[7]||'',office:r[8]||''})).filter((r:any)=>r.date&&r.name);
       return jsonResp({records});
@@ -749,14 +777,14 @@ Deno.serve(async(req:Request)=>{
       const row=[ts, record.date||'', record.name||'', record.amount||'', record.reason||'', record.applicant||'管理画面', record.category||'', record.type||'日当', record.office||''];
       if(row_number){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A${row_number}:I${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
       else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A1:I1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
-      _specialCache=null; // 保存したら次の取得は必ずシートから
+      await invalidateSpecialCache(); // 保存したら次の取得は必ずシートから
       return jsonResp({success:true});
     }
     if(action==='delete_special_rate'){
       if(!admin) return forbid();
       if(!row_number) return jsonResp({error:'row_number required'},400);
       await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A${row_number}:I${row_number}:clear`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      _specialCache=null; // 削除したら次の取得は必ずシートから
+      await invalidateSpecialCache(); // 削除したら次の取得は必ずシートから
       return jsonResp({success:true});
     }
     if(action==='get_rates'){
