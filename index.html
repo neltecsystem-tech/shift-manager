@@ -1065,6 +1065,7 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">日付</label><input type="date" id="adm-sp-date" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;"></div>
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">氏名</label><input type="text" id="adm-sp-name" list="adm-sp-name-dl" autocomplete="off" placeholder="ドライバー名" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:160px;"><datalist id="adm-sp-name-dl"></datalist></div>
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">種別</label><select id="adm-sp-type" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;"><option value="日当">日当（金額置換）</option><option value="日当+">日当+（金額加算）</option></select></div>
+          <div><label style="font-size:11px;color:var(--text-sub);display:block;">区分 <span style="color:var(--danger);">*</span></label><select id="adm-sp-cat" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;"><option value="朝刊">朝刊</option><option value="夕刊">夕刊</option><option value="朝刊・夕刊">両方（朝刊+夕刊）</option></select></div>
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">金額(¥)</label><input type="number" id="adm-sp-amount" placeholder="0" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:110px;"></div>
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">理由</label><input type="text" id="adm-sp-reason" placeholder="例:特別対応" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:160px;"></div>
           <button onclick="admSpSave()" id="adm-sp-save-btn" style="background:#2563eb;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">➕ 追加</button>
@@ -7814,7 +7815,7 @@ function admSpRender(){
     return;
   }
   let h='<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;position:sticky;top:0;">';
-  ['日付','氏名','種別','金額','理由','申請者',''].forEach(t=>h+=`<th style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap;">${t}</th>`);
+  ['日付','氏名','区分','種別','金額','理由','申請者',''].forEach(t=>h+=`<th style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap;">${t}</th>`);
   h+='</tr></thead><tbody>';
   list.forEach(s=>{
     const amt=Number(String(s.amount||'').replace(/,/g,''))||0;
@@ -7822,6 +7823,10 @@ function admSpRender(){
     h+=`<tr style="border-bottom:1px solid #f1f5f9;">`;
     h+=`<td style="padding:8px 10px;white-space:nowrap;">${admSpEsc(s._d||s.date||'')}</td>`;
     h+=`<td style="padding:8px 10px;white-space:nowrap;">${admSpEsc(s.name||'')}</td>`;
+    const catRaw=String(s.category||'').trim();
+    const catCell=catRaw?admSpEsc(catRaw)
+      :'<span style="background:#fee2e2;color:#b91c1c;padding:2px 8px;border-radius:10px;font-size:11px;" title="区分が空の行は金額計算に反映されません">未設定</span>';
+    h+=`<td style="padding:8px 10px;white-space:nowrap;">${catCell}</td>`;
     h+=`<td style="padding:8px 10px;">${typeBadge}</td>`;
     h+=`<td style="padding:8px 10px;text-align:right;white-space:nowrap;">¥${amt.toLocaleString()}</td>`;
     h+=`<td style="padding:8px 10px;color:var(--text-sub);">${admSpEsc(s.reason||'')}</td>`;
@@ -7839,6 +7844,7 @@ function admSpRender(){
 function admSpClearForm(){
   ['adm-sp-date','adm-sp-name','adm-sp-amount','adm-sp-reason','adm-sp-editrow'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   const t=document.getElementById('adm-sp-type');if(t)t.value='日当';
+  const cg=document.getElementById('adm-sp-cat');if(cg)cg.value='朝刊';
   const btn=document.getElementById('adm-sp-save-btn');if(btn)btn.textContent='➕ 追加';
 }
 function admSpEdit(rowNum){
@@ -7847,6 +7853,8 @@ function admSpEdit(rowNum){
   document.getElementById('adm-sp-date').value=admSpNormDate(s.date)||s.date||'';
   document.getElementById('adm-sp-name').value=s.name||'';
   document.getElementById('adm-sp-type').value=s.type==='日当+'?'日当+':'日当';
+  const cat=String(s.category||'').trim();
+  document.getElementById('adm-sp-cat').value=(cat.includes('朝刊')&&cat.includes('夕刊'))?'朝刊・夕刊':(cat.includes('夕刊')?'夕刊':'朝刊');
   document.getElementById('adm-sp-amount').value=String(s.amount||'').replace(/,/g,'');
   document.getElementById('adm-sp-reason').value=s.reason||'';
   document.getElementById('adm-sp-editrow').value=String(rowNum);
@@ -7869,10 +7877,13 @@ async function admSpSave(){
   try{
     // 申請者はログイン中の氏名を記録する (以前は一律「管理画面」で誰が入れたか分からなかった)
     // 編集時は元の申請者を維持する (誰が申請したかの記録なので、直した人で上書きしない)
+    const category=(document.getElementById('adm-sp-cat').value||'').trim();
     const orig=editRow?(invSpecial||[]).find(x=>x.row_number===Number(editRow)):null;
     const who=(orig&&String(orig.applicant||'').trim())
       ||(typeof sysUserName!=='undefined'&&sysUserName)||(typeof invStaffName!=='undefined'&&invStaffName)||'管理画面';
-    const rec={date,name,type,amount:String(amount),reason,applicant:who};
+    // 区分(朝刊/夕刊)は必須。 空で保存すると計算側の applySpecial が
+    // category.includes('朝刊'|'夕刊') で弾くため、金額に一切反映されない。
+    const rec={date,name,type,amount:String(amount),reason,applicant:who,category};
     const payload={action:'save_special_rate',record:rec};
     if(editRow)payload.row_number=Number(editRow);
     const res=await invApi(payload);
