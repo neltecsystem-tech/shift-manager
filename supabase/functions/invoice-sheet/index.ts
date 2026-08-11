@@ -122,11 +122,22 @@ function normPartner(s: string): string {
     .replace(/[\s　・,，\.。\-－―ー]/g, '')
     .toLowerCase().trim();
 }
+// ---- Sheets 読み取りの共通ヘルパー ----
+// Sheets がエラー(タブ名不一致=400 / 権限=403 / 一時障害=429,5xx)を返しても body に
+// values が無いだけなので、 ||[] で受けると「登録0件」と区別が付かず、原因不明の空表示に
+// なる (2026-08 特別日当が全件消えて見えた事象)。 失敗は握り潰さず例外にして呼び出し元へ返す。
+class SheetsReadError extends Error {}
+async function sheetVals(resp: Response, what = ''): Promise<any[][]> {
+  const body: any = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new SheetsReadError(`Sheetsの読み取りに失敗しました (HTTP ${resp.status})${what ? ' / ' + what : ''}: ${String(body?.error?.message ?? '').slice(0, 200)}`);
+  return body.values || [];
+}
+
 // 同じ company の名前リスト (オーナー含む) を取得 (法人オーナー権限スコープ用)
 async function fetchCompanyNames(sheetsToken: string, company: string): Promise<string[]> {
   if (!company) return [];
   const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`, { headers: { 'Authorization': `Bearer ${sheetsToken}` } });
-  const rows = (await resp.json()).values || [];
+  const rows = await sheetVals(resp);
   const list = parseRates(rows).filter((r: any) => r.biz_type === '法人' && r.company === company);
   return list.map((r: any) => r.name);
 }
@@ -450,7 +461,7 @@ Deno.serve(async(req:Request)=>{
       if(!SB_URL || !SRK) return jsonResp({error:'supabase env missing'},500);
       const token = await getAccessToken();
       const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`,{headers:{'Authorization':`Bearer ${token}`}});
-      const rates = parseRates((await resp.json()).values||[]);
+      const rates = parseRates(await sheetVals(resp));
       const seen = new Set<string>();
       const recs = rates.filter((r:any)=>r.name && (r.invoice_number||'').trim()).map((r:any)=>({
         name: String(r.name).trim(),
@@ -485,7 +496,7 @@ Deno.serve(async(req:Request)=>{
       partners.forEach((p:any)=>{ const t=(p.invoice_number||'').trim(); if(t) pmap.set(normPartner(p.name), t); });
       const token = await getAccessToken();
       const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`,{headers:{'Authorization':`Bearer ${token}`}});
-      const rates = parseRates((await resp.json()).values||[]);
+      const rates = parseRates(await sheetVals(resp));
       const data:any[] = [];
       const changes:any[] = [];
       for(const r of rates){
@@ -552,8 +563,8 @@ Deno.serve(async(req:Request)=>{
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${KAWAGOE_MASTER_SHEET_ID}/values/${encodeURIComponent(KAWAGOE_MASTER_SHEET_NAME)}!AN2:AV20`,{headers:{'Authorization':`Bearer ${token}`}}),
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${KAWAGOE_MASTER_SHEET_ID}/values/${encodeURIComponent(KAWAGOE_MASTER_SHEET_NAME)}!AN22:AV34`,{headers:{'Authorization':`Bearer ${token}`}}),
       ]);
-      const rates = parseRates((await rRes.json()).values||[]);
-      const work = parseWork((await wRes.json()).values||[]);
+      const rates = parseRates(await sheetVals(rRes));
+      const work = parseWork(await sheetVals(wRes));
       // 川越コース別単価マスタ (旧/新) を course→曜日単価 のMapに。朝刊のコース別自動単価に使う。
       const dowKey = ['sun','mon','tue','wed','thu','fri','sat'];
       const parseKwCourses = (rows:string[][]) => {
@@ -564,14 +575,14 @@ Deno.serve(async(req:Request)=>{
         return m;
       };
       const kwCourseMap: Record<string, Map<string,any>> = {
-        '旧': parseKwCourses((await kwOldRes.json()).values||[]),
-        '新': parseKwCourses((await kwNewRes.json()).values||[]),
+        '旧': parseKwCourses(await sheetVals(kwOldRes)),
+        '新': parseKwCourses(await sheetVals(kwNewRes)),
       };
       const rateByName = new Map<string,any>(rates.map((r:any)=>[r.name, r]));
       const nn = (s:string)=>String(s||'').replace(/[\s　]+/g,'').trim();
       // 特別単価を (日付|氏名) でインデックス化 (O(1)照合)
       const specIndex = new Map<string, any[]>();
-      (((await sRes.json()).values||[]) as string[][]).filter(r=>r[1]&&r[2]).forEach(r=>{
+      ((await sheetVals(sRes)) as string[][]).filter(r=>r[1]&&r[2]).forEach(r=>{
         const k=`${(r[1]||'').replace(/-/g,'/')}|${nn(r[2]||'')}`;
         const o={amount:r[3]||'',category:r[6]||'',type:r[7]||''};
         const arr=specIndex.get(k); if(arr)arr.push(o); else specIndex.set(k,[o]);
@@ -644,7 +655,7 @@ Deno.serve(async(req:Request)=>{
       if(!ym) return jsonResp({error:'year_month required'},400);
       const token = await getAccessToken();
       const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A2:P5000`,{headers:{'Authorization':`Bearer ${token}`}});
-      const rows=(await resp.json()).values||[];
+      const rows=await sheetVals(resp);
       // (ym,area,course) の最新行のみ採用 (get_confirmed_sales と同じ重複排除)
       const dedup=new Map<string,{area:string;grand:number;atMs:number}>();
       rows.forEach((r:string[])=>{
@@ -687,7 +698,7 @@ Deno.serve(async(req:Request)=>{
     if(action==='get_staff_names'){
       if (admin) {
         const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${ROSTER_SHEET_ID}/values/${encodeURIComponent(ROSTER_SHEET_NAME)}!C2:C500`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-        const names=[...new Set(((await resp.json()).values||[]).map((r:string[])=>(r[0]||'').trim()).filter(Boolean))];
+        const names=[...new Set((await sheetVals(resp)).map((r:string[])=>(r[0]||'').trim()).filter(Boolean))];
         return jsonResp({names});
       }
       // 非admin: 自分 (+ owner なら配下) のみ
@@ -698,13 +709,17 @@ Deno.serve(async(req:Request)=>{
       // 人員名簿の全行を返す (loadLiveStaff/営業所判定用)。列: A=営業所 B=契約 C=氏名 D=電話 E-K=朝 L-R=夕
       if(!admin) return forbid();
       const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${ROSTER_SHEET_ID}/values/${encodeURIComponent(ROSTER_SHEET_NAME)}!A1:Z500`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      const rows=(await resp.json()).values||[];
+      const rows=await sheetVals(resp);
       return jsonResp({rows});
     }
     if(action==='get_special_rates'){
       if(!admin) return forbid();
       const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      const raw=((await resp.json()).values||[]);
+      // Sheets がエラー(タブ名不一致/権限/一時障害)を返しても body に values が無いだけなので、
+      // ||[] で握り潰すと「登録0件」と区別が付かない。 失敗はそのまま呼び出し側に返す。
+      const body=await resp.json();
+      if(!resp.ok) return jsonResp({error:`特別日当シートの読み取りに失敗しました (Sheets ${resp.status}): ${JSON.stringify(body?.error?.message||body).slice(0,300)}`, sheet:SPECIAL_SHEET_NAME}, 502);
+      const raw=(body.values||[]);
       const records=raw.map((r:string[],i:number)=>({row_number:i+2,timestamp:r[0]||'',date:r[1]||'',name:r[2]||'',amount:r[3]||'',reason:r[4]||'',applicant:r[5]||'',category:r[6]||'',type:r[7]||'',office:r[8]||''})).filter((r:any)=>r.date&&r.name);
       return jsonResp({records});
     }
@@ -753,7 +768,7 @@ Deno.serve(async(req:Request)=>{
       const newPw = String(body.new_pw ?? '').trim();
       if(newPw.length < 3) return jsonResp({error:'新しいパスワードは3文字以上にしてください'}, 400);
       const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      const rates = parseRates((await resp.json()).values||[]);
+      const rates = parseRates(await sheetVals(resp));
       let target:any;
       if(admin && body.login_id){ target = rates.find((r:any)=>(r.login_id||'').trim()===String(body.login_id).trim()); }
       else { target = rates.find((r:any)=>r.name===callerName); }
@@ -787,7 +802,7 @@ Deno.serve(async(req:Request)=>{
       if(!corpOwner) return forbid();
       if(!callerCompany) return forbid('会社情報がありません');
       if(!record?.name) return jsonResp({error:'name required'}, 400);
-      const cur = parseRates((await (await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}})).json()).values||[]);
+      const cur = parseRates(await sheetVals(await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}}), '単価マスタ'));
       let base: any = {};
       if(row_number){
         base = cur.find((r:any)=>r.row_number===Number(row_number));
@@ -816,7 +831,7 @@ Deno.serve(async(req:Request)=>{
     if(action==='owner_delete_member'){
       if(!corpOwner) return forbid();
       if(!row_number) return jsonResp({error:'row_number required'}, 400);
-      const cur = parseRates((await (await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}})).json()).values||[]);
+      const cur = parseRates(await sheetVals(await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}}), '単価マスタ'));
       const tgt = cur.find((r:any)=>r.row_number===Number(row_number));
       if(!tgt) return jsonResp({error:'row not found'}, 404);
       if(tgt.company!==callerCompany) return forbid('自社メンバーのみ削除できます');
@@ -830,13 +845,13 @@ Deno.serve(async(req:Request)=>{
     }
     if(action==='list_work'){
       const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      const all = parseWork((await resp.json()).values||[]);
+      const all = parseWork(await sheetVals(resp));
       if (admin) return jsonResp({records: all});
       // corp-sub の金額表示はライブ判定 (自社オーナーの show_money を都度参照)
       let csm = true;
       if (corpSub) {
         const rr = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-        csm = memberShowsMoney(parseRates((await rr.json()).values||[]), callerName);
+        csm = memberShowsMoney(parseRates(await sheetVals(rr)), callerName);
       }
       const scope = await getScopeNames();
       const mine = all.filter((r:any)=>scope.has(r.staff)).map((r:any)=> (corpSub && !csm) ? { ...r, unit_price:'', amount:'' } : r);
@@ -862,7 +877,7 @@ Deno.serve(async(req:Request)=>{
       // 二重計上防止: 同 スタッフ+日付+区分+コース が既にあれば拒否
       {
         const exResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-        const exWork=parseWork((await exResp.json()).values||[]);
+        const exWork=parseWork(await sheetVals(exResp));
         const key=workDupKey(record);
         const dup=exWork.find((w:any)=>workDupKey(w)===key);
         if(dup) return jsonResp({error:`二重計上: 同じ稼働(${dup.date} ${dup.staff} / ${dup.category} / ${dup.course||'コース無し'})が既に登録されています`, code:'DUPLICATE'}, 409);
@@ -887,7 +902,7 @@ Deno.serve(async(req:Request)=>{
       // 二重計上防止: 変更後の内容が「別の行」と重複するなら拒否 (自分の行への上書きはOK)
       {
         const exResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-        const exWork=parseWork((await exResp.json()).values||[]);
+        const exWork=parseWork(await sheetVals(exResp));
         const key=workDupKey({staff:record.staff||callerName,date:record.date,category:record.category,course:record.course});
         const dup=exWork.find((w:any)=>w.row_number!==Number(row_number)&&workDupKey(w)===key);
         if(dup) return jsonResp({error:`二重計上: 同じ稼働(${dup.date} ${dup.staff} / ${dup.category} / ${dup.course||'コース無し'})が既に登録されています`, code:'DUPLICATE'}, 409);
@@ -916,7 +931,7 @@ Deno.serve(async(req:Request)=>{
       const ups = (updates || []) as any[];
       if(!ups.length) return jsonResp({success:true, updated:0, skipped:0});
       const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      const all = parseWork((await resp.json()).values||[]);
+      const all = parseWork(await sheetVals(resp));
       const byRow = new Map<number, any>(all.map((w:any)=>[w.row_number, w]));
       let scope: Set<string> | null = null;
       if(!admin) scope = await getScopeNames();
@@ -960,7 +975,7 @@ Deno.serve(async(req:Request)=>{
     }
     if(action==='list_measure'){
       const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MEASURE_SHEET)}!A2:H10000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      const rows=((await resp.json()).values||[]).filter((r:string[])=>r[0]||r[1]);
+      const rows=(await sheetVals(resp)).filter((r:string[])=>r[0]||r[1]);
       const records=rows.map((r:string[])=>({date:r[0]||'',course:r[1]||'',type:r[2]||'',start_time:r[3]||'',end_time:r[4]||'',shop_name:r[5]||'',arrival_time:r[6]||'',staff:r[7]||''}));
       return jsonResp({records});
     }
@@ -1032,14 +1047,14 @@ Deno.serve(async(req:Request)=>{
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${KAWAGOE_MASTER_SHEET_ID}/values/${encodeURIComponent(KAWAGOE_MASTER_SHEET_NAME)}!AN22:AV34`,{headers:{'Authorization':`Bearer ${sheetsToken}`}}),
       ]);
       const parseCourseRows = (rows: string[][]) => rows.filter((r:string[])=>r[0]).map((r:string[])=>({course:r[0]||'',mon:parseYenValue(r[2]),tue:parseYenValue(r[3]),wed:parseYenValue(r[4]),thu:parseYenValue(r[5]),fri:parseYenValue(r[6]),sat:parseYenValue(r[7]),sun:parseYenValue(r[8])}));
-      const oldData = parseCourseRows((await oldResp.json()).values||[]);
-      const newData = parseCourseRows((await newResp.json()).values||[]);
+      const oldData = parseCourseRows(await sheetVals(oldResp));
+      const newData = parseCourseRows(await sheetVals(newResp));
       return jsonResp({old:oldData,new:newData});
     }
     if(action==='get_confirmed_sales'){
       if(!admin) return forbid();
       const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A2:P5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      const rows=(await resp.json()).values||[];
+      const rows=await sheetVals(resp);
       const numOrNull=(v:any)=> (v===undefined||v===null||v==='') ? null : (Number(v)||0);
       const all=rows.map((r:string[],i:number)=>{
         const ym = normalizeYM(r[0]);
@@ -1073,7 +1088,7 @@ Deno.serve(async(req:Request)=>{
       const newRow=[ym,ar,cs,grand_total||0,am_total||0,pm_total||0,now,
         n(c.am),n(c.am_tokushu),n(c.am_zasshi),n(c.am_dokkon),n(c.am_kyori),n(c.pm),n(c.pm_tokushu),n(c.keiba),n(c.keiba_tokushu)];
       const existResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A2:P5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      const existRows=(await existResp.json()).values||[];
+      const existRows=await sheetVals(existResp);
       const matchIdx=existRows.findIndex((r:string[])=>normalizeYM(r[0])===ym&&r[1]===ar&&r[2]===cs);
       if(matchIdx>=0){
         const rn=matchIdx+2;
@@ -1090,7 +1105,7 @@ Deno.serve(async(req:Request)=>{
       if(!year_month||!area||!course) return jsonResp({error:'year_month, area, course required'}, 400);
       const ymNorm = normalizeYM(year_month);
       const existResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A2:G5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      const existRows=(await existResp.json()).values||[];
+      const existRows=await sheetVals(existResp);
       const matches:number[]=[];
       existRows.forEach((r:string[],i:number)=>{
         if(normalizeYM(r[0])===ymNorm&&r[1]===area&&r[2]===course)matches.push(i+2);
@@ -1125,6 +1140,8 @@ Deno.serve(async(req:Request)=>{
     }
     return jsonResp({error:'Unknown action'});
   }catch(e:any){
+    // Sheets 読み取り失敗は 502 で返す (500 と区別して原因を画面に出せるようにする)
+    if(e instanceof SheetsReadError) return jsonResp({error:e.message}, 502);
     return jsonResp({error:e.message}, 500);
   }
 });

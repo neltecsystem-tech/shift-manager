@@ -217,7 +217,7 @@ async function writeSnapshotSummary(token: string, month: string, allRows: strin
     });
   } else {
     const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SUMMARY_SHEET)}!A2:G10000`, { headers: { 'Authorization': `Bearer ${token}` } });
-    existing = (((await r.json()).values || []) as string[][]).filter((row) => row[0] && row[0] !== month);
+    existing = (await smSheetVals(r, SUMMARY_SHEET)).filter((row) => row[0] && row[0] !== month);
   }
   const HEAD = ['年月', '営業所', '朝刊店舗数', '夕刊店舗数', '競馬店舗数', '合計', '記録日時'];
   const merged = [...existing, ...newRows].sort((a, b) => {
@@ -349,6 +349,15 @@ async function ensurePartialTab(token: string): Promise<void> {
   });
 }
 
+// Sheets の失敗を空配列(=0件)にすり替えないための共通ヘルパー。
+// スナップショット読取のように「無い場合がある」箇所は従来どおり !r.ok で個別に扱い、
+// ここでは常に存在するはずのシート(店舗マスタ本体/営業所・コース一覧/サマリー)に使う。
+async function smSheetVals(resp: Response, what = ''): Promise<string[][]> {
+  const body: any = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(`Sheetsの読み取りに失敗しました (HTTP ${resp.status})${what ? ' / ' + what : ''}: ${String(body?.error?.message ?? '').slice(0, 200)}`);
+  return (body.values || []) as string[][];
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -379,10 +388,8 @@ Deno.serve(async (req: Request) => {
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${MASTER2_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!B3:B10`, { headers: { 'Authorization': `Bearer ${token}` } }),
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${MASTER2_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!A3:A150`, { headers: { 'Authorization': `Bearer ${token}` } }),
       ]);
-      const areaJson = await areaResp.json();
-      const courseJson = await courseResp.json();
-      const areas = (areaJson.values || []).map((r: string[]) => (r[0] || '').trim()).filter(Boolean);
-      const courses = (courseJson.values || []).map((r: string[]) => (r[0] || '').trim()).filter(Boolean);
+      const areas = (await smSheetVals(areaResp, '営業所一覧')).map((r: string[]) => (r[0] || '').trim()).filter(Boolean);
+      const courses = (await smSheetVals(courseResp, 'コース一覧')).map((r: string[]) => (r[0] || '').trim()).filter(Boolean);
       return new Response(JSON.stringify({ areas, courses }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -555,8 +562,8 @@ Deno.serve(async (req: Request) => {
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${MASTER2_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!B3:B10`, { headers: { 'Authorization': `Bearer ${token}` } }),
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${MASTER2_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!A3:A150`, { headers: { 'Authorization': `Bearer ${token}` } }),
       ]);
-      const areas = (((await aResp.json()).values || []) as string[][]).map((r) => (r[0] || '').trim()).filter(Boolean);
-      const courses = (((await cResp.json()).values || []) as string[][]).map((r) => (r[0] || '').trim()).filter(Boolean);
+      const areas = (await smSheetVals(aResp, '営業所一覧')).map((r) => (r[0] || '').trim()).filter(Boolean);
+      const courses = (await smSheetVals(cResp, 'コース一覧')).map((r) => (r[0] || '').trim()).filter(Boolean);
       const meta = await (await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties(sheetId,title,gridProperties)`, { headers: { 'Authorization': `Bearer ${token}` } })).json();
       const props = (meta.sheets || []).map((s: any) => s.properties);
       const masterSheet = props.find((p: any) => p.title === SHEET_NAME);
@@ -641,7 +648,7 @@ Deno.serve(async (req: Request) => {
       if (!/^\d{4}-\d{2}$/.test(month)) return new Response(JSON.stringify({ error: 'month は YYYY-MM' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       const tab = SNAP_PREFIX + month;
       const lr = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A2:${COL_END}10000`, { headers: { 'Authorization': `Bearer ${token}` } });
-      const liveRows = ((await lr.json()).values || []) as string[][];
+      const liveRows = await smSheetVals(lr, SHEET_NAME);
       const liveByCode = new Map<string, string[]>();
       for (let i = 1; i < liveRows.length; i++) { const row = liveRows[i] || []; const c = String(row[2] || '').trim(); if (c) liveByCode.set(c, row); }
       const sr = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(tab)}!A1:${COL_END}10000`, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -820,7 +827,7 @@ Deno.serve(async (req: Request) => {
       await ensureExtraHeaders(token);
       // AD=緯度(29), AE=経度(30) ... AL=修正済み(37)。AD3:AL10000 を取得 (index 0=AD)
       const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AD3:AL10000`, { headers: { 'Authorization': `Bearer ${token}` } });
-      const rows = ((await resp.json()).values || []) as string[][];
+      const rows = await smSheetVals(resp, SHEET_NAME);
       const data: any[] = [];
       let scanned = 0;
       rows.forEach((row: string[], i: number) => {
@@ -861,7 +868,7 @@ Deno.serve(async (req: Request) => {
         });
       }
       const curResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${MASTER2_ID}/values/${encodeURIComponent(MASTER2_SHEET)}!A3:A150`, { headers: { 'Authorization': `Bearer ${token}` } });
-      const curRows = ((await curResp.json()).values || []) as string[][];
+      const curRows = await smSheetVals(curResp, MASTER2_SHEET);
       const existing = curRows.map((r: string[]) => (r[0] || '').trim());
       if (existing.some((c: string) => c === course)) {
         return new Response(JSON.stringify({ success: true, duplicate: true, courses: existing.filter(Boolean) }), {
@@ -1490,8 +1497,7 @@ Deno.serve(async (req: Request) => {
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(TAB_NAME)}!A2:K500`,
         { headers: { 'Authorization': `Bearer ${token}` } }
       );
-      const j = await resp.json();
-      const rows = (j.values || []) as string[][];
+      const rows = await smSheetVals(resp, TAB_NAME);
       const extractChiJ = (text: string): string | null => {
         const m = (text || '').match(/(Ch[A-Za-z0-9_-]{20,})/);
         return m ? m[1] : null;

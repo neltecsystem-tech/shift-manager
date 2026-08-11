@@ -1239,6 +1239,19 @@ tbody tr:hover { background:var(--primary-light); }
                 <select id="adm-se-vac-edition3" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="both">両方 (朝刊+夕刊)</option><option value="am">朝刊のみ</option><option value="pm">夕刊のみ</option></select>
               </div>
               <div>
+                <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">曜日 (無選択=期間内すべて)</label>
+                <div id="adm-se-vac-dow3" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                  <label style="display:inline-flex;align-items:center;gap:3px;font-size:13px;background:#f1f5f9;padding:5px 9px;border-radius:6px;cursor:pointer;"><input type="checkbox" value="月">月</label>
+                  <label style="display:inline-flex;align-items:center;gap:3px;font-size:13px;background:#f1f5f9;padding:5px 9px;border-radius:6px;cursor:pointer;"><input type="checkbox" value="火">火</label>
+                  <label style="display:inline-flex;align-items:center;gap:3px;font-size:13px;background:#f1f5f9;padding:5px 9px;border-radius:6px;cursor:pointer;"><input type="checkbox" value="水">水</label>
+                  <label style="display:inline-flex;align-items:center;gap:3px;font-size:13px;background:#f1f5f9;padding:5px 9px;border-radius:6px;cursor:pointer;"><input type="checkbox" value="木">木</label>
+                  <label style="display:inline-flex;align-items:center;gap:3px;font-size:13px;background:#f1f5f9;padding:5px 9px;border-radius:6px;cursor:pointer;"><input type="checkbox" value="金">金</label>
+                  <label style="display:inline-flex;align-items:center;gap:3px;font-size:13px;background:#e0f2fe;padding:5px 9px;border-radius:6px;cursor:pointer;color:#0369a1;"><input type="checkbox" value="土">土</label>
+                  <label style="display:inline-flex;align-items:center;gap:3px;font-size:13px;background:#fee2e2;padding:5px 9px;border-radius:6px;cursor:pointer;color:#b91c1c;"><input type="checkbox" value="日">日</label>
+                  <button type="button" onclick="admSeDow3Clear()" style="background:#e2e8f0;color:#334155;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;">クリア</button>
+                </div>
+              </div>
+              <div>
                 <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">対象スタッフ (引継対象として登録)</label>
                 <input type="text" id="adm-se-vac-handover-staff" list="adm-se-staff-list" placeholder="名前を入力" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;">
               </div>
@@ -1251,7 +1264,11 @@ tbody tr:hover { background:var(--primary-light); }
               </div>
               <div>
                 <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">書込値</label>
-                <select id="adm-se-vac-handover-value" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="引継">引継</option><option value="研修">研修</option><option value="希望休">希望休</option><option value="有給">有給</option><option value="欠勤">欠勤</option><option value="出張">出張</option><option value="ミーティング">ミーティング</option></select>
+                <div style="display:flex;gap:8px;">
+                  <select id="adm-se-vac-handover-value" onchange="admSeHandoverValuePreview()" style="flex:0 0 40%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="引継">引継</option><option value="研修">研修</option><option value="希望休">希望休</option><option value="有給">有給</option><option value="欠勤">欠勤</option><option value="出張">出張</option><option value="ミーティング">ミーティング</option></select>
+                  <input type="text" id="adm-se-vac-handover-course" list="adm-se-course-list" autocomplete="off" oninput="admSeHandoverValuePreview()" placeholder="コース名 (任意) 例: 立川13" style="flex:1;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><datalist id="adm-se-course-list"></datalist>
+                </div>
+                <div id="adm-se-vac-handover-valprev" style="font-size:11px;color:#64748b;margin-top:4px;">書き込まれる値: <b>引継</b></div>
               </div>
               <div id="adm-se-vac-preview3" style="margin-top:8px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;color:#334155;display:none;"></div>
               <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end;">
@@ -1814,6 +1831,10 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-08-11', tag:'新機能', title:'シフト編集の引継: 曜日で絞り込み＋書込値にコース名を追加できます',
+   desc:'「休暇登録 / シフト変更」→「🤝 引継 (Section 2)」に曜日の絞り込みを追加しました。期間を選んだうえで曜日にチェックを入れると、その曜日だけに書き込みます（無選択なら期間内すべて）。また書込値の横にコース名を入力できるようにし、「引継 立川13」のように書き込めます。コース名はシフトのコース一覧から予測変換できます。引継の半額計算とコース別集計はこれまでどおり動きます。'},
+  {date:'2026-08-11', tag:'修正', title:'Googleスプレッドシートの読み取り失敗を「0件」と表示していた問題',
+   desc:'シートの読み取りに失敗したとき（タブ名の不一致・権限・一時的なエラー）、データが0件だったのか失敗したのか画面から区別できませんでした。失敗した場合は理由をそのまま表示するようにし、特別日当・単価マスタ・稼働記録・店舗マスタなど各所の読み取りを横断で見直しました。'},
   {date:'2026-08-11', tag:'改善', title:'スタッフ管理: 所属会社名を会計マスタの正式名称から選択（表記ゆれ防止）',
    desc:'単価編集の「所属会社名」に、会計ツールの取引先マスタから取得した正式名称の候補を表示するようにしました。これまではブラウザの入力履歴が候補に出ていたため、「TLC.ﾊﾟｰﾄﾅｰｽﾞ㈱」と「TLC.パートナーズ株式会社」のような表記ゆれが混ざる原因になっていました。入力履歴の候補は表示しないようにしています。会社を選んだとき、インボイス登録番号が空欄であれば会計マスタの番号を自動で補完します（入力済みの番号は上書きしません）。'},
   {date:'2026-08-11', tag:'新機能', title:'管理: 「🎁 特別日当」に表示月の切り替えを追加（先月分が見られます）',
@@ -6873,7 +6894,9 @@ async function invLoadAccCompanies(){
     invAccCompanies=(d&&Array.isArray(d.companies))?d.companies:[];
   }catch(e){ console.warn('[company] 会計マスタの会社名取得に失敗',e); invAccCompanies=[]; }
   const dl=document.getElementById('inv-re-company-dl');
-  if(dl)dl.innerHTML=invAccCompanies.map(c=>`<option value="${esc(c.name)}"></option>`).join('');
+  // esc() はグローバルに無い(各所でローカル定義)ため、ここで最小限のエスケープを持つ
+  const q=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  if(dl)dl.innerHTML=invAccCompanies.map(c=>`<option value="${q(c.name)}"></option>`).join('');
   const hint=document.getElementById('inv-re-company-hint');
   if(hint)hint.textContent=invAccCompanies.length
     ?`会計マスタの正式名称から選んでください（${invAccCompanies.length}社・表記ゆれ防止）`
@@ -10269,13 +10292,55 @@ function admSeParseSection2(){
 
 // 引継対象スタッフを Section 2 の指定日付範囲・時間帯で検索 → 該当セル
 // 戻り値: [{row, col, area, edition, oldValue, dateLabel}]
-function admSeFindSection2CellsForStaff(staffName,startCol,endCol,edition){
+// 引継タブ: 選択中の曜日 (未選択なら空 Set = 期間内すべて)
+function admSeDow3Selected(){
+  const box=document.getElementById('adm-se-vac-dow3');
+  const s=new Set();
+  if(box)box.querySelectorAll('input[type=checkbox]:checked').forEach(el=>s.add(el.value));
+  return s;
+}
+function admSeDow3Clear(){
+  const box=document.getElementById('adm-se-vac-dow3');
+  if(box)box.querySelectorAll('input[type=checkbox]').forEach(el=>el.checked=false);
+}
+// 日付ラベル("8/1") → 曜日("金") の対応表。 Section 2 の列番号は Section 1 とずれるため、
+// 曜日は列ではなく日付ラベル経由で引く。 曜日行 rows[3] は日付行 rows[0] と同じ列並び。
+function admSeDowByDateLabel(){
+  const dateRow=admSeState.rows[0]||[];
+  const dowRow=admSeState.rows[3]||[];
+  const map=new Map();
+  for(let c=1;c<dateRow.length;c++){
+    const label=String(dateRow[c]||'').trim();
+    if(!label)continue;
+    const m=String(dowRow[c]||'').match(/[月火水木金土日]/);
+    if(m&&!map.has(label))map.set(label,m[0]);
+  }
+  return map;
+}
+// 書込値 = 種別(引継等) + 半角スペース + コース名(任意)。
+// 「引継 立川13」のように書いても、 半額判定は includes('引継')、 コース別集計は
+// admPayStripHikitsugi() が「引継」を除去して bare コース名にするため両立する。
+function admSeHandoverWriteValue(){
+  const v=(document.getElementById('adm-se-vac-handover-value')||{}).value||'';
+  const c=((document.getElementById('adm-se-vac-handover-course')||{}).value||'').trim();
+  return c?`${v} ${c}`:v;
+}
+function admSeHandoverValuePreview(){
+  const el=document.getElementById('adm-se-vac-handover-valprev');
+  if(!el)return;
+  const q=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  el.innerHTML='書き込まれる値: <b>'+q(admSeHandoverWriteValue())+'</b>';
+}
+
+function admSeFindSection2CellsForStaff(staffName,startCol,endCol,edition,dows){
   const matches=[];
   if(!staffName||!startCol)return matches;
   const dateRow=admSeState.rows[0]||[];
   const dateCols1=admSeVacationDateColRange(startCol,endCol);
   if(!dateCols1.length)return matches;
-  const targetDates=new Set(dateCols1.map(c=>String(dateRow[c]||'').trim()));
+  const dowMap=(dows&&dows.size)?admSeDowByDateLabel():null;
+  const targetDates=new Set(dateCols1.map(c=>String(dateRow[c]||'').trim())
+    .filter(label=>!dowMap||dows.has(dowMap.get(label))));
   const blocks=admSeParseSection2();
   const norm=invNormName(staffName);
   blocks.forEach(b=>{
@@ -10294,10 +10359,14 @@ function admSeFindSection2CellsForStaff(staffName,startCol,endCol,edition){
 }
 
 // 引継が0件になった理由を具体的に診断 (Section 2 に行が無い / 日付外 / 時間帯外 を切り分け)
-function admSeDiagnoseHandover(staffName,startCol,endCol,edition){
+function admSeDiagnoseHandover(staffName,startCol,endCol,edition,dows){
   const dateRow=admSeState.rows[0]||[];
   const dateCols1=admSeVacationDateColRange(startCol,endCol);
-  const targetDates=[...new Set(dateCols1.map(c=>String(dateRow[c]||'').trim()).filter(Boolean))];
+  const allDates=[...new Set(dateCols1.map(c=>String(dateRow[c]||'').trim()).filter(Boolean))];
+  const dowMap=(dows&&dows.size)?admSeDowByDateLabel():null;
+  const targetDates=dowMap?allDates.filter(d=>dows.has(dowMap.get(d))):allDates;
+  if(dowMap&&!targetDates.length)
+    return `選択した期間 (${allDates.join(', ')||'(未選択)'}) に、指定した曜日 [${[...dows].join('・')}] の日がありません。\n曜日の選択を変えるか「クリア」で曜日指定を外してください。`;
   const blocks=admSeParseSection2();
   const norm=invNormName(staffName);
   const staffBlocks=blocks.filter(b=>b.staffRows.some(s=>invNormName(s.name)===norm));
@@ -10337,20 +10406,22 @@ function admSeHandoverPreview(){
   const endCol=document.getElementById('adm-se-vac-date3-end').value;
   const edition=document.getElementById('adm-se-vac-edition3').value;
   const staff=document.getElementById('adm-se-vac-handover-staff').value.trim();
-  const value=document.getElementById('adm-se-vac-handover-value').value;
+  const value=admSeHandoverWriteValue();
+  const dows=admSeDow3Selected();
   const prev=document.getElementById('adm-se-vac-preview3');
   if(!startCol){alert('開始日を選択してください');return;}
   if(!staff){alert('対象スタッフを入力してください');return;}
-  const matches=admSeFindSection2CellsForStaff(staff,startCol,endCol,edition);
+  const matches=admSeFindSection2CellsForStaff(staff,startCol,endCol,edition,dows);
   if(!matches.length){
     prev.style.display='block';prev.style.background='#fef2f2';prev.style.borderColor='#fecaca';prev.style.color='#991b1b';
-    prev.innerHTML=`⚠️ ${admSeDiagnoseHandover(staff,startCol,endCol,edition).replace(/\n/g,'<br>')}`;
+    prev.innerHTML=`⚠️ ${admSeDiagnoseHandover(staff,startCol,endCol,edition,dows).replace(/\n/g,'<br>')}`;
     return;
   }
   prev.style.display='block';prev.style.background='#f0fdf4';prev.style.borderColor='#bbf7d0';prev.style.color='#166534';
   const lines=matches.slice(0,20).map(m=>`• ${m.dateLabel} ${m.area} ${m.edition}: ${m.oldValue||'(空)'} → ${value}`);
   const more=matches.length>20?`<br>... 他 ${matches.length-20}件`:'';
-  prev.innerHTML=`✓ ${matches.length}件のセルに「${value}」を書き込みます:<br>${lines.join('<br>')}${more}`;
+  const dowNote=dows.size?`（曜日: ${[...dows].join('・')} のみ）`:'';
+  prev.innerHTML=`✓ ${matches.length}件のセルに「${value}」を書き込みます${dowNote}:<br>${lines.join('<br>')}${more}`;
 }
 
 async function admSeHandoverApply(){
@@ -10358,14 +10429,16 @@ async function admSeHandoverApply(){
   const endCol=document.getElementById('adm-se-vac-date3-end').value;
   const edition=document.getElementById('adm-se-vac-edition3').value;
   const staff=document.getElementById('adm-se-vac-handover-staff').value.trim();
-  const value=document.getElementById('adm-se-vac-handover-value').value;
+  const value=admSeHandoverWriteValue();
+  const dows=admSeDow3Selected();
   if(!startCol){alert('開始日を選択してください');return;}
   if(!staff){alert('対象スタッフを入力してください');return;}
-  const matches=admSeFindSection2CellsForStaff(staff,startCol,endCol,edition);
-  if(!matches.length){alert(admSeDiagnoseHandover(staff,startCol,endCol,edition));return;}
+  const matches=admSeFindSection2CellsForStaff(staff,startCol,endCol,edition,dows);
+  if(!matches.length){alert(admSeDiagnoseHandover(staff,startCol,endCol,edition,dows));return;}
   const summaryLines=matches.slice(0,15).map(m=>`${m.dateLabel} ${m.area} ${m.edition}: ${m.oldValue||'(空)'} → ${value}`);
   const more=matches.length>15?`\n... 他 ${matches.length-15}件`:'';
-  if(!window.confirm(`${staff} さんの Section 2 セルに「${value}」を書き込みます (${matches.length}件、まだ保存されません):\n\n${summaryLines.join('\n')}${more}\n\n適用しますか?`))return;
+  const dowNote=dows.size?`\n曜日: ${[...dows].join('・')} のみ`:'';
+  if(!window.confirm(`${staff} さんの Section 2 セルに「${value}」を書き込みます (${matches.length}件、まだ保存されません):${dowNote}\n\n${summaryLines.join('\n')}${more}\n\n適用しますか?`))return;
   matches.forEach(m=>{
     const k=`${m.row},${m.col}`;
     const orig=String((admSeState.rows[m.row]||[])[m.col]||'');
@@ -10473,6 +10546,9 @@ function admSeOpenVacation(){
   courses.sort((a,b)=>areaIdx(a)-areaIdx(b));
   const courseSel=document.getElementById('adm-se-vac-course');
   courseSel.innerHTML='<option value="">選択してください</option>'+courses.map(c=>{const a=areaOfCourse(c);return `<option value="${c}">${a?'['+a+'] ':''}${c}</option>`;}).join('');
+  // 引継タブ「書込値」の横のコース名入力用 datalist (同じコース一覧を予測変換に使う)
+  const cdl=document.getElementById('adm-se-course-list');
+  if(cdl)cdl.innerHTML=courses.map(c=>`<option value="${String(c).replace(/"/g,'&quot;')}"></option>`).join('');
   // フォームクリア
   document.getElementById('adm-se-vac-edition').value='both';
   document.getElementById('adm-se-vac-requester').value='';
@@ -10486,6 +10562,9 @@ function admSeOpenVacation(){
   document.getElementById('adm-se-vac-edition3').value='both';
   document.getElementById('adm-se-vac-handover-staff').value='';
   document.getElementById('adm-se-vac-handover-value').value='引継';
+  document.getElementById('adm-se-vac-handover-course').value='';
+  admSeDow3Clear();
+  admSeHandoverValuePreview();
   document.getElementById('adm-se-vac-preview3').style.display='none';
   // タブ初期化 (driver タブをデフォルト)
   admSeVacSwitchTab('driver');
