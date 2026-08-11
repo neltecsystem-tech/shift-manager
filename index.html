@@ -1258,7 +1258,7 @@ tbody tr:hover { background:var(--primary-light); }
               <div style="display:flex;gap:8px;align-items:flex-end;">
                 <div style="flex:1;">
                   <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">営業所 (Section 2 に行が無い時の追加先)</label>
-                  <select id="adm-se-vac-handover-area" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="城北">城北</option><option value="川越">川越</option><option value="立川">立川</option><option value="川崎高津">川崎高津</option></select>
+                  <select id="adm-se-vac-handover-area" onchange="admSeHandoverCourseDatalist()" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="城北">城北</option><option value="川越">川越</option><option value="立川">立川</option><option value="川崎高津">川崎高津</option></select>
                 </div>
                 <button onclick="admSeAddToSection2FromForm()" style="background:#14b8a6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap;" title="対象スタッフが Section 2 に無い場合、選択した営業所ブロックに行を追加します">➕ Section 2 に追加</button>
               </div>
@@ -10325,6 +10325,24 @@ function admSeHandoverWriteValue(){
   const c=((document.getElementById('adm-se-vac-handover-course')||{}).value||'').trim();
   return c?`${v} ${c}`:v;
 }
+// 引継タブのコース名候補。 上の「営業所」で絞る (コース数が多く全件だと選びにくいため)。
+// 該当が0件の営業所は絞り込まず全件を出す (取りこぼしで入力できなくなるのを防ぐ)。
+let admSeCourseListAll=[];
+function admSeHandoverCourseDatalist(){
+  const dl=document.getElementById('adm-se-course-list');
+  if(!dl)return;
+  const area=((document.getElementById('adm-se-vac-handover-area')||{}).value||'').trim();
+  let list=admSeCourseListAll;
+  if(area){
+    const hit=admSeCourseListAll.filter(c=>areaOfCourse(c)===area);
+    if(hit.length)list=hit;
+  }
+  dl.innerHTML=list.map(c=>`<option value="${String(c).replace(/"/g,'&quot;')}"></option>`).join('');
+  const inp=document.getElementById('adm-se-vac-handover-course');
+  if(inp)inp.placeholder=area&&list!==admSeCourseListAll
+    ? `コース名 (任意) ${area}の${list.length}コース`
+    : 'コース名 (任意) 例: 立川13';
+}
 function admSeHandoverValuePreview(){
   const el=document.getElementById('adm-se-vac-handover-valprev');
   if(!el)return;
@@ -10546,9 +10564,9 @@ function admSeOpenVacation(){
   courses.sort((a,b)=>areaIdx(a)-areaIdx(b));
   const courseSel=document.getElementById('adm-se-vac-course');
   courseSel.innerHTML='<option value="">選択してください</option>'+courses.map(c=>{const a=areaOfCourse(c);return `<option value="${c}">${a?'['+a+'] ':''}${c}</option>`;}).join('');
-  // 引継タブ「書込値」の横のコース名入力用 datalist (同じコース一覧を予測変換に使う)
-  const cdl=document.getElementById('adm-se-course-list');
-  if(cdl)cdl.innerHTML=courses.map(c=>`<option value="${String(c).replace(/"/g,'&quot;')}"></option>`).join('');
+  // 引継タブ「書込値」の横のコース名入力用 datalist (営業所で絞って予測変換に使う)
+  admSeCourseListAll=courses.slice();
+  admSeHandoverCourseDatalist();
   // フォームクリア
   document.getElementById('adm-se-vac-edition').value='both';
   document.getElementById('adm-se-vac-requester').value='';
@@ -10563,6 +10581,7 @@ function admSeOpenVacation(){
   document.getElementById('adm-se-vac-handover-staff').value='';
   document.getElementById('adm-se-vac-handover-value').value='引継';
   document.getElementById('adm-se-vac-handover-course').value='';
+  admSeHandoverCourseDatalist();
   admSeDow3Clear();
   admSeHandoverValuePreview();
   document.getElementById('adm-se-vac-preview3').style.display='none';
