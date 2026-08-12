@@ -477,7 +477,7 @@ Deno.serve(async(req:Request)=>{
   if(req.method==='OPTIONS')return new Response('ok',{headers:corsHeaders});
   try{
     const body = await req.json();
-    const { action, record, row_number, row_numbers, updates, login_id, login_pw, measure_data, bill_prices, bill_conditions, confirmed_sale, year_month, area, course, admin_password, auth_token } = body;
+    const { action, record, row_number, row_numbers, updates, login_id, login_pw, measure_data, bill_prices, bill_conditions, confirmed_sale, year_month, area, course, admin_password, auth_token, expect_name } = body;
 
     // ---- 認証不要のアクション: login / admin_login ----
     if(action==='login'){
@@ -977,13 +977,22 @@ Deno.serve(async(req:Request)=>{
       if(!row_number) return jsonResp({error:'row_number required'}, 400);
       const rowIdx=Number(row_number)-1;
       if(rowIdx<1) return jsonResp({error:'cannot delete header'}, 400);
+      // 行番号は位置ベースで、行を1つ消すと以降が繰り上がる。古い一覧から消すと別人が消える。
+      // 削除直前にシートを読み直し、対象行の実在と氏名の一致を確認する(owner_delete_member と同じ作法)。
+      const curDel = parseRates(await sheetVals(await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}}), '単価マスタ'));
+      const tgtDel = curDel.find((r:any)=>r.row_number===Number(row_number));
+      if(!tgtDel) return jsonResp({error:'削除対象の行が見つかりません。一覧を再読み込みしてください。', code:'ROW_NOT_FOUND'}, 404);
+      const expName=String(expect_name||'').trim();
+      if(expName && tgtDel.name!==expName){
+        return jsonResp({error:`削除対象が一致しません(指定:「${expName}」/ 実際の${row_number}行目:「${tgtDel.name}」)。一覧を再読み込みしてから操作してください。`, code:'NAME_MISMATCH'}, 409);
+      }
       const delResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({requests:[{deleteDimension:{range:{sheetId:RATE_SHEET_ID,dimension:'ROWS',startIndex:rowIdx,endIndex:rowIdx+1}}}]})});
       if(!delResp.ok){
         const errText=await delResp.text();
         return jsonResp({error:'deleteDimension failed: '+delResp.status+' '+errText.slice(0,200)}, 500);
       }
       await invalidateRateCache();
-      return jsonResp({success:true});
+      return jsonResp({success:true, deleted_name:tgtDel.name});
     }
     // ── 法人オーナー: 自社メンバーのみ管理 (単価は保全=編集不可, 会社/区分は固定) ──
     if(action==='owner_save_member'){

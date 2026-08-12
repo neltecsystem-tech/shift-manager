@@ -7034,7 +7034,7 @@ function invShowRates(){
   let h='<table style="width:100%;font-size:13px;"><thead><tr><th>スタッフ</th><th>区分</th><th>朝刊(平日)</th><th>朝刊(土日)</th><th>夕刊(月-木)</th><th>夕刊(金-日)</th><th>庫内朝</th><th>庫内夕</th><th>方式</th><th>ID</th><th></th></tr></thead><tbody>';
   invRates.forEach((r,i)=>{
     const bizBadge=r.biz_type==='個人'?'<span style="background:#dbeafe;color:#1d4ed8;padding:1px 6px;border-radius:8px;font-size:11px;">個人</span>':r.biz_type==='法人'?'<span style="background:#dcfce7;color:#166534;padding:1px 6px;border-radius:8px;font-size:11px;">法人・屋号有</span>'+(r.company?'<br><span style="font-size:11px;color:#64748b;">'+r.company+'</span>':''):'<span style="color:#cbd5e1">-</span>';
-    h+=`<tr><td><b>${r.name}</b></td><td>${bizBadge}</td><td>${r.am_weekday?'¥'+Number(r.am_weekday).toLocaleString():'-'}</td><td>${r.am_weekend?'¥'+Number(r.am_weekend).toLocaleString():'-'}</td><td>${r.pm_weekday?'¥'+Number(r.pm_weekday).toLocaleString():'-'}</td><td>${r.pm_weekend?'¥'+Number(r.pm_weekend).toLocaleString():'-'}</td><td>${r.warehouse_am?'¥'+Number(r.warehouse_am).toLocaleString():'-'}</td><td>${r.warehouse_pm?'¥'+Number(r.warehouse_pm).toLocaleString():'-'}</td><td>${r.calc_type}${r.calc_type==='個数'?' ¥'+r.unit_price:''}</td><td>${r.login_id||'<span style="color:#cbd5e1">未設定</span>'}</td><td><button onclick="invEditRate(${i+2})" style="background:none;border:none;cursor:pointer;">✏️</button></td></tr>`;
+    h+=`<tr><td><b>${r.name}</b></td><td>${bizBadge}</td><td>${r.am_weekday?'¥'+Number(r.am_weekday).toLocaleString():'-'}</td><td>${r.am_weekend?'¥'+Number(r.am_weekend).toLocaleString():'-'}</td><td>${r.pm_weekday?'¥'+Number(r.pm_weekday).toLocaleString():'-'}</td><td>${r.pm_weekend?'¥'+Number(r.pm_weekend).toLocaleString():'-'}</td><td>${r.warehouse_am?'¥'+Number(r.warehouse_am).toLocaleString():'-'}</td><td>${r.warehouse_pm?'¥'+Number(r.warehouse_pm).toLocaleString():'-'}</td><td>${r.calc_type}${r.calc_type==='個数'?' ¥'+r.unit_price:''}</td><td>${r.login_id||'<span style="color:#cbd5e1">未設定</span>'}</td><td><button onclick="invEditRate(${r.row_number})" style="background:none;border:none;cursor:pointer;">✏️</button></td></tr>`;
   });
   h+='</tbody></table>';
   if(!invRates.length)h='<p style="color:var(--text-sub);text-align:center;padding:20px;">単価が設定されていません</p>';
@@ -7159,9 +7159,16 @@ function invJinNewFields(show){
   }catch(_){}
 }
 
+// rowNum = 単価マスタシートの実行番号。invRates の並び順から計算してはいけない
+// (サーバは氏名が空の行を捨てて返すため、空行が1つでもあると以降が全員ズレて別人を書き換える)。
+function invRateByRow(rowNum){
+  const n=Number(rowNum);
+  return invRates.find(x=>Number(x.row_number)===n)||null;
+}
 function invEditRate(rowNum){
   invLoadAccCompanies();
-  const r=invRates[rowNum-2];if(!r)return;
+  const r=invRateByRow(rowNum);
+  if(!r){alert('対象の行が見つかりません。一覧を再読み込みしてください。');return;}
   document.getElementById('inv-re-row').value=rowNum;
   document.getElementById('inv-re-delete-btn').style.display='block';
   invJinNewFields(false);
@@ -7215,15 +7222,18 @@ function invEditRate(rowNum){
 async function invDeleteRate(){
   const rowNum=document.getElementById('inv-re-row').value;
   if(!rowNum){alert('編集中のスタッフが特定できません');return;}
-  const r=invRates[parseInt(rowNum)-2];
-  const name=r?r.name:'このスタッフ';
+  const r=invRateByRow(rowNum);
+  // 誰を消すのか特定できないまま行番号だけで消させない(別人を消す事故を防ぐ)
+  if(!r){alert('削除対象の行が見つかりません。一覧を再読み込みしてから操作してください。');return;}
+  const name=r.name;
   if(!window.confirm(`「${name}」を削除します。\n\nこの操作は取り消せません。続行しますか？`))return;
   const btn=document.getElementById('inv-re-delete-btn');
   btn.textContent='削除中...';btn.disabled=true;
   try{
-    const res=await invApi({action:'delete_rate',row_number:parseInt(rowNum)});
+    // 氏名も送り、サーバ側で「その行が本当にこの人か」を突き合わせてもらう
+    const res=await invApi({action:'delete_rate',row_number:parseInt(rowNum),expect_name:name});
     if(res.error)throw new Error(res.error);
-    alert(`「${name}」を削除しました`);
+    alert(`「${res.deleted_name||name}」を削除しました`);
     document.getElementById('inv-rate-edit').style.display='none';
     await invLoadAll();
     if(adminAuthed)adminLoadStaff();
@@ -7241,8 +7251,8 @@ async function invSaveRate(){
   // 既存レコードの変更(編集)は社員(または管理者)のみ。新規追加(rowNum空)は制限なし
   if(rowNum&&!invCanEditStaff()){alert('スタッフ情報の編集は社員（または管理者）のみ可能です。');return;}
   // 重複チェック（新規追加時、または編集で名前を変えた場合）
-  const existing=invRates.find((r,i)=>{
-    if(rowNum&&(i+2)===parseInt(rowNum))return false;// 自分自身はスキップ
+  const existing=invRates.find(r=>{
+    if(rowNum&&Number(r.row_number)===parseInt(rowNum))return false;// 自分自身はスキップ
     return r.name===name;
   });
   if(existing){alert(`「${name}」は既に登録されています。同姓同名の登録はできません。`);return;}
@@ -7250,8 +7260,8 @@ async function invSaveRate(){
   // (ノアガベルが noa008 でノアサンパトと重複していた)。
   const loginIdVal=(document.getElementById('inv-re-loginid').value||'').trim();
   if(loginIdVal){
-    const dupId=invRates.find((r,i)=>{
-      if(rowNum&&(i+2)===parseInt(rowNum))return false; // 自分自身はスキップ
+    const dupId=invRates.find(r=>{
+      if(rowNum&&Number(r.row_number)===parseInt(rowNum))return false; // 自分自身はスキップ
       return String(r.login_id||'').trim().toLowerCase()===loginIdVal.toLowerCase();
     });
     if(dupId){alert(`ログインID「${loginIdVal}」は既に「${dupId.name}」で使われています。\n別のIDを指定してください。`);return;}
@@ -9061,7 +9071,7 @@ async function admStaffAdd(){
 function admEditRate(idx){
   const r=invRates[idx];if(!r)return;
   if(!invCanEditStaff()){alert('スタッフ情報の編集は社員（または管理者）のみ可能です。\n新規追加はできます。');return;}
-  invEditRate(idx+2);
+  invEditRate(r.row_number);
 }
 
 // --- シフト取込 ---
