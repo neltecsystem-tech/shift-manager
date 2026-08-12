@@ -15,6 +15,52 @@ const SPECIAL_SHEET_NAME = 'フォームの回答 1';
 // isolate内キャッシュだと新しい isolate が毎回 Sheets を叩いてしまい、
 // 「1分あたりの読取上限(429)」を解消できなかったため、全 isolate 共有のDBに置く。
 // 追加/更新/削除時は破棄して、保存直後の再取得が古い値を返さないようにする。
+// ── 人員名簿の電話を中央人材マスタ(staff_master)で補完する ────────────────────
+// 人員名簿シートの D列 が空でも、NexPort/中央マスタ側に電話があるケースが常態化していた。
+// シートを唯一の情報源にすると、登録タイミング次第で「電話未登録」となり確定保存や
+// ビューア照合が落ちる。読み取り時に補完して、参照側の実装を1本化する。
+const rosterNameKey = (s: unknown) => String(s ?? '').replace(/[\s　 ]+/g, '').trim();
+// 戻り値: {filled: 補完した氏名, ambiguous: 同姓同名で電話が割れていて補完しなかった氏名}
+// 同姓同名(例: 佐々田伸吾・庄司正志)が別の電話を持つケースが実在するため、
+// 先勝ちで入れると「別人の電話で明細が引ける」事故になる。割れている名前は補完しない。
+async function fillRosterPhones(rows: any[][]): Promise<{ filled: string[]; ambiguous: string[] }> {
+  const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const empty = { filled: [] as string[], ambiguous: [] as string[] };
+  if (!SB_URL || !SRK || !Array.isArray(rows) || !rows.length) return empty;
+  // 補完が必要な行(氏名あり・電話なし)が無ければ問い合わせない
+  const need = rows.filter((r) => rosterNameKey(r?.[2]) && !String(r?.[3] ?? '').trim());
+  if (!need.length) return empty;
+  let master: any[] = [];
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/staff_master?select=full_name,phone&phone=not.is.null`,
+      { headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } });
+    if (r.ok) master = await r.json();
+  } catch (_) { return empty; } // 補完できなくても名簿自体は返す(従来動作)
+  if (!Array.isArray(master) || !master.length) return empty;
+  const byName = new Map<string, Set<string>>();
+  for (const m of master) {
+    const k = rosterNameKey(m?.full_name);
+    const p = String(m?.phone ?? '').trim();
+    if (!k || !p) continue;
+    if (!byName.has(k)) byName.set(k, new Set());
+    byName.get(k)!.add(p);
+  }
+  const filled: string[] = [], ambiguous: string[] = [];
+  for (const r of rows) {
+    const k = rosterNameKey(r?.[2]);
+    if (!k || String(r?.[3] ?? '').trim()) continue;
+    const set = byName.get(k);
+    if (!set || !set.size) continue;
+    const name = String(r[2]).trim();
+    if (set.size > 1) { ambiguous.push(name); continue; } // 同姓同名で割れている → 触らない
+    while (r.length < 4) r.push('');
+    r[3] = [...set][0];
+    filled.push(name);
+  }
+  return { filled, ambiguous };
+}
+
 const SPECIAL_CACHE_TTL_MS = 5 * 60 * 1000; // 5分
 async function getSpecialRowsCached(): Promise<any[][]> {
   const SB_URL = Deno.env.get('SUPABASE_URL') || '';
@@ -840,7 +886,12 @@ Deno.serve(async(req:Request)=>{
       if(!admin) return forbid();
       const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${ROSTER_SHEET_ID}/values/${encodeURIComponent(ROSTER_SHEET_NAME)}!A1:Z500`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
       const rows=await sheetVals(resp);
-      return jsonResp({rows});
+      // D列(電話)が空の行は中央人材マスタ(staff_master)から氏名で補完する。
+      // 人員名簿シートだけを電話の情報源にしていたため、NexPort・staff_master に電話があっても
+      // 「電話番号未登録」となり、支払明細の確定保存やビューア照合が通らなかった(上田雪枝で発生)。
+      // シートは書き換えず、返す値だけを補う(正=staff_master、シートは人が見るためのコピー)。
+      const pf=await fillRosterPhones(rows);
+      return jsonResp({rows, phone_filled: pf.filled, phone_ambiguous: pf.ambiguous});
     }
     if(action==='get_special_rates'){
       if(!admin) return forbid();
