@@ -15219,7 +15219,11 @@ async function admPayFinalizeAll(){
   invRates.forEach(rate=>{
     if(rate.biz_type==='社員')return;
     let stmt; try{stmt=admPayBuildStatement(rate,y,m,monthLabel,monthVal);}catch(_){stmt=null;}
-    if(!stmt||!((stmt.rows&&stmt.rows.length)||stmt.grandTotal>0)){skippedEmpty.push(rate.name);return;}
+    // 稼働なしスキップ。rows は「その月の全日」が必ず入る(コース空の日も1行)ため、
+    // rows.length で判定すると誰もスキップされず、稼働ゼロの人まで0円明細が作られて
+    // ビューアに公開されてしまう(2026-07 で31名発生)。実際に稼働のある日を数える。
+    const workedDays=(stmt&&stmt.rows||[]).filter(r=>(r.am_course||'')||(r.pm_course||'')||Number(r.total||0)>0).length;
+    if(!stmt||!(workedDays>0||stmt.grandTotal>0)){skippedEmpty.push(rate.name);return;}
     targets.push({
       staff_name:rate.name, phone:getPhone(rate.name)||'', year:y, month:m,
       am_sum:stmt.amSum, pm_sum:stmt.pmSum, planner_allowance:stmt.plannerAllowance||0, grand_total:stmt.grandTotal, rows:stmt.rows,
