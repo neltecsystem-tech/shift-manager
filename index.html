@@ -2868,6 +2868,7 @@ async function loadLiveStaff(){
     // 人員名簿は invoice-sheet の get_roster から取得 (fetch-shift のSSには当シートが無く失敗するため)
     const j=await invApi({action:'get_roster'});
     if(j.error||!Array.isArray(j.rows)||j.rows.length<3)throw new Error(j.error||'rows不足');
+    if(j.master_phones&&typeof j.master_phones==='object')masterPhones=j.master_phones;
     DB.raw.course_staff_table=j.rows;
     DB.staff.length=0;
     parseStaff();
@@ -3268,9 +3269,17 @@ function getDriverMaps(dateStr){
   return {amMap,pmMap};
 }
 // Get phone by staff name
+// 中央人材マスタ(staff_master)の電話。get_roster が master_phones として返す。
+// 氏名キー(空白除去) -> 電話。同姓同名で電話が割れている人は含まれない。
+let masterPhones={};
+function phoneNameKey(s){return String(s==null?'':s).replace(/[\s　 ]+/g,'').trim();}
 function getPhone(name){
   const s=DB.staff.find(s=>s.name===name);
-  return s?s.phone:'';
+  if(s&&s.phone)return s.phone;
+  // 人員名簿シートに行が無い / D列が空の人は中央人材マスタから引く。
+  // 名簿を唯一の情報源にしていたため、NexPort に電話があっても空扱いになり、
+  // 明細ビューアが電話で本人を引けなかった(上田雪枝で発生)。
+  return masterPhones[phoneNameKey(name)]||'';
 }
 function renderTenpo(){
   const nm=document.getElementById('tp-name').value.trim().normalize('NFKC').toLowerCase();

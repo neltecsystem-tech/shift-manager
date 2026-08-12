@@ -20,17 +20,16 @@ const SPECIAL_SHEET_NAME = 'フォームの回答 1';
 // シートを唯一の情報源にすると、登録タイミング次第で「電話未登録」となり確定保存や
 // ビューア照合が落ちる。読み取り時に補完して、参照側の実装を1本化する。
 const rosterNameKey = (s: unknown) => String(s ?? '').replace(/[\s　 ]+/g, '').trim();
-// 戻り値: {filled: 補完した氏名, ambiguous: 同姓同名で電話が割れていて補完しなかった氏名}
+// 戻り値: {filled, ambiguous, map}
+//   map = 氏名キー -> 電話 (同姓同名で割れていないものだけ)。
+//   名簿シートに行が無い人は補完しようがないため、参照側が直接引けるよう map も返す。
 // 同姓同名(例: 佐々田伸吾・庄司正志)が別の電話を持つケースが実在するため、
 // 先勝ちで入れると「別人の電話で明細が引ける」事故になる。割れている名前は補完しない。
-async function fillRosterPhones(rows: any[][]): Promise<{ filled: string[]; ambiguous: string[] }> {
+async function fillRosterPhones(rows: any[][]): Promise<{ filled: string[]; ambiguous: string[]; map: Record<string,string> }> {
   const SB_URL = Deno.env.get('SUPABASE_URL') || '';
   const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-  const empty = { filled: [] as string[], ambiguous: [] as string[] };
+  const empty = { filled: [] as string[], ambiguous: [] as string[], map: {} as Record<string,string> };
   if (!SB_URL || !SRK || !Array.isArray(rows) || !rows.length) return empty;
-  // 補完が必要な行(氏名あり・電話なし)が無ければ問い合わせない
-  const need = rows.filter((r) => rosterNameKey(r?.[2]) && !String(r?.[3] ?? '').trim());
-  if (!need.length) return empty;
   let master: any[] = [];
   try {
     const r = await fetch(`${SB_URL}/rest/v1/staff_master?select=full_name,phone&phone=not.is.null`,
@@ -46,6 +45,9 @@ async function fillRosterPhones(rows: any[][]): Promise<{ filled: string[]; ambi
     if (!byName.has(k)) byName.set(k, new Set());
     byName.get(k)!.add(p);
   }
+  // 名簿シートに行が無い人(上田雪枝が該当した)は補完先が無いので、参照側が直接引ける map を返す
+  const map: Record<string,string> = {};
+  for (const [k, set] of byName) if (set.size === 1) map[k] = [...set][0];
   const filled: string[] = [], ambiguous: string[] = [];
   for (const r of rows) {
     const k = rosterNameKey(r?.[2]);
@@ -58,7 +60,7 @@ async function fillRosterPhones(rows: any[][]): Promise<{ filled: string[]; ambi
     r[3] = [...set][0];
     filled.push(name);
   }
-  return { filled, ambiguous };
+  return { filled, ambiguous, map };
 }
 
 const SPECIAL_CACHE_TTL_MS = 5 * 60 * 1000; // 5分
@@ -891,7 +893,7 @@ Deno.serve(async(req:Request)=>{
       // 「電話番号未登録」となり、支払明細の確定保存やビューア照合が通らなかった(上田雪枝で発生)。
       // シートは書き換えず、返す値だけを補う(正=staff_master、シートは人が見るためのコピー)。
       const pf=await fillRosterPhones(rows);
-      return jsonResp({rows, phone_filled: pf.filled, phone_ambiguous: pf.ambiguous});
+      return jsonResp({rows, phone_filled: pf.filled, phone_ambiguous: pf.ambiguous, master_phones: pf.map});
     }
     if(action==='get_special_rates'){
       if(!admin) return forbid();
