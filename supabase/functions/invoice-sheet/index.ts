@@ -45,6 +45,46 @@ async function getSpecialRowsCached(): Promise<any[][]> {
     throw e;
   }
 }
+// 稼働記録の DBキャッシュ。 ログイン時と一覧表示で毎回 A2:J5000 を読んでおり、
+// Sheets の「1分あたり読取上限(429)」を大きく食っていた。
+// ★ 書き込み前の重複チェック/行番号特定はキャッシュを使わない (実データが必要)。
+//   ここは表示専用の経路 (ログイン時の先読み・list_work) だけで使う。
+const WORK_CACHE_TTL_MS = 2 * 60 * 1000; // 2分 (稼働登録は随時入るので短め)
+async function getWorkRowsCached(): Promise<any[][]> {
+  const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  let cached: any = null;
+  if (SB_URL && SRK) {
+    try {
+      const r = await fetch(`${SB_URL}/rest/v1/sm_kv_cache?select=data,updated_at&key=eq.work_rows`, { headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } });
+      if (r.ok) { const a = await r.json(); cached = Array.isArray(a) && a[0] ? a[0] : null; }
+    } catch (_) { /* noop */ }
+  }
+  if (cached && cached.updated_at && Array.isArray(cached.data)
+    && (Date.now() - new Date(cached.updated_at).getTime() < WORK_CACHE_TTL_MS)) return cached.data as any[][];
+  try {
+    const rows = await fetchSheetValuesWithRetry('稼働記録!A2:J5000', getAccessToken);
+    if (SB_URL && SRK) {
+      try {
+        await fetch(`${SB_URL}/rest/v1/sm_kv_cache`, {
+          method: 'POST',
+          headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify([{ key: 'work_rows', data: rows, updated_at: new Date().toISOString() }]),
+        });
+      } catch (_) { /* noop */ }
+    }
+    return rows;
+  } catch (e) {
+    if (cached && Array.isArray(cached.data)) return cached.data as any[][];
+    throw e;
+  }
+}
+async function invalidateWorkCache(): Promise<void> {
+  const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!SB_URL || !SRK) return;
+  try { await fetch(`${SB_URL}/rest/v1/sm_kv_cache?key=eq.work_rows`, { method: 'DELETE', headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } }); } catch (_) { /* noop */ }
+}
 async function invalidateSpecialCache(): Promise<void> {
   const SB_URL = Deno.env.get('SUPABASE_URL') || '';
   const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
@@ -339,6 +379,52 @@ async function ensureSheets(token:string){
 
 function parseYenValue(s: string): number { if(!s) return 0; return Number(s.replace(/[¥¥,]/g, '')) || 0; }
 
+// ── 川越コース単価表 (マスタ2 の AN〜AV 列に「旧」「新」の2ブロック) ──────────────
+// 以前は AN2:AV20(旧) / AN22:AV34(新) と行番号を直書きしていた。コースを追記して
+// ブロックが13行/19行の枠から溢れると、溢れた分が「無い」ものとして扱われ、
+// finalize 側は単価0のまま黙って支払額0で確定してしまう(2026-07 に実害)。
+// 広めに読んで「コース行が途切れる最大の隙間」で旧/新に割るようにし、行数の増減で壊れないようにする。
+const KW_COURSE_RANGE = 'AN1:AV300';
+function splitKawagoeBlocks(rows: string[][]): { old: string[][]; new: string[][]; meta: any } {
+  const isCourse = (r: string[]) => /^川越/.test(String((r || [])[0] || '').trim());
+  const idx: number[] = [];
+  rows.forEach((r, i) => { if (isCourse(r)) idx.push(i); });
+  if (idx.length < 2) return { old: [], new: [], meta: { detected: false, reason: 'コース行が見つからない', count: idx.length } };
+  // 連続するコース行の間で最も大きい隙間 = 旧ブロックと新ブロックの境目
+  let gapAt = -1, gapSize = 0;
+  for (let k = 1; k < idx.length; k++) {
+    const g = idx[k] - idx[k - 1];
+    if (g > gapSize) { gapSize = g; gapAt = k; }
+  }
+  if (gapSize < 2 || gapAt < 0) {
+    // 隙間が無い = 1ブロックしか無い。旧扱いにして新は空(誤って新に割り当てない)
+    return { old: idx.map((i) => rows[i]), new: [], meta: { detected: false, reason: '境目が見つからない(1ブロック)', count: idx.length } };
+  }
+  const oldIdx = idx.slice(0, gapAt), newIdx = idx.slice(gapAt);
+  return {
+    old: oldIdx.map((i) => rows[i]),
+    new: newIdx.map((i) => rows[i]),
+    meta: {
+      detected: true,
+      // シート上の行番号(1始まり)。想定とズレていないかの確認用
+      old_rows: [oldIdx[0] + 1, oldIdx[oldIdx.length - 1] + 1],
+      new_rows: [newIdx[0] + 1, newIdx[newIdx.length - 1] + 1],
+      old_courses: oldIdx.map((i) => String(rows[i][0]).trim()),
+      new_courses: newIdx.map((i) => String(rows[i][0]).trim()),
+    },
+  };
+}
+async function fetchKawagoeCourseRows(token: string): Promise<{ old: string[][]; new: string[][]; meta: any }> {
+  const resp = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${KAWAGOE_MASTER_SHEET_ID}/values/${encodeURIComponent(KAWAGOE_MASTER_SHEET_NAME)}!${KW_COURSE_RANGE}`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  const rows = await sheetVals(resp);
+  const split = splitKawagoeBlocks(rows);
+  if (!split.meta.detected) console.warn('[kawagoe] ブロック検出に失敗:', JSON.stringify(split.meta));
+  return split;
+}
+
 Deno.serve(async(req:Request)=>{
   if(req.method==='OPTIONS')return new Response('ok',{headers:corsHeaders});
   try{
@@ -398,7 +484,7 @@ Deno.serve(async(req:Request)=>{
       // 単価 + 稼働のスコープ: admin=全件 / corp-owner=同company全員 / それ以外=自分のみ
       // 稼働記録は認証には不要(表示用)なので、取得できなくてもログインは通す(空扱い)。
       let workValues: any[] = [];
-      try{ workValues = await fetchSheetValuesWithRetry('稼働記録!A2:J5000', getAccessToken); }catch(_e){ workValues = []; }
+      try{ workValues = await getWorkRowsCached(); }catch(_e){ workValues = []; }
       const allWork = parseWork(workValues);
       let ratesScoped, myWork;
       if (has_admin) {
@@ -551,6 +637,7 @@ Deno.serve(async(req:Request)=>{
         data.push({ range: `'単価マスタ'!V${r.row_number}`, values: [[tno]] });
       }
       if(!dryRun && data.length){
+        await invalidateWorkCache(); // 稼働記録を書き換えるので一覧キャッシュを破棄
         const up = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{
           method:'POST', headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},
           body: JSON.stringify({ valueInputOption:'USER_ENTERED', data }),
@@ -599,12 +686,11 @@ Deno.serve(async(req:Request)=>{
       const dryRun = !!body.dry_run;
       const onlyZero = body.only_zero !== false; // 既定true: 金額0の未計算行のみ補完(既存の非0金額は触らない=履歴保護)
       const token = await getAccessToken();
-      const [rRes, wRes, sRes, kwOldRes, kwNewRes] = await Promise.all([
+      const [rRes, wRes, sRes, kwBlocks] = await Promise.all([
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`,{headers:{'Authorization':`Bearer ${token}`}}),
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${token}`}}),
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A2:J5000`,{headers:{'Authorization':`Bearer ${token}`}}),
-        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${KAWAGOE_MASTER_SHEET_ID}/values/${encodeURIComponent(KAWAGOE_MASTER_SHEET_NAME)}!AN2:AV20`,{headers:{'Authorization':`Bearer ${token}`}}),
-        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${KAWAGOE_MASTER_SHEET_ID}/values/${encodeURIComponent(KAWAGOE_MASTER_SHEET_NAME)}!AN22:AV34`,{headers:{'Authorization':`Bearer ${token}`}}),
+        fetchKawagoeCourseRows(token),
       ]);
       const rates = parseRates(await sheetVals(rRes));
       const work = parseWork(await sheetVals(wRes));
@@ -618,8 +704,8 @@ Deno.serve(async(req:Request)=>{
         return m;
       };
       const kwCourseMap: Record<string, Map<string,any>> = {
-        '旧': parseKwCourses(await sheetVals(kwOldRes)),
-        '新': parseKwCourses(await sheetVals(kwNewRes)),
+        '旧': parseKwCourses(kwBlocks.old),
+        '新': parseKwCourses(kwBlocks.new),
       };
       const rateByName = new Map<string,any>(rates.map((r:any)=>[r.name, r]));
       const nn = (s:string)=>String(s||'').replace(/[\s　]+/g,'').trim();
@@ -679,6 +765,7 @@ Deno.serve(async(req:Request)=>{
         }
       }
       if(!dryRun && data.length){
+        await invalidateWorkCache(); // 稼働記録を書き換えるので一覧キャッシュを破棄
         for(let i=0;i<data.length;i+=400){
           const chunk=data.slice(i,i+400);
           const up=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'USER_ENTERED',data:chunk})});
@@ -892,8 +979,7 @@ Deno.serve(async(req:Request)=>{
       return jsonResp({success:true});
     }
     if(action==='list_work'){
-      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A2:J5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      const all = parseWork(await sheetVals(resp));
+      const all = parseWork(await getWorkRowsCached());
       if (admin) return jsonResp({records: all});
       // corp-sub の金額表示はライブ判定 (自社オーナーの show_money を都度参照)
       let csm = true;
@@ -932,6 +1018,7 @@ Deno.serve(async(req:Request)=>{
       }
       const row=[record.date||'',record.staff||'',record.course||'',record.category||'',record.start_time||'',record.end_time||'',record.quantity||'',record.unit_price||'',record.amount||'',''];
       await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A1:J1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});
+      await invalidateWorkCache(); // 追加したので次の一覧は必ずシートから
       return jsonResp({success:true});
     }
     if(action==='update_work'){
@@ -957,6 +1044,7 @@ Deno.serve(async(req:Request)=>{
       }
       const row=[record.date||'',record.staff||callerName,record.course||'',record.category||'',record.start_time||'',record.end_time||'',record.quantity||'',record.unit_price||'',record.amount||''];
       await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A${row_number}:I${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});
+      await invalidateWorkCache(); // 変更したので次の一覧は必ずシートから
       return jsonResp({success:true});
     }
     if(action==='delete_work'){
@@ -970,6 +1058,7 @@ Deno.serve(async(req:Request)=>{
         if(cv[9]) return jsonResp({error:'確定済みの記録は削除できません'}, 403);
       }
       await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('稼働記録')}!A${row_number}:J${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[Array(10).fill('')]})});
+      await invalidateWorkCache(); // 変更したので次の一覧は必ずシートから
       return jsonResp({success:true});
     }
     if(action==='batch_recalc_amounts'){
@@ -993,6 +1082,7 @@ Deno.serve(async(req:Request)=>{
         data.push({ range: `'稼働記録'!H${rn}:I${rn}`, values: [[ String(u.unit_price ?? ''), String(u.amount ?? '') ]] });
       }
       if(data.length){
+        await invalidateWorkCache(); // 稼働記録を書き換えるので一覧キャッシュを破棄
         const up = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{
           method:'POST', headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},
           body: JSON.stringify({ valueInputOption:'USER_ENTERED', data }),
@@ -1010,6 +1100,7 @@ Deno.serve(async(req:Request)=>{
       for(const rn of row_numbers){data.push({range:`'稼働記録'!J${rn}`,values:[[today]]});}
       const cfResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'USER_ENTERED',data})});
       if(!cfResp.ok){ const t=await cfResp.text(); return jsonResp({error:'確定の書き込みに失敗しました: '+cfResp.status+' '+t.slice(0,200)},500); }
+      await invalidateWorkCache();
       return jsonResp({success:true,confirmed:row_numbers.length});
     }
     if(action==='unconfirm_records'){
@@ -1019,6 +1110,7 @@ Deno.serve(async(req:Request)=>{
       for(const rn of row_numbers){data.push({range:`'稼働記録'!J${rn}`,values:[['']]});}
       const ucResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'USER_ENTERED',data})});
       if(!ucResp.ok){ const t=await ucResp.text(); return jsonResp({error:'確定解除の書き込みに失敗しました: '+ucResp.status+' '+t.slice(0,200)},500); }
+      await invalidateWorkCache();
       return jsonResp({success:true,unconfirmed:row_numbers.length});
     }
     if(action==='list_measure'){
@@ -1090,14 +1182,10 @@ Deno.serve(async(req:Request)=>{
     if(action==='get_kawagoe_course_prices'){
       // 川越コース単価マスタ — 請求側の参照に使う。staff には不要なので admin のみ
       if(!admin) return forbid();
-      const [oldResp, newResp] = await Promise.all([
-        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${KAWAGOE_MASTER_SHEET_ID}/values/${encodeURIComponent(KAWAGOE_MASTER_SHEET_NAME)}!AN2:AV20`,{headers:{'Authorization':`Bearer ${sheetsToken}`}}),
-        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${KAWAGOE_MASTER_SHEET_ID}/values/${encodeURIComponent(KAWAGOE_MASTER_SHEET_NAME)}!AN22:AV34`,{headers:{'Authorization':`Bearer ${sheetsToken}`}}),
-      ]);
-      const parseCourseRows = (rows: string[][]) => rows.filter((r:string[])=>r[0]).map((r:string[])=>({course:r[0]||'',mon:parseYenValue(r[2]),tue:parseYenValue(r[3]),wed:parseYenValue(r[4]),thu:parseYenValue(r[5]),fri:parseYenValue(r[6]),sat:parseYenValue(r[7]),sun:parseYenValue(r[8])}));
-      const oldData = parseCourseRows(await sheetVals(oldResp));
-      const newData = parseCourseRows(await sheetVals(newResp));
-      return jsonResp({old:oldData,new:newData});
+      const kw = await fetchKawagoeCourseRows(sheetsToken);
+      const parseCourseRows = (rows: string[][]) => rows.filter((r:string[])=>r[0]).map((r:string[])=>({course:String(r[0]||'').trim(),mon:parseYenValue(r[2]),tue:parseYenValue(r[3]),wed:parseYenValue(r[4]),thu:parseYenValue(r[5]),fri:parseYenValue(r[6]),sat:parseYenValue(r[7]),sun:parseYenValue(r[8])}));
+      // meta = 検出した旧/新のシート行番号とコース一覧。想定と合っているかを画面/ログで確認できる
+      return jsonResp({old:parseCourseRows(kw.old),new:parseCourseRows(kw.new),meta:kw.meta});
     }
     if(action==='get_confirmed_sales'){
       if(!admin) return forbid();

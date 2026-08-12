@@ -23,6 +23,13 @@ async function invApi(action: string, token: string): Promise<any> {
 // ── ユーティリティ (js/utils.js と同一) ──
 const isDateVal = (v: string) => !!v && /^0?\d{1,2}\/\d{1,2}$/.test(v);
 const invNormName = (n: unknown) => String(n ?? '').replace(/[\s　 ]+/g, '').trim();
+// 会社名の表記ゆれ吸収 (invoice-sheet と同じ規則)。「TLC.ﾊﾟｰﾄﾅｰｽﾞ㈱」と
+// 「TLC.パートナーズ株式会社」を同一視するため、only_company の照合に使う。
+const coKey = (s: unknown) => String(s ?? '')
+  .normalize('NFKC')
+  .replace(/株式会社|合同会社|有限会社|（株）|\(株\)|㈱|（合）|\(合\)|（有）|\(有\)/g, '')
+  .replace(/[\s　・,，\.。\-－―ー]/g, '')
+  .toLowerCase().trim();
 // 半角カナ → 全角カナ (会社名の表記ゆれ吸収用。濁点・半濁点の合字を先に処理)
 const HW_KANA2: Record<string, string> = { 'ｶﾞ': 'ガ', 'ｷﾞ': 'ギ', 'ｸﾞ': 'グ', 'ｹﾞ': 'ゲ', 'ｺﾞ': 'ゴ', 'ｻﾞ': 'ザ', 'ｼﾞ': 'ジ', 'ｽﾞ': 'ズ', 'ｾﾞ': 'ゼ', 'ｿﾞ': 'ゾ', 'ﾀﾞ': 'ダ', 'ﾁﾞ': 'ヂ', 'ﾂﾞ': 'ヅ', 'ﾃﾞ': 'デ', 'ﾄﾞ': 'ド', 'ﾊﾞ': 'バ', 'ﾋﾞ': 'ビ', 'ﾌﾞ': 'ブ', 'ﾍﾞ': 'ベ', 'ﾎﾞ': 'ボ', 'ｳﾞ': 'ヴ', 'ﾊﾟ': 'パ', 'ﾋﾟ': 'ピ', 'ﾌﾟ': 'プ', 'ﾍﾟ': 'ペ', 'ﾎﾟ': 'ポ' };
 const HW_KANA1: Record<string, string> = { 'ｱ': 'ア', 'ｲ': 'イ', 'ｳ': 'ウ', 'ｴ': 'エ', 'ｵ': 'オ', 'ｶ': 'カ', 'ｷ': 'キ', 'ｸ': 'ク', 'ｹ': 'ケ', 'ｺ': 'コ', 'ｻ': 'サ', 'ｼ': 'シ', 'ｽ': 'ス', 'ｾ': 'セ', 'ｿ': 'ソ', 'ﾀ': 'タ', 'ﾁ': 'チ', 'ﾂ': 'ツ', 'ﾃ': 'テ', 'ﾄ': 'ト', 'ﾅ': 'ナ', 'ﾆ': 'ニ', 'ﾇ': 'ヌ', 'ﾈ': 'ネ', 'ﾉ': 'ノ', 'ﾊ': 'ハ', 'ﾋ': 'ヒ', 'ﾌ': 'フ', 'ﾍ': 'ヘ', 'ﾎ': 'ホ', 'ﾏ': 'マ', 'ﾐ': 'ミ', 'ﾑ': 'ム', 'ﾒ': 'メ', 'ﾓ': 'モ', 'ﾔ': 'ヤ', 'ﾕ': 'ユ', 'ﾖ': 'ヨ', 'ﾗ': 'ラ', 'ﾘ': 'リ', 'ﾙ': 'ル', 'ﾚ': 'レ', 'ﾛ': 'ロ', 'ﾜ': 'ワ', 'ｦ': 'ヲ', 'ﾝ': 'ン', 'ｧ': 'ァ', 'ｨ': 'ィ', 'ｩ': 'ゥ', 'ｪ': 'ェ', 'ｫ': 'ォ', 'ｯ': 'ッ', 'ｬ': 'ャ', 'ｭ': 'ュ', 'ｮ': 'ョ', 'ｰ': 'ー', '･': '・' };
@@ -159,6 +166,15 @@ Deno.serve(async (req) => {
     if (!invRates.length) return json({ error: '単価マスタ取得失敗(get_rates)', detail: ratesRes?.error || '' }, 500);
     const invSpecial: any[] = specialRes?.records || [];
     const kwOld: any[] = kwRes?.old || [], kwNew: any[] = kwRes?.new || [];
+    // 川越コース単価表の突合。全角数字・前後空白のゆれで引けずに 0円 で確定する事故があったため、
+    // 正規化したキーで引く。引けなかった場合は黙って0円にせず kwMisses に記録して外に出す。
+    const normCourse = (s: unknown) => String(s ?? '').trim()
+      .replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xFEE0)).replace(/[\s　]/g, '');
+    const kwMap: Record<string, Map<string, any>> = {
+      '旧': new Map(kwOld.map((mm: any) => [normCourse(mm.course), mm])),
+      '新': new Map(kwNew.map((mm: any) => [normCourse(mm.course), mm])),
+    };
+    const kwMisses = new Map<string, number>(); // "パターン/コース" -> 引けなかった日数
     const shop = { headers: shopRes?.headers || [], records: shopRes?.records || [] };
     const calcKodate = makeCalcKodate(shop);
 
@@ -205,8 +221,14 @@ Deno.serve(async (req) => {
       if (isAm) {
         const kwPattern = rate.kw_pattern || '';
         if (kwPattern && course.startsWith('川越')) {
-          const ml = kwPattern === '旧' ? kwOld : kwNew; const found = ml.find((mm) => mm.course === course);
-          if (found) { const DK = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']; const v = Number(found[DK[dowNum]]) || 0; if (v) return v; }
+          const found = kwMap[kwPattern]?.get(normCourse(course));
+          const DK = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+          const v = found ? (Number(found[DK[dowNum]]) || 0) : 0;
+          if (v) return v;
+          // 単価表から引けなかった。このまま下に落ちると am_weekday(川越の人は空)=0円になり、
+          // 「支払漏れなのに誰も気づかない」状態になるため記録して呼び出し元へ返す。
+          const key = `${kwPattern}/${course}`;
+          kwMisses.set(key, (kwMisses.get(key) || 0) + 1);
         }
         const kwDays = String(rate.kw_am_daily || '').split(','); const kwMap = [6, 0, 1, 2, 3, 4, 5]; const kwP = kwDays[kwMap[dowNum]];
         if (kwP) return Number(kwP) || 0;
@@ -285,9 +307,19 @@ Deno.serve(async (req) => {
     };
 
     // ── 全非社員を確定 ──
+    // only_staff / only_company を指定すると対象を絞れる (特定の1社・1名だけの再確定用)。
+    // force と併用しても、指定外の人の確定済み明細は一切触らない。
+    const onlyStaff: string[] = ([] as string[]).concat(body.only_staff ?? []).filter(Boolean).map((v: string) => invNormName(String(v)));
+    const onlyCompany: string[] = ([] as string[]).concat(body.only_company ?? []).filter(Boolean).map((v: string) => coKey(String(v)));
+    const isTarget = (rate: any) => {
+      if (onlyStaff.length && onlyStaff.includes(invNormName(String(rate.name || '')))) return true;
+      if (onlyCompany.length && onlyCompany.includes(coKey(String(rate.company || '')))) return true;
+      return !onlyStaff.length && !onlyCompany.length;
+    };
     const targets: any[] = []; const skipped: string[] = [];
     for (const rate of invRates) {
       if (rate.biz_type === '社員') continue;
+      if (!isTarget(rate)) continue;
       let st; try { st = buildStatement(rate); } catch { st = null; }
       if (!st || !((st.rows && st.rows.some((r: any) => r.total > 0)) || st.grandTotal > 0)) { skipped.push(rate.name); continue; }
       const nk = invNormName(rate.name);
@@ -299,7 +331,8 @@ Deno.serve(async (req) => {
     if (dryRun) {
       let debug: any = undefined;
       if (body.debug_staff) { const dk = invNormName(body.debug_staff); const t = targets.find((x) => invNormName(x.staff_name) === dk); debug = t ? { staff_name: t.staff_name, grand_total: t.grand_total, am_sum: t.am_sum, pm_sum: t.pm_sum, primary_area: t.primary_area, rows: (t.rows || []).filter((r: any) => r.total > 0) } : { note: 'not found in targets (no 稼働?)' }; }
-      return json({ ok: true, mode: 'dry_run', year: y, month: m, count: targets.length, total: totalAll, skipped_count: skipped.length, summary, debug });
+      return json({ ok: true, mode: 'dry_run', year: y, month: m, count: targets.length, total: totalAll, skipped_count: skipped.length,
+        kawagoe_rate_missing: [...kwMisses.entries()].map(([k, days]) => `${k} (${days}日分)`), summary, debug });
     }
 
     // finalize: reflected_at済みは保護(上書き禁止)。未反映のみ upsert。
@@ -403,8 +436,24 @@ Deno.serve(async (req) => {
         }
       } else saved += chunk.length;
     }
+    // 川越コース単価表から引けなかったコースがあれば常設アラートにする。
+    // 金額0で確定してしまう性質上、本人からの異議が来るまで誰も気づかないため。
+    const kwMissList = [...kwMisses.entries()].map(([k, days]) => `${k} (${days}日分)`);
+    if (kwMissList.length) {
+      const nowA = new Date().toISOString();
+      await sb.from('sm_active_alerts').upsert({
+        key: `kw_course_rate_missing:${ym}`, app: 'shift-manager', kind: 'kw_course_rate_missing',
+        title: `⛔ 川越コース単価が引けません (${y}年${m}月)`,
+        body: `下記のコースが川越コース単価表(マスタ2 AN〜AV列)から引けず、朝刊が0円で確定しています。単価表に該当コースの行があるか確認してください。\n対象: ${kwMissList.join('、')}`,
+        cnt: kwMissList.length, names: kwMissList, status: 'open', resolved_at: null, updated_at: nowA,
+      }, { onConflict: 'key' }).then(() => {}, () => {}); // アラート失敗で確定自体は止めない
+    } else {
+      await sb.from('sm_active_alerts').update({ status: 'resolved', resolved_at: new Date().toISOString(), cnt: 0, updated_at: new Date().toISOString() })
+        .eq('key', `kw_course_rate_missing:${ym}`).eq('status', 'open').then(() => {}, () => {});
+    }
     return json({ ok: true, mode: 'finalize', year: y, month: m, count: targets.length, saved, locked: locked.size, total: totalAll,
-      skipped_no_phone: noPhone, phone_from_company: byCompanyUsed, company_renamed: renamedCo, company_cleared: clearedCo, errors: errs });
+      skipped_no_phone: noPhone, phone_from_company: byCompanyUsed, company_renamed: renamedCo, company_cleared: clearedCo,
+      kawagoe_rate_missing: kwMissList, errors: errs });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 500);
   }
