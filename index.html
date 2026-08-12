@@ -2851,11 +2851,15 @@ function staffRefreshFilters(){
   aSel.value=aVal;cSel.value=cVal;
 }
 let staffLiveLoading=false;
+let staffLivePending=null; // 進行中の人員名簿取得 (二重呼び出しはこれを待つ)
 // 人員名簿は開くたびに常に live 取得 (シフト系は live 必須ルール)。
 // 既存データを即表示しつつ裏で最新化する stale-while-revalidate。
 async function loadLiveStaff(){
-  if(staffLiveLoading)return;
+  // 実行中なら「何もせず返す」ではなく、進行中の取得を待つ。
+  // 待たずに返すと呼び出し元(確定処理)が古い DB.staff のまま先に進み、電話が空で確定される。
+  if(staffLiveLoading)return staffLivePending;
   staffLiveLoading=true;
+  let _resolve; staffLivePending=new Promise(r=>{_resolve=r;});
   const wrap=document.getElementById('staff-wrap');
   // 既に表が出ている場合は控えめに更新中表示
   let ind=null;
@@ -2875,6 +2879,7 @@ async function loadLiveStaff(){
   }finally{
     staffLiveLoading=false;
     const i2=document.getElementById('staff-live-ind');if(i2)i2.remove();
+    if(_resolve)_resolve(); staffLivePending=null;
   }
 }
 function renderStaff(){
@@ -14966,6 +14971,10 @@ function admPayApplySpecial(amount,detail,date,staffName,isAm){
 // 月のシフトをロード (キャッシュに無ければ fetch-shift で取得)
 async function admPayEnsureMonthLoaded(year,month){
   const sheetName=`${month}月シフト${year}`;
+  // 電話番号(getPhone)は DB.staff = 人員名簿 から引く。静的 data.js のままだと古く、
+  // 電話が空のまま確定され、明細ビューアが電話で本人を引けなくなる(上田雪枝で発生)。
+  // 確定前に必ず人員名簿を live 取得する(中央人材マスタからの電話補完もここで乗る)。
+  try{ await loadLiveStaff(); }catch(_){ /* 取得失敗時は従来どおり既存データで続行 */ }
   // 必ず Google Sheets から live で取得 (キャッシュ越しのスタレを防ぐ)
   const ok=await forceFreshShift(year,month);
   if(ok)return sheetName;
