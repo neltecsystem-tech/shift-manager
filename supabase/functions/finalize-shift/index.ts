@@ -339,6 +339,12 @@ Deno.serve(async (req) => {
     const force = body.force === true; // 変更を反映ボタン: 反映済みでも上書き再確定
     const { data: existing } = await sb.from('closed_pay_statements').select('staff_name, reflected_at').eq('year', y).eq('month', m);
     const locked = force ? new Set<string>() : new Set((existing ?? []).filter((r: any) => r.reflected_at).map((r: any) => String(r.staff_name)));
+    // 既存行の反映日時。再確定で公開を取り消さないよう引き継ぐ。
+    const prevReflected = new Map<string, string | null>(
+      (existing ?? []).map((r: any) => [String(r.staff_name), r.reflected_at ?? null]),
+    );
+    // その月が既に公開済みか(1件でも反映済みがあれば公開済みとみなす)
+    const monthPublished = (existing ?? []).some((r: any) => r.reflected_at);
     const now = new Date().toISOString();
     let saved = 0; const errs: string[] = [];
 
@@ -420,7 +426,13 @@ Deno.serve(async (req) => {
           if (co) { ph = co; byCompanyUsed.push(`${t.staff_name}(${coName})`); }
         }
         if (!ph) noPhone.push(String(t.staff_name));
-        return { ...t, company_name: coName, phone: ph, finalized_at: now, finalized_by: 'cron:finalize-shift' };
+        // 既に公開済みの月に後から作られた行(誤記修正での復活など)は、その場で公開する。
+        // reflected_at が null のままだと明細ビューアの取引先一覧に出ず、修正した本人にも
+        // 見えない(2026-07 のノアガデル・TLC5 が該当)。反映は月次cronのため翌月まで放置される。
+        // まだ一度も公開していない月は従来どおり null のままにし、反映工程で解禁する。
+        const prevRef = prevReflected.get(String(t.staff_name)) ?? null;
+        const refAt = prevRef ?? (monthPublished ? now : null);
+        return { ...t, company_name: coName, phone: ph, reflected_at: refAt, finalized_at: now, finalized_by: 'cron:finalize-shift' };
       });
     // 電話が取れない人も確定する(phone は null 可にした)。ビューアは電話で本人照合するため
     // 「本人ログインでは自分の明細を引けない」制約は残る → no_phone として応答に列挙し、登録を促す。
