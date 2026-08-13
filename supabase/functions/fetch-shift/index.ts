@@ -59,12 +59,89 @@ function colToA1(col) {
   }
   return s;
 }
+// ---- 呼び出し元認証 (shop-master / invoice-sheet と同じ HMAC セッショントークン) ----
+// 本EFは verify_jwt=false の公開EF。読み取りは素通しのままで良いが、書き込み系は
+// 無認証の第三者がシフト表・人員名簿・単価マスタを書き換え/行削除できてしまうため塞ぐ。
+const SESSION_SECRET = Deno.env.get('SHIFT_SESSION_SECRET') || '';
+const FS_ADMIN_PASSWORD = Deno.env.get('SHIFT_ADMIN_PASSWORD') || '';
+// 段階導入: 既定は監査モード(警告ログのみで実行は通す)。呼び出し漏れが無いことを
+// ログで確認してから FETCH_SHIFT_ENFORCE=1 を設定して遮断に切り替える。
+const ENFORCE = Deno.env.get('FETCH_SHIFT_ENFORCE') === '1';
+function b64urlDecodeUtf8(s) {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const bytes = new Uint8Array(bin.length);
+  for(let i = 0; i < bin.length; i++)bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+async function hmacSign(payload) {
+  if (!SESSION_SECRET) throw new Error('SHIFT_SESSION_SECRET not set');
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(SESSION_SECRET), {
+    name: 'HMAC',
+    hash: 'SHA-256'
+  }, false, [
+    'sign'
+  ]);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  return btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function verifyToken(token) {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
+  try {
+    const expected = await hmacSign(payload);
+    if (sig.length !== expected.length) return null;
+    let diff = 0;
+    for(let i = 0; i < sig.length; i++)diff |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
+    if (diff !== 0) return null;
+    const claims = JSON.parse(b64urlDecodeUtf8(payload));
+    if (claims.exp && claims.exp < Date.now()) return null;
+    return claims;
+  } catch  {
+    return null;
+  }
+}
+// シート(シフト表・人員名簿・単価マスタ等)を書き換えるアクション。ログイン必須。
+// 読み取り(list_sheets / fetch_sheet / fetch_cached_shifts)は従来どおり素通し。
+const WRITE_ACTIONS = new Set([
+  'update_cells',
+  'update_range',
+  'create_sheet',
+  'format_cells',
+  'append_row',
+  'delete_rows',
+  'insert_row_at',
+  'move_rows'
+]);
 Deno.serve(async (req)=>{
   if (req.method === 'OPTIONS') return new Response('ok', {
     headers: corsHeaders
   });
   try {
     const body = await req.json().catch(()=>({}));
+    if (WRITE_ACTIONS.has(body.action)) {
+      const adminPwOk = !!FS_ADMIN_PASSWORD && body.admin_password === FS_ADMIN_PASSWORD;
+      const claims = adminPwOk ? {
+        role: 'admin'
+      } : await verifyToken(body.auth_token);
+      if (!claims) {
+        // 監査ログ: 遮断前に「トークン無しで来ている呼び出し」を洗い出すための記録
+        console.warn(`[fetch-shift][AUTH_AUDIT] action=${body.action} sheet=${body.sheet_name || ''} origin=${req.headers.get('origin') || '-'} enforce=${ENFORCE}`);
+        if (ENFORCE) {
+          return new Response(JSON.stringify({
+            error: 'ログインが必要です（再ログインしてください）',
+            code: 'AUTH_REQUIRED'
+          }), {
+            status: 401,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json'
+            }
+          });
+        }
+      }
+    }
     if (body.action === 'fetch_cached_shifts') {
       const supabaseUrl = Deno.env.get('SUPABASE_URL');
       const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');

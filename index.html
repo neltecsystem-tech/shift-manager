@@ -9078,7 +9078,20 @@ function admEditRate(idx){
 const SHIFT_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/fetch-shift';
 // Sheets EF(fetch-shift)呼び出しの共通ラッパー。429/クォータ超過(per-minute制限)を指数バックオフで自動リトライ。
 // 429はステータス or 200で本文に google の quota エラーが包まれて返る両方に対応。
+// fetch-shift の書き込み系(update_cells/append_row/delete_rows 等)はサーバ側で
+// ログイン済みトークン必須。全呼び出しがこのラッパーを通るので、ここで一括付与する。
+const SHIFT_WRITE_ACTIONS=new Set(['update_cells','update_range','create_sheet','format_cells','append_row','delete_rows','insert_row_at','move_rows']);
+function smShiftAttachToken(opts){
+  const tok=(typeof invAuthToken!=='undefined'&&invAuthToken)?invAuthToken:'';
+  if(!tok||!opts||typeof opts.body!=='string')return opts;
+  try{
+    const b=JSON.parse(opts.body);
+    if(!SHIFT_WRITE_ACTIONS.has(b.action)||b.auth_token)return opts;
+    return {...opts,body:JSON.stringify({...b,auth_token:tok})};
+  }catch(_){ return opts; }
+}
 async function smShiftFetch(opts){
+  opts=smShiftAttachToken(opts);
   const waits=[1500,5000,12000]; // リトライ前の待機(ms) → 最大3回リトライ
   for(let i=0;;i++){
     let resp;
