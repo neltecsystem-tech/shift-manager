@@ -13871,6 +13871,63 @@ async function admBillAreaConfirmAll(area,monthVal){
   }catch(e){admBillHideProgress();alert('確定失敗: '+e.message);console.error(e);}
 }
 
+// 確定済みの営業所を、解除せずにそのまま上書き確定する。
+// save_confirmed_sale は 年月×営業所×コース で既存行を PUT するので、解除は不要。
+// 解除→再確定の2往復(45コース×2回)は無駄なうえ、途中で失敗すると未確定が残る。
+async function admBillAreaReconfirmAll(area,monthVal){
+  try{
+    if(!admBillShopData)await admBillInit();
+    if(!admBillShopData){alert('月初スナップを読み込めていないため再確定できません。');return;}
+    if(!billPricesCache)await loadBillPrices();
+    if(!confirmedSalesCache)await loadConfirmedSales();
+    const records=(admBillShopData?.records)||[];
+    const cols=admBillCols();
+    const bulkAreas=area==='城北'?['城北','池袋']:[area];
+    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&bulkAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+    const allC=new Set();
+    filtered.forEach(r=>{
+      if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
+      if(r[`col_${cols.pmCourse}`])allC.add(r[`col_${cols.pmCourse}`]);
+      if(r[`col_${cols.keibaCourse}`])allC.add(r[`col_${cols.keibaCourse}`]);
+    });
+    const courses=[...allC].filter(c=>bulkAreas.some(a=>c.includes(a))).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+    if(!courses.length){alert('該当コースがありません');return;}
+    // 現在の確定額と、いま計算し直した額を比べて差分を見せる
+    let oldTotal=0,newTotal=0; const changed=[]; const results=[];
+    courses.forEach(course=>{
+      const r=admBillRenderWithTotals(area,course,monthVal);
+      const cf=getConfirmedSale(monthVal,area,course);
+      const o=cf?Number(cf.grand_total)||0:0;
+      results.push({course,grand:r.grandTotal,am:r.totalAmSum,pm:r.totalPmSum,counts:billCountsFrom(r)});
+      oldTotal+=o; newTotal+=r.grandTotal;
+      if(o!==r.grandTotal)changed.push({course,o,n:r.grandTotal});
+    });
+    const diff=newTotal-oldTotal;
+    const msg=`${area}営業所 ${monthVal} の全${courses.length}コースを再確定（上書き）します。\n\n`
+      +`確定済み合計 ¥${oldTotal.toLocaleString()}\n`
+      +`再計算後合計 ¥${newTotal.toLocaleString()}\n`
+      +`差額 ${diff>=0?'+':''}¥${diff.toLocaleString()}\n\n`
+      +(changed.length?`金額が変わるコース ${changed.length}件\n`
+        +changed.slice(0,10).map(c=>`・${c.course}: ¥${c.o.toLocaleString()} → ¥${c.n.toLocaleString()}`).join('\n')
+        +(changed.length>10?`\n…他 ${changed.length-10}件`:'')
+        :'金額の変わるコースはありません（店舗数だけ更新されます）')
+      +`\n\n続行しますか？`;
+    if(!window.confirm(msg))return;
+    admBillShowProgress(`🔄 ${area}営業所 再確定（上書き）中...`);
+    try{
+      for(let i=0;i<results.length;i++){
+        admBillUpdateProgress(i,results.length,`${results[i].course} を上書き中...`);
+        await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course:results[i].course,grand_total:results[i].grand,am_total:results[i].am,pm_total:results[i].pm,counts:results[i].counts}});
+      }
+      admBillUpdateProgress(results.length,results.length,'キャッシュ更新中...');
+      confirmedSalesCache=null;
+      await loadConfirmedSales();
+    }finally{ admBillHideProgress(); }
+    alert(`✓ ${courses.length}コースを上書き確定しました${changed.length?`（金額変更 ${changed.length}件・差額 ${diff>=0?'+':''}¥${diff.toLocaleString()}）`:''}`);
+    admBillAllCourses();
+  }catch(e){admBillHideProgress();alert('再確定失敗: '+e.message);console.error(e);}
+}
+
 async function admBillAreaUnconfirmAll(area,monthVal){
   try{
     if(!admBillShopData)await admBillInit();
@@ -13903,15 +13960,24 @@ async function admBillAreaUnconfirmAll(area,monthVal){
   }catch(e){admBillHideProgress();alert('解除失敗: '+e.message);console.error(e);}
 }
 
-async function admBillConfirm(area,course,monthVal,grandTotal,amTotal,pmTotal){
-  const ok=window.confirm(`${area} ${course} ${monthVal} の売上 ¥${Number(grandTotal).toLocaleString()} を確定しますか？\n収支管理にこの金額が反映されます。`);
+// isOverwrite=true: 確定済みを解除せずに上書きする(解除→再確定の2手を1手にする)
+async function admBillConfirm(area,course,monthVal,grandTotal,amTotal,pmTotal,isOverwrite){
+  let msg=`${area} ${course} ${monthVal} の売上 ¥${Number(grandTotal).toLocaleString()} を確定しますか？\n収支管理にこの金額が反映されます。`;
+  if(isOverwrite){
+    const cf=(typeof getConfirmedSale==='function')?getConfirmedSale(monthVal,area,course):null;
+    const o=cf?Number(cf.grand_total)||0:0, d=Number(grandTotal)-o;
+    msg=`${area} ${course} ${monthVal} の確定額を上書きします。\n\n`
+      +`確定済み ¥${o.toLocaleString()}\n再計算後 ¥${Number(grandTotal).toLocaleString()}\n`
+      +`差額 ${d>=0?'+':''}¥${d.toLocaleString()}\n\n続行しますか？`;
+  }
+  const ok=window.confirm(msg);
   if(!ok)return;
   try{
     let counts=null; try{counts=billCountsFrom(admBillRenderWithTotals(area,course,monthVal));}catch(_){}
     await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course,grand_total:grandTotal,am_total:amTotal,pm_total:pmTotal,counts}});
     confirmedSalesCache=null;
     await loadConfirmedSales();
-    alert('売上を確定しました');
+    alert(isOverwrite?'確定額を上書きしました':'売上を確定しました');
     admBillGenerate();
   }catch(e){alert('確定に失敗しました: '+e.message);}
 }
@@ -14152,8 +14218,9 @@ async function admBillGenerate(){
     topBar=`<div style="background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
       <div><span style="color:#166534;font-weight:bold;">✓ 確定済み</span> <span style="color:var(--text-sub);font-size:12px;margin-left:8px;">確定日時: ${confirmed.confirmed_at} / 確定額: ¥${Number(confirmed.grand_total).toLocaleString()}</span></div>
       <div style="display:flex;gap:6px;">
-        <button onclick="admBillEditConfirmed('${area}','${course}','${monthVal}')" style="background:#2563eb;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">✏️ 編集</button>
-        <button onclick="admBillUnconfirm('${area}','${course}','${monthVal}')" style="background:#ef4444;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">確定解除</button>
+        <button onclick="admBillConfirm('${area}','${course}','${monthVal}',${result.grandTotal},${result.totalAmSum},${result.totalPmSum},true)" title="解除せずに、いまの月初スナップで計算し直して上書きします" style="background:#2563eb;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">🔄 再確定（上書き）</button>
+        <button onclick="admBillEditConfirmed('${area}','${course}','${monthVal}')" style="background:#fff;color:#2563eb;border:1px solid #93c5fd;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">✏️ 金額編集</button>
+        <button onclick="admBillUnconfirm('${area}','${course}','${monthVal}')" style="background:#fff;color:#dc2626;border:1px solid #fca5a5;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">確定解除</button>
       </div>
     </div>`;
   }else{
@@ -14563,7 +14630,10 @@ function buildAreaTotalPage(area,monthVal,courses){
   if(confirmedCnt===courses.length&&courses.length>0){
     h+=`<div style="background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
       <div><span style="color:#166534;font-weight:bold;">✓ 全${courses.length}コース確定済み</span> <span style="color:var(--text-sub);font-size:12px;margin-left:8px;">収支管理に反映されます</span></div>
-      <button onclick="admBillAreaUnconfirmAll('${area}','${monthVal}')" style="background:#ef4444;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">全確定解除</button>
+      <div style="display:flex;gap:6px;">
+        <button onclick="admBillAreaReconfirmAll('${area}','${monthVal}')" title="解除せずに、いまの月初スナップで計算し直して確定額を上書きします" style="background:#2563eb;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">🔄 再確定（上書き）</button>
+        <button onclick="admBillAreaUnconfirmAll('${area}','${monthVal}')" style="background:#fff;color:#dc2626;border:1px solid #fca5a5;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">全確定解除</button>
+      </div>
     </div>`;
   }else{
     h+=`<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
