@@ -13924,16 +13924,35 @@ async function admBillAreaReconfirmAll(area,monthVal){
       +`\n\n続行しますか？`;
     if(!window.confirm(msg))return;
     admBillShowProgress(`🔄 ${area}営業所 再確定（上書き）中...`);
+    // 1コースの保存が失敗しても残りは続ける。途中で中断すると、そのコースだけ
+    // 古い確定額が「確定済み」の顔で残り続ける(2026-07 城北23 = 夕刊列修正前の
+    // ¥720,800 が最後の1コースだけ取り残された)。失敗は最後に必ず名前で報告する。
+    const failed=[];
     try{
       for(let i=0;i<results.length;i++){
         admBillUpdateProgress(i,results.length,`${results[i].course} を上書き中...`);
-        await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course:results[i].course,grand_total:results[i].grand,am_total:results[i].am,pm_total:results[i].pm,counts:results[i].counts}});
+        let lastErr=null;
+        for(let attempt=0;attempt<3;attempt++){
+          try{
+            await invApi({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course:results[i].course,grand_total:results[i].grand,am_total:results[i].am,pm_total:results[i].pm,counts:results[i].counts}});
+            lastErr=null;break;
+          }catch(e){ lastErr=e; if(attempt<2)await new Promise(r=>setTimeout(r,600*(attempt+1))); }
+        }
+        if(lastErr)failed.push({course:results[i].course,msg:lastErr.message||String(lastErr)});
       }
       admBillUpdateProgress(results.length,results.length,'キャッシュ更新中...');
       confirmedSalesCache=null;
       await loadConfirmedSales();
     }finally{ admBillHideProgress(); }
-    alert(`✓ ${courses.length}コースを上書き確定しました${changed.length?`（金額変更 ${changed.length}件・差額 ${diff>=0?'+':''}¥${diff.toLocaleString()}）`:''}`);
+    if(failed.length){
+      alert(`⚠ ${failed.length}コースの上書きに失敗しました。\n`
+        +`このコースは古い確定額がそのまま残っています。再度「再確定（上書き）」を実行してください。\n\n`
+        +failed.slice(0,10).map(f=>`・${f.course}: ${f.msg}`).join('\n')
+        +(failed.length>10?`\n…他 ${failed.length-10}件`:'')
+        +`\n\n成功 ${results.length-failed.length}/${results.length}コース`);
+    }else{
+      alert(`✓ ${courses.length}コースを上書き確定しました${changed.length?`（金額変更 ${changed.length}件・差額 ${diff>=0?'+':''}¥${diff.toLocaleString()}）`:''}`);
+    }
     admBillAllCourses();
   }catch(e){admBillHideProgress();alert('再確定失敗: '+e.message);console.error(e);}
 }
