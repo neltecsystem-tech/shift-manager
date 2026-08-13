@@ -1048,6 +1048,7 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="admShopListSwitchTab('closeshop')" id="adm-sl-tab-closeshop" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">➖ 閉店候補</button>
           <button onclick="admShopListSwitchTab('diff')" id="adm-sl-tab-diff" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">⚠ 差異あり</button>
           <button onclick="admShopListSwitchTab('catsummary')" id="adm-sl-tab-catsummary" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">📊 区分集計</button>
+          <button onclick="admShopListSwitchTab('coursesummary')" id="adm-sl-tab-coursesummary" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">🚚 コース別</button>
           <button onclick="admShopListSwitchTab('match')" id="adm-sl-tab-match" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">✅ 一致</button>
         </div>
         <div id="adm-sl-result" class="table-wrap"></div>
@@ -16107,7 +16108,8 @@ let admSlData=null;
 let admSlMaster=null;
 let admSlResult=null;
 let admSlActiveTab='closeopen';
-let admSlCatDrill=null; // 区分集計のドリルダウン中キー (`営業所\t区分`)
+let admSlCatDrill=null;
+let admSlCourseDrill=null; // コース別のドリルダウン中キー // 区分集計のドリルダウン中キー (`営業所\t区分`)
 
 // HTMLエスケープ。既存の esc は各関数内のローカル定義なので、関数外から使えるものを別名で置く。
 function smEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -16568,8 +16570,33 @@ function admShopListAnalyze(){
     catCompare[k]={onlyShip,onlyMast,codeChanged,closedShip,courseDiff,
                    shipCount:sh.size,closedCount:closedShip.length,mastCount:ma.size};
   });
+  // ── コース別の突合 ──
+  // 区分×コース単位で「マスタの登録数」と「荷主リストで配送対象になっている数」を並べる。
+  // 単価はコース単位で効くので、営業所×区分の集計だけでは請求のズレを追えない。
+  const courseCompare={};
+  const MCOL2={'朝刊':'amCourse','平日':'pmCourse','競馬':'keibaCourse'};
+  const getCC=k=>(courseCompare[k]=courseCompare[k]||{master:new Set(),ship:new Set(),closed:new Set()});
+  admSlMaster.forEach(m=>{
+    if(m.closed)return;
+    Object.entries(MCOL2).forEach(([cat,col])=>{
+      if(cat==='競馬'&&KEIBA_EXCLUDE.has(m.code))return;
+      const cn=String(m[col]||'').trim(); if(!cn)return;
+      getCC(cat+'\t'+cn).master.add(m.code);
+    });
+  });
+  Object.entries(shipCourseN).forEach(([k,mp])=>{
+    const [a,cat]=k.split('\t'); if(!MCOL2[cat])return;
+    const pref=a==='高津'?'川崎高津':a;
+    Object.entries(mp).forEach(([code,num])=>{
+      const cc=getCC(cat+'\t'+pref+num);
+      cc.ship.add(code);
+      const mt=motoAllMap.get(code); const cl=String((mt&&mt.close)||'').trim();
+      if(/^\d{8}$/.test(cl)&&cl!=='99999999'&&cl<=monthStartYmd)cc.closed.add(code);
+    });
+  });
+
   admSlResult={
-    closeopen:coRes,newshop:newShops,closeshop:closedShops,diff:diffs,match:matches,catSummary,catCompare,
+    closeopen:coRes,newshop:newShops,closeshop:closedShops,diff:diffs,match:matches,catSummary,catCompare,courseCompare,
     stats:{
       motoTotal:moto.length,motoNeltec:motoNeltec.length,
       masterTotal:admSlMaster.length,masterActive:admSlMaster.filter(m=>!m.closed).length,
@@ -16600,6 +16627,7 @@ function admShopListAnalyze(){
 function admShopListSwitchTab(tab){
   admSlActiveTab=tab;
   admSlCatDrill=null;
+  admSlCourseDrill=null;
   document.querySelectorAll('.adm-sl-tab').forEach(b=>{b.style.background='#f1f5f9';b.style.color='var(--text-sub)';});
   const el=document.getElementById('adm-sl-tab-'+tab);
   if(el){el.style.background='var(--primary)';el.style.color='#fff';}
@@ -16663,6 +16691,58 @@ function admShopListRender(){
         html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(moto.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.area)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(motoArea)}</td><td style="padding:6px;border:1px solid #e2e8f0;font-size:11px;color:#92400e;">${issues.map(esc).join('<br>')}</td></tr>`;
       });
       html+='</tbody></table>';
+    }
+  }else if(tab==='coursesummary'){
+    // ── コース別: 区分×コースごとに マスタ / 荷主 の店舗数を並べる ──
+    const esc2=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const cco=admSlResult.courseCompare||{};
+    const nameOf=c=>{const m=(admSlMaster||[]).find(x=>x.code===c);return (m&&m.name)||((admSlData.shipName||{})[c])||'';};
+    if(admSlCourseDrill&&cco[admSlCourseDrill]){
+      const [dcat,dcourse]=admSlCourseDrill.split('\t');
+      const g=cco[admSlCourseDrill];
+      const onlyShip=[...g.ship].filter(c=>!g.master.has(c)&&!g.closed.has(c));
+      const onlyMast=[...g.master].filter(c=>!g.ship.has(c));
+      const both=[...g.master].filter(c=>g.ship.has(c));
+      html=`<div style="margin-bottom:10px;"><button onclick="admSlCourseDrill=null;admShopListRender();" style="background:#64748b;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">← コース別に戻る</button> <b style="margin-left:8px;">${esc2(dcourse)} ／ ${esc2(dcat)}</b> <span style="color:var(--text-sub);font-size:12px;">一致${both.length}件</span></div>`;
+      const tbl=(title,color,list)=>{
+        if(!list.length)return '';
+        let h=`<div style="font-size:12px;color:${color};font-weight:600;margin:6px 0 4px;">${title} (${list.length}件)</div>`;
+        h+='<table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:12px;"><thead><tr style="background:#f1f5f9;"><th style="padding:6px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:6px;border:1px solid #e2e8f0;">店舗名</th></tr></thead><tbody>';
+        list.forEach(c=>{h+=`<tr><td style="padding:5px;border:1px solid #e2e8f0;">${esc2(c)}</td><td style="padding:5px;border:1px solid #e2e8f0;">${esc2(nameOf(c))}</td></tr>`;});
+        return h+'</tbody></table>';
+      };
+      html+=tbl('🟢 荷主のみ（このコースでマスタ未登録）','#15803d',onlyShip);
+      html+=tbl('🔴 マスタのみ（荷主シートに無い）','#dc2626',onlyMast);
+      html+=tbl('⚫ 閉店済み（対象月より前に閉店・差異から除外）','#64748b',[...g.closed]);
+      html+=tbl('✅ 一致','#475569',both);
+    }else{
+      html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">区分×コースごとの店舗数です。<b>マスタ</b>=月初スナップの登録数／<b>荷主</b>=荷主リストで配送対象（○・期中OP）になっている数（閉店済みを含む実数）。<b>差</b>=閉店を除いた食い違い。<b>行をクリック</b>すると店舗名が出ます。</p>';
+      const cats2=['朝刊','平日','競馬'];
+      cats2.forEach(cat=>{
+        const keys=Object.keys(cco).filter(k=>k.split('\t')[0]===cat)
+          .sort((a,b)=>a.split('\t')[1].localeCompare(b.split('\t')[1],'ja',{numeric:true}));
+        if(!keys.length)return;
+        let tm=0,ts=0,td=0;
+        let rows='';
+        keys.forEach(k=>{
+          const g=cco[k],cn=k.split('\t')[1];
+          const os=[...g.ship].filter(c=>!g.master.has(c)&&!g.closed.has(c)).length;
+          const om=[...g.master].filter(c=>!g.ship.has(c)).length;
+          const d=os+om; tm+=g.master.size; ts+=g.ship.size; td+=d;
+          rows+=`<tr onclick="admSlCourseDrill='${k.replace(/'/g,"")}';admShopListRender();" style="cursor:pointer;${d?'background:#fff7ed;':''}">`
+            +`<td style="padding:6px 10px;border:1px solid #e2e8f0;font-weight:600;">${esc2(cn)}</td>`
+            +`<td style="padding:6px 10px;border:1px solid #e2e8f0;text-align:right;">${g.master.size}</td>`
+            +`<td style="padding:6px 10px;border:1px solid #e2e8f0;text-align:right;">${g.ship.size}</td>`
+            +`<td style="padding:6px 10px;border:1px solid #e2e8f0;text-align:center;font-weight:700;color:${d?'#c2410c':'#16a34a'};">${d?d:'0 ✓'}</td>`
+            +`<td style="padding:6px 10px;border:1px solid #e2e8f0;font-size:11px;color:var(--text-sub);">${g.closed.size?('閉店'+g.closed.size):''}</td></tr>`;
+        });
+        html+=`<h4 style="margin:14px 0 6px;font-size:14px;">${cat}（${keys.length}コース）</h4>`
+          +'<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;">'
+          +'<th style="padding:6px 10px;border:1px solid #cbd5e1;">コース</th><th style="padding:6px 10px;border:1px solid #cbd5e1;">マスタ</th><th style="padding:6px 10px;border:1px solid #cbd5e1;">荷主</th><th style="padding:6px 10px;border:1px solid #cbd5e1;">差</th><th style="padding:6px 10px;border:1px solid #cbd5e1;">備考</th></tr></thead><tbody>'
+          +rows
+          +`<tr style="background:#f8fafc;font-weight:700;"><td style="padding:6px 10px;border:1px solid #cbd5e1;">計</td><td style="padding:6px 10px;border:1px solid #cbd5e1;text-align:right;">${tm}</td><td style="padding:6px 10px;border:1px solid #cbd5e1;text-align:right;">${ts}</td><td style="padding:6px 10px;border:1px solid #cbd5e1;text-align:center;">${td}</td><td style="border:1px solid #cbd5e1;"></td></tr>`
+          +'</tbody></table>';
+      });
     }
   }else if(tab==='catsummary'){
     const cc=admSlResult.catCompare||{};
