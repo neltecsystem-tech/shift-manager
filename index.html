@@ -11182,87 +11182,6 @@ function admJinCellValue(r,c){
   return (admJinState.rows[r]||[])[c]||'';
 }
 
-// ── 新規ドライバー追加 (人員名簿シートに1行 append) ──
-function admJinAddRow(){
-  if(!admJinState.loaded){alert('人員名簿の読み込み完了後に追加できます');return;}
-  // 既存の拠点/契約範囲を候補に
-  const data=admJinState.rows.slice(2);
-  const areas=[...new Set(data.map(r=>String(r[0]||'').trim()).filter(Boolean))].sort();
-  const ranges=[...new Set(data.map(r=>String(r[1]||'').trim()).filter(Boolean))].sort();
-  const esc=s=>String(s).replace(/"/g,'&quot;');
-  const old=document.getElementById('adm-jin-add-modal');if(old)old.remove();
-  const wrap=document.createElement('div');
-  wrap.id='adm-jin-add-modal';
-  wrap.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.6);z-index:300;display:flex;justify-content:center;align-items:center;padding:20px;';
-  wrap.innerHTML=`<div style="background:#fff;border-radius:14px;padding:24px;width:100%;max-width:420px;position:relative;">
-    <button onclick="document.getElementById('adm-jin-add-modal').remove()" style="position:absolute;top:12px;right:14px;background:none;border:none;font-size:20px;color:#94a3b8;cursor:pointer;">✕</button>
-    <h3 style="color:var(--primary);margin-bottom:4px;">➕ 新規ドライバー追加</h3>
-    <p style="font-size:11px;color:var(--text-sub);margin-bottom:14px;">人員名簿に1名追加します。コース(朝刊/夕刊)は追加後にグリッドで入力してください。</p>
-    <div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-sub)">拠点</label>
-      <input id="ajn-area" list="ajn-area-list" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 立川 / 城北 / 川越 ...">
-      <datalist id="ajn-area-list">${areas.map(a=>`<option value="${esc(a)}">`).join('')}</datalist></div>
-    <div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-sub)">契約範囲</label>
-      <input id="ajn-range" list="ajn-range-list" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 朝刊 / 朝刊,競馬 / 朝刊,プランナー ...">
-      <datalist id="ajn-range-list">${ranges.map(a=>`<option value="${esc(a)}">`).join('')}</datalist></div>
-    <div style="margin-bottom:10px;"><label style="font-size:12px;color:var(--text-sub)">氏名 <span style="color:#dc2626;">*</span></label>
-      <input id="ajn-name" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
-    <div style="margin-bottom:14px;"><label style="font-size:12px;color:var(--text-sub)">電話番号</label>
-      <input id="ajn-phone" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 090-1234-5678"></div>
-    ${(typeof invIsAdmin!=='undefined'&&invIsAdmin)?`<div style="margin-bottom:14px;display:flex;align-items:flex-start;gap:8px;padding:8px 10px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;">
-      <input type="checkbox" id="ajn-addrate" checked style="margin-top:2px;">
-      <label for="ajn-addrate" style="font-size:12px;color:#0f766e;line-height:1.4;">請求書の<b>単価マスタにも追加</b><br><span style="font-size:11px;color:#0d9488;">単価・区分・ログインは後で「単価一覧」で設定</span></label></div>`:''}
-    <div id="ajn-msg" style="font-size:12px;min-height:16px;margin-bottom:8px;"></div>
-    <button onclick="admJinAddRowSave()" id="ajn-submit" style="width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;">追加する</button>
-  </div>`;
-  document.body.appendChild(wrap);
-  setTimeout(()=>{const n=document.getElementById('ajn-name');if(n)n.focus();},50);
-}
-
-async function admJinAddRowSave(){
-  const area=(document.getElementById('ajn-area').value||'').trim();
-  const range=(document.getElementById('ajn-range').value||'').trim();
-  const name=(document.getElementById('ajn-name').value||'').trim();
-  const phone=(document.getElementById('ajn-phone').value||'').trim();
-  const msg=document.getElementById('ajn-msg');
-  if(!name){msg.innerHTML='<span style="color:#dc2626;">氏名を入力してください</span>';return;}
-  const addRate=(typeof invIsAdmin!=='undefined'&&invIsAdmin)&&!!((document.getElementById('ajn-addrate')||{}).checked);
-  // 同名チェック (警告のみ・同姓同名はありうるので続行可)
-  const exists=admJinState.rows.slice(2).some(r=>String(r[2]||'').trim()===name);
-  if(exists&&!confirm(`「${name}」は既に人員名簿にあります。\n同姓同名として追加しますか?`))return;
-  const btn=document.getElementById('ajn-submit');
-  btn.textContent='追加中...';btn.disabled=true;
-  try{
-    // ① 人員名簿シートに追加
-    const resp=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'append_row',sheet_name:'人員名簿',values:[area,range,name,phone]})});
-    const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
-    if(json.error)throw new Error(json.error);
-    // ② 請求書の単価マスタにも追加 (admin時・チェックON。氏名のみ。単価等は後で単価一覧で設定)
-    let rateMsg='';
-    if(addRate){
-      try{
-        const rr=await invApi({action:'get_rates'});
-        const norm=(typeof invNormName==='function')?invNormName(name):name;
-        const dup=(rr.rates||[]).some(x=>((typeof invNormName==='function')?invNormName(String(x.name||'')):String(x.name||''))===norm);
-        if(dup){rateMsg='（単価マスタは既存のためスキップ）';}
-        else{
-          const sr=await invApi({action:'save_rate',record:{name}});
-          rateMsg=(sr&&sr.error)?`（単価マスタ追加失敗: ${sr.error}）`:' ＋単価マスタにも追加';
-        }
-      }catch(e){rateMsg='（単価マスタ追加失敗）';}
-    }
-    const modal=document.getElementById('adm-jin-add-modal');if(modal)modal.remove();
-    // 絞り込みが新規行を隠さないようにクリアしてから再読込
-    const sEl=document.getElementById('adm-se-search'),aEl=document.getElementById('adm-se-area');
-    if(sEl)sEl.value='';if(aEl)aEl.value='';
-    admJinState.loaded=false;
-    await admJinLoad();
-    const m=document.getElementById('adm-se-msg');
-    if(m){m.textContent=`✓ 「${name}」を人員名簿に追加しました${rateMsg}。朝刊/夕刊コースはグリッドで入力→💾保存してください`;m.style.color='#16a34a';}
-  }catch(e){
-    msg.innerHTML='<span style="color:#dc2626;">追加失敗: '+e.message+'</span>';
-    btn.textContent='追加する';btn.disabled=false;
-  }
-}
 
 function admJinOnCellInput(ev){
   const t=ev.target;
@@ -16442,6 +16361,8 @@ function admShopListAnalyze(){
   });
   // 各区分シート(J列○) と マスタ を照合: 営業所×区分ごとに「荷主のみ/マスタのみ」を出す
   const shipByCat=admSlData.shipperByCat||{};
+  // 対象月の初日(YYYYMMDD)。これより前に閉店した店は、荷主リストに配送○が残っていても対象外。
+  const monthStartYmd=((document.getElementById('adm-sl-month')||{}).value||'').replace('-','')+'01';
   const normA2=a=>String(a||'').trim().replace(/^(川崎高津|川崎)$/,'高津').replace(/^池袋$/,'城北');
   // 平日(夕刊)はO列(夕刊コース名/pmCourse)を参照。旧夕刊コースは手動で行コピー置換しO列へ反映する運用。
   // 朝出しはI列「夕刊同梱」(asaCourse=col_8)のチェックボックス。bool:true=値がTRUEの店だけ該当(非空判定だとFALSEも数えて膨らむ)。
@@ -16498,7 +16419,21 @@ function admShopListAnalyze(){
       return true;
     });
     onlyMast=onlyMast.filter(m=>!usedMast.has(m.code));
-    catCompare[k]={onlyShip,onlyMast,codeChanged,shipCount:sh.size,mastCount:ma.size};
+    // 荷主リストは処理日時点(例 6/29)なので、対象月の開始前に閉店した店が配送○のまま残る。
+    // これを差異に数えると毎月同じ店が出続けるため「閉店済み」として切り出す。
+    // ※ 消さずに別枠で見せる: 差が減った理由を後から追えなくなるのを避ける。
+    const closedShip=[];
+    onlyShip=onlyShip.filter(s=>{
+      const mt=motoAllMap.get(s.code);
+      const cl=String((mt&&mt.close)||'').trim();
+      // 月初当日(7/1)の閉店も対象外。その月はほぼ稼働していないうえ、実際マスタにも載っていない。
+      // 隠さず「閉店済み」表に出すので、判定を広めに取っても後から追える。
+      if(/^\d{8}$/.test(cl)&&cl!=='99999999'&&cl<=monthStartYmd){ closedShip.push({...s,close:cl}); return false; }
+      return true;
+    });
+    // 荷主件数からも閉店済みを差し引く。差0なのに件数だけ赤(不一致)になるのを避ける。
+    catCompare[k]={onlyShip,onlyMast,codeChanged,closedShip,
+                   shipCount:sh.size-closedShip.length,shipCountRaw:sh.size,mastCount:ma.size};
   });
   admSlResult={
     closeopen:coRes,newshop:newShops,closeshop:closedShops,diff:diffs,match:matches,catSummary,catCompare,
@@ -16597,7 +16532,16 @@ function admShopListRender(){
       const [da,dc]=admSlCatDrill.split('\t');
       const list=cs[admSlCatDrill];
       const cch=(cc[admSlCatDrill]&&cc[admSlCatDrill].codeChanged)||[];
-      html=`<div style="margin-bottom:10px;"><button onclick="admSlCatDrill=null;admShopListRender();" style="background:#64748b;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">← 区分集計に戻る</button> <b style="margin-left:8px;">${esc(da)}${esc(dc)} の差異店舗 (${list.length}件)${cch.length?` ／ コード相違 ${cch.length}件`:''}</b></div>`;
+      const ccl=(cc[admSlCatDrill]&&cc[admSlCatDrill].closedShip)||[];
+      html=`<div style="margin-bottom:10px;"><button onclick="admSlCatDrill=null;admShopListRender();" style="background:#64748b;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">← 区分集計に戻る</button> <b style="margin-left:8px;">${esc(da)}${esc(dc)} の差異店舗 (${list.length}件)${cch.length?` ／ コード相違 ${cch.length}件`:''}${ccl.length?` ／ 閉店済み ${ccl.length}件`:''}</b></div>`;
+      if(ccl.length){
+        // 荷主リストは処理日時点なので、対象月より前に閉店した店が配送○のまま残る。
+        // 差異には数えないが、消えた理由が分かるようここに出す。
+        html+='<div style="font-size:12px;color:#64748b;font-weight:600;margin:4px 0;">⚫ 閉店済み(差異から除外) ＝ 対象月の開始前に閉店。荷主リストが処理日時点のため配送○が残っているだけで、マスタ側が正しい。対応不要。</div>';
+        html+='<table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:14px;"><thead><tr style="background:#f8fafc;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">閉店日</th></tr></thead><tbody>';
+        ccl.forEach(s=>{const c=String(s.close||'');html+=`<tr style="color:#64748b;"><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${c.length===8?esc(c.slice(0,4)+'/'+c.slice(4,6)+'/'+c.slice(6,8)):esc(c)}</td></tr>`;});
+        html+='</tbody></table>';
+      }
       if(list.length){
         const snapM=admSlSnapMonth();
         html+=`<table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:14px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">区分</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">月初訂正${snapM?` (${snapM})`:''}</th></tr></thead><tbody>`;
@@ -16636,7 +16580,7 @@ function admShopListRender(){
       else{
         const colMast={朝刊:0,平日:0,競馬:0,朝出し:0},colShip={朝刊:0,平日:0,競馬:0,朝出し:0},colDiff={朝刊:0,平日:0,競馬:0,朝出し:0};
         let gMast=0,gShip=0,gDiff=0;
-        html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">各区分シート(J列○)とマスタを照合。各セル上段=<b>マスタ件数 / 荷主件数</b>(<span style="color:#dc2626;">赤=件数不一致</span>)、下段=<b>差N</b>=食い違い店舗数(荷主のみ＝マスタ未登録＋マスタのみ＝荷主シート未掲載)、<b style="color:#2563eb;">コN</b>=コード相違(同名で店舗コードのみ違う同一店。差異から除外)。平日=夕刊/朝出し=同梱。<b>下段をクリック</b>で該当店舗が出ます。件数が一致すれば店舗集計と突き合います。</p>';
+        html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">各区分シート(J列○)とマスタを照合。各セル上段=<b>マスタ件数 / 荷主件数</b>(<span style="color:#dc2626;">赤=件数不一致</span>)、下段=<b>差N</b>=食い違い店舗数(荷主のみ＝マスタ未登録＋マスタのみ＝荷主シート未掲載)、<b style="color:#2563eb;">コN</b>=コード相違(同名で店舗コードのみ違う同一店。差異から除外)、<b style="color:#94a3b8;">閉N</b>=対象月より前に閉店(荷主リストが処理日時点のため○が残っているだけ。差異・件数から除外)。平日=夕刊/朝出し=同梱。<b>下段をクリック</b>で該当店舗が出ます。件数が一致すれば店舗集計と突き合います。</p>';
         html+='<table style="border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px 18px;border:1px solid #cbd5e1;">営業所＼区分</th>'+cats.map(c=>`<th style="padding:8px 18px;border:1px solid #cbd5e1;">${c}</th>`).join('')+'<th style="padding:8px 18px;border:1px solid #cbd5e1;">計(食い違い)</th></tr></thead><tbody>';
         areas.forEach(a=>{
           let rDiff=0;
@@ -16650,8 +16594,9 @@ function admShopListRender(){
             const mismatch=cmp.mastCount!==cmp.shipCount;
             const has=cmp.mastCount||cmp.shipCount||n||cch;
             const countLine=has?`<div style="font-size:11px;padding:2px 0;${mismatch?'color:#dc2626;font-weight:700;':'color:#475569;'}">${cmp.mastCount} / ${cmp.shipCount}</div>`:'';
-            const inner=`${n?`差${n}`:'差0'}${cch?` <span style="color:#2563eb;">コ${cch}</span>`:''}`;
-            const diffLine=(n||cch)?`<button onclick="admSlCatDrill='${a}\\t${c}';admShopListRender();" style="width:100%;padding:3px 12px;background:${n?'#fef3c7':'#eff6ff'};color:${n?'#92400e':'#2563eb'};border:none;cursor:pointer;font-weight:700;font-size:13px;">${inner}</button>`:(has?'<span style="color:#16a34a;font-size:11px;">差0 ✓</span>':'<span style="color:#cbd5e1;">-</span>');
+            const ncl=(cc[key]&&cc[key].closedShip||[]).length;
+            const inner=`${n?`差${n}`:'差0'}${cch?` <span style="color:#2563eb;">コ${cch}</span>`:''}${ncl?` <span style="color:#94a3b8;">閉${ncl}</span>`:''}`;
+            const diffLine=(n||cch||ncl)?`<button onclick="admSlCatDrill='${a}\\t${c}';admShopListRender();" style="width:100%;padding:3px 12px;background:${n?'#fef3c7':'#eff6ff'};color:${n?'#92400e':'#2563eb'};border:none;cursor:pointer;font-weight:700;font-size:13px;">${inner}</button>`:(has?'<span style="color:#16a34a;font-size:11px;">差0 ✓</span>':'<span style="color:#cbd5e1;">-</span>');
             html+=`<td style="padding:2px 0;border:1px solid #cbd5e1;text-align:center;${mismatch?'background:#fef2f2;':''}">${countLine}${diffLine}</td>`;
           });
           gDiff+=rDiff;
