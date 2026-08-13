@@ -107,7 +107,7 @@ function claimHasPerm(claims: any, perms: string[]): boolean {
 // 書き込み系アクション。無認証では実行させない。
 // destructive: 店舗マスタ本体/スナップショットを変更する管理操作 → admin もしくは shopmaster 権限が必須。
 const ADMIN_WRITE_ACTIONS = new Set([
-  'update','add','add_course','bulk_add','delete',
+  'update','update_course','add','add_course','bulk_add','delete',
   'batch_update_cells','batch_update_addr','batch_update_official','batch_update_official_name',
   'batch_update_placeid','fix_validation','bulk_lock_gps','apply_new_pm_courses',
   'snapshot_purge_course','snapshot_remove_store','snapshot_update_cells','snapshot_sync_store',
@@ -790,6 +790,36 @@ Deno.serve(async (req: Request) => {
     // 月初スナップの健全性チェック(cronから毎日叩く)。
     // スナップが無い月は請求を月初構成で計算できず、確定済みの保存値も無ければ再現不能になる。
     // 1日の自動作成が転けても誰も気づけなかったため、状態を sm_active_alerts に反映する。
+    // 現行の店舗マスタのコース列だけを更新する。
+    // 荷主リスト突合でコース相違を直すとき、スナップ(=その月の請求)だけ直しても
+    // マスタが古いままだと翌月のスナップで同じ差異が再発するため。
+    if (action === 'update_course') {
+      await invalidateShopCache();
+      const code = String(reqBody.code || '').trim();
+      const cat = String(reqBody.cat || '').trim();
+      const value = String(reqBody.value ?? '').trim();
+      const COL: Record<string, number> = { '朝刊': 5, '平日': 14, '競馬': 19 };
+      const ci = COL[cat];
+      if (!code || ci === undefined) {
+        return new Response(JSON.stringify({ error: 'code と cat(朝刊/平日/競馬) が必要です' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const rows = await getShopRowsCached(token);
+      let target = -1;  // 行番号(1始まり・データはA2から)
+      for (let i = 0; i < rows.length; i++) { if (String((rows[i] || [])[2] || '').trim() === code) { target = i + 2; break; } }
+      if (target < 0) return new Response(JSON.stringify({ error: 'store not found: ' + code }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const before = String((rows[target - 2] || [])[ci] || '');
+      const letter = colLetter(ci);
+      const up = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!${letter}${target}?valueInputOption=RAW`, {
+        method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [[value]] }),
+      });
+      if (!up.ok) { const t = await up.text(); return new Response(JSON.stringify({ error: 'update failed: ' + up.status + ' ' + t.slice(0, 200) }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }); }
+      await invalidateShopCache();
+      const nm = String((rows[target - 2] || [])[3] || '');
+      await appendHistory(token, [[jstStamp(), '編集', code, nm, `${cat}コース名: 「${before || '空'}」→「${value || '空'}」(荷主リスト突合より)`, actorBy]]);
+      return new Response(JSON.stringify({ success: true, code, cat, before, after: value, row: target }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     if (action === 'snapshot_health') {
       const jst = new Date(Date.now() + 9 * 3600 * 1000);
       const ym = `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, '0')}`;

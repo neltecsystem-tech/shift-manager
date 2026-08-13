@@ -16677,9 +16677,13 @@ function admShopListRender(){
       if(ccd.length){
         // 店の有無は合っているが、載っているコースが違う。コース単位の請求がズレる原因になる。
         html+='<div style="font-size:12px;color:#c2410c;font-weight:600;margin:4px 0;">🟠 コース相違 ＝ 店舗はどちらにもあるが、所属コースが違う。荷主リストの便番号(上1〜2桁)から復元したコースと、マスタのコース設定を比較しています。<b>コース単位の請求がズレます。</b></div>';
-        html+='<table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:14px;"><thead><tr style="background:#fff7ed;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主リストから算出</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗マスタ</th></tr></thead><tbody>';
-        ccd.forEach(s=>{html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;color:#15803d;font-weight:600;">${esc(s.ship)}</td><td style="padding:6px;border:1px solid #e2e8f0;color:#dc2626;font-weight:600;">${esc(s.master)}</td></tr>`;});
+        const snapM2=admSlSnapMonth();
+        html+='<table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:8px;"><thead><tr style="background:#fff7ed;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主リストから算出</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗マスタ</th><th style="padding:8px;border:1px solid #e2e8f0;">月初訂正'+(snapM2?` (${esc(snapM2)})`:'')+'</th></tr></thead><tbody>';
+        ccd.forEach(s=>{
+          const act=snapM2?`<button onclick="admSlFixCourse('${esc(s.code)}','${esc(dc)}','${esc(s.ship)}','${esc((s.name||'').replace(/'/g,''))}')" title="月初スナップの${esc(dc)}コースを荷主リストの値に合わせる" style="background:#c2410c;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;">→ ${esc(s.ship)} に修正</button>`:'<span style="color:#cbd5e1;font-size:11px;">—</span>';
+          html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;color:#15803d;font-weight:600;">${esc(s.ship)}</td><td style="padding:6px;border:1px solid #e2e8f0;color:#dc2626;font-weight:600;">${esc(s.master)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${act}</td></tr>`;});
         html+='</tbody></table>';
+        if(snapM2)html+=`<div style="margin-bottom:14px;"><button onclick="admSlFixCourseAll()" style="background:#c2410c;color:#fff;border:none;padding:8px 18px;border-radius:8px;cursor:pointer;font-weight:700;font-size:13px;">🟠 この区分のコース相違をまとめて修正 (${ccd.length}件)</button> <span style="font-size:11px;color:var(--text-sub);">月初スナップを荷主リストの値に合わせます。店舗マスタは個別ボタンから更新できます。</span></div>`;
       }
       if(ccl.length){
         // 荷主リストは処理日時点なので、対象月より前に閉店した店が配送○のまま残る。
@@ -16787,6 +16791,55 @@ async function admSlSnapSync(code){
     alert(`✓ ${month} の月初スナップに反映しました（更新${j.updated}／追加${j.appended}）。\n${month} の請求に反映されます。現行マスタはそのままです。`);
     admSlMaster=null;await admShopListEnsureMaster();admShopListAnalyze();
   }catch(e){alert('反映エラー: '+e.message);}
+}
+
+// 月初の訂正: コース相違を荷主リストの値に合わせる。
+// 請求は月初スナップで計算するので、まずスナップを直す＝その月の請求が正しくなる。
+// 現行マスタも直さないと翌月のスナップで同じズレが再発するため、続けて確認する。
+const SL_CAT_COL={'朝刊':5,'平日':14,'競馬':19}; // スナップの列index (F/O/T)
+async function admSlFixCourse(code,cat,toCourse,name){
+  const month=admSlSnapMonth();
+  if(!month){alert('月初スナップと突合していないため実行できません。');return;}
+  const ci=SL_CAT_COL[cat];
+  if(ci===undefined){alert(`${cat} はコース列を持たないため修正できません（朝出しは夕刊同梱のチェック）。`);return;}
+  if(!confirm(`${name}（${code}）の${cat}コースを\n\n　「${toCourse}」\n\nに変更します。対象＝${month} の月初スナップ。\n${month} の請求金額に反映されます。\n\nよろしいですか？`))return;
+  try{
+    const resp=await smPost({action:'snapshot_update_cells',month,updates:[{code:String(code),col_index:ci,value:toCourse}]});
+    const j=await resp.json();
+    if(j.error)throw new Error(j.error);
+    if(!j.matched){alert(`⚠ ${month} のスナップに コード ${code} が見つかりませんでした。`);return;}
+    // 現行マスタも直さないと翌月また同じ差異が出る
+    if(confirm(`✓ ${month} のスナップを修正しました。\n\n現行の店舗マスタも「${toCourse}」に変更しますか？\n（変更しないと翌月のスナップで同じ差異が再発します）`)){
+      try{
+        const m=(admSlMaster||[]).find(x=>x.code===String(code));
+        const r2=await smPost({action:'update_course',code:String(code),cat,value:toCourse,row:m?m.row:null,by:(typeof invUserName!=='undefined'?invUserName:'')});
+        const j2=await r2.json();
+        if(j2.error)alert('店舗マスタの更新に失敗しました: '+j2.error+'\n（スナップの修正は完了しています）');
+      }catch(e2){alert('店舗マスタの更新に失敗しました: '+e2.message+'\n（スナップの修正は完了しています）');}
+    }
+    admSlMaster=null;await admShopListEnsureMaster();admShopListAnalyze();
+  }catch(e){alert('修正エラー: '+e.message);}
+}
+async function admSlFixCourseAll(){
+  const key=admSlCatDrill; if(!key)return;
+  const list=((admSlResult&&admSlResult.catCompare[key])||{}).courseDiff||[];
+  if(!list.length)return;
+  const [ ,cat]=key.split('\t');
+  const month=admSlSnapMonth();
+  if(!month){alert('月初スナップと突合していないため実行できません。');return;}
+  if(!confirm(`${list.length}件のコース相違を、荷主リストの値に合わせて ${month} の月初スナップに反映します。\n\n`
+    +list.slice(0,10).map(s=>`・${s.name}：${s.master} → ${s.ship}`).join('\n')
+    +(list.length>10?`\n…他 ${list.length-10}件`:'')+`\n\nよろしいですか？`))return;
+  const ci=SL_CAT_COL[cat];
+  if(ci===undefined){alert(`${cat} はコース列を持たないため一括修正できません。`);return;}
+  try{
+    const resp=await smPost({action:'snapshot_update_cells',month,
+      updates:list.map(s=>({code:String(s.code),col_index:ci,value:s.ship}))});
+    const j=await resp.json();
+    if(j.error)throw new Error(j.error);
+    alert(`✓ ${j.matched}件を修正しました${(j.notFound||[]).length?`／スナップに無い ${j.notFound.length}件はスキップ`:''}。\n${month} の請求に反映されます。\n\n※現行の店舗マスタは変更していません。翌月以降のために、店舗マスタ側も個別に修正してください。`);
+    admSlMaster=null;await admShopListEnsureMaster();admShopListAnalyze();
+  }catch(e){alert('一括修正エラー: '+e.message);}
 }
 
 // 月初の訂正: 月初に居なかった店を 月初スナップから除外(請求対象外)。現行マスタは触らない。
