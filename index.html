@@ -16197,6 +16197,19 @@ async function admShopListUpload(event){
     // 営業所×区分シート(立川朝刊/城北平日/川越競馬/川越朝出し 等)の J列=○ を該当店舗として読む
     const SL_OFFICES=['立川','川越','高津','城北','池袋'];
     const SL_CATS=['朝刊','平日','競馬','朝出し'];
+    // 配送対象セルの判定。○/〇 のほかに「6/17OP」のような開店日メモが入ることがあり、
+    // ○だけを見ていると期中オープンの新店を丸ごと取りこぼす(2026-07で4店が両側から消えていた)。
+    // 「閉店」「中止」は対象外。
+    const slIsMark=v=>{
+      const s=String(v==null?'':v).trim();
+      if(!s)return false;
+      if(s==='○'||s==='〇')return true;
+      if(/閉店|中止|休止/.test(s))return false;
+      if(/OP/i.test(s))return true;   // 期中オープン(例「6/17OP」)は配送対象
+      return false;
+    };
+    const shipCountWarn=[];           // シート申告件数と集計のズレ
+    const shipCourse={};              // `${営業所}\t${区分}` -> {code: コース番号}
     const shipperByCat={}; // `${営業所}\t${区分}` -> Set(code)
     const shipName={}; // code -> 区分シートの店舗名(荷主リスト上の正しい店名。コード付替の名前ズレ対策)
     // シートごとに列レイアウトが違う(朝刊はSTAND=B/○=J、競馬はSTAND=A/○=L「競馬配送」等)ため
@@ -16227,6 +16240,13 @@ async function admShopListUpload(event){
       // 朝出しシートは「掲載=該当」(朝出し専用の○列が無く、列は夕刊配送/競馬配送のため○絞り込み不可)。全行採用。
       const allRow=(cat==='朝出し');
       const set=new Set();
+      // 便番号列(朝平/夕平/夕金 = 便列の1つ左)。上位1〜2桁がNELTECのコース番号になる。
+      //   3桁(999未満)なら1桁目 / 4桁なら上2桁  例 549→5(川崎高津5) / 1030→10(立川10)
+      // 荷主リスト側からコース番号が復元できるので、マスタのコース設定と突き合わせられる。
+      let binCol=hdr.findIndex(h=>h.includes('便')); binCol=binCol>0?binCol-1:7;
+      const courseOf=v=>{const s=String(v==null?'':v).trim();
+        if(!/^\d+$/.test(s))return'';return Number(s)<999?s.slice(0,1):s.slice(0,2);};
+      const cmap={};
       // ヘッダーがあればその次行から、無ければ1行目(メタ行[TEE...])だけ飛ばして全データ行を読む。
       // 数値コードのみ採用するのでヘッダー/メタ行は自然に除外され、先頭データ行も取りこぼさない。
       const start=hi>=0?hi+1:1;
@@ -16236,12 +16256,19 @@ async function admShopListUpload(event){
         if(!code||isNaN(Number(code)))continue;
         const nm=String(r[nameCol]||'').trim();
         if(nm&&!shipName[code])shipName[code]=nm;
-        const mark=allRow||(cat==='朝刊'&&FORCE_AM_INCLUDE.has(code))||markCols.some(ci=>{const v=String(r[ci]||'').trim();return v==='○'||v==='〇';});
-        if(mark)set.add(code);
+        const mark=allRow||(cat==='朝刊'&&FORCE_AM_INCLUDE.has(code))||markCols.some(ci=>slIsMark(r[ci]));
+        if(mark){set.add(code);const cn=courseOf(r[binCol]);if(cn)cmap[code]=cn;}
       }
       shipperByCat[off+'\t'+cat]=set;
+      shipCourse[off+'\t'+cat]=cmap;
+      // 荷主シートのメタ行(1行目)にある申告件数と、こちらの集計を突き合わせる。
+      // ズレたら○以外の記載を読み落としている可能性がある(実際「6/17OP」で新店を落としていた)。
+      const declared=(rows[0]||[]).map(c=>String(c||'').trim())
+        .filter(v=>/^\d+$/.test(v)&&!/^\d{8}$/.test(v)).map(Number)
+        .filter(n=>n>10).pop();
+      if(declared&&declared!==set.size) shipCountWarn.push({sheet:sn,declared,counted:set.size});
     });
-    admSlData={moto,closeOpen,parsedDate,shipperByCat,shipName};
+    admSlData={moto,closeOpen,parsedDate,shipperByCat,shipName,shipCountWarn,shipCourse};
     // 荷主リストの日付(parsedDate=YYYY/MM/DD)から突合対象月を自動設定 → その月の月初スナップと突合
     if(parsedDate&&/^\d{4}\/\d{2}\/\d{2}/.test(parsedDate)){
       const ym=parsedDate.slice(0,7).replace('/','-');
@@ -16401,6 +16428,13 @@ function admShopListAnalyze(){
   });
   const shipByCatN={};
   Object.keys(shipByCat).forEach(k=>{ const[off,cat]=k.split('\t'); const a=normA2(off); const set=shipByCatN[a+'\t'+cat]=shipByCatN[a+'\t'+cat]||new Set(); shipByCat[k].forEach(c=>set.add(c)); });
+  // 便番号から復元したコース番号も営業所を正規化してまとめる(池袋→城北)
+  const shipCourseN={};
+  Object.entries(admSlData.shipCourse||{}).forEach(([k,mp])=>{
+    const[off,cat]=k.split('\t'); const a=normA2(off);
+    const t=shipCourseN[a+'\t'+cat]=shipCourseN[a+'\t'+cat]||{};
+    Object.entries(mp).forEach(([c,v])=>{ t[c]=v; });
+  });
   const catCompare={};
   new Set([...Object.keys(shipByCatN),...Object.keys(masterByCat)]).forEach(k=>{
     const sh=shipByCatN[k]||new Set(), ma=masterByCat[k]||new Set();
@@ -16431,8 +16465,26 @@ function admShopListAnalyze(){
       if(/^\d{8}$/.test(cl)&&cl!=='99999999'&&cl<=monthStartYmd){ closedShip.push({...s,close:cl}); return false; }
       return true;
     });
+    // ── コース相違: 荷主リストの便番号から復元したコースと、マスタのコース設定を突き合わせる ──
+    // 便番号の上1〜2桁がコース番号(例 549→川崎高津5)。両側にコースがある店だけ比較する。
+    // 店の有無だけでなく「どのコースに載っているか」まで見ないと、コース単位の請求がズレる。
+    const [kArea,kCat]=k.split('\t');
+    const MCOL={'朝刊':'amCourse','平日':'pmCourse','競馬':'keibaCourse'};
+    const courseDiff=[];
+    if(MCOL[kCat]){
+      const pref=kArea==='高津'?'川崎高津':kArea;
+      Object.keys(shipCourseN[k]||{}).forEach(code=>{
+        if(!ma.has(code))return;                       // 片側だけの店は onlyShip/onlyMast で扱う
+        const m=masterMap.get(code); if(!m)return;
+        const actual=String(m[MCOL[kCat]]||'').trim();
+        if(!actual)return;                              // マスタ未設定は対象外
+        const expect=pref+shipCourseN[k][code];
+        if(actual!==expect)
+          courseDiff.push({code,name:mastNameOf(code),ship:expect,master:actual});
+      });
+    }
     // 荷主件数からも閉店済みを差し引く。差0なのに件数だけ赤(不一致)になるのを避ける。
-    catCompare[k]={onlyShip,onlyMast,codeChanged,closedShip,
+    catCompare[k]={onlyShip,onlyMast,codeChanged,closedShip,courseDiff,
                    shipCount:sh.size-closedShip.length,shipCountRaw:sh.size,mastCount:ma.size};
   });
   admSlResult={
@@ -16445,6 +16497,15 @@ function admShopListAnalyze(){
   };
   const s=admSlResult.stats;
   document.getElementById('adm-sl-summary').innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;"><div style="background:#f1f5f9;padding:10px;border-radius:8px;font-size:12px;"><div style="color:var(--text-sub)">荷主リスト 処理日</div><div style="font-weight:600;font-size:14px;">${s.parsedDate||'-'}</div></div><div style="background:#f1f5f9;padding:10px;border-radius:8px;font-size:12px;"><div style="color:var(--text-sub)">荷主リスト 元シート</div><div style="font-weight:600;font-size:14px;">${s.motoTotal.toLocaleString()}店<span style="font-size:11px;color:var(--text-sub);"> / NELTEC配送 ${s.motoNeltec.toLocaleString()}店</span></div></div><div style="background:#f1f5f9;padding:10px;border-radius:8px;font-size:12px;"><div style="color:var(--text-sub)">店舗マスタ</div><div style="font-weight:600;font-size:14px;">${s.masterTotal.toLocaleString()}店<span style="font-size:11px;color:var(--text-sub);"> / 稼働中 ${s.masterActive.toLocaleString()}店</span></div></div><div style="background:#fee2e2;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#dc2626">閉店・新店</div><div style="font-weight:600;font-size:14px;">${admSlResult.closeopen.length}件</div></div><div style="background:#dcfce7;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#15803d">新店候補</div><div style="font-weight:600;font-size:14px;">${admSlResult.newshop.length}件</div></div><div style="background:#fef3c7;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#92400e">閉店候補</div><div style="font-weight:600;font-size:14px;">${admSlResult.closeshop.length}件</div></div><div style="background:#fef3c7;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#92400e">差異あり</div><div style="font-weight:600;font-size:14px;">${admSlResult.diff.length}件</div></div><div style="background:#e0f2fe;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#075985">一致</div><div style="font-weight:600;font-size:14px;">${admSlResult.match.length}件</div></div></div>`;
+  // シート申告件数とのズレを警告(読み落としの早期発見)
+  const scw=(admSlData.shipCountWarn||[]);
+  if(scw.length){
+    document.getElementById('adm-sl-summary').innerHTML+=
+      `<div style="margin-top:10px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px 12px;font-size:12px;color:#b91c1c;">`
+      +`⚠️ <b>荷主シートの申告件数と集計が一致しません（${scw.length}シート）。</b>配送列に○以外の記載がある可能性があります。<br>`
+      +scw.map(w=>`　・<b>${esc(w.sheet)}</b> シート申告 ${w.declared} / 集計 ${w.counted}（差 ${w.declared-w.counted}）`).join('<br>')
+      +`</div>`;
+  }
   document.getElementById('adm-sl-tab-closeopen').innerHTML=`🔥 閉店・新店シート (${admSlResult.closeopen.length})`;
   document.getElementById('adm-sl-tab-newshop').innerHTML=`➕ 新店候補 (${admSlResult.newshop.length})`;
   document.getElementById('adm-sl-tab-closeshop').innerHTML=`➖ 閉店候補 (${admSlResult.closeshop.length})`;
@@ -16533,7 +16594,15 @@ function admShopListRender(){
       const list=cs[admSlCatDrill];
       const cch=(cc[admSlCatDrill]&&cc[admSlCatDrill].codeChanged)||[];
       const ccl=(cc[admSlCatDrill]&&cc[admSlCatDrill].closedShip)||[];
-      html=`<div style="margin-bottom:10px;"><button onclick="admSlCatDrill=null;admShopListRender();" style="background:#64748b;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">← 区分集計に戻る</button> <b style="margin-left:8px;">${esc(da)}${esc(dc)} の差異店舗 (${list.length}件)${cch.length?` ／ コード相違 ${cch.length}件`:''}${ccl.length?` ／ 閉店済み ${ccl.length}件`:''}</b></div>`;
+      const ccd=(cc[admSlCatDrill]&&cc[admSlCatDrill].courseDiff)||[];
+      html=`<div style="margin-bottom:10px;"><button onclick="admSlCatDrill=null;admShopListRender();" style="background:#64748b;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">← 区分集計に戻る</button> <b style="margin-left:8px;">${esc(da)}${esc(dc)} の差異店舗 (${list.length}件)${cch.length?` ／ コード相違 ${cch.length}件`:''}${ccd.length?` ／ コース相違 ${ccd.length}件`:''}${ccl.length?` ／ 閉店済み ${ccl.length}件`:''}</b></div>`;
+      if(ccd.length){
+        // 店の有無は合っているが、載っているコースが違う。コース単位の請求がズレる原因になる。
+        html+='<div style="font-size:12px;color:#c2410c;font-weight:600;margin:4px 0;">🟠 コース相違 ＝ 店舗はどちらにもあるが、所属コースが違う。荷主リストの便番号(上1〜2桁)から復元したコースと、マスタのコース設定を比較しています。<b>コース単位の請求がズレます。</b></div>';
+        html+='<table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:14px;"><thead><tr style="background:#fff7ed;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主リストから算出</th><th style="padding:8px;border:1px solid #e2e8f0;">店舗マスタ</th></tr></thead><tbody>';
+        ccd.forEach(s=>{html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;color:#15803d;font-weight:600;">${esc(s.ship)}</td><td style="padding:6px;border:1px solid #e2e8f0;color:#dc2626;font-weight:600;">${esc(s.master)}</td></tr>`;});
+        html+='</tbody></table>';
+      }
       if(ccl.length){
         // 荷主リストは処理日時点なので、対象月より前に閉店した店が配送○のまま残る。
         // 差異には数えないが、消えた理由が分かるようここに出す。
@@ -16580,7 +16649,7 @@ function admShopListRender(){
       else{
         const colMast={朝刊:0,平日:0,競馬:0,朝出し:0},colShip={朝刊:0,平日:0,競馬:0,朝出し:0},colDiff={朝刊:0,平日:0,競馬:0,朝出し:0};
         let gMast=0,gShip=0,gDiff=0;
-        html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">各区分シート(J列○)とマスタを照合。各セル上段=<b>マスタ件数 / 荷主件数</b>(<span style="color:#dc2626;">赤=件数不一致</span>)、下段=<b>差N</b>=食い違い店舗数(荷主のみ＝マスタ未登録＋マスタのみ＝荷主シート未掲載)、<b style="color:#2563eb;">コN</b>=コード相違(同名で店舗コードのみ違う同一店。差異から除外)、<b style="color:#94a3b8;">閉N</b>=対象月より前に閉店(荷主リストが処理日時点のため○が残っているだけ。差異・件数から除外)。平日=夕刊/朝出し=同梱。<b>下段をクリック</b>で該当店舗が出ます。件数が一致すれば店舗集計と突き合います。</p>';
+        html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">各区分シート(J列○)とマスタを照合。各セル上段=<b>マスタ件数 / 荷主件数</b>(<span style="color:#dc2626;">赤=件数不一致</span>)、下段=<b>差N</b>=食い違い店舗数(荷主のみ＝マスタ未登録＋マスタのみ＝荷主シート未掲載)、<b style="color:#2563eb;">コN</b>=コード相違(同名で店舗コードのみ違う同一店。差異から除外)、<b style="color:#c2410c;">路N</b>=コース相違(店はあるが所属コースが違う。荷主の便番号 上1〜2桁から復元。<b>コース単位の請求がズレます</b>)、<b style="color:#94a3b8;">閉N</b>=対象月より前に閉店(荷主リストが処理日時点のため○が残っているだけ。差異・件数から除外)。平日=夕刊/朝出し=同梱。<b>下段をクリック</b>で該当店舗が出ます。件数が一致すれば店舗集計と突き合います。</p>';
         html+='<table style="border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px 18px;border:1px solid #cbd5e1;">営業所＼区分</th>'+cats.map(c=>`<th style="padding:8px 18px;border:1px solid #cbd5e1;">${c}</th>`).join('')+'<th style="padding:8px 18px;border:1px solid #cbd5e1;">計(食い違い)</th></tr></thead><tbody>';
         areas.forEach(a=>{
           let rDiff=0;
@@ -16595,8 +16664,9 @@ function admShopListRender(){
             const has=cmp.mastCount||cmp.shipCount||n||cch;
             const countLine=has?`<div style="font-size:11px;padding:2px 0;${mismatch?'color:#dc2626;font-weight:700;':'color:#475569;'}">${cmp.mastCount} / ${cmp.shipCount}</div>`:'';
             const ncl=(cc[key]&&cc[key].closedShip||[]).length;
-            const inner=`${n?`差${n}`:'差0'}${cch?` <span style="color:#2563eb;">コ${cch}</span>`:''}${ncl?` <span style="color:#94a3b8;">閉${ncl}</span>`:''}`;
-            const diffLine=(n||cch||ncl)?`<button onclick="admSlCatDrill='${a}\\t${c}';admShopListRender();" style="width:100%;padding:3px 12px;background:${n?'#fef3c7':'#eff6ff'};color:${n?'#92400e':'#2563eb'};border:none;cursor:pointer;font-weight:700;font-size:13px;">${inner}</button>`:(has?'<span style="color:#16a34a;font-size:11px;">差0 ✓</span>':'<span style="color:#cbd5e1;">-</span>');
+            const ncd=(cc[key]&&cc[key].courseDiff||[]).length;
+            const inner=`${n?`差${n}`:'差0'}${cch?` <span style="color:#2563eb;">コ${cch}</span>`:''}${ncd?` <span style="color:#c2410c;">路${ncd}</span>`:''}${ncl?` <span style="color:#94a3b8;">閉${ncl}</span>`:''}`;
+            const diffLine=(n||cch||ncl||ncd)?`<button onclick="admSlCatDrill='${a}\\t${c}';admShopListRender();" style="width:100%;padding:3px 12px;background:${n?'#fef3c7':'#eff6ff'};color:${n?'#92400e':'#2563eb'};border:none;cursor:pointer;font-weight:700;font-size:13px;">${inner}</button>`:(has?'<span style="color:#16a34a;font-size:11px;">差0 ✓</span>':'<span style="color:#cbd5e1;">-</span>');
             html+=`<td style="padding:2px 0;border:1px solid #cbd5e1;text-align:center;${mismatch?'background:#fef2f2;':''}">${countLine}${diffLine}</td>`;
           });
           gDiff+=rDiff;
