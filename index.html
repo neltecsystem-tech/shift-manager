@@ -13149,7 +13149,12 @@ function admRevRender(){
       const monthFirstDay=`${y}-${String(m).padStart(2,'0')}-01`;
       function isOpen(shop){if(openDateCol<0)return true;const od=normalizeDateYmd(shop[`col_${openDateCol}`]||'');if(!od)return true;return od<=monthFirstDay;}
 
-      const oAm=amShops.filter(isOpen),oPm=pmShops.filter(isOpen),oK=keibaShops.filter(isOpen);
+      const oAm=amShops.filter(isOpen),oPm=pmShops.filter(isOpen);
+      // 競馬を請求しない特殊店舗(JRA)立川 32006 / ｳｲﾝｽﾞ立川A 32001)は競馬から除外する。
+      // 請求書側(SPECIAL_BILLING_SHOPS の noKeiba)と同じ規則。ここを外すと日次収支の
+      // 競馬売上が請求額より多く出る。
+      const KEIBA_NO_BILL=new Set(['32006','32001']);
+      const oK=keibaShops.filter(isOpen).filter(s=>!KEIBA_NO_BILL.has(s[`col_${colsB.code}`]));
       const specialPriceShops=new Set(['622179','602271','622183','612322','622068','762049','602267','761537','761536','761538','601719']);
       const allPmCodes=new Set(records.filter(r=>notCancelled(r)&&r[`col_${colsB.pmCourse}`]).map(s=>s[`col_${colsB.code}`]));
       const cond=getBillConditions(monthVal);
@@ -14338,7 +14343,7 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   h+=`<div style="display:flex;justify-content:space-between;margin-bottom:4px;">`;
   h+=`<div><span style="font-size:12px;">令和${reiwa}年</span> <span style="font-size:16px;font-weight:bold;">${m}月分</span></div>`;
   h+=`<div style="text-align:center;"><span style="font-size:12px;">${area}営業所</span> <span style="font-size:16px;font-weight:bold;">${course} コース</span></div>`;
-  h+=`<div style="text-align:right;font-size:11px;color:var(--text-sub);">朝刊${amCount}店 夕刊${pmCount}店 競馬${keibaCount}店</div>`;
+  h+=`<div style="text-align:right;font-size:11px;color:var(--text-sub);">朝刊${amCount}店 夕刊${pmCount}店 競馬${keibaCountAdj}店</div>`;
   h+=`</div>`;
 
   // 立川レイアウト: 日 | 曜 | 合計金額 | 朝刊店舗料金 | 朝刊店舗数 | 夕刊同梱料金 | 夕刊同梱件数 | 特殊納品料金 | 管理費 | 雑誌料金 | 夕刊料金 | 夕刊店舗数 | 夕刊特殊 | 夕刊管理費
@@ -14429,7 +14434,7 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#f1f5f9;">雑誌</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${amZasshi}</td>`;
   h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#faf5ff;">夕刊店舗</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${pmCount}</td>`;
   h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#faf5ff;">夕特殊</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${pmTokushu}</td>`;
-  h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#fef3c7;">競馬店舗</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${keibaCount}</td>`;
+  h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#fef3c7;">競馬店舗</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${keibaCountAdj}</td>`;
   h+=`<td style="border:1px solid #ccc;padding:1px 4px;background:#fef3c7;">競特殊</td><td style="border:1px solid #ccc;padding:1px 4px;text-align:right;font-weight:bold;">${keibaTokushu}</td>`;
   h+=`</tr></table>`;
   h+=isKawagoe
@@ -14438,7 +14443,7 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   h+=`</div>`;
   h+=`</div>`;
 
-  if(returnTotals)return {html:h,course,grandTotal,totalAmSum,totalPmSum,totalKanriAm,totalKanriPm,kanriTotal:totalKanriAm+totalKanriPm,amCount,amDokkon,amTokushu,amZasshi,amKyori,pmCount,pmTokushu,keibaCount,keibaTokushu,perDay};
+  if(returnTotals)return {html:h,course,grandTotal,totalAmSum,totalPmSum,totalKanriAm,totalKanriPm,kanriTotal:totalKanriAm+totalKanriPm,amCount,amDokkon,amTokushu,amZasshi,amKyori,pmCount,pmTokushu,keibaCount:keibaCountAdj,keibaTokushu,perDay};
   return h;
 }
 
