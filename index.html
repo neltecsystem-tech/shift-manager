@@ -16054,7 +16054,8 @@ let admSlResult=null;
 let admSlActiveTab='closeopen';
 let admSlCatDrill=null; // 区分集計のドリルダウン中キー (`営業所\t区分`)
 
-let admSlSource=''; // 'snapshot:YYYY-MM' | 'live'
+let admSlSource=''; // 'snapshot:YYYY-MM' | 'nosnap'(未作成) | 'error'(取得失敗)
+let admSlSnapErrMonth=''; // スナップを取れなかった対象月
 
 function admShopListInit(){
   // 突合の対象月を当月デフォルト (アップロード時に荷主リストの日付へ自動更新)
@@ -16073,12 +16074,17 @@ function admShopListRenderSource(){
     const m=admSlSource.split(':')[1];
     el.innerHTML=`📌 <b>${m} 月初スナップショット</b>と突合中（月途中の店舗追加・閉店・コース変更は突合に影響しません）`;
     el.style.cssText='font-size:12px;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;padding:6px 10px;border-radius:8px;';
-  }else if(admSlSource==='live'){
-    el.innerHTML=`⚠️ <b>ライブの店舗マスタ</b>と突合中（この月の月初スナップ未作成）。月初構成で突合したい場合は店舗マスタ画面で「📌 月初スナップ作成」を実行してください。`;
-    el.style.cssText='font-size:12px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;padding:6px 10px;border-radius:8px;';
+  }else if(admSlSource==='nosnap'){
+    // 月初スナップが無い月。ライブで代用すると1日時点の構成を再現できないので突合しない。
+    el.innerHTML=`⛔ <b>${esc(admSlSnapErrMonth||'この月')} の月初スナップがありません</b>ので突合を中止しました。<br>`
+      +`請求は月初スナップで計算します。ライブの店舗マスタは「今の姿」しか持たず、月途中のコース変更・付け替えを遡れないため、代用すると実態とかけ離れた差異が出ます。<br>`
+      +`店舗マスタ画面の「📌 今すぐ月初スナップを作成（手動）」で作成してから、もう一度お試しください。`;
+    el.style.cssText='font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;padding:8px 10px;border-radius:8px;line-height:1.7;';
   }else if(admSlSource==='error'){
-    el.innerHTML=`⛔ <b>店舗マスタの取得に失敗しました</b>（Sheets読み取り上限などの一時的エラーの可能性）。少し待って「🔄 マスタ再取得」を押してください。0件での誤突合を防ぐため中止しています。`;
-    el.style.cssText='font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;padding:6px 10px;border-radius:8px;';
+    el.innerHTML=`⛔ <b>${esc(admSlSnapErrMonth||'')} の月初スナップを取得できませんでした</b>（Sheets読み取り上限などの一時エラーの可能性。3回リトライ済み）。<br>`
+      +`スナップ自体は存在する可能性が高いので、少し待って「🔄 マスタ再取得」を押してください。<br>`
+      +`<b>誤った数字で請求を判断しないよう、ライブの店舗マスタでの代用はしません。</b>`;
+    el.style.cssText='font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;padding:8px 10px;border-radius:8px;line-height:1.7;';
   }else{el.innerHTML='';}
 }
 
@@ -16086,8 +16092,11 @@ async function admShopListReloadMaster(){
   invalidateShopMasterCache();
   admSlMaster=null;
   const ok=await admShopListEnsureMaster();
-  if(admSlData)admShopListAnalyze();
-  alert(ok?('店舗マスタを再取得しました（'+(admSlMaster?admSlMaster.length:0)+'店）'):'⚠️ 店舗マスタの取得に失敗しました。少し待ってからもう一度お試しください。');
+  if(ok&&admSlData)admShopListAnalyze();
+  alert(ok?('月初スナップを再取得しました（'+(admSlMaster?admSlMaster.length:0)+'店）')
+          :(admSlSource==='nosnap'
+             ?'⛔ この月の月初スナップがありません。店舗マスタ画面で「📌 今すぐ月初スナップを作成」を実行してください。'
+             :'⚠️ 月初スナップを取得できませんでした。少し待ってもう一度お試しください。'));
 }
 
 // 対象月変更: マスタを読み直して再解析
@@ -16099,21 +16108,35 @@ async function admShopListOnMonthChange(){
 
 async function admShopListEnsureMaster(){
   if(admSlMaster&&admSlMaster.length)return true;
-  // 対象月の月初スナップを優先、無ければライブ
+  // ── 突合相手は「その月の月初スナップ」だけ。ライブの店舗マスタへは落とさない ──
+  // この機能は請求に使うデータの差異を潰すためのもの。請求は月初スナップで計算する。
+  // 月途中でコース変更・付け替えが起きるとライブのマスタでは1日時点の構成を再現できず、
+  // 出てくる差異が実態とかけ離れる(2026-07を8/13のライブと比べたら差104件になった)。
+  // 取得できないときは、数字を出さずに止める。
   const month=(document.getElementById('adm-sl-month')||{}).value||'';
-  let json=month?await fetchShopMasterSnapshot(month):null;
-  let src='';
-  if(json&&(json.records||[]).length){src='snapshot:'+month;}
-  else{
-    // ライブへフォールバック。取得失敗/空(429・Sheets読み取り上限)なら force で数回リトライ。
-    // ここで0件のまま突合すると全店が「荷主のみ」と誤判定されるため、必ず中身の有無を確認する。
-    json=null;
+  let json=null,src='';
+  if(month){
+    // Sheets読み取り上限(429)等の一時失敗があるのでリトライする
     for(let i=0;i<3;i++){
-      if(i>0){invalidateShopMasterCache();await new Promise(r=>setTimeout(r,1200*i));}
-      json=await fetchShopMasterList({force:i>0});
+      if(i>0)await new Promise(r=>setTimeout(r,1200*i));
+      json=await fetchShopMasterSnapshot(month);
       if(json&&!json.error&&(json.records||[]).length)break;
     }
-    src='live';
+  }
+  if(json&&(json.records||[]).length){src='snapshot:'+month;}
+  else{
+    // 「未作成」と「取得失敗」を区別する。原因が違えば対処も違う。
+    const notFound=!month||(json&&(json.snapshot===false||/not found/i.test(String(json.error||''))));
+    admSlSource=notFound?'nosnap':'error';
+    admSlSnapErrMonth=month;
+    admShopListRenderSource();
+    // 前月の結果が画面に残っていると「今の月の結果」と誤読される。数字は消す。
+    admSlMaster=null; admSlResult=null;
+    const sEl=document.getElementById('adm-sl-summary'); if(sEl)sEl.innerHTML='';
+    const tEl=document.getElementById('adm-sl-tabs');    if(tEl)tEl.style.display='none';
+    const rEl=document.getElementById('adm-sl-result');  if(rEl)rEl.innerHTML='';
+    const cEl=document.getElementById('adm-sl-csv-btn'); if(cEl)cEl.style.display='none';
+    return false;
   }
   if(!json||json.error||!(json.records||[]).length){
     // 取得失敗 → admSlMaster は上書きしない(前回値を保持)。エラー表示して中止。
