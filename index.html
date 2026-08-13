@@ -1036,7 +1036,7 @@ tbody tr:hover { background:var(--primary-light); }
             <input type="month" id="adm-sl-month" onchange="admShopListOnMonthChange()" style="padding:6px;border:1px solid var(--border);border-radius:6px;">
           </div>
           <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end;">
-            <button onclick="admShopListReloadMaster()" style="background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🔄 マスタ再取得</button>
+            <button onclick="admShopListReloadMaster()" style="background:#f59e0b;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🔄 スナップ再取得</button>
             <button onclick="admShopListExportCsv()" id="adm-sl-csv-btn" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;display:none;">📥 現在のタブをCSV出力</button>
           </div>
         </div>
@@ -13184,7 +13184,8 @@ function admRevRender(){
       const notCancelled=r=>!(r[`col_${colsB.area}`]||'').includes('納品中止');
       const matchAreas=saleArea==='城北'?['城北','池袋']:[saleArea];
       const inArea=r=>matchAreas.includes((r[`col_${colsB.area}`]||'').split(',')[0].trim());
-      const amShops=records.filter(r=>notCancelled(r)&&inArea(r)&&r[`col_${colsB.amCourse}`]===courseVal);
+      // 朝刊もコース名一致だけで拾う(請求書側と同じ規則)
+      const amShops=records.filter(r=>notCancelled(r)&&r[`col_${colsB.amCourse}`]===courseVal);
       const pmShops=records.filter(r=>notCancelled(r)&&r[`col_${colsB.pmCourse}`]===courseVal);
       const keibaShops=records.filter(r=>notCancelled(r)&&r[`col_${colsB.keibaCourse}`]===courseVal);
 
@@ -13635,7 +13636,7 @@ async function admBillInit(){
     const now=new Date();
     mInput.value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   }
-  // 選択月の月初スナップ(無ければライブ)を読み込む
+  // 選択月の月初スナップを読み込む(ライブの店舗マスタへは落ちない)
   await admBillLoadForMonth(mInput.value);
   const records=(admBillShopData?.records)||[];
   const headers=(admBillShopData?.headers)||[];
@@ -13857,7 +13858,9 @@ async function admBillAreaConfirmAll(area,monthVal){
     const records=(admBillShopData?.records)||[];
     const cols=admBillCols();
     const bulkAreas=area==='城北'?['城北','池袋']:[area];
-    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&bulkAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+    // コースの洗い出しは全件から。営業所欄で絞ると、営業所欄が空の店しか居ない
+    // コースが一覧から丸ごと消える。コース名側(bulkAreas)で絞れば足りる。
+    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止'));
     const allC=new Set();
     filtered.forEach(r=>{
       if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
@@ -13906,7 +13909,9 @@ async function admBillAreaReconfirmAll(area,monthVal){
     const records=(admBillShopData?.records)||[];
     const cols=admBillCols();
     const bulkAreas=area==='城北'?['城北','池袋']:[area];
-    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&bulkAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+    // コースの洗い出しは全件から。営業所欄で絞ると、営業所欄が空の店しか居ない
+    // コースが一覧から丸ごと消える。コース名側(bulkAreas)で絞れば足りる。
+    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止'));
     const allC=new Set();
     filtered.forEach(r=>{
       if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
@@ -13986,7 +13991,9 @@ async function admBillAreaUnconfirmAll(area,monthVal){
     const records=(admBillShopData?.records)||[];
     const cols=admBillCols();
     const bulkAreas=area==='城北'?['城北','池袋']:[area];
-    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&bulkAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+    // コースの洗い出しは全件から。営業所欄で絞ると、営業所欄が空の店しか居ない
+    // コースが一覧から丸ごと消える。コース名側(bulkAreas)で絞れば足りる。
+    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止'));
     const allC=new Set();
     filtered.forEach(r=>{
       if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
@@ -14116,7 +14123,9 @@ async function admBillBulkConfirmBefore(beforeMonth){
     const areaCoursesMap={};
     for(const area of allAreas){
       const bulkAreas=area==='城北'?['城北','池袋']:[area];
-      const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&bulkAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+      // コースの洗い出しは全件から。営業所欄で絞ると、営業所欄が空の店しか居ない
+    // コースが一覧から丸ごと消える。コース名側(bulkAreas)で絞れば足りる。
+    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止'));
       const allC=new Set();
       filtered.forEach(r=>{
         if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
@@ -14325,7 +14334,11 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const notCancelled=r=>!(r[`col_${cols.area}`]||'').includes('納品中止');
   const matchAreas=area==='城北'?['城北','池袋']:[area];
   const inArea=r=>matchAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim());
-  const amShops=records.filter(r=>notCancelled(r)&&inArea(r)&&r[`col_${cols.amCourse}`]===course);
+  // 朝刊もコース名一致だけで拾う(夕刊・競馬と同じ)。コース名に営業所が入っている
+  // ので営業所欄で絞る必要がなく、絞ると営業所欄が空/別営業所の店が請求から落ちる。
+  // 実例: FM都営線中野坂上駅(611358) は朝刊コース=城北23 だが営業所欄が空で、
+  // 2026-07 の城北23 が 46店で請求されていた(正: 47店 / 差 ¥9,610)。
+  const amShops=records.filter(r=>notCancelled(r)&&r[`col_${cols.amCourse}`]===course);
   // 夕刊（月〜木）— コース名一致なら営業所問わず
   const pmShops=records.filter(r=>notCancelled(r)&&r[`col_${cols.pmCourse}`]===course);
   // 競馬（金〜日）— コース名一致なら営業所問わず
@@ -14790,7 +14803,8 @@ async function admBillAllCourses(){
   const cols=admBillCols();
   // 営業所の全コースを取得（納品中止除外、朝刊+夕刊+競馬、城北は池袋含む）
   const bulkAreas=area==='城北'?['城北','池袋']:[area];
-  const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&bulkAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+  // コースの洗い出しは全件から(コース名側で絞る)
+  const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止'));
   const allC=new Set();
   filtered.forEach(r=>{
     if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
@@ -14834,7 +14848,8 @@ async function admBillAllCourses(){
 // 1営業所の総合計を返す (HTML生成なし、 buildAreaTotalPage と同じ計算式)
 function admBillComputeAreaTotal(area,monthVal,records,cols){
   const bulkAreas=area==='城北'?['城北','池袋']:[area];
-  const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&bulkAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
+  // コースの洗い出しは全件から(コース名側で絞る)
+  const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止'));
   const allC=new Set();
   filtered.forEach(r=>{
     if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
@@ -16345,7 +16360,7 @@ function admShopListRenderSource(){
     el.style.cssText='font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;padding:8px 10px;border-radius:8px;line-height:1.7;';
   }else if(admSlSource==='error'){
     el.innerHTML=`⛔ <b>${smEsc(admSlSnapErrMonth||'')} の月初スナップを取得できませんでした</b>（Sheets読み取り上限などの一時エラーの可能性。3回リトライ済み）。<br>`
-      +`スナップ自体は存在する可能性が高いので、少し待って「🔄 マスタ再取得」を押してください。<br>`
+      +`スナップ自体は存在する可能性が高いので、少し待って「🔄 スナップ再取得」を押してください。<br>`
       +`<b>誤った数字で請求を判断しないよう、ライブの店舗マスタでの代用はしません。</b>`;
     el.style.cssText='font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;padding:8px 10px;border-radius:8px;line-height:1.7;';
   }else{el.innerHTML='';}
@@ -16573,7 +16588,7 @@ function admShopListAnalyze(){
   // 店舗マスタが0件(取得失敗)のまま突合すると全店が「荷主のみ」と誤判定される → 中止して案内。
   if(!admSlMaster||!admSlMaster.length){
     const s=document.getElementById('adm-sl-summary');
-    if(s)s.innerHTML='<p style="color:#b91c1c;font-weight:bold;">⛔ 店舗マスタを取得できませんでした（0件）。全店が「荷主のみ」と誤判定されるのを防ぐため突合を中止しました。<br>少し待って「🔄 マスタ再取得」を押してください。</p>';
+    if(s)s.innerHTML='<p style="color:#b91c1c;font-weight:bold;">⛔ 店舗マスタを取得できませんでした（0件）。全店が「荷主のみ」と誤判定されるのを防ぐため突合を中止しました。<br>少し待って「🔄 スナップ再取得」を押してください。</p>';
     const t=document.getElementById('adm-sl-tabs');if(t)t.style.display='none';
     const rEl=document.getElementById('adm-sl-result');if(rEl)rEl.innerHTML='';
     return;
