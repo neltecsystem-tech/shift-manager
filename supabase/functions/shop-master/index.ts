@@ -352,6 +352,47 @@ async function ensurePartialTab(token: string): Promise<void> {
 // Sheets の失敗を空配列(=0件)にすり替えないための共通ヘルパー。
 // スナップショット読取のように「無い場合がある」箇所は従来どおり !r.ok で個別に扱い、
 // ここでは常に存在するはずのシート(店舗マスタ本体/営業所・コース一覧/サマリー)に使う。
+// 店舗マスタ本体の DBキャッシュ。 list は店舗マスタ/店舗検索/ダッシュボード等から
+// 頻繁に呼ばれ、 毎回 A2:10000 を読むため Sheets の読取上限(429)を大きく食っていた。
+// TTL は短め。 書き込み系アクションは冒頭で invalidateShopCache() を呼ぶ。
+const SHOP_CACHE_TTL_MS = 90 * 1000;
+async function getShopRowsCached(token: string): Promise<string[][]> {
+  const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  let cached: any = null;
+  if (SB_URL && SRK) {
+    try {
+      const r = await fetch(`${SB_URL}/rest/v1/sm_kv_cache?select=data,updated_at&key=eq.shop_rows`, { headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } });
+      if (r.ok) { const a = await r.json(); cached = Array.isArray(a) && a[0] ? a[0] : null; }
+    } catch (_) { /* noop */ }
+  }
+  if (cached && cached.updated_at && Array.isArray(cached.data)
+    && (Date.now() - new Date(cached.updated_at).getTime() < SHOP_CACHE_TTL_MS)) return cached.data as string[][];
+  const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A2:${COL_END}10000`, { headers: { 'Authorization': `Bearer ${token}` } });
+  if (!resp.ok) {
+    if (cached && Array.isArray(cached.data)) return cached.data as string[][]; // 期限切れでも凌ぐ
+    const t = await resp.text();
+    throw new Error('Sheets API error: ' + resp.status + ' ' + t.slice(0, 200));
+  }
+  const rows = ((await resp.json()).values || []) as string[][];
+  if (SB_URL && SRK) {
+    try {
+      await fetch(`${SB_URL}/rest/v1/sm_kv_cache`, {
+        method: 'POST',
+        headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify([{ key: 'shop_rows', data: rows, updated_at: new Date().toISOString() }]),
+      });
+    } catch (_) { /* noop */ }
+  }
+  return rows;
+}
+async function invalidateShopCache(): Promise<void> {
+  const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+  const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  if (!SB_URL || !SRK) return;
+  try { await fetch(`${SB_URL}/rest/v1/sm_kv_cache?key=eq.shop_rows`, { method: 'DELETE', headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } }); } catch (_) { /* noop */ }
+}
+
 async function smSheetVals(resp: Response, what = ''): Promise<string[][]> {
   const body: any = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(`Sheetsの読み取りに失敗しました (HTTP ${resp.status})${what ? ' / ' + what : ''}: ${String(body?.error?.message ?? '').slice(0, 200)}`);
@@ -425,6 +466,7 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ rows }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
     if (action === 'partial_stop_add') {
+      await invalidateShopCache(); // 店舗マスタを書き換えるので一覧キャッシュを破棄
       const rec = record || {};
       const code = String(rec.code || '').trim();
       const name = String(rec.name || '').trim();
@@ -450,6 +492,7 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: true, id }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
     if (action === 'partial_stop_cancel') {
+      await invalidateShopCache(); // 店舗マスタを書き換えるので一覧キャッシュを破棄
       const id = String((record && record.id) || reqBody.id || '').trim();
       if (!id) return new Response(JSON.stringify({ error: 'id required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(PARTIAL_SHEET)}!A2:J10000`, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -467,6 +510,7 @@ Deno.serve(async (req: Request) => {
 
     // ── 月初スナップショット ──
     if (action === 'snapshot_create') {
+      await invalidateShopCache(); // 店舗マスタを書き換えるので一覧キャッシュを破棄
       // 店舗マスタ全行(header=シート行2, data=行3+)を月別タブへ凍結。古いスナップは剪定。
       const month = (reqBody.month || jstYearMonth()).toString().trim();
       if (!/^\d{4}-\d{2}$/.test(month)) {
@@ -556,6 +600,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'fix_validation') {
+      await invalidateShopCache(); // 店舗マスタを書き換えるので一覧キャッシュを破棄
       // 移行でコピーされた営業所/コースのドロップダウンが #REF! になったのを修正。
       // マスタ2(旧)の選択肢を新SSの「選択肢」タブへ写し、その範囲を参照させる。
       const [aResp, cResp] = await Promise.all([
@@ -742,6 +787,35 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ months }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
+    // 月初スナップの健全性チェック(cronから毎日叩く)。
+    // スナップが無い月は請求を月初構成で計算できず、確定済みの保存値も無ければ再現不能になる。
+    // 1日の自動作成が転けても誰も気づけなかったため、状態を sm_active_alerts に反映する。
+    if (action === 'snapshot_health') {
+      const jst = new Date(Date.now() + 9 * 3600 * 1000);
+      const ym = `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, '0')}`;
+      const day = jst.getUTCDate();
+      const metaResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties.title`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const titles = ((await metaResp.json()).sheets || []).map((s: any) => s.properties.title);
+      const exists = titles.includes(SNAP_PREFIX + ym);
+      // 1日は作成cron(9:00 JST)より前に走る可能性があるので猶予を置く
+      const shouldAlert = !exists && day >= 2;
+      const SB = Deno.env.get('SUPABASE_URL') || '';
+      const SRK2 = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if (SB && SRK2) {
+        const hdr = { 'Content-Type': 'application/json', 'apikey': SRK2, 'Authorization': `Bearer ${SRK2}`, 'Prefer': 'resolution=merge-duplicates' };
+        const now = new Date().toISOString();
+        const body = shouldAlert
+          ? [{ key: 'shift:snapshot_missing', app: 'shift-manager', kind: 'snapshot_missing',
+               title: `${ym} の月初スナップがありません`,
+               body: `毎月1日の自動作成が失敗した可能性があります。店舗マスタ画面の「📌 今すぐ月初スナップを作成」を実行してください。スナップが無いと ${ym} の請求を月初構成で計算できず、荷主リスト突合も動きません。`,
+               cnt: 1, status: 'open', updated_at: now, resolved_at: null }]
+          : [{ key: 'shift:snapshot_missing', app: 'shift-manager', kind: 'snapshot_missing',
+               title: `${ym} の月初スナップ`, body: '正常', cnt: 0, status: 'resolved', updated_at: now, resolved_at: now }];
+        await fetch(`${SB}/rest/v1/sm_active_alerts?on_conflict=key`, { method: 'POST', headers: hdr, body: JSON.stringify(body) });
+      }
+      return new Response(JSON.stringify({ month: ym, day, exists, alert: shouldAlert }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     if (action === 'snapshot_read') {
       // list と同形 {records, headers} を返す (フロントが list と差し替え可能に)
       const month = (reqBody.month || '').toString().trim();
@@ -823,6 +897,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'bulk_lock_gps') {
+      await invalidateShopCache(); // 店舗マスタを書き換えるので一覧キャッシュを破棄
       // 緯度経度が入っている全行を 修正済み(AL=TRUE) にする一括ロック。既にTRUEはスキップ。
       await ensureExtraHeaders(token);
       // AD=緯度(29), AE=経度(30) ... AL=修正済み(37)。AD3:AL10000 を取得 (index 0=AD)
@@ -860,6 +935,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'add_course') {
+      await invalidateShopCache(); // 店舗マスタを書き換えるので一覧キャッシュを破棄
       // マスタ2 A列(コース候補)へ新コースを追記。朝刊/夕刊/競馬 共通の候補リスト。
       const course = ((record?.course ?? reqBody.course) || '').toString().trim();
       if (!course) {
@@ -900,18 +976,14 @@ Deno.serve(async (req: Request) => {
 
     if (action === 'list') {
       await ensureExtraHeaders(token);
-      const resp = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A2:${COL_END}10000`,
-        { headers: { 'Authorization': `Bearer ${token}` } }
-      );
-      if (!resp.ok) {
-        const errText = await resp.text();
-        return new Response(JSON.stringify({ error: 'Sheets API error: ' + resp.status + ' ' + errText.slice(0, 200) }), {
+      let allRows: string[][];
+      try {
+        allRows = await getShopRowsCached(token);
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e as any)?.message ?? e) }), {
           status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-      const result = await resp.json();
-      const allRows = result.values ?? [];
       if (allRows.length < 2) {
         return new Response(JSON.stringify({ records: [], headers: [] }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -942,6 +1014,7 @@ Deno.serve(async (req: Request) => {
       });
 
     } else if (action === 'update') {
+      await invalidateShopCache(); // 店舗マスタを書き換えるので一覧キャッシュを破棄
       if (!row_number || !record) {
         return new Response(JSON.stringify({ error: 'row_number and record required' }), {
           status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -1000,6 +1073,7 @@ Deno.serve(async (req: Request) => {
       });
 
     } else if (action === 'add') {
+      await invalidateShopCache(); // 店舗マスタを書き換えるので一覧キャッシュを破棄
       if (!record) {
         return new Response(JSON.stringify({ error: 'record required' }), {
           status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -1038,6 +1112,7 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else if (action === 'bulk_add') {
+      await invalidateShopCache(); // 店舗マスタを書き換えるので一覧キャッシュを破棄
       // 新店CSV一括登録: records[] を一度に追加し、影響する(区分,コース)を1回ずつ店着時間順に採番
       const records = reqBody.records;
       if (!Array.isArray(records) || records.length === 0) {
@@ -1081,6 +1156,7 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else if (action === 'batch_update_latlng') {
+      await invalidateShopCache(); // 店舗マスタを書き換えるので一覧キャッシュを破棄
       if (!Array.isArray(updates) || updates.length === 0) {
         return new Response(JSON.stringify({ error: 'updates array required' }), {
           status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
