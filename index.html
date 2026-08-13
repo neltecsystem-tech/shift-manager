@@ -16649,7 +16649,7 @@ function admShopListRender(){
       else{
         const colMast={朝刊:0,平日:0,競馬:0,朝出し:0},colShip={朝刊:0,平日:0,競馬:0,朝出し:0},colDiff={朝刊:0,平日:0,競馬:0,朝出し:0};
         let gMast=0,gShip=0,gDiff=0;
-        html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">各区分シート(J列○)とマスタを照合。各セル上段=<b>マスタ件数 / 荷主件数</b>(<span style="color:#dc2626;">赤=件数不一致</span>)、下段=<b>差N</b>=食い違い店舗数(荷主のみ＝マスタ未登録＋マスタのみ＝荷主シート未掲載)、<b style="color:#2563eb;">コN</b>=コード相違(同名で店舗コードのみ違う同一店。差異から除外)、<b style="color:#c2410c;">路N</b>=コース相違(店はあるが所属コースが違う。荷主の便番号 上1〜2桁から復元。<b>コース単位の請求がズレます</b>)、<b style="color:#94a3b8;">閉N</b>=対象月より前に閉店(荷主リストが処理日時点のため○が残っているだけ。差異・件数から除外)。平日=夕刊/朝出し=同梱。<b>下段をクリック</b>で該当店舗が出ます。件数が一致すれば店舗集計と突き合います。</p>';
+        html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">各区分シート(J列○)とマスタを照合。各セル上段=<b>マスタ件数 / 荷主件数</b>(<span style="color:#dc2626;">赤=件数不一致</span>)、下段=<b>差N</b>=食い違い店舗数(荷主のみ＝マスタ未登録＋マスタのみ＝荷主シート未掲載)、<b style="color:#2563eb;">コードN</b>=コード相違(同名で店舗コードのみ違う同一店。差異から除外)、<b style="color:#c2410c;">コースN</b>=コース相違(店はどちらにもあるが所属コースが違う。荷主リストの便番号 上1〜2桁から復元して比較。<b>コース単位の請求がズレます</b>)、<b style="color:#94a3b8;">閉店N</b>=対象月より前に閉店(荷主リストが処理日時点のため○が残っているだけ。差異・件数から除外)。平日=夕刊/朝出し=同梱。<b>下段をクリック</b>で該当店舗が出ます。件数が一致すれば店舗集計と突き合います。</p>';
         html+='<table style="border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px 18px;border:1px solid #cbd5e1;">営業所＼区分</th>'+cats.map(c=>`<th style="padding:8px 18px;border:1px solid #cbd5e1;">${c}</th>`).join('')+'<th style="padding:8px 18px;border:1px solid #cbd5e1;">計(食い違い)</th></tr></thead><tbody>';
         areas.forEach(a=>{
           let rDiff=0;
@@ -16665,7 +16665,8 @@ function admShopListRender(){
             const countLine=has?`<div style="font-size:11px;padding:2px 0;${mismatch?'color:#dc2626;font-weight:700;':'color:#475569;'}">${cmp.mastCount} / ${cmp.shipCount}</div>`:'';
             const ncl=(cc[key]&&cc[key].closedShip||[]).length;
             const ncd=(cc[key]&&cc[key].courseDiff||[]).length;
-            const inner=`${n?`差${n}`:'差0'}${cch?` <span style="color:#2563eb;">コ${cch}</span>`:''}${ncd?` <span style="color:#c2410c;">路${ncd}</span>`:''}${ncl?` <span style="color:#94a3b8;">閉${ncl}</span>`:''}`;
+            // バッジは略さない。「路」等の略字は意味が伝わらず、見る側が毎回聞くことになる。
+            const inner=`${n?`差${n}`:'差0'}${cch?` <span style="color:#2563eb;font-size:11px;">コード${cch}</span>`:''}${ncd?` <span style="color:#c2410c;font-size:11px;">コース${ncd}</span>`:''}${ncl?` <span style="color:#94a3b8;font-size:11px;">閉店${ncl}</span>`:''}`;
             const diffLine=(n||cch||ncl||ncd)?`<button onclick="admSlCatDrill='${a}\\t${c}';admShopListRender();" style="width:100%;padding:3px 12px;background:${n?'#fef3c7':'#eff6ff'};color:${n?'#92400e':'#2563eb'};border:none;cursor:pointer;font-weight:700;font-size:13px;">${inner}</button>`:(has?'<span style="color:#16a34a;font-size:11px;">差0 ✓</span>':'<span style="color:#cbd5e1;">-</span>');
             html+=`<td style="padding:2px 0;border:1px solid #cbd5e1;text-align:center;${mismatch?'background:#fef2f2;':''}">${countLine}${diffLine}</td>`;
           });
