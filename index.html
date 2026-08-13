@@ -11589,12 +11589,16 @@ async function admJinSave(){
   }
 }
 
-// 保存対象の値のうち、単価マスタ(invRates)に無い氏名を返す。
-// 空欄・記号・コース名・休み系の記号は氏名ではないので除外する。
+// 保存対象の値のうち、どこにも登録が無い氏名を返す。
+// 判定元は入力候補(datalist)と同じ「単価マスタ + 人員名簿」。候補から選べば必ず通る。
+// 🚨 単価マスタだけで判定してはいけない: 社員は月給のため単価マスタに行が無く、
+//    アスクル等の他現場の人も名簿にだけ載っている。全員に警告が出て意味がなくなる。
+// 空欄・記号・日付は氏名ではないので除外する。
 function admSeUnknownStaffIn(updates){
-  if(typeof invRates==='undefined'||!Array.isArray(invRates)||!invRates.length)return []; // 単価マスタ未取得なら判定しない
+  const known=(typeof admSeBuildStaffList==='function')?admSeBuildStaffList():[];
+  if(!known.length)return []; // 候補が未取得なら判定しない(誤検知で保存を止めない)
   const norm=s=>String(s||'').normalize('NFKC').replace(/[\s　]/g,'');
-  const master=new Set(invRates.map(r=>norm(r&&r.name)).filter(Boolean));
+  const master=new Set(known.map(norm).filter(Boolean));
   const skip=/^(休|公休|有給|-|—|ー|・|×|✕|◯|○|\?|？|空|なし|未定)$/;
   const seen=new Set(),out=[];
   updates.forEach(u=>{
@@ -13521,8 +13525,9 @@ let admBillSource='';        // 'snapshot:YYYY-MM' | 'live'
 let admBillLoadedMonth='';   // 現在 admBillShopData が対応する月
 
 async function fetchShopMasterSnapshot(month){
-  // 一時的な読込失敗で黙ってライブに落ちないよう、最大2回リトライ
-  for(let attempt=0;attempt<2;attempt++){
+  // Sheets の読取上限(429)などで一時的に失敗する。ここで諦めると請求が
+  // 「保持期間終了」扱いになるので、間隔を空けて3回まで粘る。
+  for(let attempt=0;attempt<3;attempt++){
     try{
       const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_read',month})});
       if(resp.ok){
@@ -13530,18 +13535,26 @@ async function fetchShopMasterSnapshot(month){
         if(json&&json.snapshot&&Array.isArray(json.records)&&json.records.length)return json;
       }
     }catch(_){}
-    if(attempt===0)await new Promise(r=>setTimeout(r,700));
+    if(attempt<2)await new Promise(r=>setTimeout(r,800*(attempt+1)));
   }
   return null;
 }
 // 月初スナップが「実体として存在するか」だけを確認(読込失敗と本当の未作成の区別用)
+// 戻り値: true=有る / false=無い / null=確認できなかった
+// ★ 確認できなかったときに false を返してはいけない。「保持期間が終了しています」と
+//   断定してしまい、実際にはスナップがあるのに保存値表示へ落ちる(2026-07で発生)。
 async function snapshotMonthExists(month){
-  try{
-    const r=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_list'})});
-    if(!r.ok)return false;
-    const j=await r.json();
-    return Array.isArray(j.months)&&j.months.includes(month);
-  }catch(_){return false;}
+  for(let i=0;i<3;i++){
+    try{
+      const r=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_list'})});
+      if(r.ok){
+        const j=await r.json();
+        if(Array.isArray(j.months))return j.months.includes(month);
+      }
+    }catch(_){}
+    if(i<2)await new Promise(r=>setTimeout(r,600*(i+1)));
+  }
+  return null; // 確認不能
 }
 
 function admBillRenderSource(){
@@ -13573,9 +13586,12 @@ async function admBillLoadForMonth(monthVal,force){
     // 付け替えを遡れないため、別月の構成で金額を出してしまう。
     //   スナップ有・読込失敗 → 一時的なので中止(待って再取得すれば正しい値が取れる)
     //   スナップ無し(保持期間切れ) → 確定時に保存した数値を参照する。再計算はしない
+    // exists: true=有る / false=無い / null=確認できなかった
+    // 確認できなかった場合は「取得失敗」側に倒す。無いと断定して保存値表示に落とすと、
+    // 実際はスナップがあるのに再取得を促されず、原因を誤認する。
     const exists=monthVal?await snapshotMonthExists(monthVal):false;
     admBillShopData=null;
-    admBillSource=exists?('snapfail:'+monthVal):('saved:'+monthVal);
+    admBillSource=(exists===false)?('saved:'+monthVal):('snapfail:'+monthVal);
   }
   admBillLoadedMonth=monthVal;
   admBillRenderSource();
