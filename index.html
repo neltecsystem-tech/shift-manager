@@ -14080,7 +14080,7 @@ async function admBillGenerate(){
     document.getElementById('adm-bill-totals').innerHTML='';
     if(admBillSource.indexOf('snapfail:')===0){
       pv.innerHTML=`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px;color:#b91c1c;font-size:13px;line-height:1.8;">`
-        +`⛔ <b>${esc(monthVal)} の月初スナップを読み込めませんでした。</b><br>`
+        +`⛔ <b>${smEsc(monthVal)} の月初スナップを読み込めませんでした。</b><br>`
         +`スナップ自体は存在するので、少し待ってから年月を選び直すか再読み込みしてください。<br>`
         +`<b>誤った金額で請求しないよう、ライブの店舗マスタでの再計算はしません。</b></div>`;
       return;
@@ -14088,8 +14088,8 @@ async function admBillGenerate(){
     const cf=getConfirmedSale(monthVal,area,course);
     if(!cf){
       pv.innerHTML=`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px;color:#b91c1c;font-size:13px;line-height:1.8;">`
-        +`⛔ <b>${esc(monthVal)} は月初スナップの保持期間が終了しており、確定済みの記録もありません。</b><br>`
-        +`${esc(area)} ${esc(course)} の請求金額を再現できません。ライブの店舗マスタで計算すると当時と違う店舗構成になるため、数字は出しません。</div>`;
+        +`⛔ <b>${smEsc(monthVal)} は月初スナップの保持期間が終了しており、確定済みの記録もありません。</b><br>`
+        +`${smEsc(area)} ${smEsc(course)} の請求金額を再現できません。ライブの店舗マスタで計算すると当時と違う店舗構成になるため、数字は出しません。</div>`;
       return;
     }
     pv.innerHTML=admBillSavedHtml(cf,area,course,monthVal);
@@ -14125,13 +14125,13 @@ function admBillSavedHtml(cf,area,course,monthVal){
   const yen=v=>'¥'+Number(v||0).toLocaleString();
   const row=(l,v)=>v===null||v===undefined?'':`<tr><td style="padding:6px 10px;border:1px solid #e2e8f0;">${l}</td><td style="padding:6px 10px;border:1px solid #e2e8f0;text-align:right;">${Number(v).toLocaleString()}</td></tr>`;
   return `<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:12px 14px;margin-bottom:12px;color:#1e40af;font-size:13px;line-height:1.8;">`
-    +`📁 <b>${esc(monthVal)} は月初スナップの保持期間が終了しています。</b>確定時に保存した数値を表示しています（再計算していません）。<br>`
-    +`<span style="font-size:12px;">確定日時 ${esc(cf.confirmed_at||'—')}</span></div>`
+    +`📁 <b>${smEsc(monthVal)} は月初スナップの保持期間が終了しています。</b>確定時に保存した数値を表示しています（再計算していません）。<br>`
+    +`<span style="font-size:12px;">確定日時 ${smEsc(cf.confirmed_at||'—')}</span></div>`
     +`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">`
     +`<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 18px;"><div style="font-size:12px;color:#15803d;">確定売上</div><div style="font-size:22px;font-weight:700;color:#15803d;">${yen(cf.grand_total)}</div></div>`
     +`<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 18px;"><div style="font-size:12px;color:#64748b;">朝刊計</div><div style="font-size:18px;font-weight:700;">${yen(cf.am_total)}</div></div>`
     +`<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 18px;"><div style="font-size:12px;color:#64748b;">夕刊計</div><div style="font-size:18px;font-weight:700;">${yen(cf.pm_total)}</div></div></div>`
-    +`<div style="font-size:12px;color:var(--text-sub);margin-bottom:4px;">確定時の店舗数（${esc(area)} ${esc(course)}）</div>`
+    +`<div style="font-size:12px;color:var(--text-sub);margin-bottom:4px;">確定時の店舗数（${smEsc(area)} ${smEsc(course)}）</div>`
     +`<table style="border-collapse:collapse;font-size:13px;">`
     +row('朝刊 店舗数',c.am)+row('　うち特殊',c.am_tokushu)+row('　雑誌',c.am_zasshi)
     +row('　同梱',c.am_dokkon)+row('　距離',c.am_kyori)
@@ -16109,6 +16109,8 @@ let admSlResult=null;
 let admSlActiveTab='closeopen';
 let admSlCatDrill=null; // 区分集計のドリルダウン中キー (`営業所\t区分`)
 
+// HTMLエスケープ。既存の esc は各関数内のローカル定義なので、関数外から使えるものを別名で置く。
+function smEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 let admSlSource=''; // 'snapshot:YYYY-MM' | 'nosnap'(未作成) | 'error'(取得失敗)
 let admSlSnapErrMonth=''; // スナップを取れなかった対象月
 
@@ -16131,12 +16133,12 @@ function admShopListRenderSource(){
     el.style.cssText='font-size:12px;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;padding:6px 10px;border-radius:8px;';
   }else if(admSlSource==='nosnap'){
     // 月初スナップが無い月。ライブで代用すると1日時点の構成を再現できないので突合しない。
-    el.innerHTML=`⛔ <b>${esc(admSlSnapErrMonth||'この月')} の月初スナップがありません</b>ので突合を中止しました。<br>`
+    el.innerHTML=`⛔ <b>${smEsc(admSlSnapErrMonth||'この月')} の月初スナップがありません</b>ので突合を中止しました。<br>`
       +`請求は月初スナップで計算します。ライブの店舗マスタは「今の姿」しか持たず、月途中のコース変更・付け替えを遡れないため、代用すると実態とかけ離れた差異が出ます。<br>`
       +`店舗マスタ画面の「📌 今すぐ月初スナップを作成（手動）」で作成してから、もう一度お試しください。`;
     el.style.cssText='font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;padding:8px 10px;border-radius:8px;line-height:1.7;';
   }else if(admSlSource==='error'){
-    el.innerHTML=`⛔ <b>${esc(admSlSnapErrMonth||'')} の月初スナップを取得できませんでした</b>（Sheets読み取り上限などの一時エラーの可能性。3回リトライ済み）。<br>`
+    el.innerHTML=`⛔ <b>${smEsc(admSlSnapErrMonth||'')} の月初スナップを取得できませんでした</b>（Sheets読み取り上限などの一時エラーの可能性。3回リトライ済み）。<br>`
       +`スナップ自体は存在する可能性が高いので、少し待って「🔄 マスタ再取得」を押してください。<br>`
       +`<b>誤った数字で請求を判断しないよう、ライブの店舗マスタでの代用はしません。</b>`;
     el.style.cssText='font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;padding:8px 10px;border-radius:8px;line-height:1.7;';
@@ -16581,7 +16583,7 @@ function admShopListAnalyze(){
     document.getElementById('adm-sl-summary').innerHTML+=
       `<div style="margin-top:10px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px 12px;font-size:12px;color:#b91c1c;">`
       +`⚠️ <b>荷主シートの申告件数と集計が一致しません（${scw.length}シート）。</b>配送列に○以外の記載がある可能性があります。<br>`
-      +scw.map(w=>`　・<b>${esc(w.sheet)}</b> シート申告 ${w.declared} / 集計 ${w.counted}（差 ${w.declared-w.counted}）`).join('<br>')
+      +scw.map(w=>`　・<b>${smEsc(w.sheet)}</b> シート申告 ${w.declared} / 集計 ${w.counted}（差 ${w.declared-w.counted}）`).join('<br>')
       +`</div>`;
   }
   document.getElementById('adm-sl-tab-closeopen').innerHTML=`🔥 閉店・新店シート (${admSlResult.closeopen.length})`;
