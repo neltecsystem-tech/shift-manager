@@ -11589,6 +11589,24 @@ async function admJinSave(){
   }
 }
 
+// 保存対象の値のうち、単価マスタ(invRates)に無い氏名を返す。
+// 空欄・記号・コース名・休み系の記号は氏名ではないので除外する。
+function admSeUnknownStaffIn(updates){
+  if(typeof invRates==='undefined'||!Array.isArray(invRates)||!invRates.length)return []; // 単価マスタ未取得なら判定しない
+  const norm=s=>String(s||'').normalize('NFKC').replace(/[\s　]/g,'');
+  const master=new Set(invRates.map(r=>norm(r&&r.name)).filter(Boolean));
+  const skip=/^(休|公休|有給|-|—|ー|・|×|✕|◯|○|\?|？|空|なし|未定)$/;
+  const seen=new Set(),out=[];
+  updates.forEach(u=>{
+    const v=String(u.value||'').trim();
+    if(!v||skip.test(v)||/^[\d\/\-:：\s]+$/.test(v))return;
+    const k=norm(v);
+    if(!k||master.has(k)||seen.has(k))return;
+    seen.add(k);out.push(v);
+  });
+  return out;
+}
+
 async function admSeSave(){
   // 人員名簿モードのときは admJinSave へ委譲
   if((admSeState.mode||'pretty')==='jin')return admJinSave();
@@ -11608,6 +11626,15 @@ async function admSeSave(){
     const [r,c]=k.split(',').map(Number);
     updates.push({row:r,col:c,value});
   });
+  // 単価マスタに無い氏名を検知して警告する。
+  // シフト表の氏名は単価マスタと完全一致で突合され、外れると支払明細がその人だけ
+  // 丸ごと作られない(7月に「ノアガデル/ノアガベル」の1文字違いで実際に発生)。
+  // 候補(datalist)から選べば起きないが、手入力・貼り付けの取りこぼしをここで拾う。
+  const unknown=admSeUnknownStaffIn(updates);
+  if(unknown.length){
+    const list=unknown.slice(0,12).map(n=>`・${n}`).join('\n')+(unknown.length>12?`\n…ほか${unknown.length-12}件`:'');
+    if(!window.confirm(`⚠️ 単価マスタに無い氏名が ${unknown.length} 件あります。\n\n${list}\n\nこのまま保存すると、この氏名の支払明細は作られません。\n（候補から選ぶか、先に単価マスタへ登録してください）\n\nそれでも保存しますか?`))return;
+  }
   if(!window.confirm(`${admSeState.sheetName} に ${updates.length} 件の変更を保存します。続行?`))return;
   msg.textContent=`保存中... (${updates.length}件)`;msg.style.color='#3b82f6';
   try{
