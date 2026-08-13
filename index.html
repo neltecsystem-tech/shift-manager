@@ -3975,7 +3975,7 @@ async function smLoad(force){
       if(h.includes('店舗名')&&h!=='正式店舗名')smColMap.name=i;
       if(h.includes('開店日'))smColMap.openDate=i;
       if(h.includes('朝刊コース'))smColMap.amCourse=i;
-      if(h==='旧夕刊コース')smColMap.pmCourseNew=i;
+      if(/^[新旧]夕刊コース/.test(h))smColMap.pmCourseNew=i;
       else if(h.includes('夕刊コース'))smColMap.pmCourse=i;
       if(h.includes('競馬コース'))smColMap.keibaCourse=i;
       if(h.includes('備考'))smColMap.note=i;
@@ -13665,7 +13665,7 @@ function admBillCols(){
     if(h==='夕刊同梱')cols.yuukanDokkon=i;
     if(h==='距離増')cols.kyori=i;
     if(h==='雑誌')cols.zasshi=i;
-    if(h==='旧夕刊コース')cols.pmCourseNew=i;
+    if(/^[新旧]夕刊コース/.test(h))cols.pmCourseNew=i;
     else if(h.includes('夕刊コース'))cols.pmCourse=i;
     if(h==='夕刊特殊納品')cols.pmTokushu=i;
     if(h.includes('競馬コース'))cols.keibaCourse=i;
@@ -17524,7 +17524,7 @@ async function msrLoadData(){
       if(h.includes('店舗名'))msrColMap.name=i;
       if(h.includes('朝刊コース'))msrColMap.amCourse=i;
       if(h.includes('朝刊順番'))msrColMap.amOrder=i;
-      if(h==='旧夕刊コース')msrColMap.pmCourseNew=i;
+      if(/^[新旧]夕刊コース/.test(h))msrColMap.pmCourseNew=i;
       else if(h.includes('夕刊コース'))msrColMap.pmCourse=i;
       if(h.includes('夕刊順番'))msrColMap.pmOrder=i;
       if(h.includes('競馬コース'))msrColMap.keibaCourse=i;
@@ -18208,7 +18208,7 @@ function diagBuildColMap(headers){
     if(h.includes('朝刊コース'))m.amCourse=i;
     if(h.includes('朝刊順番'))m.amOrder=i;
     // 「旧夕刊コース」(AJ列) は別管理。 「夕刊コース名」(O列) のみ pmCourse に入れる
-    if(h==='旧夕刊コース')m.pmCourseNew=i;
+    if(/^[新旧]夕刊コース/.test(h))m.pmCourseNew=i;
     else if(h.includes('夕刊コース'))m.pmCourse=i;
     if(h.includes('夕刊順番'))m.pmOrder=i;
     if(h.includes('競馬コース'))m.keibaCourse=i;
