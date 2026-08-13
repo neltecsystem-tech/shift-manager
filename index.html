@@ -16563,9 +16563,10 @@ function admShopListAnalyze(){
           courseDiff.push({code,name:mastNameOf(code),ship:expect,master:actual});
       });
     }
-    // 荷主件数からも閉店済みを差し引く。差0なのに件数だけ赤(不一致)になるのを避ける。
+    // 荷主件数は「荷主シートの実数」をそのまま出す。引き算すると Excel と突き合わせられない。
+    // 閉店済みは別バッジ(閉店N)で見せ、一致判定のときだけ差し引いて比べる。
     catCompare[k]={onlyShip,onlyMast,codeChanged,closedShip,courseDiff,
-                   shipCount:sh.size-closedShip.length,shipCountRaw:sh.size,mastCount:ma.size};
+                   shipCount:sh.size,closedCount:closedShip.length,mastCount:ma.size};
   });
   admSlResult={
     closeopen:coRes,newshop:newShops,closeshop:closedShops,diff:diffs,match:matches,catSummary,catCompare,
@@ -16731,8 +16732,8 @@ function admShopListRender(){
       const areas=[...order.filter(a=>present.includes(a)),...present.filter(a=>!order.includes(a)).sort()];
       if(areas.length===0)html='<p style="text-align:center;padding:30px;color:var(--text-sub);">区分シートが読み込まれていません</p>';
       else{
-        const colMast={朝刊:0,平日:0,競馬:0,朝出し:0},colShip={朝刊:0,平日:0,競馬:0,朝出し:0},colDiff={朝刊:0,平日:0,競馬:0,朝出し:0};
-        let gMast=0,gShip=0,gDiff=0;
+        const colMast={朝刊:0,平日:0,競馬:0,朝出し:0},colShip={朝刊:0,平日:0,競馬:0,朝出し:0},colDiff={朝刊:0,平日:0,競馬:0,朝出し:0};const colClosed={朝刊:0,平日:0,競馬:0,朝出し:0};
+        let gMast=0,gShip=0,gDiff=0,gClosed=0;
         html='<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">各区分シート(J列○)とマスタを照合。各セル上段=<b>マスタ件数 / 荷主件数</b>(<span style="color:#dc2626;">赤=件数不一致</span>)、下段=<b>差N</b>=食い違い店舗数(荷主のみ＝マスタ未登録＋マスタのみ＝荷主シート未掲載)、<b style="color:#2563eb;">コードN</b>=コード相違(同名で店舗コードのみ違う同一店。差異から除外)、<b style="color:#c2410c;">コースN</b>=コース相違(店はどちらにもあるが所属コースが違う。荷主リストの便番号 上1〜2桁から復元して比較。<b>コース単位の請求がズレます</b>)、<b style="color:#94a3b8;">閉店N</b>=対象月より前に閉店(荷主リストが処理日時点のため○が残っているだけ。差異・件数から除外)。平日=夕刊/朝出し=同梱。<b>下段をクリック</b>で該当店舗が出ます。件数が一致すれば店舗集計と突き合います。</p>';
         html+='<table style="border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px 18px;border:1px solid #cbd5e1;">営業所＼区分</th>'+cats.map(c=>`<th style="padding:8px 18px;border:1px solid #cbd5e1;">${c}</th>`).join('')+'<th style="padding:8px 18px;border:1px solid #cbd5e1;">計(食い違い)</th></tr></thead><tbody>';
         areas.forEach(a=>{
@@ -16743,8 +16744,10 @@ function admShopListRender(){
             const cmp=cc[key]||{shipCount:0,mastCount:0};
             const n=(cs[key]||[]).length;
             const cch=(cmp.codeChanged||[]).length;
-            rDiff+=n;colDiff[c]+=n;colMast[c]+=cmp.mastCount;colShip[c]+=cmp.shipCount;
-            const mismatch=cmp.mastCount!==cmp.shipCount;
+            rDiff+=n;colDiff[c]+=n;colMast[c]+=cmp.mastCount;colShip[c]+=cmp.shipCount;colClosed[c]=(colClosed[c]||0)+(cmp.closedCount||0);
+            // 荷主件数はシートの実数を表示するが、一致判定は閉店済みを除いて比べる
+            // (閉店は対象月に存在しないので、マスタに無いのが正しい)
+            const mismatch=cmp.mastCount!==(cmp.shipCount-(cmp.closedCount||0));
             const has=cmp.mastCount||cmp.shipCount||n||cch;
             const countLine=has?`<div style="font-size:11px;padding:2px 0;${mismatch?'color:#dc2626;font-weight:700;':'color:#475569;'}">${cmp.mastCount} / ${cmp.shipCount}</div>`:'';
             const ncl=(cc[key]&&cc[key].closedShip||[]).length;
@@ -16757,8 +16760,8 @@ function admShopListRender(){
           gDiff+=rDiff;
           html+=`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${rDiff}</td></tr>`;
         });
-        Object.keys(colMast).forEach(c=>{gMast+=colMast[c];gShip+=colShip[c];});
-        html+=`<tr style="background:#f8fafc;"><td style="padding:6px 18px;border:1px solid #cbd5e1;font-weight:700;">計</td>`+cats.map(c=>`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;"><div style="font-size:11px;${colMast[c]!==colShip[c]?'color:#dc2626;':'color:#475569;'}">${colMast[c]} / ${colShip[c]}</div>差${colDiff[c]}</td>`).join('')+`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;"><div style="font-size:11px;${gMast!==gShip?'color:#dc2626;':'color:#475569;'}">${gMast} / ${gShip}</div>差${gDiff}</td></tr>`;
+        Object.keys(colMast).forEach(c=>{gMast+=colMast[c];gShip+=colShip[c];gClosed+=colClosed[c]||0;});
+        html+=`<tr style="background:#f8fafc;"><td style="padding:6px 18px;border:1px solid #cbd5e1;font-weight:700;">計</td>`+cats.map(c=>`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;"><div style="font-size:11px;${colMast[c]!==(colShip[c]-(colClosed[c]||0))?'color:#dc2626;':'color:#475569;'}">${colMast[c]} / ${colShip[c]}</div>差${colDiff[c]}</td>`).join('')+`<td style="padding:6px 18px;border:1px solid #cbd5e1;text-align:center;font-weight:700;"><div style="font-size:11px;${gMast!==(gShip-gClosed)?'color:#dc2626;':'color:#475569;'}">${gMast} / ${gShip}</div>差${gDiff}</td></tr>`;
         html+='</tbody></table>';
       }
     }
