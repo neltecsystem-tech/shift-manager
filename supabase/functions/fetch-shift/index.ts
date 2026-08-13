@@ -108,6 +108,7 @@ const WRITE_ACTIONS = new Set([
   'update_cells',
   'update_range',
   'create_sheet',
+  'delete_sheet',
   'format_cells',
   'append_row',
   'delete_rows',
@@ -337,6 +338,79 @@ Deno.serve(async (req)=>{
       return new Response(JSON.stringify({
         success: true,
         updated: j.updatedCells || 0
+      }), {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    // シートをタブごと削除する。誤爆が致命的なので、
+    // 呼び出し側に confirm_name(削除するシート名と同じ文字列) を必須にしている。
+    if (body.action === 'delete_sheet') {
+      const token = await getToken('https://www.googleapis.com/auth/spreadsheets');
+      const name = body.sheet_name;
+      const spreadsheetId = body.spreadsheet_id || SHIFT_SPREADSHEET;
+      if (!name || body.confirm_name !== name) {
+        return new Response(JSON.stringify({
+          error: 'sheet_name and matching confirm_name required'
+        }), {
+          status: 400,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+      const meta = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      const mj = await meta.json();
+      const sh = (mj.sheets || []).find((s)=>s.properties.title === name);
+      if (!sh) {
+        return new Response(JSON.stringify({
+          error: 'sheet not found: ' + name
+        }), {
+          status: 404,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+      const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          requests: [
+            {
+              deleteSheet: {
+                sheetId: sh.properties.sheetId
+              }
+            }
+          ]
+        })
+      });
+      if (!resp.ok) {
+        const err = await resp.text();
+        return new Response(JSON.stringify({
+          error: 'Delete sheet failed: ' + err.slice(0, 300)
+        }), {
+          status: 500,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+      return new Response(JSON.stringify({
+        success: true,
+        deleted: name
       }), {
         headers: {
           ...corsHeaders,
@@ -930,7 +1004,7 @@ Deno.serve(async (req)=>{
       });
     }
     return new Response(JSON.stringify({
-      error: 'Unknown action. Use list_sheets, fetch_sheet, fetch_cached_shifts, update_cells, update_range, create_sheet, format_cells, append_row, delete_rows, insert_row_at, move_rows'
+      error: 'Unknown action. Use list_sheets, fetch_sheet, fetch_cached_shifts, update_cells, update_range, create_sheet, delete_sheet, format_cells, append_row, delete_rows, insert_row_at, move_rows'
     }), {
       headers: {
         ...corsHeaders,
