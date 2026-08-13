@@ -14215,7 +14215,7 @@ async function admBillGenerate(){
   const confirmed=getConfirmedSale(monthVal,area,course);
   let topBar='';
   if(confirmed){
-    topBar=`<div style="background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+    topBar=`<div class="no-print" style="background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
       <div><span style="color:#166534;font-weight:bold;">✓ 確定済み</span> <span style="color:var(--text-sub);font-size:12px;margin-left:8px;">確定日時: ${confirmed.confirmed_at} / 確定額: ¥${Number(confirmed.grand_total).toLocaleString()}</span></div>
       <div style="display:flex;gap:6px;">
         <button onclick="admBillConfirm('${area}','${course}','${monthVal}',${result.grandTotal},${result.totalAmSum},${result.totalPmSum},true)" title="解除せずに、いまの月初スナップで計算し直して上書きします" style="background:#2563eb;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">🔄 再確定（上書き）</button>
@@ -14224,7 +14224,7 @@ async function admBillGenerate(){
       </div>
     </div>`;
   }else{
-    topBar=`<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
+    topBar=`<div class="no-print" style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
       <div><span style="color:#92400e;font-weight:bold;">⚠ 未確定</span> <span style="color:var(--text-sub);font-size:12px;margin-left:8px;">収支管理にはまだ反映されていません</span></div>
       <button onclick="admBillConfirm('${area}','${course}','${monthVal}',${result.grandTotal},${result.totalAmSum},${result.totalPmSum})" style="background:#22c55e;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">✓ 売上を確定する</button>
     </div>`;
@@ -14628,7 +14628,7 @@ function buildAreaTotalPage(area,monthVal,courses){
 
   // 確定ボタンエリア
   if(confirmedCnt===courses.length&&courses.length>0){
-    h+=`<div style="background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
+    h+=`<div class="no-print" style="background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
       <div><span style="color:#166534;font-weight:bold;">✓ 全${courses.length}コース確定済み</span> <span style="color:var(--text-sub);font-size:12px;margin-left:8px;">収支管理に反映されます</span></div>
       <div style="display:flex;gap:6px;">
         <button onclick="admBillAreaReconfirmAll('${area}','${monthVal}')" title="解除せずに、いまの月初スナップで計算し直して確定額を上書きします" style="background:#2563eb;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">🔄 再確定（上書き）</button>
@@ -14636,7 +14636,7 @@ function buildAreaTotalPage(area,monthVal,courses){
       </div>
     </div>`;
   }else{
-    h+=`<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
+    h+=`<div class="no-print" style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
       <div><span style="color:#92400e;font-weight:bold;">⚠ 未確定 ${courses.length-confirmedCnt}/${courses.length}コース</span> <span style="color:var(--text-sub);font-size:12px;margin-left:8px;">ボタンで一括確定できます</span></div>
       <button onclick="admBillAreaConfirmAll('${area}','${monthVal}')" style="background:#22c55e;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">✓ 営業所全コース確定</button>
     </div>`;
@@ -14650,7 +14650,7 @@ function buildAreaTotalPage(area,monthVal,courses){
   h+=`<div style="flex:1;background:#fef3c7;border:2px solid #f59e0b;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:11px;color:#92400e;">総合計</div><div style="font-size:24px;font-weight:bold;color:#92400e;">¥${subtotal.toLocaleString()}</div></div>`;
   h+=`</div>`;
   if(confirmedCnt>0){
-    h+=`<div style="padding:8px 12px;background:#dcfce7;border-radius:6px;font-size:12px;margin-bottom:12px;color:#166534;">✓ ${confirmedCnt}/${courses.length}コースが確定済み（確定金額を優先使用）</div>`;
+    h+=`<div class="no-print" style="padding:8px 12px;background:#dcfce7;border-radius:6px;font-size:12px;margin-bottom:12px;color:#166534;">✓ ${confirmedCnt}/${courses.length}コースが確定済み（確定金額を優先使用）</div>`;
   }
   h+=`<table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:8px;">`;
   h+=`<thead><tr style="background:#f1f5f9;"><th style="border:1px solid #ccc;padding:10px;">項目</th><th style="border:1px solid #ccc;padding:10px;text-align:right;">店舗数（延べ）</th><th style="border:1px solid #ccc;padding:10px;text-align:right;">金額</th></tr></thead><tbody>`;
@@ -14992,7 +14992,7 @@ function admBillSavePDF(){
   const fileName=`R${reiwa}年${m}月度${area}明細`;
 
   const win=window.open('','_blank');
-  const printCss=`body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 4px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:2mm;box-sizing:border-box;}.summary-page{page:summary;font-size:10px!important;padding:4mm!important;border:none!important;}.summary-page h2{font-size:16px!important;}.summary-page table{font-size:10px!important;}.summary-page table th,.summary-page table td{padding:3px 5px!important;}@page{size:A4 landscape;margin:0;}@page summary{size:A4 portrait;margin:5mm;}@media print{div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}.summary-page{page-break-inside:avoid!important;}}`;
+  const printCss=`body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 4px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:2mm;box-sizing:border-box;}.summary-page{page:summary;font-size:10px!important;padding:4mm!important;border:none!important;}.summary-page h2{font-size:16px!important;}.summary-page table{font-size:10px!important;}.summary-page table th,.summary-page table td{padding:3px 5px!important;}button{display:none!important;}.no-print{display:none!important;}@page{size:A4 landscape;margin:0;}@page summary{size:A4 portrait;margin:5mm;}@media print{div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}.summary-page{page-break-inside:avoid!important;}}`;
   win.document.write(`<!DOCTYPE html><html><head><title>${fileName}</title><style>${printCss}</style></head><body>${preview.innerHTML}<script>document.title='${fileName}';setTimeout(()=>window.print(),500)<\/script></body></html>`);
   win.document.close();
 }
@@ -15001,7 +15001,7 @@ function admBillPrint(){
   const preview=document.getElementById('adm-bill-preview');
   if(!preview||!preview.innerHTML.trim()){alert('先に明細を作成してください');return;}
   const win=window.open('','_blank');
-  const printCss=`body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 4px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:2mm;box-sizing:border-box;}.summary-page{page:summary;font-size:10px!important;padding:4mm!important;border:none!important;}.summary-page h2{font-size:16px!important;}.summary-page table{font-size:10px!important;}.summary-page table th,.summary-page table td{padding:3px 5px!important;}button{display:none!important;}@page{size:A4 landscape;margin:0;}@page summary{size:A4 portrait;margin:5mm;}@media print{div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}.summary-page{page-break-inside:avoid!important;}}`;
+  const printCss=`body{font-family:'Meiryo',sans-serif;padding:0;margin:0;color:#1e293b;font-size:11px;}table{width:100%;border-collapse:collapse;}th,td{padding:2px 4px;border:1px solid #ccc;}.bill-page{page-break-after:always;padding:2mm;box-sizing:border-box;}.summary-page{page:summary;font-size:10px!important;padding:4mm!important;border:none!important;}.summary-page h2{font-size:16px!important;}.summary-page table{font-size:10px!important;}.summary-page table th,.summary-page table td{padding:3px 5px!important;}button{display:none!important;}.no-print{display:none!important;}@page{size:A4 landscape;margin:0;}@page summary{size:A4 portrait;margin:5mm;}@media print{div[style*="page-break"]{page-break-before:always!important;margin-top:0!important;padding-top:0!important;border-top:none!important;}.summary-page{page-break-inside:avoid!important;}}`;
   win.document.write(`<!DOCTYPE html><html><head><title>請求明細</title><style>${printCss}</style></head><body>${preview.innerHTML}<script>setTimeout(()=>window.print(),500)<\/script></body></html>`);
   win.document.close();
 }
