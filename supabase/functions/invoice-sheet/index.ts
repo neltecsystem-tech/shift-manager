@@ -153,7 +153,13 @@ const RATE_HEADERS = ['スタッフ名','朝刊(月-金)','朝刊(土)','夕刊/
 
 const SERVICE_ACCOUNT = JSON.parse(Deno.env.get('GOOGLE_SERVICE_ACCOUNT_KEY')!);
 const SESSION_SECRET = Deno.env.get('SHIFT_SESSION_SECRET') || '';
-const ADMIN_PASSWORD = Deno.env.get('SHIFT_ADMIN_PASSWORD') || 'neltec2026';
+// ★ SHIFT_ADMIN_PASSWORD とは分けること。
+// あちらは fetch-shift / shop-master が「本物の秘密鍵」として使う変数で、
+// 未設定なら弾く設計 (|| '')。ここは画面(index.html)が平文で持っている UI 用
+// パスワードと突き合わせるだけなので、性質がまったく違う。
+// 同じ変数を共用していたため、2026-08-13 に遮断対応で SHIFT_ADMIN_PASSWORD を
+// 設定した瞬間、請求書と鍵マップの管理操作が全部 401 になった。
+const ADMIN_PASSWORD = Deno.env.get('SHIFT_UI_PASSWORD') || 'neltec2026';
 const SYNC_SECRET = Deno.env.get('SYNC_SECRET') || ''; // 会計同期cron用の秘密ヘッダ
 const TOKEN_EXPIRY_MS = 12 * 60 * 60 * 1000; // 12時間
 
