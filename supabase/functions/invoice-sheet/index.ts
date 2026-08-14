@@ -1298,6 +1298,52 @@ Deno.serve(async(req:Request)=>{
       }
       return jsonResp({success:true});
     }
+    // 確定の一括保存。1コースずつ save_confirmed_sale を叩くと、コースごとに
+    // シート全体(A2:P5000)を読むため、45コースで読み取り45回になり Sheets の
+    // 「1分あたり60回」上限に当たって途中で 429 で落ちる(2026-07 立川で発生)。
+    // ここでは読み取り1回・書き込み1回にまとめる。
+    if(action==='save_confirmed_sales_bulk'){
+      if(!admin) return forbid();
+      const list = Array.isArray(body.confirmed_sales) ? body.confirmed_sales : [];
+      if(!list.length) return jsonResp({error:'confirmed_sales required'}, 400);
+      const now=new Date().toISOString().replace('T',' ').slice(0,19);
+      const n=(v:any)=> (v===undefined||v===null||v==='') ? '' : (Number(v)||0);
+      const existResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A2:P5000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      const existRows=await sheetVals(existResp);
+      const idxOf=new Map<string,number>();
+      existRows.forEach((r:string[],i:number)=>{
+        const k=`${normalizeYM(r[0])}\u0001${(r[1]||'').trim()}\u0001${(r[2]||'').trim()}`;
+        if(!idxOf.has(k)) idxOf.set(k,i);
+      });
+      const updates:any[]=[]; const appends:any[]=[]; const saved:string[]=[]; const skipped:any[]=[];
+      for(const it of list){
+        const ym=normalizeYM(it?.year_month); const ar=it?.area; const cs=it?.course;
+        if(!ym||!ar||!cs){ skipped.push({course:cs??'', reason:'year_month/area/course がありません'}); continue; }
+        const c=it.counts||{};
+        const row=[ym,ar,cs,it.grand_total||0,it.am_total||0,it.pm_total||0,now,
+          n(c.am),n(c.am_tokushu),n(c.am_zasshi),n(c.am_dokkon),n(c.am_kyori),n(c.pm),n(c.pm_tokushu),n(c.keiba),n(c.keiba_tokushu)];
+        const k=`${ym}\u0001${ar}\u0001${cs}`;
+        const at=idxOf.get(k);
+        if(at!==undefined){
+          // counts 未指定の更新では既存の店舗数(H〜P)を維持(単体保存と同じ規則)
+          if(!it.counts){ const ex=existRows[at]||[]; for(let j=7;j<=15;j++) row[j]=(ex[j]!==undefined?ex[j]:''); }
+          const rn=at+2;
+          updates.push({range:`${CONFIRMED_SALES_SHEET}!A${rn}:P${rn}`,values:[row]});
+        }else{
+          appends.push(row);
+        }
+        saved.push(cs);
+      }
+      if(updates.length){
+        const r1=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'RAW',data:updates})});
+        if(!r1.ok) return jsonResp({error:`確定の更新に失敗しました (HTTP ${r1.status}): ${(await r1.text()).slice(0,300)}`}, 502);
+      }
+      if(appends.length){
+        const r2=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CONFIRMED_SALES_SHEET)}!A1:P1:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:appends})});
+        if(!r2.ok) return jsonResp({error:`確定の追加に失敗しました (HTTP ${r2.status}): ${(await r2.text()).slice(0,300)}`}, 502);
+      }
+      return jsonResp({success:true, saved:saved.length, updated:updates.length, appended:appends.length, skipped});
+    }
     if(action==='unconfirm_sale'){
       if(!admin) return forbid();
       if(!year_month||!area||!course) return jsonResp({error:'year_month, area, course required'}, 400);

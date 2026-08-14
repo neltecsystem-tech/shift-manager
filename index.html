@@ -6119,6 +6119,23 @@ async function invApi(body){
 // await invApi(...) だけでは「保存できていないのに成功扱い」になる。
 // 実際に確定(save_confirmed_sale)が1件も保存されないまま
 // 「✓ 確定しました」と出ていた。応答を検証して失敗なら例外にする。
+// 確定の一括保存。1コースずつ save_confirmed_sale を叩くと、コースごとに
+// Sheets 全体を読むため 45コースで読み取り45回になり「1分あたり60回」の上限に
+// 当たって途中で 429 で落ちる(2026-07 立川で発生)。サーバ側で読み書き各1回にまとめる。
+// 上限に当たった場合に備え、間隔を空けて3回まで試す。
+async function invSaveConfirmedBulk(items,onRetry){
+  const WAITS=[3000,10000];
+  let lastErr=null;
+  for(let attempt=0;attempt<3;attempt++){
+    try{ return await invWrite({action:'save_confirmed_sales_bulk',confirmed_sales:items}); }
+    catch(e){
+      lastErr=e;
+      if(attempt<2){ if(onRetry)onRetry(attempt+1,e); await new Promise(r=>setTimeout(r,WAITS[attempt])); }
+    }
+  }
+  throw lastErr;
+}
+
 async function invWrite(body){
   const data=await invApi(body);
   if(!data) throw new Error('応答がありません（通信失敗）');
@@ -13882,10 +13899,10 @@ async function admBillAreaConfirmAll(area,monthVal){
     // 進捗表示
     admBillShowProgress(`🔄 ${area}営業所 確定処理中...`);
     try{
-      for(let i=0;i<results.length;i++){
-        admBillUpdateProgress(i,results.length,`${results[i].course} を確定中...`);
-        await invWrite({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course:results[i].course,grand_total:results[i].grand,am_total:results[i].am,pm_total:results[i].pm,counts:results[i].counts}});
-      }
+      admBillUpdateProgress(0,results.length,`${results.length}コースを保存中...`);
+      await invSaveConfirmedBulk(
+        results.map(r=>({year_month:monthVal,area,course:r.course,grand_total:r.grand,am_total:r.am,pm_total:r.pm,counts:r.counts})),
+        (n,e)=>admBillUpdateProgress(0,results.length,`混雑のため再試行 ${n}/2（${e.message}）`));
       admBillUpdateProgress(results.length,results.length,'キャッシュ更新中...');
       confirmedSalesCache=null;
       await loadConfirmedSales();
@@ -13947,27 +13964,12 @@ async function admBillAreaReconfirmAll(area,monthVal){
     // ¥720,800 が最後の1コースだけ取り残された)。失敗は最後に必ず名前で報告する。
     const failed=[];
     try{
-      for(let i=0;i<results.length;i++){
-        admBillUpdateProgress(i,results.length,`${results[i].course} を上書き中...`);
-        let lastErr=null;
-        // Sheets の書き込み上限(1分あたり)に当たると 1コースだけ落ちる。
-        // 600ms では足りないので、待ち時間を大きく取って4回まで試す。
-        const WAITS=[1500,5000,15000];
-        for(let attempt=0;attempt<4;attempt++){
-          try{
-            await invWrite({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course:results[i].course,grand_total:results[i].grand,am_total:results[i].am,pm_total:results[i].pm,counts:results[i].counts}});
-            lastErr=null;break;
-          }catch(e){
-            lastErr=e;
-            if(attempt<3){
-              admBillUpdateProgress(i,results.length,`${results[i].course} 再試行 ${attempt+1}/3（${e.message}）`);
-              await new Promise(r=>setTimeout(r,WAITS[attempt]));
-            }
-          }
-        }
-        if(lastErr)failed.push({course:results[i].course,msg:lastErr.message||String(lastErr)});
-        else await new Promise(r=>setTimeout(r,250));// 上限に当てないよう間隔を空ける
-      }
+      admBillUpdateProgress(0,results.length,`${results.length}コースを上書き中...`);
+      try{
+        await invSaveConfirmedBulk(
+          results.map(r=>({year_month:monthVal,area,course:r.course,grand_total:r.grand,am_total:r.am,pm_total:r.pm,counts:r.counts})),
+          (n,e)=>admBillUpdateProgress(0,results.length,`混雑のため再試行 ${n}/2（${e.message}）`));
+      }catch(e){ results.forEach(r=>failed.push({course:r.course,msg:e.message||String(e)})); }
       admBillUpdateProgress(results.length,results.length,'キャッシュ更新中...');
       confirmedSalesCache=null;
       await loadConfirmedSales();
