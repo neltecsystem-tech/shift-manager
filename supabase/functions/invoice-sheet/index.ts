@@ -843,7 +843,52 @@ Deno.serve(async(req:Request)=>{
       });
       const byArea:Record<string,number>={};
       dedup.forEach(v=>{ byArea[v.area]=(byArea[v.area]||0)+v.grand; });
-      return jsonResp({year_month:ym, by_area:byArea});
+
+      // ── 追加請求行(コース外)を足す ──
+      // 確定(save_confirmed_sale)はコース単位なので、請求書の営業所合計に載る
+      // 返品新聞作業料・庫内作業費・優馬直送便が確定に入らない。これを会計へ
+      // 渡さないと、毎月その分だけ売上が不足する(2026-07 立川 450,572 / 高津 184,368)。
+      // 画面(admBillAreaTotal)と同じ規則で請求条件から計算する。
+      const extras:Record<string,number>={};
+      const extraDetail:Record<string,{label:string;amount:number}[]>={};
+      try{
+        const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+        const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+        if(SB_URL && SRK){
+          const cr = await fetch(`${SB_URL}/rest/v1/bill_conditions?select=conditions&month_val=eq.${encodeURIComponent(ym)}`,{headers:{'apikey':SRK,'Authorization':`Bearer ${SRK}`}});
+          const carr = cr.ok ? await cr.json() : [];
+          const cond:any = (carr && carr[0] && carr[0].conditions) || {};
+          const [yy,mm] = ym.split('-').map(Number);
+          const daysInMonth = new Date(yy, mm, 0).getDate();
+          const holiday:number[] = cond.holiday || [];
+          const noam:number[] = cond.noam || [];
+          const nopm:number[] = cond.nopm || [];
+          const yeskeiba:number[] = cond.yeskeiba || [];
+          let amDays=0, keibaWorkDays=0;
+          for(let d=1;d<=daysInMonth;d++){
+            const dow=new Date(yy,mm-1,d).getDay();
+            const isHoliday=holiday.includes(d);
+            if(!isHoliday && !noam.includes(d)) amDays++;
+            // 競馬配送日: 金・土 + yeskeiba (月〜木は夕刊で競馬配送なし)
+            const isKeibaDispatch=(dow===5||dow===6||yeskeiba.includes(d)) && !nopm.includes(d);
+            if(!isHoliday && isKeibaDispatch) keibaWorkDays++;
+          }
+          const push=(area:string,label:string,amount:number)=>{
+            if(!amount) return;
+            extras[area]=(extras[area]||0)+amount;
+            (extraDetail[area]=extraDetail[area]||[]).push({label,amount});
+          };
+          push('立川','返品新聞 開梱+カゴ分け作業料', Number(cond.work_tachikawa)||0);
+          push('立川',`庫内作業費(朝刊) ${amDays}日×6,000`, amDays*6000);
+          push('立川',`庫内作業費(競馬) ${keibaWorkDays}日×9,000`, keibaWorkDays*9000);
+          push('川崎高津','返品新聞 開梱+カゴ分け作業料', Number(cond.work_kawasaki)||0);
+          push('川崎高津',`優馬直送便 ${keibaWorkDays}日×7,000`, keibaWorkDays*7000);
+        }
+      }catch(_){ /* 追加分が取れなくてもコース分は返す */ }
+
+      const byAreaCourses:Record<string,number>={...byArea};
+      Object.entries(extras).forEach(([a,v])=>{ if(byArea[a]!==undefined) byArea[a]=byArea[a]+v; });
+      return jsonResp({year_month:ym, by_area:byArea, by_area_courses:byAreaCourses, extras, extra_detail:extraDetail});
     }
 
     // ---- 以下はトークン必須 ----
