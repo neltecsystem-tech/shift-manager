@@ -55,9 +55,10 @@ function coKey(s: string): string {
     .toLowerCase();
 }
 
-// 氏名照合(電話番号未登録者の明細取得)は管理者のみ許可。
-// shift EF は NexPort と同一プロジェクト(workchat)上なので、admin クライアントで
-// caller の JWT を検証し profiles.role を確認できる。
+// 🔒 他人の明細(氏名照合・会社集計・取引先一覧・他人の電話)を引けるのは「NELTEC社員の管理者」のみ。
+//    管理者権限を持つ委託ドライバー(個人事業主)からは引けないようにする(2026-08-07)。
+//    社員判定 = 中央人材マスタ staff_master.category='社員' (profile_id または電話で照合)。
+//    super_admin は保守用に常に許可。
 async function callerIsAdmin(admin: any, authToken: string | undefined): Promise<boolean> {
   if (!authToken) return false;
   try {
@@ -65,10 +66,16 @@ async function callerIsAdmin(admin: any, authToken: string | undefined): Promise
     if (!user) return false;
     const { data: prof } = await admin
       .from('profiles')
-      .select('role')
+      .select('role, phone')
       .eq('id', user.id)
       .maybeSingle();
-    return !!prof && (prof.role === 'admin' || prof.role === 'super_admin');
+    if (!prof) return false;
+    if (prof.role === 'super_admin') return true;
+    if (prof.role !== 'admin') return false;
+    const ph = normalizePhone(String((prof as any).phone ?? ''));
+    const or = [`profile_id.eq.${user.id}`, ph ? `phone.eq.${ph}` : ''].filter(Boolean).join(',');
+    const { data: sm } = await admin.from('staff_master').select('category').or(or).limit(5);
+    return (sm ?? []).some((r: any) => String(r.category ?? '') === '社員');
   } catch (_) {
     return false;
   }
@@ -215,7 +222,8 @@ Deno.serve(async (req: Request) => {
       // 🔒 電話番号での本人明細取得: 本人 or 管理者 or 自社オーナー(自社メンバー)のみ。
       //   他人の電話で他人の明細を取得できないようにする(askul/delivery EFと同一の保護)。
       const caller = await getCaller(admin, body.auth_token);
-      const isAdmin = !!caller && (caller.role === 'admin' || caller.role === 'super_admin');
+      // 他人の電話で明細を引けるのは NELTEC社員の管理者のみ(委託ドライバーの管理者は不可)。
+      const isAdmin = caller?.phone === phoneInput ? true : await callerIsAdmin(admin, body.auth_token);
       if (!isAdmin) {
         if (!caller || !caller.phone) return json({ error: 'forbidden (ログインが必要です)', code: 'FORBIDDEN' }, 403);
         if (caller.phone !== phoneInput) {
