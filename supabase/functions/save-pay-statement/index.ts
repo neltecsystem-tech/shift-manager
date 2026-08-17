@@ -42,6 +42,19 @@ interface Payload {
   finalized_by?: string;
   statement?: StatementPayload;
   statements?: StatementPayload[];
+  action?: string;
+  year?: number;
+  month?: number;
+}
+
+// コース名から営業所 (index.html の areaOfCourse と同じ規則)
+function areaOfCourse(c: string): string {
+  const s = String(c || '');
+  if (s.startsWith('城北')) return '城北';
+  if (s.startsWith('川越')) return '川越';
+  if (s.startsWith('立川')) return '立川';
+  if (s.startsWith('川崎')) return '川崎高津';
+  return '';
 }
 
 // invoice-sheet と共有の HMAC token 検証 (SHIFT_SESSION_SECRET)
@@ -104,6 +117,65 @@ Deno.serve(async (req: Request) => {
     // 認証: HMAC token (shift admin_login で発行) のみ。 admin_password は廃止
     const claims = await verifyShiftToken(body.auth_token);
     if (claims?.role !== 'admin') return json({ error: 'unauthorized', code: 'AUTH_REQUIRED' }, 401);
+
+    // ── 確定済み支払いの営業所別サマリー ──
+    // 収支管理はこれまで毎回シフト+単価マスタから外注費を計算し直しており、
+    // Sheets の読取上限(429)に当たると金額が黙って小さく出ていた。
+    // 支払いは「確定・公開」で closed_pay_statements に保存済みなので、
+    // 確定済みの月はその数字をそのまま使う。日別の行にコース名が入っているので
+    // 営業所別も出せる。集計はここ(サーバ)で完結させ、明細は返さない。
+    if (body.action === 'summary') {
+      const year = Number(body.year), month = Number(body.month);
+      if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return json({ error: 'year/month required' }, 400);
+      }
+      const admin0 = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+      const { data, error } = await admin0
+        .from('closed_pay_statements')
+        .select('staff_name, grand_total, planner_allowance, primary_area, rows, finalized_at')
+        .eq('year', year).eq('month', month);
+      if (error) return json({ error: error.message }, 500);
+      const list = data ?? [];
+      const byArea: Record<string, number> = {};
+      let total = 0, attributed = 0, lastAt = '';
+      for (const s of list) {
+        total += Number(s.grand_total) || 0;
+        if (s.finalized_at && String(s.finalized_at) > lastAt) lastAt = String(s.finalized_at);
+        const perArea: Record<string, number> = {};
+        let mine = 0;
+        for (const r of (Array.isArray(s.rows) ? s.rows : []) as StatementRow[]) {
+          const a1 = areaOfCourse(r?.am_course ?? ''); const v1 = Number(r?.am) || 0;
+          if (a1 && v1) { perArea[a1] = (perArea[a1] ?? 0) + v1; mine += v1; }
+          const a2 = areaOfCourse(r?.pm_course ?? ''); const v2 = Number(r?.pm) || 0;
+          if (a2 && v2) { perArea[a2] = (perArea[a2] ?? 0) + v2; mine += v2; }
+        }
+        // コースの付かない支払い(プランナー手当・特別日当・営業所を判定できないコース)は
+        // その人が実際に稼働した営業所の金額比で按分する。稼働営業所が取れない人は
+        // primary_area へ、それも無ければ未配分として残す。
+        const leftover = Math.round((Number(s.grand_total) || 0) - mine);
+        const areas = Object.keys(perArea);
+        if (leftover > 0 && areas.length) {
+          let dealt = 0;
+          areas.forEach((a, i) => {
+            const v = i === areas.length - 1 ? leftover - dealt : Math.round(leftover * (perArea[a] / mine));
+            dealt += v; perArea[a] += v;
+          });
+        } else if (leftover > 0 && s.primary_area) {
+          perArea[String(s.primary_area)] = (perArea[String(s.primary_area)] ?? 0) + leftover;
+        }
+        for (const [a, v] of Object.entries(perArea)) { byArea[a] = (byArea[a] ?? 0) + v; attributed += v; }
+      }
+      // 人別の合計も返す (収支のスタッフ別表示用)。明細行は返さない。
+      const byStaff = list
+        .map((s) => ({ staff: String(s.staff_name || ''), amount: Number(s.grand_total) || 0 }))
+        .filter((x) => x.staff && x.amount)
+        .sort((a, b) => b.amount - a.amount);
+      return json({
+        year, month, staff_count: list.length, finalized: list.length > 0,
+        total, by_area: byArea, by_staff: byStaff, unassigned: Math.max(0, total - attributed),
+        last_finalized_at: lastAt || null,
+      });
+    }
 
     const all: StatementPayload[] = body.statement
       ? [body.statement]

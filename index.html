@@ -823,7 +823,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="adm-revenue" class="adm-panel" style="display:none;">
         <div class="filters">
           <div><label>年月</label><input type="month" id="adm-rev-month" onchange="admRevLoad()"></div>
-          <div><label>支払い元</label><select id="adm-rev-expsrc" onchange="admRevLoad()"><option value="shift">シフト自動</option><option value="work">稼働記録</option></select></div>
+          <div><label>支払い元</label><select id="adm-rev-expsrc" onchange="admRevLoad()"><option value="closed">確定支払い（推奨）</option><option value="shift">シフト自動（再計算）</option><option value="work">稼働記録</option></select></div>
           <div><label>表示</label><select id="adm-rev-view" onchange="admRevRender()"><option value="all">全営業所合計</option><option value="area">営業所別</option><option value="course">コース別</option><option value="daily">コース別日次</option></select></div>
           <div><label>営業所</label><select id="adm-rev-area" onchange="admRevRender()"><option value="">全て</option></select></div>
           <div id="adm-rev-course-wrap" style="display:none;"><label>コース</label><select id="adm-rev-course" onchange="admRevRender()"><option value="">選択</option></select></div>
@@ -9677,6 +9677,25 @@ async function admRevInit(){
   admRevLoad();
 }
 
+// エラー文が長い(GoogleのQuota本文など)ので、原因が分かる短さに詰める
+function admRevErrShort(msg){
+  const s=String(msg||'');
+  if(/429|Quota exceeded/i.test(s))return 'Googleスプレッドシートの読み取り上限(429)に達しました';
+  return s.length>160?s.slice(0,160)+'…':s;
+}
+// 数字を1つも出さずに理由だけ表示する。中途半端な数字を見せない。
+function admRevShowBlocked(reasons){
+  admRevData=null;
+  const detail=document.getElementById('adm-rev-detail');if(detail)detail.innerHTML='';
+  const el=document.getElementById('adm-rev-summary');if(!el)return;
+  el.innerHTML=`<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:16px 18px;color:#b91c1c;">`
+    +`<div style="font-weight:bold;font-size:15px;margin-bottom:8px;">⛔ 数字を表示できません</div>`
+    +`<div style="font-size:13px;line-height:1.9;">`+reasons.map(r=>'・'+r).join('<br>')+`</div>`
+    +`<div style="font-size:12px;margin-top:10px;color:#7f1d1d;">誤った数字で判断しないよう、集計を中止しました。読み取り上限は1分あたりで回復します。少し待ってから下のボタンを押してください。</div>`
+    +`<button onclick="admRevLoad()" style="margin-top:10px;padding:8px 16px;border:none;border-radius:8px;background:#b91c1c;color:#fff;font-weight:600;cursor:pointer;">🔄 もう一度読み込む</button>`
+    +`</div>`;
+}
+
 async function admRevLoad(){
   const monthVal=document.getElementById('adm-rev-month').value;
   if(!monthVal)return;
@@ -9686,12 +9705,33 @@ async function admRevLoad(){
   // 確定済み売上を読み込む
   await loadConfirmedSales();
 
+  // ── 信用できない数字は出さない ──
+  // ★ 中途半端な数字を出すくらいなら何も出さない方がよい。Sheetsの読取上限(429)に
+  //   当たると、店舗マスタが0件 → コースも0件 → 売上が営業所追加料金だけになり、
+  //   「売上¥698,434・粗利率-3106%」のような数字が並んでしまう(2026-08-17に発生)。
+  // 確定売上が読めないときは売上の正が無いので中止する。
+  if(confirmedSalesLoadError){
+    admRevShowBlocked([`確定売上を読み込めませんでした（${admRevErrShort(confirmedSalesLoadError)}）`]);
+    return;
+  }
+
   // 売上: 確定済みを優先、なければ計算値
   const records=(admBillShopData?.records)||[];
+  // 店舗マスタが読めなくても、売上は確定売上(営業所・コース単位で保存済み)だけで出せる。
+  // 出せないのは店舗数と、未確定コースの計算値だけ。数字を丸ごと消すより、
+  // 出せるものを出して出せないものを「—」にする。
+  const masterOk=records.length>0;
   const cols=admBillCols();
   const allAreas=['立川','城北','川越','川崎高津'];
   const sales=[];
-  allAreas.forEach(area=>{
+  if(!masterOk){
+    // 店舗マスタが無い → 確定売上そのものから営業所別に組み立てる。
+    // 店舗数は数えられないので 0 のままにし、表示側で「—」にする。
+    (confirmedSalesCache||[]).filter(s=>s.year_month===monthVal&&s.course!=='(手入力)').forEach(c=>{
+      sales.push({area:c.area,course:c.course,amount:Number(c.grand_total)||0,amTotal:Number(c.am_total)||0,pmTotal:Number(c.pm_total)||0,confirmed:true,confirmed_at:c.confirmed_at,amCount:0,pmCount:0,keibaCount:0,kanriTotal:0});
+    });
+  }
+  if(masterOk)allAreas.forEach(area=>{
     const matchAreas=area==='城北'?['城北','池袋']:[area];
     const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止')&&matchAreas.includes((r[`col_${cols.area}`]||'').split(',')[0].trim()));
     const allC=new Set();
@@ -9752,12 +9792,38 @@ async function admRevLoad(){
     if(ex.total>0)areaExtras[area]=ex;
   });
 
-  // 支払いソース選択: 'shift' = シフト自動計算 (admPayBuildStatement と同ロジック)、
-  //                    'work'  = 稼働記録 (手入力)
-  const expSrc=(document.getElementById('adm-rev-expsrc')||{}).value||'shift';
+  // 支払いソース選択:
+  //   'closed' = 確定支払い (closed_pay_statements)。管理画面で「確定・公開」した数字そのもの。
+  //   'shift'  = シフト自動計算 (admPayBuildStatement と同ロジック)
+  //   'work'   = 稼働記録 (手入力)
+  // ★ 既定は 'closed'。支払いは確定させているのだから、収支で毎回シフトから
+  //   計算し直す必要がない。再計算は Sheets を大量に読むため読取上限(429)に当たりやすく、
+  //   古いシフトに落ちると外注費が黙って小さく出る(同じ7月で 18.0M と 25.2M が出た)。
+  //   確定値なら支払明細と必ず一致し、Sheets も読まない。
+  const expSrc=(document.getElementById('adm-rev-expsrc')||{}).value||'closed';
   const [y,m]=monthVal.split('-').map(Number);
   let expByStaff={},expByCourse={},expByArea={},expByCourseDate={},monthWork=[];
-  if(expSrc==='shift'){
+  let closedPaySummary=null;
+  if(expSrc==='closed'){
+    try{
+      const resp=await fetch(ADM_PAY_SAVE_EF,{method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':`Bearer ${SUPABASE_ANON_KEY}`},
+        body:JSON.stringify({auth_token:invAuthToken,action:'summary',year:y,month:m})});
+      const j=await resp.json();
+      if(j&&!j.error)closedPaySummary=j;
+      else closedPaySummary={error:String((j&&j.error)||'unknown')};
+    }catch(e){closedPaySummary={error:String((e&&e.message)||e)};}
+    if(closedPaySummary&&closedPaySummary.error){
+      admRevShowBlocked([`確定支払いを読み込めませんでした（${admRevErrShort(closedPaySummary.error)}）`]);
+      return;
+    }
+    if(!closedPaySummary.finalized){
+      admRevShowBlocked([`${monthVal} の支払いはまだ確定されていません。支払い明細から「確定・公開」するか、「支払い元」を「シフト自動（再計算）」に切り替えてください。`]);
+      return;
+    }
+    expByArea=Object.assign({},closedPaySummary.by_area||{});
+    (closedPaySummary.by_staff||[]).forEach(x=>{if(x&&x.staff)expByStaff[x.staff]=Number(x.amount)||0;});
+  }else if(expSrc==='shift'){
     // シフト自動計算: invRates の各非社員ドライバーに admPayBuildStatement を実行し、
     // grandTotal を expByStaff に、rows の per-day amount をコース別/エリア別に集計
     if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
@@ -9973,11 +10039,19 @@ async function admRevLoad(){
     });
   });
 
-  // データの取得に失敗して古い値/計算値に落ちていないか。画面に出して判断できるようにする。
+  // 外注費はシフトの日数から計算する。シフトが古いと金額が黙って小さく出るので、
+  // その状態で粗利を出しても意味がない。数字は出さずに中止する。
+  if(expSrc==='shift'&&admPayShiftStale){
+    admRevShowBlocked(['対象月のシフトを最新で取得できませんでした。外注費が古いシフトから計算されるため、粗利が実態と合いません。']);
+    return;
+  }
+  // 出せなかったものを表示側に伝える (店舗マスタが無ければ店舗数は出せない)
   const dataWarn=[];
-  if(confirmedSalesLoadError)dataWarn.push(`確定売上を読み込めませんでした（${confirmedSalesLoadError}）。全コースが「未確定」に見え、売上が確定値ではなく計算値で表示されます。`);
-  if(expSrc==='shift'&&admPayShiftStale)dataWarn.push('対象月のシフトを最新で取得できませんでした。外注費が古いシフトから計算されている可能性があります。');
-  admRevData={sales,expenses,monthWork,expByCourse,expByArea,expByCourseDate,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays,dataWarn};
+  if(!masterOk)dataWarn.push('店舗マスタ（月初スナップ）を読み込めなかったため、売上は確定売上から組み立てています。店舗数と、未確定コースの計算値は表示できません。');
+  const expNote=expSrc==='closed'
+    ? `支払いは ${monthVal} の確定支払い（${closedPaySummary.staff_count}名・${(closedPaySummary.last_finalized_at||'').slice(0,10)} 確定）です。支払明細と同じ数字で、再計算していません。`
+    : (expSrc==='shift'?'支払いはシフトと単価マスタから再計算した値です。確定支払いとは一致しないことがあります。':'支払いは稼働記録（手入力）の合計です。入力漏れがあるとそのまま少なく出ます。');
+  admRevData={sales,expenses,monthWork,expByCourse,expByArea,expByCourseDate,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays,dataWarn,expNote,expSrc};
   admRevRender();
 }
 
@@ -13071,10 +13145,15 @@ function admRevRender(){
   const dataWarnList=admRevData.dataWarn||[];
   if(dataWarnList.length){
     sh+=`<div style="margin-top:8px;padding:10px 12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;font-size:12px;color:#b91c1c;">`
-      +`⛔ <b>この画面の数字は信頼できません。</b><br>`
+      +`⛔ <b>一部の数字を表示できません。</b><br>`
       +dataWarnList.map(w=>'・'+w).join('<br>')
       +`<br>月を選び直すか、少し待ってから開き直してください。`
       +`</div>`;
+  }
+  // 支払いがどこから来た数字なのかを常に明示する (確定値か再計算か)
+  if(admRevData.expNote){
+    const ok=admRevData.expSrc==='closed';
+    sh+=`<div style="margin-top:8px;padding:8px 12px;background:${ok?'#f0fdf4':'#fffbeb'};border:1px solid ${ok?'#86efac':'#fcd34d'};border-radius:6px;font-size:12px;color:${ok?'#166534':'#92400e'};">${ok?'✅':'⚠'} ${admRevData.expNote}</div>`;
   }
   if(totalCnt>confirmedCnt){
     sh+=`<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border-radius:6px;font-size:12px;color:#92400e;">⚠ ${totalCnt-confirmedCnt}コースが未確定（計算値 ¥${unconfirmedAmount.toLocaleString()}）。請求書作成画面から確定してください。</div>`;
@@ -15529,6 +15608,8 @@ async function admPayRender(){
 // 統合明細ビューア用「確定保存」ボタンバー
 // items: [{rate, stmt}]  rate=単価マスタ行 / stmt=admPayBuildStatement の戻り値
 const ADM_PAY_SAVE_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/save-pay-statement';
+// このEFは verify_jwt=true なので anon キーが要る (権限は auth_token 側で判定)
+const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jY29nbnB0b3ByaHdzYmpud2N1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNDU0NDEsImV4cCI6MjA4OTkyMTQ0MX0.M3h31uPyKYWlNevVW3OvZOonoTidC1KLZ04sB5nRKzU';
 const admPaySavePayloadStore={};// barId -> statements[]
 
 function admPayBuildSaveBar(items,y,m,monthLabel){
@@ -15579,7 +15660,7 @@ async function admPaySaveStatements(barId){
       headers:{
         'Content-Type':'application/json',
         // anon を使う (verify_jwt=true)
-        'Authorization':'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jY29nbnB0b3ByaHdzYmpud2N1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNDU0NDEsImV4cCI6MjA4OTkyMTQ0MX0.M3h31uPyKYWlNevVW3OvZOonoTidC1KLZ04sB5nRKzU'
+        'Authorization':`Bearer ${SUPABASE_ANON_KEY}`
       },
       body:JSON.stringify({
         auth_token:invAuthToken,// HMAC token (admin_login で発行)
