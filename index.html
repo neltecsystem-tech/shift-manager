@@ -1861,6 +1861,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-08-17', tag:'修正', title:'収支管理: 営業所を絞ると粗利率がマイナスになる／振り分けられない支払いが見えない',
+   desc:'営業所を1つ選んだとき、売上だけがその営業所に絞られ、外注費と社員給料は全社の合計のままでした（川崎高津で粗利率 -153% と表示されていました）。外注費は営業所別の集計、給料は勤務日数で按分した額を使うようにしました。あわせて、営業所別の表に「営業所に振り分けられなかった支払い」の警告を追加しました。営業所はコース名の先頭（城北/川越/立川/川崎）で判定しているため、これに当てはまらないコース名の支払いはどの営業所にも入らず、営業所別の粗利率がその分だけ実態より高く出ます。金額を明示するので気づけます。'},
   {date:'2026-08-17', tag:'修正', title:'荷主リスト突合: まだ開店していない店舗を差異として数えていました',
    desc:'新店は開店の数週間前に店舗マスタへ登録するため、月初スナップには「その月の後半に開店する店」が含まれます。請求と月初集計は月初時点で未開店の店を除外していますが、荷主リスト突合だけが除外しておらず、荷主リストに載っていない＝差異として毎月出ていました。突合も請求と同じ規則に揃え、対象月の月初時点で開店日が来ていない店舗を、区分集計・閉店候補・稼働中の件数から除外します。2026年8月分では立川の3店（TJ7元八王子2丁目・TJ7国立富士見台１丁目・FM新小平青梅街道／開店日 8/26〜8/29）が対象です。'},
   {date:'2026-08-17', tag:'修正', title:'荷主リスト突合: 配送欄が「新店」の店舗を数えていませんでした',
@@ -12929,7 +12931,11 @@ function admRevRender(){
   let filteredExpenses=expenses;
   if(areaFilter){
     filteredSales=sales.filter(s=>s.area===areaFilter);
-    // 支払いはスタッフ→営業所の紐付けが難しいので全体のまま
+    // 支払い・給料も営業所で絞る。
+    // ★ 以前は「スタッフ→営業所の紐付けが難しい」として全社の外注費をそのまま
+    //   使っていたため、営業所を1つ選ぶと 売上=その営業所 / 外注費=全社 になり
+    //   粗利率が -153% のような無意味な数字になっていた。
+    //   コース名から営業所を出した expByArea / socialSalaryByArea が既にあるので使う。
   }
 
   const courseSales=filteredSales.reduce((s,r)=>s+r.amount,0);
@@ -12947,7 +12953,16 @@ function admRevRender(){
   // 消費税 (10%) と税込
   const tax=Math.round(totalSalesNet*0.10);
   const totalSales=totalSalesNet+tax;// 税込売上 (請求書(営業所合計)と一致)
-  const totalExpenses=filteredExpenses.reduce((s,r)=>s+r.amount,0);
+  // 外注費: 全営業所なら全員分の合計、営業所を絞ったときはコース由来の営業所別集計を使う。
+  const expByAreaForFilter=admRevData.expByArea||{};
+  const totalExpenses=areaFilter
+    ? (expByAreaForFilter[areaFilter]||0)
+    : filteredExpenses.reduce((s,r)=>s+r.amount,0);
+  // 営業所別に振り分けられなかった外注費 (コース名が営業所を判定できないもの)。
+  // 黙って消えると営業所別の合計が全社と合わなくなるので、画面に出して気づけるようにする。
+  const expAllStaffTotal=filteredExpenses.reduce((s,r)=>s+r.amount,0);
+  const expAreaSumAll=Object.values(expByAreaForFilter).reduce((s,v)=>s+v,0);
+  const expUnassigned=Math.max(0,Math.round(expAllStaffTotal-expAreaSumAll));
   const profit=totalSales-totalExpenses;
 
   // 確定状況
@@ -12968,8 +12983,13 @@ function admRevRender(){
 
   // 社員集計
   const socialSalesTotal=admRevData.socialSalesTotal||0;
-  const socialSalaryTotal=admRevData.socialSalaryTotal||0;
-  const socialStaffCount=(admRevData.socialStaff||[]).length;
+  // 給料も営業所を絞ったらその営業所の按分額にする(勤務日数比で按分済みの socialSalaryByArea)
+  const socialSalaryTotal=areaFilter
+    ? Math.round((admRevData.socialSalaryByArea||{})[areaFilter]||0)
+    : (admRevData.socialSalaryTotal||0);
+  const socialStaffCount=areaFilter
+    ? Object.keys(admRevData.empAreaDays||{}).filter(n=>((admRevData.empAreaDays||{})[n]||{})[areaFilter]).length
+    : (admRevData.socialStaff||[]).length;
   const filteredSocialSales=areaFilter
     ? filteredSales.reduce((a,s)=>a+(s.socialSales||0),0)
     : socialSalesTotal;
@@ -13084,6 +13104,17 @@ function admRevRender(){
     totalRow+=`<td colspan="2" style="border:1px solid #ccc;padding:6px;"></td></tr>`;
     dh+=totalRow;
     dh+=`</tbody></table>`;
+    // 営業所に振り分けられなかった外注費。コース名から営業所を判定できない分
+    // (城北/川越/立川/川崎 のどれでも始まらないコース名・コース名なしの支払い)。
+    // 出さないと「営業所別の支払い合計 < 全社の外注費」に気づけない。
+    if(expUnassigned>0){
+      dh+=`<div style="margin-top:8px;padding:8px 12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;font-size:12px;color:#b91c1c;">`
+        +`⚠ <b>営業所に振り分けられなかった支払いが ¥${expUnassigned.toLocaleString()} あります。</b>`
+        +`（全社の外注費 ¥${expAllStaffTotal.toLocaleString()} − 営業所別の合計 ¥${expAreaSumAll.toLocaleString()}）<br>`
+        +`営業所はコース名の先頭（城北 / 川越 / 立川 / 川崎）で判定しています。これに当てはまらないコース名の支払いは、どの営業所にも入りません。`
+        +`<b>営業所別の粗利率はこの分だけ実態より高く出ます。</b>`
+        +`</div>`;
+    }
     // 作業料/庫内/優馬の内訳
     if(extraFeeRows.length>0){
       dh+=`<h4 style="margin-top:16px;color:#92400e;">作業料・追加費用の内訳</h4>`;
