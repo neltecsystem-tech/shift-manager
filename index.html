@@ -1861,6 +1861,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-08-17', tag:'修正', title:'氏名の字体違い（齋藤／斉藤 など）で別人扱いになる問題',
+   desc:'氏名の照合は空白の違いだけを吸収しており、漢字の字体が違うと別人として扱われていました。7月シフト表は「斉藤　一輝」、単価マスタは「齋藤　一輝」と書かれていたため、シフトに42日入っているのに社員の担当売上が0日・0円になっていました。齋／斎／齊→斉、髙→高、﨑／嵜→崎、濵／濱→浜、邊／邉→辺、澤→沢、眞→真、冨→富 など、読みも人も同じで字体だけ違うものを同一視して照合するようにしました。あわせて、字体違いが見つかった場合は収支管理に「シフト表 → 単価マスタ」の形で名前を表示します。照合自体は通りますが、他の機能では別人扱いのままになるため、どちらかの表記に揃えてください。'},
   {date:'2026-08-17', tag:'修正', title:'社員の担当売上: 川崎の夕刊・競馬が計上されていませんでした',
    desc:'社員の担当売上は「そのコースの売上を、その日にシフトへ入っていた社員へ配分する」計算です。コース名で突き合わせていますが、川崎だけ シフト表が「川崎夕刊N」・店舗マスタが「川崎高津N」と表記が違うため、川崎の夕刊・競馬のシフトが1日も突き合わず、その分の売上が社員に配分されていませんでした（2026年7月は245日分）。朝刊はどちらも「川崎高津N」で一致していたため、川崎の社員担当売上は朝刊だけの金額になっていました。コース名を店舗マスタ側に揃えてから突き合わせるようにしました。収支管理の「社員別 売上配分」と、社員管理タブの両方が対象です。'},
   {date:'2026-08-17', tag:'改善', title:'収支管理: 支払いは「確定支払い」の数字を使うようにしました',
@@ -9947,9 +9949,18 @@ async function admRevLoad(){
   const socialStaff=invRates.filter(r=>r.biz_type==='社員');
   const socialNames=new Set(socialStaff.map(r=>r.name));
   const _normToName={};socialStaff.forEach(r=>{_normToName[invNormName(r.name)]=r.name;});
+  // シフト表と単価マスタで氏名の字体が違うもの (齋藤/斉藤 等)。
+  // 照合は異体字を吸収して通すが、直さないと他の場所で同じ事故が起きるので名前を出す。
+  const nameVariantHits={};
   const findSocial=(cellName)=>{
     if(!cellName||cellName==='0'||cellName==='希望休')return null;
-    return _normToName[invNormName(cellName)]||null;
+    const hit=_normToName[invNormName(cellName)]||null;
+    if(hit){
+      const raw=String(cellName).replace(/[\s　 ]+/g,'');
+      const mast=String(hit).replace(/[\s　 ]+/g,'');
+      if(raw!==mast)nameVariantHits[raw+' → '+hit]=(nameVariantHits[raw+' → '+hit]||0)+1;
+    }
+    return hit;
   };
   const socialSalaryTotal=socialStaff.reduce((s,r)=>s+(Number(r.monthly_salary)||0),0);
   const socialSalaryByName={};
@@ -10075,10 +10086,11 @@ async function admRevLoad(){
   // 出せなかったものを表示側に伝える (店舗マスタが無ければ店舗数は出せない)
   const dataWarn=[];
   if(!masterOk)dataWarn.push('店舗マスタ（月初スナップ）を読み込めなかったため、売上は確定売上から組み立てています。店舗数と、未確定コースの計算値は表示できません。');
+  const nameVariants=Object.entries(nameVariantHits).map(([k,v])=>`${k}（${v}回）`);
   const expNote=expSrc==='closed'
     ? `支払いは ${monthVal} の確定支払い（${closedPaySummary.staff_count}名・${(closedPaySummary.last_finalized_at||'').slice(0,10)} 確定）です。支払明細と同じ数字で、再計算していません。`
     : (expSrc==='shift'?'支払いはシフトと単価マスタから再計算した値です。確定支払いとは一致しないことがあります。':'支払いは稼働記録（手入力）の合計です。入力漏れがあるとそのまま少なく出ます。');
-  admRevData={sales,expenses,monthWork,expByCourse,expByArea,expByCourseDate,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays,dataWarn,expNote,expSrc,socialSalaryAllocated,socialSalaryNoArea};
+  admRevData={sales,expenses,monthWork,expByCourse,expByArea,expByCourseDate,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays,dataWarn,expNote,expSrc,socialSalaryAllocated,socialSalaryNoArea,nameVariants};
   admRevRender();
 }
 
@@ -13193,6 +13205,15 @@ function admRevRender(){
       +salNoArea.map(x=>`${x.name}（¥${x.salary.toLocaleString()}）`).join(' / ')
       +`<br>給料は「営業所別シフト勤務日数の比率」で按分するため、勤務日が無いとどの営業所にも入りません（全社の合計には入っています）。`
       +`<b>新聞セクションを離れた社員は、スタッフ管理でその方の月給を空にしてください。</b>そうすればこの一覧からも費用からも外れます。`
+      +`</div>`;
+  }
+  // 氏名の字体違い。照合は通しているが、直さないと他の集計で同じ事故が起きる。
+  const nv=admRevData.nameVariants||[];
+  if(nv.length){
+    sh+=`<div style="margin-top:8px;padding:8px 12px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;font-size:12px;color:#92400e;">`
+      +`⚠ <b>シフト表と単価マスタで氏名の字体が違う方がいます</b>（左=シフト表 / 右=単価マスタ）。`
+      +`この画面では同一人物として集計していますが、他の機能では別人扱いになり金額が0になることがあります。どちらかに揃えてください。<br>`
+      +nv.join(' / ')
       +`</div>`;
   }
   // 支払いがどこから来た数字なのかを常に明示する (確定値か再計算か)
