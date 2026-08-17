@@ -5662,6 +5662,28 @@ async function smMapSearchAddr(){
   }
 }
 
+// ── 情報更新日の自動入力 (店舗マスタの更新経路で共通に使う) ──
+// 内容に変更があったときだけ今日の日付を入れる。
+// 変更が無い保存でも日付が動くと「いつ実際に情報が変わったか」が分からなくなり、
+// 列の意味が失われるため、必ず差分を見てから入れる。
+// record: これから送る値 / before: 現在の行(新規追加なら null)
+function smStampUpdateDate(record, before){
+  const idx=smHeaders.findIndex(h=>(h||'').includes('情報更新日'));
+  if(idx<0)return;                                    // 列が無いシートでは何もしない
+  const key=`col_${idx}`;
+  // 更新日そのものを手で直したときは、その値を尊重して上書きしない
+  // (意図的に日付を遡って入れることがあるため)
+  if(before&&Object.prototype.hasOwnProperty.call(record,key)
+     &&String(record[key]??'')!==String(before[key]??''))return;
+  // 新規追加は常に「今入力した情報」なので入れる
+  const changed=!before||Object.keys(record).some(k=>{
+    if(k===key)return false;
+    return String(record[k]??'')!==String(before[k]??'');
+  });
+  if(!changed)return;
+  const d=new Date();
+  record[key]=`${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+}
 async function smSave(){
   const btn=document.getElementById('sm-submit');
   // 新規追加時のみ重複チェック
@@ -5700,27 +5722,7 @@ async function smSave(){
       record[`col_${i}`]=el.value;
     }
   });
-  // ── 情報更新日の自動入力 ──
-  // 内容に変更があったときだけ今日の日付を入れる。
-  // 開いて閉じただけ・変更なしの保存でも日付が動くと「いつ実際に情報が変わったか」が
-  // 分からなくなり、列の意味が失われるため、必ず差分を見てから入れる。
-  const smUpdIdx=smHeaders.findIndex(h=>(h||'').includes('情報更新日'));
-  if(smUpdIdx>=0){
-    const before=smEditRow?(smData.find(r=>r.row_number===smEditRow)||{}):null;
-    // 新規追加は常に「今入力した情報」なので更新日を入れる
-    const changed=!before||smHeaders.some((h,i)=>{
-      if(!h||i===smUpdIdx)return false;                 // 更新日そのものは比較対象外
-      if(!Object.prototype.hasOwnProperty.call(record,`col_${i}`))return false; // 画面に無い列は触らない
-      return String(record[`col_${i}`]??'')!==String(before[`col_${i}`]??'');
-    });
-    // 更新日そのものを手で直したときは、その値を尊重して上書きしない
-    // (意図的に日付を遡って入れることがあるため)
-    const editedByHand=!!before&&String(record[`col_${smUpdIdx}`]??'')!==String(before[`col_${smUpdIdx}`]??'');
-    if(changed&&!editedByHand){
-      const d=new Date();
-      record[`col_${smUpdIdx}`]=`${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
-    }
-  }
+  smStampUpdateDate(record, smEditRow?(smData.find(r=>r.row_number===smEditRow)||{}):null);
   try{
     const action=smEditRow?'update':'add';
     const body=smEditRow?{action,row_number:smEditRow,record}:{action,record};
@@ -7726,6 +7728,8 @@ async function smCloseSave(){
   const record={};
   if(lastCollect)record[`col_${collectCol}`]=lastCollect.replace(/-/g,'/');
   record[`col_${deliverCol}`]=lastDeliver.replace(/-/g,'/');
+  // 閉店情報の入力も「情報の変更」なので更新日を入れる
+  smStampUpdateDate(record, smData.find(r=>r.row_number===parseInt(rowNum))||null);
 
   try{
     await smPost({action:'update',row_number:parseInt(rowNum),record});
