@@ -1861,6 +1861,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-08-17', tag:'改善', title:'収支管理: 読み取り上限（429）で開けなくなるのを改善',
+   desc:'Googleスプレッドシートの読み取り上限に当たると収支管理が開けない状態が続いていました。原因は、年月・営業所・支払い元を変えるたびに確定売上を読み直していたことと、失敗時にその場で3回再試行して上限をさらに消費していたことです。確定売上は一度取得したら60秒は読み直さないようにし、失敗時の再試行はやめました（上限は1分あたりなので、その場で再試行しても失敗するだけです）。また、取得できた確定売上を端末に保存しておき、上限で取得できないときはその写しを使って数字を表示します。確定値そのものなので金額は正しく、いつ取得した写しなのかを画面に表示します。'},
   {date:'2026-08-17', tag:'修正', title:'氏名の字体違い（齋藤／斉藤 など）で別人扱いになる問題',
    desc:'氏名の照合は空白の違いだけを吸収しており、漢字の字体が違うと別人として扱われていました。7月シフト表は「斉藤　一輝」、単価マスタは「齋藤　一輝」と書かれていたため、シフトに42日入っているのに社員の担当売上が0日・0円になっていました。齋／斎／齊→斉、髙→高、﨑／嵜→崎、濵／濱→浜、邊／邉→辺、澤→沢、眞→真、冨→富 など、読みも人も同じで字体だけ違うものを同一視して照合するようにしました。あわせて、字体違いが見つかった場合は収支管理に「シフト表 → 単価マスタ」の形で名前を表示します。照合自体は通りますが、他の機能では別人扱いのままになるため、どちらかの表記に揃えてください。'},
   {date:'2026-08-17', tag:'修正', title:'社員の担当売上: 川崎の夕刊・競馬が計上されていませんでした',
@@ -10086,6 +10088,10 @@ async function admRevLoad(){
   // 出せなかったものを表示側に伝える (店舗マスタが無ければ店舗数は出せない)
   const dataWarn=[];
   if(!masterOk)dataWarn.push('店舗マスタ（月初スナップ）を読み込めなかったため、売上は確定売上から組み立てています。店舗数と、未確定コースの計算値は表示できません。');
+  if(confirmedSalesStaleAt){
+    const mins=Math.max(1,Math.round((Date.now()-confirmedSalesStaleAt)/60000));
+    dataWarn.push(`確定売上を取得できなかったため、${mins}分前に取得した写しを使っています（Googleスプレッドシートの読み取り上限）。確定値そのものなので金額は正しいですが、その後に確定・再確定した分は反映されていません。`);
+  }
   const nameVariants=Object.entries(nameVariantHits).map(([k,v])=>`${k}（${v}回）`);
   const expNote=expSrc==='closed'
     ? `支払いは ${monthVal} の確定支払い（${closedPaySummary.staff_count}名・${(closedPaySummary.last_finalized_at||'').slice(0,10)} 確定）です。支払明細と同じ数字で、再計算していません。`
@@ -13967,6 +13973,7 @@ function admBillCols(){
 
 // 確定済み売上キャッシュ
 let confirmedSalesCache=null;
+let confirmedSalesFetchedAt=0;// 最後に取得できた時刻 (60秒は読み直さない)
 // 確定売上の読み込み。
 // ★ 以前は失敗しても confirmedSalesCache=[] にしていたため、Sheetsの読取上限(429)等で
 //   一時的に取れなかっただけで全コースが「未確定」に見え、収支・請求が確定値ではなく
@@ -13974,20 +13981,52 @@ let confirmedSalesCache=null;
 //   invApi は HTTP エラーでも例外を投げず {error:...} を返すので catch にも入らない。
 //   ここでは「0件」と「取得失敗」を区別し、失敗時はキャッシュを壊さず理由を残す。
 let confirmedSalesLoadError='';
+let confirmedSalesStaleAt=0;// 取得できず保存済みの写しを使ったときの、その写しの取得時刻
+// 確定売上は一度確定したら変わらないデータなので、取得できたら端末に保存しておく。
+// Sheets の読取上限(429)は1分あたりで、混んでいると何度開いても取得できないことがある。
+// そのとき「数字を出さない」だけだと画面が使えないままになるので、保存済みの写しを使う。
+// 写しは確定値そのものなので数字は正しい。いつ取得したものかは画面に出す。
+const CONFIRMED_SALES_LS='confirmedSalesSnapshot';
+function saveConfirmedSalesLocal(records){
+  try{localStorage.setItem(CONFIRMED_SALES_LS,JSON.stringify({at:Date.now(),records}));}catch(_){/* 容量超過は無視 */}
+}
+function loadConfirmedSalesLocal(){
+  try{
+    const o=JSON.parse(localStorage.getItem(CONFIRMED_SALES_LS)||'null');
+    if(o&&Array.isArray(o.records)&&o.records.length)return o;
+  }catch(_){}
+  return null;
+}
 async function loadConfirmedSales(){
-  confirmedSalesLoadError='';
-  let lastErr='';
-  for(let i=0;i<3;i++){
-    if(i>0)await new Promise(r=>setTimeout(r,900*i));
-    try{
-      const res=await invApi({action:'get_confirmed_sales'});
-      if(res&&res.error){lastErr=String(res.error);continue;}
-      if(!res||!Array.isArray(res.records)){lastErr='応答に records がありません';continue;}
-      confirmedSalesCache=res.records;
-      return confirmedSalesCache;
-    }catch(e){lastErr=String((e&&e.message)||e);}
+  confirmedSalesLoadError='';confirmedSalesStaleAt=0;
+  // 直前に取得済みなら読み直さない。年月・営業所・支払い元を変えるたびに admRevLoad が
+  // 走るので、そのたびに Sheets を読むと読取上限(1分あたり)をすぐ使い切る。
+  // 確定売上を書き換える操作は confirmedSalesCache=null にするので、そちらで無効化される。
+  if(confirmedSalesCache&&confirmedSalesCache.length&&(Date.now()-confirmedSalesFetchedAt)<60000){
+    return confirmedSalesCache;
   }
-  // 失敗: 前回値を保持したまま理由を残す(空配列で上書きすると全部「未確定」になる)
+  let lastErr='';
+  try{
+    const res=await invApi({action:'get_confirmed_sales'});
+    if(res&&res.error)lastErr=String(res.error);
+    else if(!res||!Array.isArray(res.records))lastErr='応答に records がありません';
+    else{
+      confirmedSalesCache=res.records;
+      confirmedSalesFetchedAt=Date.now();
+      saveConfirmedSalesLocal(res.records);
+      return confirmedSalesCache;
+    }
+  }catch(e){lastErr=String((e&&e.message)||e);}
+  // ★ 429 は1分あたりの上限なので、その場で再試行しても失敗するうえ上限を余計に消費する。
+  //   再試行はせず、保存済みの写しに落ちる。
+  if(!confirmedSalesCache||!confirmedSalesCache.length){
+    const local=loadConfirmedSalesLocal();
+    if(local){confirmedSalesCache=local.records;confirmedSalesStaleAt=local.at;return confirmedSalesCache;}
+  }else{
+    // メモリに前回値がある場合もそれを使う(今回の取得だけ失敗しただけ)
+    confirmedSalesStaleAt=confirmedSalesStaleAt||Date.now();
+    return confirmedSalesCache;
+  }
   confirmedSalesLoadError=lastErr||'原因不明';
   if(!confirmedSalesCache)confirmedSalesCache=[];
   return confirmedSalesCache;
@@ -14042,7 +14081,7 @@ async function admBillBackfillCounts(monthVal){
           updated++;
         }catch(e){failed++;console.error('backfill fail',s,e);}
       }
-    }finally{admBillHideProgress();confirmedSalesCache=null;await loadConfirmedSales();}
+    }finally{admBillHideProgress();confirmedSalesCache=null;confirmedSalesFetchedAt=0;await loadConfirmedSales();}
     alert(`記録完了: ${updated}件更新 / ${skipped}件は記録済み${failed?` / ${failed}件失敗`:''}（計${sales.length}）`);
     await admBsRender();
   }catch(e){admBillHideProgress&&admBillHideProgress();alert('記録に失敗: '+e.message);console.error(e);}
@@ -14050,7 +14089,7 @@ async function admBillBackfillCounts(monthVal){
 }
 
 async function admBsRender(reload){
-  if(reload)confirmedSalesCache=null;
+  if(reload){confirmedSalesCache=null;confirmedSalesFetchedAt=0;}
   await loadConfirmedSales();
   const all=confirmedSalesCache||[];
   admBsRenderTrend(all);
@@ -14095,7 +14134,7 @@ async function admBsSaveRow(btn,rid){
       year_month:tr.getAttribute('data-ym'),area:tr.getAttribute('data-area'),course:tr.getAttribute('data-course'),
       grand_total:Number(tr.getAttribute('data-grand'))||0,am_total:Number(tr.getAttribute('data-am'))||0,pm_total:Number(tr.getAttribute('data-pm'))||0,
       counts}});
-    btn.textContent='✓';confirmedSalesCache=null;
+    btn.textContent='✓';confirmedSalesCache=null;confirmedSalesFetchedAt=0;
     setTimeout(()=>{admBsRender();},500);
   }catch(e){alert('保存失敗: '+e.message);btn.textContent=old;btn.disabled=false;}
 }
@@ -14170,7 +14209,7 @@ async function admBillAreaConfirmAll(area,monthVal){
         results.map(r=>({year_month:monthVal,area,course:r.course,grand_total:r.grand,am_total:r.am,pm_total:r.pm,counts:r.counts})),
         (n,e)=>admBillUpdateProgress(0,results.length,`混雑のため再試行 ${n}/2（${e.message}）`));
       admBillUpdateProgress(results.length,results.length,'キャッシュ更新中...');
-      confirmedSalesCache=null;
+      confirmedSalesCache=null;confirmedSalesFetchedAt=0;
       await loadConfirmedSales();
     }finally{
       admBillHideProgress();
@@ -14237,7 +14276,7 @@ async function admBillAreaReconfirmAll(area,monthVal){
           (n,e)=>admBillUpdateProgress(0,results.length,`混雑のため再試行 ${n}/2（${e.message}）`));
       }catch(e){ results.forEach(r=>failed.push({course:r.course,msg:e.message||String(e)})); }
       admBillUpdateProgress(results.length,results.length,'キャッシュ更新中...');
-      confirmedSalesCache=null;
+      confirmedSalesCache=null;confirmedSalesFetchedAt=0;
       await loadConfirmedSales();
     }finally{ admBillHideProgress(); }
     if(failed.length){
@@ -14277,7 +14316,7 @@ async function admBillAreaUnconfirmAll(area,monthVal){
         await invWrite({action:'unconfirm_sale',year_month:monthVal,area,course:courses[i]});
       }
       admBillUpdateProgress(courses.length,courses.length,'キャッシュ更新中...');
-      confirmedSalesCache=null;
+      confirmedSalesCache=null;confirmedSalesFetchedAt=0;
       await loadConfirmedSales();
     }finally{
       admBillHideProgress();
@@ -14302,7 +14341,7 @@ async function admBillConfirm(area,course,monthVal,grandTotal,amTotal,pmTotal,is
   try{
     let counts=null; try{counts=billCountsFrom(admBillRenderWithTotals(area,course,monthVal));}catch(_){}
     await invWrite({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course,grand_total:grandTotal,am_total:amTotal,pm_total:pmTotal,counts}});
-    confirmedSalesCache=null;
+    confirmedSalesCache=null;confirmedSalesFetchedAt=0;
     await loadConfirmedSales();
     alert(isOverwrite?'確定額を上書きしました':'売上を確定しました');
     admBillGenerate();
@@ -14313,7 +14352,7 @@ async function admBillUnconfirm(area,course,monthVal){
   if(!ok)return;
   try{
     await invWrite({action:'unconfirm_sale',year_month:monthVal,area,course});
-    confirmedSalesCache=null;
+    confirmedSalesCache=null;confirmedSalesFetchedAt=0;
     await loadConfirmedSales();
     alert('確定を解除しました');
     admBillGenerate();
@@ -14356,7 +14395,7 @@ async function admBillSaveEditedConfirmed(area,course,monthVal){
   const pm_total=Number(document.getElementById('edit-conf-pm').value)||0;
   try{
     await invWrite({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course,grand_total,am_total,pm_total}});
-    confirmedSalesCache=null;
+    confirmedSalesCache=null;confirmedSalesFetchedAt=0;
     await loadConfirmedSales();
     document.getElementById('edit-conf-modal')?.remove();
     alert('確定値を更新しました');
@@ -14431,7 +14470,7 @@ async function admBillBulkConfirmBefore(beforeMonth){
       }
     }
     progEl.remove();
-    confirmedSalesCache=null;
+    confirmedSalesCache=null;confirmedSalesFetchedAt=0;
     await loadConfirmedSales();
     alert(`✓ 一括確定 完了\n対象月: ${months.length}ヶ月 (${months[0]}〜${months[months.length-1]})\n新規確定: ${saved}件\nスキップ(既確定): ${skipped}件\n失敗: ${failed}件`);
     if(typeof admRevLoad==='function')admRevLoad();
@@ -14499,7 +14538,7 @@ async function admRevManualSave(){
       }
     }
     await invWrite({action:'save_confirmed_sale',confirmed_sale:{year_month:monthVal,area,course:'(手入力)',grand_total,am_total,pm_total}});
-    confirmedSalesCache=null;
+    confirmedSalesCache=null;confirmedSalesFetchedAt=0;
     await loadConfirmedSales();
     document.getElementById('adm-rev-manual-modal')?.remove();
     alert(`✓ 保存しました\n${monthVal} / ${area}\n売上合計: ¥${grand_total.toLocaleString()}`);
