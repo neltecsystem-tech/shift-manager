@@ -1861,8 +1861,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
-  {date:'2026-08-17', tag:'修正', title:'収支管理: 営業所を絞ると粗利率がマイナスになる／振り分けられない支払いが見えない',
-   desc:'営業所を1つ選んだとき、売上だけがその営業所に絞られ、外注費と社員給料は全社の合計のままでした（川崎高津で粗利率 -153% と表示されていました）。外注費は営業所別の集計、給料は勤務日数で按分した額を使うようにしました。あわせて、営業所別の表に「営業所に振り分けられなかった支払い」の警告を追加しました。営業所はコース名の先頭（城北/川越/立川/川崎）で判定しているため、これに当てはまらないコース名の支払いはどの営業所にも入らず、営業所別の粗利率がその分だけ実態より高く出ます。金額を明示するので気づけます。'},
+  {date:'2026-08-17', tag:'修正', title:'収支管理: 営業所別の外注費が実態より少なく出ていました',
+   desc:'外注費は単価マスタとシフトから1人ずつ計算しており、その合計は正しく出ていましたが、営業所別に振り分ける段階で一部が消えていました。原因は、コース欄が空のまま支払いが発生する項目（🧭プランナー手当＝月額なので日付の行に乗らない／🎁特別日当＝シフトが無い日にも付く）と、営業所を判定できないコース名（庫内・引継のみ等）です。営業所はコース名の先頭（城北/川越/立川/川崎）で判定しているため、これらはどの営業所にも入らず、営業所別の粗利率が実態より高く出ていました。コースの付かない支払いは、その人が実際に稼働した営業所の金額比で按分するようにしました。それでも振り分けられない分は表の下に金額を明示します。あわせて、営業所を1つ選んだときに売上だけが絞られ外注費と社員給料が全社の合計のままだった問題（川崎高津で粗利率 -153% と表示）も修正しました。'},
   {date:'2026-08-17', tag:'修正', title:'荷主リスト突合: まだ開店していない店舗を差異として数えていました',
    desc:'新店は開店の数週間前に店舗マスタへ登録するため、月初スナップには「その月の後半に開店する店」が含まれます。請求と月初集計は月初時点で未開店の店を除外していますが、荷主リスト突合だけが除外しておらず、荷主リストに載っていない＝差異として毎月出ていました。突合も請求と同じ規則に揃え、対象月の月初時点で開店日が来ていない店舗を、区分集計・閉店候補・稼働中の件数から除外します。2026年8月分では立川の3店（TJ7元八王子2丁目・TJ7国立富士見台１丁目・FM新小平青梅街道／開店日 8/26〜8/29）が対象です。'},
   {date:'2026-08-17', tag:'修正', title:'荷主リスト突合: 配送欄が「新店」の店舗を数えていませんでした',
@@ -9773,12 +9773,15 @@ async function admRevLoad(){
         // ※ コース別は店舗マスタとシフトでコース名が一致しないと per-course でロスする
         //   (例: 川崎は店舗マスタ PM=川崎高津X、シフト PM=川崎夕刊X で不一致)
         //   per-area 表示には expByArea を使うことで取りこぼしを防ぐ
+        // この人の営業所別内訳。コースが付いていない支払い(下記)を按分するのに使う。
+        const rateByArea={};
+        let rateAttributed=0;
+        const addArea=(a,v)=>{if(a){expByArea[a]=(expByArea[a]||0)+v;rateByArea[a]=(rateByArea[a]||0)+v;rateAttributed+=v;}};
         (stmt.rows||[]).forEach(r=>{
           if(r.am&&r.am_course){
             const cKey=admPayStripHikitsugi(r.am_course)||r.am_course;
             expByCourse[cKey]=(expByCourse[cKey]||0)+r.am;
-            const a=areaOfCourse(cKey);
-            if(a)expByArea[a]=(expByArea[a]||0)+r.am;
+            addArea(areaOfCourse(cKey),r.am);
             if(r.ymd){
               if(!expByCourseDate[cKey])expByCourseDate[cKey]={};
               if(!expByCourseDate[cKey][r.ymd])expByCourseDate[cKey][r.ymd]={am:0,pm:0};
@@ -9788,8 +9791,7 @@ async function admRevLoad(){
           if(r.pm&&r.pm_course){
             const cKey=admPayStripHikitsugi(r.pm_course)||r.pm_course;
             expByCourse[cKey]=(expByCourse[cKey]||0)+r.pm;
-            const a=areaOfCourse(cKey);
-            if(a)expByArea[a]=(expByArea[a]||0)+r.pm;
+            addArea(areaOfCourse(cKey),r.pm);
             if(r.ymd){
               if(!expByCourseDate[cKey])expByCourseDate[cKey]={};
               if(!expByCourseDate[cKey][r.ymd])expByCourseDate[cKey][r.ymd]={am:0,pm:0};
@@ -9797,6 +9799,23 @@ async function admRevLoad(){
             }
           }
         });
+        // ── コースが付いていない支払いを、その人の稼働営業所へ按分する ──
+        // grandTotal に入るのに行のコースが無く、営業所別から丸ごと落ちていたもの:
+        //   ・🧭プランナー手当 (月額。そもそも行に乗らない)
+        //   ・🎁特別日当 (日当/日当+)。シフトが無い日にも付くのでコース欄が空になる
+        //   ・コース名が営業所を判定できない日 (庫内・引継のみ 等)
+        // その人が実際に稼働した営業所の金額比で分ける。稼働営業所が1つも取れない
+        // 人の分だけが未配分として残り、画面の警告に出る。
+        const leftover=Math.round((stmt.grandTotal||0)-rateAttributed);
+        if(leftover>0&&rateAttributed>0){
+          const areas=Object.keys(rateByArea);
+          let dealt=0;
+          areas.forEach((a,i)=>{
+            const v=i===areas.length-1?leftover-dealt:Math.round(leftover*(rateByArea[a]/rateAttributed));
+            dealt+=v;
+            expByArea[a]=(expByArea[a]||0)+v;
+          });
+        }
       });
     }
   }else{
