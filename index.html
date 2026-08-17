@@ -1861,6 +1861,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-08-17', tag:'修正', title:'社員の担当売上: 川崎の夕刊・競馬が計上されていませんでした',
+   desc:'社員の担当売上は「そのコースの売上を、その日にシフトへ入っていた社員へ配分する」計算です。コース名で突き合わせていますが、川崎だけ シフト表が「川崎夕刊N」・店舗マスタが「川崎高津N」と表記が違うため、川崎の夕刊・競馬のシフトが1日も突き合わず、その分の売上が社員に配分されていませんでした（2026年7月は245日分）。朝刊はどちらも「川崎高津N」で一致していたため、川崎の社員担当売上は朝刊だけの金額になっていました。コース名を店舗マスタ側に揃えてから突き合わせるようにしました。収支管理の「社員別 売上配分」と、社員管理タブの両方が対象です。'},
   {date:'2026-08-17', tag:'改善', title:'収支管理: 支払いは「確定支払い」の数字を使うようにしました',
    desc:'これまで収支管理は、支払いを毎回シフトと単価マスタから計算し直していました。支払いは管理画面で「確定・公開」しているので、その確定値をそのまま使うようにし、「支払い元」の既定を「確定支払い（推奨）」にしました。支払明細と必ず一致し、Googleスプレッドシートを読まないので読み取り上限（429）の影響も受けません。営業所別も確定支払いの日別データのコース名から算出します。従来の計算し直しは「シフト自動（再計算）」として残してあります。あわせて、営業所に振り分けられない社員給料（その月に新聞のシフトが1日も無い社員の月給。給料は営業所別の勤務日数比で按分するため、勤務日が無いとどの営業所にも入りません）を、名前と金額つきで表示するようにしました。全社の合計には入っていますが営業所別には入らないため、表の縦計が合わない理由になります。新聞セクションを離れた社員については、スタッフ管理でその方の月給を空にすれば費用からも外れます。'},
   {date:'2026-08-17', tag:'修正', title:'収支管理: 読み込みに失敗しても数字が出てしまう問題',
@@ -9657,6 +9659,15 @@ function admScExportCsv(){
 }
 
 // --- 収支管理 ---
+// シフト表と店舗マスタでコース名が違うものを、店舗マスタ側の名前に揃える。
+// 川崎の夕刊/競馬は シフト「川崎夕刊N」/ 店舗マスタ「川崎高津N」で表記が違い、
+// 揃えないとコース名で突き合わせる処理(社員の売上按分など)が空振りする。
+// 2026-07 は川崎の夕刊シフト245日分が丸ごと突き合わせられていなかった。
+function revNormCourse(c){
+  const s=String(c||'').trim();
+  const m=s.match(/^川崎(?:夕刊|朝刊)(\d+)$/);
+  return m?('川崎高津'+m[1]):s;
+}
 let admRevData=null;// {sales:[{area,course,amount}], expenses:[{staff,amount}]}
 
 async function admRevInit(){
@@ -9947,7 +9958,7 @@ async function admRevLoad(){
   // 該当月のシフトデータを集める (DB.shiftsByCourse[monthLabel])
   // monthVal は 'YYYY-MM' 形式、DEFS の label は '4月シフト2026' 形式
   const [my,mm]=monthVal.split('-').map(Number);
-  const matchedShifts={};// course -> {amTotal, amSocial, pmTotal, pmSocial}
+  const matchedShifts={};// course -> {amTotal, amSocial, pmTotal, pmSocial}  ※キーは店舗マスタのコース名に正規化
   Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
     Object.values(byArea).forEach(({entries,dates})=>{
       // 期間が一致するかチェック
@@ -9958,8 +9969,9 @@ async function admRevLoad(){
       if(!inMonth.length)return;
       const inMonthIdx=new Set(inMonth.map(dt=>dt.d));
       entries.forEach(({course,a})=>{
-        if(!matchedShifts[course])matchedShifts[course]={amTotal:0,amSocial:0,pmTotal:0,pmSocial:0};
-        const stat=matchedShifts[course];
+        const ckey=revNormCourse(course);
+        if(!matchedShifts[ckey])matchedShifts[ckey]={amTotal:0,amSocial:0,pmTotal:0,pmSocial:0};
+        const stat=matchedShifts[ckey];
         a.forEach(({d,am,pm})=>{
           if(!inMonthIdx.has(d))return;
           if(am&&am!=='0'&&am!=='希望休'){stat.amTotal++;if(findSocial(am))stat.amSocial++;}
@@ -9991,7 +10003,7 @@ async function admRevLoad(){
     Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
       Object.values(byArea).forEach(({entries,dates})=>{
         entries.forEach(({course:c,a})=>{
-          if(c!==course)return;
+          if(revNormCourse(c)!==course)return;
           a.forEach(({d,am,pm})=>{
             const [yy,mmm]=d.split('-').map(Number);
             if(yy!==my||mmm!==mm)return;
@@ -12859,8 +12871,9 @@ async function admEmpLoad(){
       if(!inMonth.length)return;
       const inMonthSet=new Set(inMonth.map(dt=>dt.d));
       entries.forEach(({course,a})=>{
-        if(!matchedShifts[course])matchedShifts[course]={amTotal:0,amSocial:0,pmTotal:0,pmSocial:0};
-        const stat=matchedShifts[course];
+        const ckey=revNormCourse(course);
+        if(!matchedShifts[ckey])matchedShifts[ckey]={amTotal:0,amSocial:0,pmTotal:0,pmSocial:0};
+        const stat=matchedShifts[ckey];
         a.forEach(({d,am,pm})=>{
           if(!inMonthSet.has(d))return;
           if(am&&am!=='0'&&am!=='希望休'){stat.amTotal++;if(findSocial(am))stat.amSocial++;}
@@ -12937,11 +12950,16 @@ async function admEmpLoad(){
   Object.values(DB.shiftsByCourse||{}).forEach(byArea=>{
     Object.values(byArea).forEach(({entries})=>{
       entries.forEach(({course,a})=>{
-        if(!courseShiftMap[course])courseShiftMap[course]={};
+        // 店舗マスタ側の名前に揃える。川崎は朝刊が「川崎高津N」・夕刊が「川崎夕刊N」と
+        // 別の行で入ってくるので、同じキーに寄せたうえで am/pm をマージする
+        // (代入だと後から来た行が前の行を消してしまう)。
+        const ckey=revNormCourse(course);
+        if(!courseShiftMap[ckey])courseShiftMap[ckey]={};
         a.forEach(({d,am,pm})=>{
           const [yy,mmm]=d.split('-').map(Number);
           if(yy!==my||mmm!==mm)return;
-          courseShiftMap[course][d]={am:am||'',pm:pm||''};
+          const cur=courseShiftMap[ckey][d]||{am:'',pm:''};
+          courseShiftMap[ckey][d]={am:am||cur.am||'',pm:pm||cur.pm||''};
         });
       });
     });
