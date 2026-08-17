@@ -1861,6 +1861,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-08-17', tag:'修正', title:'収支管理: 読み込みに失敗しても数字が出てしまう問題',
+   desc:'確定売上の読み込みに失敗したとき、これまでは「確定が0件」として扱っていたため、全コースが未確定に見え、売上が確定値ではなく計算値で表示されていました（読み込みエラーと本当に未確定なのかを画面から区別できませんでした）。失敗時は前回の値を保持したうえで理由を表示し、3回まで再試行するようにしました。あわせて、対象月のシフトを最新で取得できずキャッシュから計算した場合も警告を出します（外注費はシフトの日数から計算するため、古いシフトに落ちると金額が実態より小さく出ます）。どちらの場合も「この画面の数字は信頼できません」と赤で表示されるので、その状態で判断せずに開き直してください。'},
   {date:'2026-08-17', tag:'修正', title:'収支管理: 営業所別の外注費が実態より少なく出ていました',
    desc:'外注費は単価マスタとシフトから1人ずつ計算しており、その合計は正しく出ていましたが、営業所別に振り分ける段階で一部が消えていました。原因は、コース欄が空のまま支払いが発生する項目（🧭プランナー手当＝月額なので日付の行に乗らない／🎁特別日当＝シフトが無い日にも付く）と、営業所を判定できないコース名（庫内・引継のみ等）です。営業所はコース名の先頭（城北/川越/立川/川崎）で判定しているため、これらはどの営業所にも入らず、営業所別の粗利率が実態より高く出ていました。コースの付かない支払いは、その人が実際に稼働した営業所の金額比で按分するようにしました。それでも振り分けられない分は表の下に金額を明示します。あわせて、営業所を1つ選んだときに売上だけが絞られ外注費と社員給料が全社の合計のままだった問題（川崎高津で粗利率 -153% と表示）も修正しました。'},
   {date:'2026-08-17', tag:'修正', title:'荷主リスト突合: まだ開店していない店舗を差異として数えていました',
@@ -9971,7 +9973,11 @@ async function admRevLoad(){
     });
   });
 
-  admRevData={sales,expenses,monthWork,expByCourse,expByArea,expByCourseDate,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays};
+  // データの取得に失敗して古い値/計算値に落ちていないか。画面に出して判断できるようにする。
+  const dataWarn=[];
+  if(confirmedSalesLoadError)dataWarn.push(`確定売上を読み込めませんでした（${confirmedSalesLoadError}）。全コースが「未確定」に見え、売上が確定値ではなく計算値で表示されます。`);
+  if(expSrc==='shift'&&admPayShiftStale)dataWarn.push('対象月のシフトを最新で取得できませんでした。外注費が古いシフトから計算されている可能性があります。');
+  admRevData={sales,expenses,monthWork,expByCourse,expByArea,expByCourseDate,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays,dataWarn};
   admRevRender();
 }
 
@@ -13060,6 +13066,16 @@ function admRevRender(){
   sh+=`<div style="background:${profitBg};border:1px solid ${profitBorder};border-radius:10px;padding:16px 24px;flex:1;min-width:160px;text-align:center;"><div style="font-size:12px;color:${profitColor};">粗利 ${socialStaffCount>0?'(外注+社員)':''}</div><div style="font-size:24px;font-weight:bold;color:${profitColor};">¥${finalProfit.toLocaleString()}</div><div style="font-size:10px;color:${profitColor};margin-top:2px;">粗利率 ${finalMargin.toFixed(1)}%</div>${socialStaffCount>0?`<div style="font-size:10px;color:var(--text-sub);margin-top:4px;border-top:1px dashed #cbd5e1;padding-top:4px;">給料前 ¥${profitNoKanri.toLocaleString()}</div>`:''}</div>`;
   sh+=`<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:10px 18px;flex:1;min-width:180px;"><div style="font-size:11px;color:var(--text-sub);margin-bottom:4px;">店舗数（延べ）</div><div style="display:flex;gap:10px;font-size:13px;"><span>📰朝刊 <b>${totalAmShops}</b></span><span>🌙夕刊 <b>${totalPmShops}</b></span><span>🏇競馬 <b>${totalKeibaShops}</b></span></div></div>`;
   sh+=`</div>`;
+  // データを取り切れていない場合は、数字より先に出す。
+  // 「確定が0件」なのか「確定を読めなかった」のかで意味が正反対になるため。
+  const dataWarnList=admRevData.dataWarn||[];
+  if(dataWarnList.length){
+    sh+=`<div style="margin-top:8px;padding:10px 12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;font-size:12px;color:#b91c1c;">`
+      +`⛔ <b>この画面の数字は信頼できません。</b><br>`
+      +dataWarnList.map(w=>'・'+w).join('<br>')
+      +`<br>月を選び直すか、少し待ってから開き直してください。`
+      +`</div>`;
+  }
   if(totalCnt>confirmedCnt){
     sh+=`<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border-radius:6px;font-size:12px;color:#92400e;">⚠ ${totalCnt-confirmedCnt}コースが未確定（計算値 ¥${unconfirmedAmount.toLocaleString()}）。請求書作成画面から確定してください。</div>`;
   }
@@ -13798,11 +13814,29 @@ function admBillCols(){
 
 // 確定済み売上キャッシュ
 let confirmedSalesCache=null;
+// 確定売上の読み込み。
+// ★ 以前は失敗しても confirmedSalesCache=[] にしていたため、Sheetsの読取上限(429)等で
+//   一時的に取れなかっただけで全コースが「未確定」に見え、収支・請求が確定値ではなく
+//   計算値に黙って落ちていた(2026-08-17に 90/91確定 → 0/91未確定 と表示されて発覚)。
+//   invApi は HTTP エラーでも例外を投げず {error:...} を返すので catch にも入らない。
+//   ここでは「0件」と「取得失敗」を区別し、失敗時はキャッシュを壊さず理由を残す。
+let confirmedSalesLoadError='';
 async function loadConfirmedSales(){
-  try{
-    const res=await invApi({action:'get_confirmed_sales'});
-    confirmedSalesCache=res.records||[];
-  }catch(_){confirmedSalesCache=[];}
+  confirmedSalesLoadError='';
+  let lastErr='';
+  for(let i=0;i<3;i++){
+    if(i>0)await new Promise(r=>setTimeout(r,900*i));
+    try{
+      const res=await invApi({action:'get_confirmed_sales'});
+      if(res&&res.error){lastErr=String(res.error);continue;}
+      if(!res||!Array.isArray(res.records)){lastErr='応答に records がありません';continue;}
+      confirmedSalesCache=res.records;
+      return confirmedSalesCache;
+    }catch(e){lastErr=String((e&&e.message)||e);}
+  }
+  // 失敗: 前回値を保持したまま理由を残す(空配列で上書きすると全部「未確定」になる)
+  confirmedSalesLoadError=lastErr||'原因不明';
+  if(!confirmedSalesCache)confirmedSalesCache=[];
   return confirmedSalesCache;
 }
 function getConfirmedSale(monthVal,area,course){
@@ -15329,8 +15363,13 @@ function admPayApplySpecial(amount,detail,date,staffName,isAm){
 }
 
 // 月のシフトをロード (キャッシュに無ければ fetch-shift で取得)
+// 対象月のシフトが live で取れたか。取れずにキャッシュ/静的データへ落ちた場合 true。
+// ★ 支払い(外注費)はシフトの日数から計算するので、古いシフトに落ちると金額が黙って
+//   小さく出る。落ちたこと自体を画面に出さないと気づけない。
+let admPayShiftStale=false;
 async function admPayEnsureMonthLoaded(year,month){
   const sheetName=`${month}月シフト${year}`;
+  admPayShiftStale=false;
   // 電話番号(getPhone)は DB.staff = 人員名簿 から引く。静的 data.js のままだと古く、
   // 電話が空のまま確定され、明細ビューアが電話で本人を引けなくなる(上田雪枝で発生)。
   // 確定前に必ず人員名簿を live 取得する(中央人材マスタからの電話補完もここで乗る)。
@@ -15338,7 +15377,8 @@ async function admPayEnsureMonthLoaded(year,month){
   // 必ず Google Sheets から live で取得 (キャッシュ越しのスタレを防ぐ)
   const ok=await forceFreshShift(year,month);
   if(ok)return sheetName;
-  // 取得失敗 → 既存キャッシュにフォールバック
+  // 取得失敗 → 既存キャッシュにフォールバック(古い可能性があるので印を付ける)
+  admPayShiftStale=true;
   if(DB.shifts[sheetName])return sheetName;
   for(const k of Object.keys(DEFS)){
     if(DEFS[k].label===sheetName&&DB.raw[k]){
