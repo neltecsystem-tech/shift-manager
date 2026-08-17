@@ -52,7 +52,8 @@ function parseDate(s: string): Date | null {
 //   朝刊 F=5(course)/M=12(order)/N=13(time)
 //   夕刊 O=14(course)/R=17(order)/S=18(time)
 //   競馬 T=19(course)/X=23(order)/Y=24(time)
-const EDITIONS = [
+// 区分ごとの列。既定値は従来の直書き位置。実行時に見出しから引き直す(下の resolveCols)。
+let EDITIONS = [
   { courseCol: 5,  orderCol: 12, timeCol: 13 },
   { courseCol: 14, orderCol: 17, timeCol: 18 },
   { courseCol: 19, orderCol: 23, timeCol: 24 },
@@ -78,12 +79,34 @@ Deno.serve(async (req: Request) => {
     const token = await getAccessToken();
     const now = new Date();
 
-    // Columns (0-indexed): B=1, F=5, O=14, T=19, AA=26
-    const areaCol = 1;          // B: 営業所
-    const amCourseCol = 5;      // F: 朝刊コース名
-    const pmCourseCol = 14;     // O: 夕刊コース名
-    const keibaCourseCol = 19;  // T: 競馬コース名
-    const lastDeliveryCol = 26; // AA: 最終納品日
+    // ── 列は見出し(2行目)から引く ──────────────────────────────
+    // ★ 直書きにしてはいけない。シートに列を1つ挿入すると、画面側(見出しで探して
+    //   書き込む)と処理側(直書き)がズレ、最終納品日を入れても永久にクリアされない。
+    //   しかもエラーにならず静かに何もしないので気づけない。
+    //   (単価マスタで同じ事故を起こしている)
+    const headerResp = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A2:BZ2`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const headerRow = (((await headerResp.json()).values ?? [])[0] ?? []) as string[];
+    const resolved: Record<string, string> = {};
+    const findCol = (label: string, keyword: string, fallback: number): number => {
+      const i = headerRow.findIndex((h) => (h ?? '').trim().includes(keyword));
+      // 見つからなければ従来位置で動かす(直して壊すより、今の挙動を保つ)
+      resolved[label] = i >= 0 ? `${colLetter(i)}(見出し一致)` : `${colLetter(fallback)}(既定値・見出し未検出)`;
+      return i >= 0 ? i : fallback;
+    };
+
+    const areaCol = findCol('営業所', '営業所', 1);
+    const amCourseCol = findCol('朝刊コース名', '朝刊コース', 5);
+    const pmCourseCol = findCol('夕刊コース名', '夕刊コース', 14);
+    const keibaCourseCol = findCol('競馬コース名', '競馬コース', 19);
+    const lastDeliveryCol = findCol('最終納品日', '最終納品日', 26);
+    EDITIONS = [
+      { courseCol: amCourseCol,    orderCol: findCol('朝刊順番', '朝刊順番', 12), timeCol: findCol('朝刊店着時間', '朝刊店着', 13) },
+      { courseCol: pmCourseCol,    orderCol: findCol('夕刊順番', '夕刊順番', 17), timeCol: findCol('夕刊店着時間', '夕刊店着', 18) },
+      { courseCol: keibaCourseCol, orderCol: findCol('競馬順番', '競馬順番', 23), timeCol: findCol('競馬店着時間', '競馬店着', 24) },
+    ];
 
     const dataResp = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A3:AO3000`,
@@ -94,7 +117,9 @@ Deno.serve(async (req: Request) => {
 
     // ── 休店: 休店終了日(AO=40)を過ぎた行の休店情報(AM:AO)を自動クリア ──
     // AM=38 休店中, AN=39 休店開始日, AO=40 休店終了日
-    const suspFlagCol = 38, suspStartCol = 39, suspEndCol = 40;
+    const suspFlagCol = findCol('休店中', '休店中', 38);
+    const suspStartCol = findCol('休店開始日', '休店開始', 39);
+    const suspEndCol = findCol('休店終了日', '休店終了', 40);
     const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const suspData: { range: string; values: string[][] }[] = [];
     rows.forEach((row: string[], i: number) => {
@@ -308,6 +333,8 @@ Deno.serve(async (req: Request) => {
       success: true,
       message: `${cleared}件の店舗を処理（コース名クリア + B列に納品中止追加）／部分中止 ${partialCleared}件（区分別コースクリア）／順番 ${reordered}セルを詰め直し／休店終了 ${suspendCleared}件クリア`,
       total_checked: rows.length,
+      // どの列に解決されたか。「既定値・見出し未検出」が出ていたら見出しが変わっている。
+      columns: resolved,
       cleared,
       partialCleared,
       reordered,
