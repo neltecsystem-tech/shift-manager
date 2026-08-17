@@ -13273,13 +13273,21 @@ function admRevRender(){
     const allAreasTax=Math.round(allAreasSubtotal*0.10);
     const allAreasGrand=allAreasSubtotal+allAreasTax;
     const summaryColspan=hasSocial?6:4;// 「合計」列までの幅
-    dh+=`<tr style="background:#f8fafc;font-weight:600;"><td colspan="4" style="border:1px solid #ccc;padding:4px;text-align:right;">小計 (税抜)</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${allAreasSubtotal.toLocaleString()}</td><td colspan="${hasSocial?5:3}" style="border:1px solid #ccc;padding:4px;"></td></tr>`;
+    // 小計(税抜)の行にも支払い〜粗利率を出す。営業所別の行と同じ計算 (売上税抜 − 支払い − 社員給料) で、
+    // 各列の縦計になる。粗利は税抜ベースなので、税込合計の行ではなくこの行に出すのが正しい。
+    const allAreasSocialSales=Math.round(Object.values(socialSalesByAreaMap).reduce((a,b)=>a+b,0));
+    const allAreasSocialSalary=Math.round(Object.values(socialSalaryByAreaMap).reduce((a,b)=>a+b,0));
+    const allAreasProfit=allAreasSubtotal-allAreasExp-allAreasSocialSalary;
+    const allAreasMargin=allAreasSubtotal>0?(allAreasProfit/allAreasSubtotal*100):0;
+    const stColor=allAreasProfit>=0?'#1d4ed8':'#dc2626';
+    let subRow=`<tr style="background:#f8fafc;font-weight:600;"><td colspan="4" style="border:1px solid #ccc;padding:4px;text-align:right;">小計 (税抜)</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${allAreasSubtotal.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:#dc2626;">¥${allAreasExp.toLocaleString()}</td>`;
+    if(hasSocial)subRow+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;background:#fdf4ff;color:#7c3aed;">¥${allAreasSocialSales.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;background:#fef3c7;color:#92400e;">¥${allAreasSocialSalary.toLocaleString()}</td>`;
+    subRow+=`<td style="border:1px solid #ccc;padding:4px;text-align:right;font-weight:bold;color:${stColor};">¥${allAreasProfit.toLocaleString()}</td><td style="border:1px solid #ccc;padding:4px;text-align:right;color:${stColor};">${allAreasMargin.toFixed(1)}%</td></tr>`;
+    dh+=subRow;
     dh+=`<tr style="background:#f8fafc;"><td colspan="4" style="border:1px solid #ccc;padding:4px;text-align:right;">消費税 (10%)</td><td style="border:1px solid #ccc;padding:4px;text-align:right;">¥${allAreasTax.toLocaleString()}</td><td colspan="${hasSocial?5:3}" style="border:1px solid #ccc;padding:4px;"></td></tr>`;
     let totalRow=`<tr style="background:#fef3c7;font-weight:bold;"><td colspan="4" style="border:1px solid #ccc;padding:6px;text-align:right;">合計 (税込)</td><td style="border:1px solid #ccc;padding:6px;text-align:right;color:#92400e;">¥${allAreasGrand.toLocaleString()}</td><td style="border:1px solid #ccc;padding:6px;text-align:right;color:#dc2626;">¥${allAreasExp.toLocaleString()}</td>`;
     if(hasSocial){
-      const totalSocialSales=Math.round(Object.values(socialSalesByAreaMap).reduce((a,b)=>a+b,0));
-      const totalSocialSalary=Math.round(Object.values(socialSalaryByAreaMap).reduce((a,b)=>a+b,0));
-      totalRow+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;background:#fdf4ff;color:#7c3aed;">¥${totalSocialSales.toLocaleString()}</td><td style="border:1px solid #ccc;padding:6px;text-align:right;background:#fef3c7;color:#92400e;">¥${totalSocialSalary.toLocaleString()}</td>`;
+      totalRow+=`<td style="border:1px solid #ccc;padding:6px;text-align:right;background:#fdf4ff;color:#7c3aed;">¥${allAreasSocialSales.toLocaleString()}</td><td style="border:1px solid #ccc;padding:6px;text-align:right;background:#fef3c7;color:#92400e;">¥${allAreasSocialSalary.toLocaleString()}</td>`;
     }
     totalRow+=`<td colspan="2" style="border:1px solid #ccc;padding:6px;"></td></tr>`;
     dh+=totalRow;
