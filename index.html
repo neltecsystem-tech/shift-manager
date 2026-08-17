@@ -1861,6 +1861,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-08-17', tag:'改善', title:'収支管理: 支払いは「確定支払い」の数字を使うようにしました',
+   desc:'これまで収支管理は、支払いを毎回シフトと単価マスタから計算し直していました。支払いは管理画面で「確定・公開」しているので、その確定値をそのまま使うようにし、「支払い元」の既定を「確定支払い（推奨）」にしました。支払明細と必ず一致し、Googleスプレッドシートを読まないので読み取り上限（429）の影響も受けません。営業所別も確定支払いの日別データのコース名から算出します。従来の計算し直しは「シフト自動（再計算）」として残してあります。あわせて、その月に新聞のシフトが1日も無い社員の月給を、新聞の費用に含めないようにしました（他セクションへ移った社員の給料が新聞の粗利から引かれていました。2026年7月は2名・計77万円）。外した社員は画面に名前と金額を表示します。'},
   {date:'2026-08-17', tag:'修正', title:'収支管理: 読み込みに失敗しても数字が出てしまう問題',
    desc:'確定売上の読み込みに失敗したとき、これまでは「確定が0件」として扱っていたため、全コースが未確定に見え、売上が確定値ではなく計算値で表示されていました（読み込みエラーと本当に未確定なのかを画面から区別できませんでした）。失敗時は前回の値を保持したうえで理由を表示し、3回まで再試行するようにしました。あわせて、対象月のシフトを最新で取得できずキャッシュから計算した場合も警告を出します（外注費はシフトの日数から計算するため、古いシフトに落ちると金額が実態より小さく出ます）。どちらの場合も「この画面の数字は信頼できません」と赤で表示されるので、その状態で判断せずに開き直してください。'},
   {date:'2026-08-17', tag:'修正', title:'収支管理: 営業所別の外注費が実態より少なく出ていました',
@@ -10038,6 +10040,17 @@ async function admRevLoad(){
       socialSalaryByArea[area]=(socialSalaryByArea[area]||0)+salary*(days/total);
     });
   });
+  // ── その月に新聞のシフトに1日も入っていない社員の給料は、新聞の費用にしない ──
+  // ★ 以前は 社員給料 = 単価マスタで biz_type='社員' の全員の月給合計 だったため、
+  //   他セクションへ移った社員の月給まで新聞の粗利から引かれていた
+  //   (2026-07 は勤務0日の2名 計¥770,000 が乗り、粗利がその分少なく出ていた)。
+  //   営業所別に按分できるのは勤務のある社員だけなので、合計もそれに揃える。
+  const socialSalaryAllocated=Math.round(Object.values(socialSalaryByArea).reduce((a,b)=>a+b,0));
+  const socialWorked=new Set(Object.entries(empAreaDays)
+    .filter(([,d])=>Object.values(d||{}).some(v=>v>0)).map(([n])=>n));
+  const socialSalaryExcluded=socialStaff
+    .filter(r=>(Number(r.monthly_salary)||0)>0&&!socialWorked.has(r.name))
+    .map(r=>({name:r.name,salary:Number(r.monthly_salary)||0}));
 
   // 外注費はシフトの日数から計算する。シフトが古いと金額が黙って小さく出るので、
   // その状態で粗利を出しても意味がない。数字は出さずに中止する。
@@ -10051,7 +10064,7 @@ async function admRevLoad(){
   const expNote=expSrc==='closed'
     ? `支払いは ${monthVal} の確定支払い（${closedPaySummary.staff_count}名・${(closedPaySummary.last_finalized_at||'').slice(0,10)} 確定）です。支払明細と同じ数字で、再計算していません。`
     : (expSrc==='shift'?'支払いはシフトと単価マスタから再計算した値です。確定支払いとは一致しないことがあります。':'支払いは稼働記録（手入力）の合計です。入力漏れがあるとそのまま少なく出ます。');
-  admRevData={sales,expenses,monthWork,expByCourse,expByArea,expByCourseDate,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays,dataWarn,expNote,expSrc};
+  admRevData={sales,expenses,monthWork,expByCourse,expByArea,expByCourseDate,socialStaff,socialNames,socialSalaryTotal,socialSalaryByName,socialSalesTotal,socialSalesByStaff,socialDaysByStaff,areaExtras,socialSalesByArea,socialSalaryByArea,empAreaDays,dataWarn,expNote,expSrc,socialSalaryAllocated,socialSalaryExcluded};
   admRevRender();
 }
 
@@ -13082,13 +13095,13 @@ function admRevRender(){
 
   // 社員集計
   const socialSalesTotal=admRevData.socialSalesTotal||0;
-  // 給料も営業所を絞ったらその営業所の按分額にする(勤務日数比で按分済みの socialSalaryByArea)
+  // 給料は「その月に新聞のシフトに入っていた社員」の分だけ。営業所を絞ればその営業所の按分額。
+  // 勤務0日の社員(他セクションへ移った等)の月給は新聞の費用にしない。
   const socialSalaryTotal=areaFilter
     ? Math.round((admRevData.socialSalaryByArea||{})[areaFilter]||0)
-    : (admRevData.socialSalaryTotal||0);
-  const socialStaffCount=areaFilter
-    ? Object.keys(admRevData.empAreaDays||{}).filter(n=>((admRevData.empAreaDays||{})[n]||{})[areaFilter]).length
-    : (admRevData.socialStaff||[]).length;
+    : (admRevData.socialSalaryAllocated||0);
+  const socialStaffCount=Object.keys(admRevData.empAreaDays||{})
+    .filter(n=>{const d=(admRevData.empAreaDays||{})[n]||{};return areaFilter?d[areaFilter]:Object.values(d).some(v=>v>0);}).length;
   const filteredSocialSales=areaFilter
     ? filteredSales.reduce((a,s)=>a+(s.socialSales||0),0)
     : socialSalesTotal;
@@ -13148,6 +13161,15 @@ function admRevRender(){
       +`⛔ <b>一部の数字を表示できません。</b><br>`
       +dataWarnList.map(w=>'・'+w).join('<br>')
       +`<br>月を選び直すか、少し待ってから開き直してください。`
+      +`</div>`;
+  }
+  // 新聞の費用から外した社員の給料。黙って外すと「なぜ合計が違うのか」が分からなくなる。
+  const salExcluded=admRevData.socialSalaryExcluded||[];
+  if(salExcluded.length&&!areaFilter){
+    const sum=salExcluded.reduce((a,b)=>a+b.salary,0);
+    sh+=`<div style="margin-top:8px;padding:8px 12px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;font-size:12px;color:var(--text-sub);">`
+      +`ℹ️ この月に新聞のシフトが1日も無い社員 ${salExcluded.length}名（計 ¥${sum.toLocaleString()}）は、給料を新聞の費用に含めていません：`
+      +salExcluded.map(x=>`${x.name}（¥${x.salary.toLocaleString()}）`).join(' / ')
       +`</div>`;
   }
   // 支払いがどこから来た数字なのかを常に明示する (確定値か再計算か)
