@@ -1861,6 +1861,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-08-18', tag:'修正', title:'シフト編集: 「引継 立川43」などが氏名の警告に出ていた問題',
+   desc:'シフト編集の保存時に「単価マスタに無い氏名があります」と警告が出ますが、引継・ミーティング・希望休・研修・有給・欠勤・出張・休刊といった人名ではないセルまで氏名として照合していたため、誤って警告に並んでいました。同じ画面のドライバー重複チェックにはこれらの除外リストがあり、氏名チェックにだけ無かったのが原因です。2か所で食い違わないよう除外リストを共通化しました。氏名の1文字違い（ノアガデル/ノアガベルなど）を拾う本来の働きはそのままです。'},
   {date:'2026-08-17', tag:'改善', title:'収支管理: 読み取り上限（429）で開けなくなるのを改善',
    desc:'Googleスプレッドシートの読み取り上限に当たると収支管理が開けない状態が続いていました。原因は、年月・営業所・支払い元を変えるたびに確定売上を読み直していたことと、失敗時にその場で3回再試行して上限をさらに消費していたことです。確定売上は一度取得したら60秒は読み直さないようにし、失敗時の再試行はやめました（上限は1分あたりなので、その場で再試行しても失敗するだけです）。また、取得できた確定売上を端末に保存しておき、上限で取得できないときはその写しを使って数字を表示します。確定値そのものなので金額は正しく、いつ取得した写しなのかを画面に表示します。'},
   {date:'2026-08-17', tag:'修正', title:'氏名の字体違い（齋藤／斉藤 など）で別人扱いになる問題',
@@ -10285,6 +10287,13 @@ function admSeStaffCellHtml(r,c,val,dirty,minWidth,blackout,isDup){
 
 // Section 1 ドライバー重複スキャン: 同一日付列 (col / col+1) で同じ名前が複数行にあれば重複
 // 戻り値: Set<"r,c"> 重複セルのキー
+// シフト表のセルに入る「人名ではない値」。引継・ミーティング・希望休など、
+// 支払計算側(ADM_PAY_NONPAID_PATTERN / ADM_PAY_HIKITSUGI_PATTERN)が
+// 特別扱いしているものと同じ。重複チェックと氏名チェックの両方で使う。
+// 🚨 片方だけに書くと食い違う。実際、氏名チェックにだけ無かったため
+//    「引継 立川43」が『単価マスタに無い氏名』として警告されていた。
+const ADM_SE_SPECIAL_CELL=/ミーティング|希望休|引継|研修|有給|欠勤|出張|五反田|目黒|渋谷|休刊/;
+
 function admSeFindStaffDups(){
   const dupCells=new Set();
   const rows=admSeState.rows;
@@ -10294,7 +10303,7 @@ function admSeFindStaffDups(){
   for(let c=1;c<dateRow.length;c++){
     if(/^\d{1,2}\/\d{1,2}$/.test(String(dateRow[c]||'').trim()))cols.push(c);
   }
-  const SPECIAL=/ミーティング|希望休|引継|研修|有給|欠勤|出張|五反田|目黒|渋谷|休刊/;
+  const SPECIAL=ADM_SE_SPECIAL_CELL;
   cols.forEach(c=>{
     [c,c+1].forEach(col=>{
       const map=new Map();
@@ -11812,6 +11821,8 @@ function admSeUnknownStaffIn(updates){
   updates.forEach(u=>{
     const v=String(u.value||'').trim();
     if(!v||skip.test(v)||/^[\d\/\-:：\s]+$/.test(v))return;
+    // 引継・ミーティング等は人名ではないので氏名として照合しない
+    if(ADM_SE_SPECIAL_CELL.test(v))return;
     const k=norm(v);
     if(!k||master.has(k)||seen.has(k))return;
     seen.add(k);out.push(v);
