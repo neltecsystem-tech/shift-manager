@@ -9152,7 +9152,10 @@ const SHIFT_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/fetch-shi
 // 429はステータス or 200で本文に google の quota エラーが包まれて返る両方に対応。
 // fetch-shift の書き込み系(update_cells/append_row/delete_rows 等)はサーバ側で
 // ログイン済みトークン必須。全呼び出しがこのラッパーを通るので、ここで一括付与する。
-const SHIFT_WRITE_ACTIONS=new Set(['update_cells','update_range','create_sheet','format_cells','append_row','delete_rows','insert_row_at','move_rows']);
+// ★ サーバ(fetch-shift)の WRITE_ACTIONS と必ず一致させること。
+//   ここに無いアクションはトークンが付かないため、遮断モードで401になる。
+//   delete_sheet が漏れていた(現在UIからの呼び出しは無いが、追加した時に嵌る)。
+const SHIFT_WRITE_ACTIONS=new Set(['update_cells','update_range','create_sheet','delete_sheet','format_cells','append_row','delete_rows','insert_row_at','move_rows']);
 function smShiftAttachToken(opts){
   const tok=(typeof invAuthToken!=='undefined'&&invAuthToken)?invAuthToken:'';
   if(!tok||!opts||typeof opts.body!=='string')return opts;
