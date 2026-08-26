@@ -74,18 +74,72 @@ function areaOfCourse(c: string): string {
 }
 
 // ── 単価マスタから 社員・プランナー 名前リスト ──
-async function getShainNames(token: string): Promise<string[]> {
+// 🚨 ここが空で返ると「社員の新聞予定を全削除して入れ直さない」= 予定が消える(2026-08-26の障害)。
+// Sheets は読取枠(60/分)超過や一時エラーで落ちることがあるので、
+//   ① 軽リトライ ② 直近成功分の DBキャッシュへフォールバック ③ どちらも駄目なら throw(=削除前に中断)
+// の三段で「静かに0件」を作らないようにする。
+const SHAIN_CACHE_KEY = 'schedule_sync_shain_cache';
+
+async function fetchShainFromSheet(token: string): Promise<string[]> {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${INVOICE_SS}/values/${encodeURIComponent(TANKA_SHEET)}!A2:U10000`;
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  const j = await r.json();
-  const rows = (j.values || []) as string[][];
-  const names: string[] = [];
-  for (const row of rows) {
-    const name = (row[0] || '').trim();
-    const bizType = (row[11] || '').trim(); // L列 = 区分
-    if (name && (bizType === '社員' || bizType === 'プランナー')) names.push(name);
+  let lastErr = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await new Promise((res) => setTimeout(res, attempt * 800));
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) { lastErr = `http_${r.status}: ${(await r.text()).slice(0, 150)}`; continue; }
+    const j = await r.json().catch(() => null);
+    if (!j || !Array.isArray(j.values)) { lastErr = 'no_values_in_response'; continue; }
+    const rows = j.values as string[][];
+    const names: string[] = [];
+    for (const row of rows) {
+      const name = (row[0] || '').trim();
+      const bizType = (row[11] || '').trim(); // L列 = 区分
+      if (name && (bizType === '社員' || bizType === 'プランナー')) names.push(name);
+    }
+    // 読めたのに0件 = 区分列がずれた等の構造事故。キャッシュを上書きせず異常として扱う。
+    if (!names.length) { lastErr = 'zero_shain_rows (単価マスタのL列=区分を確認)'; continue; }
+    return [...new Set(names)];
   }
-  return [...new Set(names)];
+  throw new Error(`rate_master_read_failed: ${lastErr}`);
+}
+
+async function readShainCache(): Promise<string[]> {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/automation_config?key=eq.${SHAIN_CACHE_KEY}&select=value`, {
+      headers: { apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
+    });
+    const j = await r.json();
+    const arr = JSON.parse(j?.[0]?.value || '[]');
+    return Array.isArray(arr) ? arr.map((x: unknown) => String(x).trim()).filter(Boolean) : [];
+  } catch { return []; }
+}
+
+async function writeShainCache(names: string[]): Promise<void> {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/automation_config`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_SERVICE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+        'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify({ key: SHAIN_CACHE_KEY, value: JSON.stringify(names), updated_at: new Date().toISOString() }),
+    });
+  } catch { /* キャッシュ更新の失敗は同期本体を止めない */ }
+}
+
+// 戻り値の source は dry-run/レスポンスで「今回どこから取れたか」を見えるようにするため。
+async function getShainNames(token: string): Promise<{ names: string[]; source: 'sheet' | 'cache'; warn?: string }> {
+  try {
+    const names = await fetchShainFromSheet(token);
+    await writeShainCache(names);
+    return { names, source: 'sheet' };
+  } catch (e: any) {
+    const warn = e?.message || String(e);
+    const cached = await readShainCache();
+    if (cached.length) return { names: cached, source: 'cache', warn };
+    // 単価マスタもキャッシュも無い = 対象者不明。ここで throw して削除前に中断する。
+    throw new Error(`${warn} / no cached shain list — 同期を中断しました(既存の予定は消しません)`);
+  }
 }
 
 // ── 予定表同期の追加対象(プランナー等)。単価マスタ区分を変えず(=支払明細に影響させず)、
@@ -324,13 +378,13 @@ Deno.serve(async (req: Request) => {
 
     // 並行取得
     const token = await getAccessToken();
-    const [shainNames0, userMap, extraNames] = await Promise.all([
+    const [shainRes, userMap, extraNames] = await Promise.all([
       getShainNames(token),
       getUserMap(),
       getExtraStaff(),
     ]);
     // 単価マスタ社員/プランナー + 追加対象(automation_config)。同期対象の氏名リスト。
-    const shainNames = [...new Set([...shainNames0, ...extraNames])];
+    const shainNames = [...new Set([...shainRes.names, ...extraNames])];
 
     // 社員 → user_id マッピング(同名の全アカウントに反映)
     const staffToUser: { name: string; user_ids: string[] }[] = [];
@@ -407,6 +461,8 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({
         ok: true, dry_run: true,
         shain_total: shainNames.length,
+        shain_source: shainRes.source,
+        shain_warn: shainRes.warn || null,
         shain_mapped: staffToUser.length,
         shain_unmapped: unmappedStaff,
         months: monthsLoaded,
@@ -458,6 +514,8 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({
       ok: true, inserted, removed,
       shain_mapped: staffToUser.length,
+      shain_source: shainRes.source,
+      shain_warn: shainRes.warn || null,
       shain_unmapped: unmappedStaff,
       months: monthsLoaded,
       breakdown: { shift_manager: shiftMgrCount, askul: askulCount, delivery: deliveryCount },
