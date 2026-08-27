@@ -7818,10 +7818,21 @@ function smPartialSelect(rowNum,area,code,name){
   document.getElementById('smp-code').value=code;
   document.getElementById('smp-name').value=name;
   const rec=smData.find(r=>r.row_number===rowNum)||{};
-  // 朝刊=col_5 / 夕刊=col_14(無ければAJ=col_35) / 競馬=col_19
-  const eds=[{k:'朝刊',c:rec.col_5},{k:'夕刊',c:rec.col_14||rec.col_35},{k:'競馬',c:rec.col_19}];
+  // 列位置はヘッダーから引く(smColMap)。決め打ちにすると列が動いたとき静かにズレる。
+  // 🚨 旧夕刊コース(AJ列)へのフォールバックはしない。旧列には過去のコース名が残っているため、
+  //    現行の夕刊コースが空でも「夕刊(城北13)」のように取扱ありに見えてしまう(編集画面と食い違う)。
+  const cv=(idx,fb)=>{const i=(idx!=null?idx:fb);return i==null?'':String(rec[`col_${i}`]??'').trim();};
+  const eds=[
+    {k:'朝刊',c:cv(smColMap.amCourse,5)},
+    {k:'夕刊',c:cv(smColMap.pmCourse,14)},
+    {k:'競馬',c:cv(smColMap.keibaCourse,19)},
+  ];
+  // 旧夕刊コース(AJ)に値が残っている場合は、取扱ありとは書かずに参考として別行で出す
+  const oldPm=smColMap.pmCourseNew!=null?String(rec[`col_${smColMap.pmCourseNew}`]??'').trim():String(rec.col_35??'').trim();
+  const oldPmNote=(oldPm&&!eds[1].c)
+    ?`<div style="font-size:11px;color:#94a3b8;margin-top:2px;">旧夕刊コース(${oldPm}) が残っていますが、現行の夕刊コースは空です</div>`:'';
   const has=eds.filter(e=>String(e.c||'').trim());
-  document.getElementById('smp-info').innerHTML=`<div style="font-size:15px;font-weight:bold;color:#1e293b;">${name}</div><div style="font-size:12px;color:var(--text-sub);">${area} / ${code} / 行${rowNum}</div><div style="font-size:12px;color:#64748b;margin-top:4px;">現在の取扱: ${has.length?has.map(e=>e.k+'('+e.c+')').join(' / '):'なし'}</div>`;
+  document.getElementById('smp-info').innerHTML=`<div style="font-size:15px;font-weight:bold;color:#1e293b;">${name}</div><div style="font-size:12px;color:var(--text-sub);">${area} / ${code} / 行${rowNum}</div><div style="font-size:12px;color:#64748b;margin-top:4px;">現在の取扱: ${has.length?has.map(e=>e.k+'('+e.c+')').join(' / '):'なし'}</div>${oldPmNote}`;
   document.getElementById('smp-editions').innerHTML=has.length
     ?has.map(e=>`<label style="display:flex;align-items:center;gap:4px;background:#fff;border:1px solid #fed7aa;border-radius:8px;padding:6px 10px;cursor:pointer;"><input type="checkbox" class="smp-ed" value="${e.k}">${e.k}</label>`).join('')
     :'<span style="font-size:12px;color:#94a3b8;">この店舗に取扱区分がありません</span>';
