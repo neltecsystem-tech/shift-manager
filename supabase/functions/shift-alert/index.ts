@@ -112,6 +112,25 @@ Deno.serve(async (req) => {
         return json({ ok: true, open: true, key, cnt });
       }
 
+      // アスクル: 25日の自動確定(finalize-askul)が失敗した。
+      //   pg_cron は net.http_post を投げた時点で成功扱いになるため、EFが500を返しても
+      //   誰にも見えない。2026-08-25 は Google Sheets の 503 で落ち、支払明細が
+      //   8/21 の確定のまま1週間気付かれなかった。names[0] に失敗理由が入る。
+      if (kind === 'askul_finalize_failed') {
+        const month = clip(b.month, 20);
+        const key = `askul_finalize_failed:${month}`;
+        const names: string[] = Array.isArray(b.names) ? b.names.map((x: unknown) => clip(x, 200)).filter(Boolean).slice(0, 5) : [];
+        const cnt = names.length;
+        if (cnt === 0) {
+          await sb.from('sm_active_alerts').update({ status: 'resolved', resolved_at: new Date().toISOString(), cnt: 0, updated_at: new Date().toISOString() }).eq('key', key).eq('status', 'open');
+          return json({ ok: true, resolved: true, key });
+        }
+        const title = '⚠️ アスクルの自動確定が失敗しました';
+        const body = `アスクル ${month}：自動確定(毎月25日22時)が失敗しました。支払明細が古いままになり、会計の自動入力にも出ません。アスクル管理の締め画面から確定し直してください。原因: ${names[0]}`;
+        await sb.from('sm_active_alerts').upsert({ key, app, kind, title, body, cnt, names, status: 'open', resolved_at: null, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+        return json({ ok: true, open: true, key, cnt });
+      }
+
       // 🔑鍵タグ: 位置の取得が止まっている。画面は古い位置を出し続けるため、気付けるようにする。
       // stale_h = 最も新しい取得の経過時間、cnt = 古いタグ数(0で自動解消)
       if (kind === 'key_tag_stale') {
