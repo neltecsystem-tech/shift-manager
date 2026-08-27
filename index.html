@@ -1155,11 +1155,37 @@ tbody tr:hover { background:var(--primary-light); }
             <button onclick="admSeOpenVacation()" style="background:#8b5cf6;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="休み希望を入力し、代わりのドライバーで上書き">🏖️ 休暇登録</button>
             <button onclick="admSeCheckGaps()" style="background:#dc2626;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="マスタ R:U の必要フラグに対してシフトの空きセルを検出">🔍 空き確認</button>
             <button onclick="admSeApplyHolidayPm()" style="background:#9333ea;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="読込中シートの金土以外の祝日(年始除く)の夕刊を休刊(担当クリア+黒塗り)にする">🗾 祝日の夕刊休刊</button>
+            <button onclick="admSeOpenKeibaSun()" style="background:#dc2626;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" title="競馬配送がある日曜を登録し、金土(競馬)のコースだけ入力できるようにする(黒塗り解除)">🏇 日曜の競馬配送日</button>
             <button onclick="admSeSave()" id="adm-se-save" style="background:#22c55e;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;" disabled>💾 保存 (<span id="adm-se-dirty">0</span>件)</button>
           </div>
         </div>
         <div id="adm-se-msg" style="margin-top:8px;font-size:13px;color:var(--text-sub);"></div>
         <div id="adm-se-content" style="margin-top:12px;overflow:auto;max-height:75vh;border:1px solid var(--border);border-radius:8px;background:#fff;"></div>
+
+        <!-- 🏇 日曜の競馬配送日 モーダル -->
+        <div id="adm-se-keiba-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;">
+          <div style="background:#fff;padding:22px;border-radius:12px;max-width:560px;width:92%;box-shadow:0 10px 40px rgba(0,0,0,0.2);max-height:88vh;overflow:auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <h3 style="margin:0;font-size:18px;color:#1e293b;">🏇 日曜の競馬配送日</h3>
+              <button onclick="admSeCloseKeibaSun()" style="background:transparent;border:none;font-size:20px;cursor:pointer;color:#64748b;">×</button>
+            </div>
+            <p style="font-size:12px;color:var(--text-sub);line-height:1.8;margin:0 0 12px;">
+              日曜は通常 夕刊/競馬が休刊なので黒塗りですが、<b>競馬配送がある日曜</b>にチェックを入れると
+              <b>金土(競馬)のコースだけ</b>入力できるようになります（他のコースは黒塗りのままです）。<br>
+              この設定は<b>請求条件の「🏇 競馬配送有り」と同じもの</b>なので、請求・明細・自動確定にもそのまま効きます。
+            </p>
+            <div id="adm-se-keiba-list" style="border:1px solid var(--border);border-radius:8px;padding:6px 10px;max-height:300px;overflow:auto;"></div>
+            <label style="display:flex;align-items:center;gap:6px;margin-top:12px;font-size:13px;color:#1e293b;cursor:pointer;">
+              <input type="checkbox" id="adm-se-keiba-copy" checked>
+              直前の土曜の担当者をコピーする<span style="font-size:11px;color:var(--text-sub);">(空欄のセルだけ／後から直せます)</span>
+            </label>
+            <div id="adm-se-keiba-msg" style="margin-top:10px;font-size:12px;color:var(--text-sub);min-height:18px;"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+              <button onclick="admSeCloseKeibaSun()" style="background:#f1f5f9;color:#475569;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">キャンセル</button>
+              <button onclick="admSeApplyKeibaSun()" id="adm-se-keiba-apply" style="background:#dc2626;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">適用</button>
+            </div>
+          </div>
+        </div>
 
         <!-- 🏖️ 休暇登録モーダル -->
         <div id="adm-se-vacation-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;">
@@ -1861,6 +1887,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-08-27', tag:'新機能', title:'シフト編集: 日曜の競馬配送日を登録できるようにしました',
+   desc:'日曜は夕刊・競馬が休刊のため、シフト表の夕刊セルは黒塗りで担当者を入れられませんでした。競馬配送がある日曜のために、シフト編集に「🏇 日曜の競馬配送日」を追加しました。押すと読み込んでいる月の日曜が並ぶので、競馬配送がある日にチェックして「適用」を押してください。その日の夕刊セルのうち、マスタで「金土(競馬)」に✔が付いているコースだけ黒塗りが外れて入力できるようになります（朝刊だけ・夕刊だけのコースは黒塗りのままです）。既定で「直前の土曜の担当者をコピーする」が入っているので、空欄のセルには前の土曜と同じ担当者が入った状態から直せます。チェックを外して適用すれば休刊（担当クリア＋黒塗り）に戻ります。この設定は請求条件の「🏇 競馬配送有り」と同じ場所に保存されるので、請求・明細・自動確定にもそのまま反映されます（別々に登録する必要はありません）。空き確認も、登録した日曜の競馬セルが空なら「PM(競馬)」として拾います。新規月作成でも、その月に登録済みの日曜があれば最初から黒塗りせずに作ります。'},
   {date:'2026-08-18', tag:'修正', title:'シフト編集: 「引継 立川43」などが氏名の警告に出ていた問題',
    desc:'シフト編集の保存時に「単価マスタに無い氏名があります」と警告が出ますが、引継・ミーティング・希望休・研修・有給・欠勤・出張・休刊といった人名ではないセルまで氏名として照合していたため、誤って警告に並んでいました。同じ画面のドライバー重複チェックにはこれらの除外リストがあり、氏名チェックにだけ無かったのが原因です。2か所で食い違わないよう除外リストを共通化しました。氏名の1文字違い（ノアガデル/ノアガベルなど）を拾う本来の働きはそのままです。'},
   {date:'2026-08-17', tag:'改善', title:'収支管理: 読み取り上限（429）で開けなくなるのを改善',
@@ -10433,8 +10461,27 @@ function admSeBuildStaffList(){
   return [...set].filter(n=>n).sort();
 }
 
+// 「競馬配送有り」に登録された日 (請求条件の yeskeiba)。
+// 日曜など通常は競馬がない日に競馬配送が入る日。請求条件タブと同じ localStorage('billConditions')
+// を読むので、シフトと請求で設定が1つに揃う(二重管理しない)。
+let _admSeKeibaCache={ym:'',set:null};
+function admSeKeibaDays(year,month){
+  const ym=`${year}-${String(month).padStart(2,'0')}`;
+  if(_admSeKeibaCache.ym===ym&&_admSeKeibaCache.set)return _admSeKeibaCache.set;
+  let set=new Set();
+  try{ set=new Set(((getBillConditions(ym)||{}).yeskeiba||[]).map(Number)); }catch(_){ set=new Set(); }
+  _admSeKeibaCache={ym,set};
+  return set;
+}
+function admSeIsKeibaDay(year,month,day){
+  if(!year||!month||!day)return false;
+  return admSeKeibaDays(year,month).has(Number(day));
+}
+function admSeKeibaCacheClear(){ _admSeKeibaCache={ym:'',set:null}; }
+
 // マスタ R:U フラグからセル黒塗り判定 (admSeMasterReqs キャッシュ前提)
 // 朝刊✔がない → AM 黒 / 夕刊✔がない → 月-木 PM 黒 / 金土✔がない → 金土 PM 黒 / 日PM は常に黒
+// 日曜でも「競馬配送有り」に登録された日は 金土(競馬)✔ のコースだけ稼働 → 黒にしない
 // 金土以外の祝日(年始除く)は夕刊休刊 → PM 黒 (year/month/day を渡した場合のみ判定)
 function admSeIsBlackout(course,jsDay,isPm,year,month,day){
   const reqs=admSeMasterReqs;
@@ -10442,7 +10489,7 @@ function admSeIsBlackout(course,jsDay,isPm,year,month,day){
   const req=reqs[course];
   if(!req)return false;
   if(!isPm)return !req.am;
-  if(jsDay===0)return true;
+  if(jsDay===0)return !(req.keiba&&admSeIsKeibaDay(year,month,day));
   if(isPmHolidayClosed(year,month,day,jsDay))return true;// 金土以外の祝日 = 夕刊休刊
   if(jsDay===5||jsDay===6)return !req.keiba;
   return !req.pm;
@@ -12209,7 +12256,7 @@ async function admYobiReflectCoursesToSheet(courseNames,startDate,sheetName,year
       if(req){
         if(!req.am)blackCells.push({row:target,col:amCol});
         let pmActive;
-        if(js===0)pmActive=false;
+        if(js===0)pmActive=!!req.keiba&&admSeIsKeibaDay(year,month,day);// 競馬配送有りの日曜は競馬コースだけ稼働
         else if(isPmHolidayClosed(year,month,day,js))pmActive=false;
         else if(js===5||js===6)pmActive=!!req.keiba;
         else pmActive=!!req.pm;
@@ -12304,6 +12351,188 @@ async function admSeApplyHolidayPm(){
   }
 }
 
+// ── 🏇 日曜の競馬配送日 ────────────────────────────────────────
+// 日曜は通常 夕刊/競馬が休刊で黒塗りだが、競馬配送がある日曜は 金土(競馬)✔ のコースだけ稼働させる。
+// 設定の置き場は請求条件の yeskeiba(localStorage:billConditions + DB:bill_conditions)を共用する。
+// シフト側と請求側で別に持つと必ず片方だけ直して食い違うため、意図的に1つにしている。
+let admSeKeibaState=null;// {year,month,ym,sundays:[{day,pmCol}],dates:[{day,dow,amCol,pmCol}]}
+
+function admSeCloseKeibaSun(){
+  const m=document.getElementById('adm-se-keiba-modal');
+  if(m)m.style.display='none';
+}
+
+async function admSeOpenKeibaSun(){
+  if(!admSeState.sheetName){alert('シートを選択してください');return;}
+  if(!admSeState.rows.length){alert('シートが読み込まれていません');return;}
+  const parsed=parseMonthLabel(admSeState.sheetName);
+  const year=parsed?parsed.year:new Date().getFullYear();
+  const month=parsed?parsed.month:1;
+  const ym=`${year}-${String(month).padStart(2,'0')}`;
+  // シートの日付行から日付列を取る (列位置はシートが正)
+  const dateRow=admSeState.rows[0]||[];
+  const dates=[];
+  for(let c=1;c<dateRow.length;c++){
+    const mm=String(dateRow[c]||'').trim().match(/^(\d{1,2})\/(\d{1,2})$/);
+    if(!mm)continue;
+    const day=Number(mm[2]);
+    const dow=new Date(year,Number(mm[1])-1,day).getDay();
+    dates.push({day,dow,amCol:c,pmCol:c+1});
+  }
+  const sundays=dates.filter(d=>d.dow===0);
+  admSeKeibaState={year,month,ym,sundays,dates};
+  // 競馬コース数 (マスタ R:U の 金土✔)
+  let keibaCourses=0;
+  try{
+    const reqs=await admSeLoadMaster();
+    for(let i=6;i<Math.min(116,admSeState.rows.length);i++){
+      const course=String((admSeState.rows[i]||[])[0]||'').trim();
+      if(!course||course==='重複')continue;
+      if(reqs[course]&&reqs[course].keiba)keibaCourses++;
+    }
+  }catch(_){}
+  const cur=admSeKeibaDays(year,month);
+  const list=document.getElementById('adm-se-keiba-list');
+  if(!sundays.length){
+    list.innerHTML='<p style="padding:10px;color:var(--text-sub);font-size:13px;">このシートに日曜の列が見つかりません</p>';
+  }else{
+    list.innerHTML=sundays.map(sd=>{
+      const on=cur.has(sd.day);
+      return `<label style="display:flex;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid #f1f5f9;cursor:pointer;font-size:14px;">`
+        +`<input type="checkbox" data-day="${sd.day}" ${on?'checked':''}>`
+        +`<b style="color:#dc2626;">${month}/${sd.day}(日)</b>`
+        +`<span style="font-size:12px;color:${on?'#16a34a':'var(--text-sub)'};">${on?'競馬配送 有り':'なし'}</span>`
+        +`</label>`;
+    }).join('');
+  }
+  const msg=document.getElementById('adm-se-keiba-msg');
+  msg.style.color='var(--text-sub)';
+  msg.textContent=`対象コース: 金土(競馬)✔ が ${keibaCourses}コース (マスタ R:U 基準)`;
+  const modal=document.getElementById('adm-se-keiba-modal');
+  modal.style.display='flex';
+}
+
+// yeskeiba を localStorage + DB へ保存し、請求条件タブとキャッシュを揃える
+function admSeKeibaPersist(ym,days){
+  let all={};
+  try{all=JSON.parse(localStorage.getItem('billConditions')||'{}');}catch(_){all={};}
+  if(!all[ym])all[ym]={holiday:[],noam:[],nodokkon:[],yesdokkon:[],nopm:[],yeskeiba:[]};
+  all[ym].yeskeiba=days.slice().sort((a,b)=>a-b);
+  localStorage.setItem('billConditions',JSON.stringify(all));
+  admBcData=all;// 請求条件タブと同じ実体にする(タブ側で上書きされて消えないように)
+  try{admBcSyncToServer(false);}catch(_){}// 自動確定(finalize-shift)が読む DB へも同期
+  admSeKeibaCacheClear();
+  // 請求条件タブが同じ月を開いていれば表示を更新
+  try{
+    const bcM=document.getElementById('adm-bc-month');
+    if(bcM&&bcM.value===ym&&typeof admBcLoad==='function')admBcLoad();
+  }catch(_){}
+}
+
+async function admSeApplyKeibaSun(){
+  const st=admSeKeibaState;
+  if(!st){admSeCloseKeibaSun();return;}
+  const msg=document.getElementById('adm-se-keiba-msg');
+  const boxes=Array.from(document.querySelectorAll('#adm-se-keiba-list input[type=checkbox][data-day]'));
+  const sundayDays=boxes.map(b=>Number(b.dataset.day));
+  const checked=boxes.filter(b=>b.checked).map(b=>Number(b.dataset.day));
+  const cur=Array.from(admSeKeibaDays(st.year,st.month));
+  const add=checked.filter(d=>!cur.includes(d)).sort((a,b)=>a-b);
+  const del=sundayDays.filter(d=>cur.includes(d)&&!checked.includes(d)).sort((a,b)=>a-b);
+  if(!add.length&&!del.length){msg.style.color='var(--text-sub)';msg.textContent='変更はありません';return;}
+  if(admSeState.dirty.size&&!window.confirm('未保存の変更があります。先に保存することを推奨します。続行しますか?'))return;
+  const copySat=!!(document.getElementById('adm-se-keiba-copy')||{}).checked;
+  const applyBtn=document.getElementById('adm-se-keiba-apply');
+  try{
+    msg.style.color='#3b82f6';msg.textContent='マスタ取得中...';
+    const reqs=await admSeLoadMaster();
+    const rows=admSeState.rows;
+    const colByDay={};st.dates.forEach(d=>{colByDay[d.day]=d;});
+    // 競馬コース行
+    const keibaRows=[];
+    for(let i=6;i<Math.min(116,rows.length);i++){
+      const course=String((rows[i]||[])[0]||'').trim();
+      if(!course||course==='重複')continue;
+      if(reqs[course]&&reqs[course].keiba)keibaRows.push({row:i,course});
+    }
+    if(!keibaRows.length){msg.style.color='var(--danger)';msg.textContent='金土(競馬)✔ のコースがありません (マスタ R:U を確認してください)';return;}
+    // 直前の土曜(同一シート内)を日ごとに引く
+    const satDays=st.dates.filter(d=>d.dow===6).map(d=>d.day).sort((a,b)=>a-b);
+    const prevSat=(day)=>{let found=null;for(const s of satDays){if(s<day)found=s;else break;}return found;};
+
+    const whiteCells=[],blackCells=[],valueUpdates=[];
+    let copied=0,cleared=0;
+    add.forEach(day=>{
+      const dc=colByDay[day];if(!dc)return;
+      keibaRows.forEach(({row})=>{
+        whiteCells.push({row,col:dc.pmCol});
+        if(!copySat)return;
+        const curVal=String((rows[row]||[])[dc.pmCol]||'').trim();
+        if(curVal)return;// 既に入っているセルは触らない
+        const ps=prevSat(day);if(!ps)return;
+        const src=String((rows[row]||[])[colByDay[ps].pmCol]||'').trim();
+        if(!src)return;
+        valueUpdates.push({row,col:dc.pmCol,value:src});copied++;
+      });
+    });
+    del.forEach(day=>{
+      const dc=colByDay[day];if(!dc)return;
+      keibaRows.forEach(({row})=>{
+        blackCells.push({row,col:dc.pmCol});
+        const curVal=String((rows[row]||[])[dc.pmCol]||'').trim();
+        if(curVal){valueUpdates.push({row,col:dc.pmCol,value:''});cleared++;}
+      });
+    });
+    const lines=[];
+    if(add.length)lines.push(`競馬配送 有りにする: ${add.map(d=>st.month+'/'+d).join(', ')}`);
+    if(del.length)lines.push(`解除して休刊に戻す: ${del.map(d=>st.month+'/'+d).join(', ')}`);
+    if(!window.confirm(`${lines.join('\n')}\n\n対象コース: ${keibaRows.length}件（金土(競馬)✔ のみ）\n・黒塗り解除: ${whiteCells.length}セル\n・黒塗り: ${blackCells.length}セル\n・担当コピー: ${copied}セル\n・担当クリア: ${cleared}セル\n\nこの設定は請求条件の「🏇競馬配送有り」にも保存され、請求・明細に反映されます。\n\n続行?`)){msg.textContent='';return;}
+    if(applyBtn){applyBtn.disabled=true;applyBtn.style.opacity='0.5';}
+
+    if(valueUpdates.length){
+      msg.textContent=`担当の書込中... (${valueUpdates.length}件)`;
+      const r1=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:admSeState.sheetName,updates:valueUpdates})});
+      const j1=await r1.json();
+      if(j1.error)throw new Error(j1.error);
+      valueUpdates.forEach(u=>{if(!rows[u.row])rows[u.row]=[];rows[u.row][u.col]=u.value;});
+    }
+    if(whiteCells.length){
+      msg.textContent=`黒塗り解除中... (${whiteCells.length}件)`;
+      const r2=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:admSeState.sheetName,cells:whiteCells,bg:{red:1,green:1,blue:1}})});
+      const j2=await r2.json();
+      if(j2.error)throw new Error(j2.error);
+    }
+    if(blackCells.length){
+      msg.textContent=`黒塗り適用中... (${blackCells.length}件)`;
+      const r3=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'format_cells',sheet_name:admSeState.sheetName,cells:blackCells,bg:{red:0,green:0,blue:0}})});
+      const j3=await r3.json();
+      if(j3.error)throw new Error(j3.error);
+    }
+    // 設定を保存 (日曜以外の既存 yeskeiba は触らない)
+    const keep=cur.filter(d=>!sundayDays.includes(d));
+    admSeKeibaPersist(st.ym,keep.concat(checked));
+
+    admSeState.dirty.clear();
+    admSeUpdateDirtyBadge();
+    admSeCloseKeibaSun();
+    const m2=document.getElementById('adm-se-msg');
+    if(m2){
+      m2.style.color='#16a34a';
+      m2.textContent=`✓ 日曜の競馬配送日を更新しました (`
+        +(add.length?`有り: ${add.map(d=>st.month+'/'+d).join(', ')} `:'')
+        +(del.length?`解除: ${del.map(d=>st.month+'/'+d).join(', ')} `:'')
+        +`/ 解除${whiteCells.length}・黒塗り${blackCells.length}・担当コピー${copied}セル / 請求条件にも保存)`;
+    }
+    admSeRender();
+    forceFreshShift(st.year,st.month).catch(()=>{});
+  }catch(e){
+    msg.style.color='var(--danger)';
+    msg.textContent='適用失敗: '+(e&&e.message||e);
+  }finally{
+    if(applyBtn){applyBtn.disabled=false;applyBtn.style.opacity='1';}
+  }
+}
+
 // 新規月作成: マスタ R 列のコース一覧から自動生成 (テンプレート不使用)
 
 // マスタ R:U のキャッシュ: course → {am, pm, keiba} (boolean)
@@ -12390,8 +12619,8 @@ function admSeFindGaps(reqs){
       if(req.pm&&!isSat&&!isFri&&!isSun&&!isPmHolidayClosed(year,month,day,dow)&&!pm){
         gaps.push({row:i,col:col+1,course,month,day,dow:dows[dow],type:'PM(夕刊)'});
       }
-      // 競馬チェック (金土) — 金土フラグ ✔
-      if(req.keiba&&(isFri||isSat)&&!pm){
+      // 競馬チェック (金土 + 競馬配送有りに登録した日曜) — 金土フラグ ✔
+      if(req.keiba&&(isFri||isSat||(isSun&&admSeIsKeibaDay(year,month,day)))&&!pm){
         gaps.push({row:i,col:col+1,course,month,day,dow:dows[dow],type:'PM(競馬)'});
       }
     });
@@ -12733,7 +12962,7 @@ async function admSeNewMonth(){
         const amCol=1+i*2,pmCol=2+i*2;
         if(!req.am)blackCells.push({row:rowIdx,col:amCol});
         let pmActive=false;
-        if(d.js===0)pmActive=false;// Sun = 休刊
+        if(d.js===0)pmActive=!!req.keiba&&admSeIsKeibaDay(year,month,d.day);// Sun = 休刊。競馬配送有りの日曜だけ競馬コースが稼働
         else if(isPmHolidayClosed(year,month,d.day,d.js))pmActive=false;// 金土以外の祝日 = 夕刊休刊
         else if(d.js===5||d.js===6)pmActive=!!req.keiba;// Fri/Sat = 競馬日
         else pmActive=!!req.pm;// Mon-Thu = 通常夕刊
