@@ -5923,37 +5923,63 @@ async function smCsvSubmit(){
   }catch(e){alert('登録エラー: '+e.message);submit.disabled=false;submit.textContent=`登録する (${smCsvRecords.length}件)`;}
 }
 
-// 新店追加/CSV取込時: その店だけ Places API で Place ID を自動取得しマスタへ書込(一括ボタン不要)。
-// 座標周辺45m+正式店舗名の一致で取得(名前一致優先/無ければ最寄り店)。座標が無い店はスキップ。
+// 新店追加/CSV取込時: その店だけ Places API で Place ID と正式店舗名の候補を自動取得する。
+// 🚨 2026-09-01: 旧実装は「周辺45mで名前が一致しなければ最寄りの店を無条件に採用」していたため、
+// 隣の別チェーンのIDが入り、ナビが別の店へ誘導していた(全2555件中411件が別店を指していた)。
+// → 店舗名の略称(FM/LA/T]7 等)からブランドを決め、そのブランドの店だけを候補にする。
+//   見つからなければ何も入れない(住所でナビする方が、別の店に行くより安全)。
+// 正式店舗名は空欄のときだけ候補で埋める。既に入っている値や🔒修正済みの行は触らない。
+const SM_BRANDS=[['LALS',['ローソンストア100']],['LAＬ',['ローソン']],['LATF',['ローソン']],['LS',['ローソンストア100','ローソン']],['LA',['ローソン']],['FM',['ファミリーマート']],['MS',['ミニストップ']],['SY',['西友']],['T]7',['セブン-イレブン','セブンイレブン']],['T]７',['セブン-イレブン','セブンイレブン']],['NL',['ナチュラルローソン','ニューデイズ','NewDays']],['トモニー',['トモニー']],['YS',['ヤマザキ']]];
+function smBrandOf(name){const n=String(name||'').trim();for(const [p,b] of SM_BRANDS){if(n.startsWith(p))return b;}return null;}
+const SM_PLACE_NG=/ATM|銀行|ゆうちょ|コインランドリー|駐車場/;
 async function smAutoFetchPlaceId(codes){
   try{
     if(!codes||!codes.length||typeof GEOCODING_API_KEY==='undefined'||!GEOCODING_API_KEY)return 0;
     const H=smHeaders,ci=n=>H.indexOf(n);
     const iCode=ci('店舗コード'),iPid=ci('Place ID'),iLa=ci('緯度'),iLo=ci('経度'),iOff=ci('正式店舗名'),iName=ci('店舗名');
     if(iPid<0||iLa<0||iLo<0)return 0;
-    const norm=s=>(s||'').normalize('NFKC').replace(/[\s　]/g,'').replace(/[ぁ-ん]/g,c=>String.fromCharCode(c.charCodeAt(0)+0x60)).toLowerCase();
-    const TYPES=['convenience_store','supermarket','grocery_store','food_store','store'];
     const set=new Set(codes.map(c=>String(c).trim()).filter(Boolean));
-    const targets=(smData||[]).filter(r=>set.has(String(r[`col_${iCode}`]||'').trim()) && !String(r[`col_${iPid}`]||'').trim());
-    const updates=[];
+    const targets=(smData||[]).filter(r=>set.has(String(r[`col_${iCode}`]||'').trim()) && !String(r[`col_${iPid}`]||'').trim() && !smIsLocked(r));
+    const pidUpd=[],offUpd=[],report=[];
     for(const r of targets){
       const lat=parseFloat(r[`col_${iLa}`]),lng=parseFloat(r[`col_${iLo}`]);
       if(!(isFinite(lat)&&isFinite(lng)))continue;
-      const target=norm(r[`col_${iOff}`]||r[`col_${iName}`]||'');
-      let pid=null;
-      for(const types of [TYPES,null]){
-        const body={locationRestriction:{circle:{center:{latitude:lat,longitude:lng},radius:45}},languageCode:'ja',maxResultCount:10};
-        if(types)body.includedPrimaryTypes=types;
-        let resp;try{resp=await fetch('https://places.googleapis.com/v1/places:searchNearby',{method:'POST',headers:{'Content-Type':'application/json','X-Goog-Api-Key':GEOCODING_API_KEY,'X-Goog-FieldMask':'places.id,places.displayName'},body:JSON.stringify(body)});}catch(_){continue;}
-        if(!resp.ok)continue;
-        const places=(await resp.json()).places||[];if(!places.length)continue;
-        const m=places.find(p=>{const n=norm(p.displayName?.text||'');return n&&(n.includes(target)||target.includes(n));});
-        if(m){pid=m.id;break;} if(types===null){pid=places[0].id;break;}
+      const shopName=String(r[`col_${iName}`]||'').trim();
+      const brands=smBrandOf(shopName);
+      if(!brands)continue;                       // 略称の規則に無い店(駅納本等)は自動取得しない
+      let hit=null;
+      for(const radius of [80,200]){
+        let resp;
+        try{
+          resp=await fetch('https://places.googleapis.com/v1/places:searchNearby',{method:'POST',
+            headers:{'Content-Type':'application/json','X-Goog-Api-Key':GEOCODING_API_KEY,'X-Goog-FieldMask':'places.id,places.displayName,places.location'},
+            body:JSON.stringify({includedTypes:['convenience_store','supermarket','store'],maxResultCount:20,languageCode:'ja',
+              locationRestriction:{circle:{center:{latitude:lat,longitude:lng},radius}}})});
+        }catch(_){continue;}
+        if(!resp||!resp.ok)continue;
+        const places=(await resp.json()).places||[];
+        const cand=places.filter(p=>{const t=p.displayName?.text||'';return brands.some(b=>t.includes(b))&&!SM_PLACE_NG.test(t);});
+        if(cand.length){
+          cand.sort((a,b)=>msrCalcDist(lat,lng,a.location.latitude,a.location.longitude)-msrCalcDist(lat,lng,b.location.latitude,b.location.longitude));
+          hit=cand[0];break;
+        }
       }
-      if(pid)updates.push({row_number:r.row_number,place_id:pid});
+      if(!hit)continue;
+      pidUpd.push({row_number:r.row_number,place_id:hit.id});
+      const offNow=iOff>=0?String(r[`col_${iOff}`]||'').trim():'';
+      if(iOff>=0&&!offNow){offUpd.push({row_number:r.row_number,official:hit.displayName.text});}
+      report.push(`${shopName} → ${hit.displayName.text}`);
     }
-    if(updates.length){await smPost({action:'batch_update_placeid',updates});}
-    return updates.length;
+    if(pidUpd.length)await smPost({action:'batch_update_placeid',updates:pidUpd});
+    if(offUpd.length)await smPost({action:'batch_update_official',updates:offUpd});
+    if(report.length){
+      const NL=String.fromCharCode(10);
+      const head=report.slice(0,10).join(NL);
+      const more=report.length>10?(NL+'…他'+(report.length-10)+'件'):'';
+      alert('📍 Place IDと正式店舗名の候補を取得しました（'+report.length+'件）'+NL+NL+head+more+NL+NL
+        +'※ 違う店が入っていたら店編集から直してください。直したら「🔒修正済み」をONにすると一括処理で上書きされません。');
+    }
+    return pidUpd.length;
   }catch(e){console.warn('[smAutoFetchPlaceId]',e);return 0;}
 }
 
