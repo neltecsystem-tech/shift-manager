@@ -16300,27 +16300,41 @@ function admPayBuildSummaryHtml(companyName,monthVal,drivers){
 }
 
 // ドライバーの月内の主稼働営業所を判定 (出勤日数が最大の営業所)
+// 🚨 2026-09-01: 判定材料をシフト表のブロック位置だけにしていたため、川崎高津のコースに
+// 入っている人が城北ブロックに行があるだけで「城北の一括明細」に出ていた(池上智子)。
+// コース名には営業所が入っている(川崎高津12 / 城北9 / 立川21 / 川越…)ので、コース名から
+// 読める営業所を優先する。「引継」「庫内」のように営業所が読めないコースは、
+// 従来どおりシフト表のブロックの営業所として数える(弱いカウント)。
+// 強いカウント(コース名由来)が1日でもあれば、そちらだけで比べる。
+function admPayAreaOfCourse(course,areaNames){
+  const c=String(course||'').trim();
+  if(!c)return '';
+  // 「川崎高津」と「川崎」のように前方一致が競合するので、長い営業所名から先に見る
+  for(const a of areaNames){ if(a&&c.startsWith(a))return a; }
+  return '';
+}
 function admPayGetPrimaryArea(monthLabel,staffName){
   const months=DB.shifts[monthLabel];
   if(!months)return '';
-  const counts={};
-  // 名前の正規化 (スペース数違い対応)
+  const strong={},weak={};   // strong=コース名から読めた営業所 / weak=シフト表のブロック
+  const areaNames=Object.keys(months).sort((a,b)=>b.length-a.length);
   const target=invNormName(staffName);
   Object.entries(months).forEach(([area,obj])=>{
     if(!obj||!obj.entries)return;
     const entry=obj.entries.find(e=>invNormName(e.course)===target);
     if(!entry)return;
-    let days=0;
     entry.a.forEach(({am,pm})=>{
-      // ミーティング等の特殊シフトは主稼働判定からも除外 (支払い計算と一貫させる)
-      if(!admPayIsNonPaidShift(am))days++;
-      if(!admPayIsNonPaidShift(pm))days++;
+      [am,pm].forEach(c=>{
+        // ミーティング等の特殊シフトは主稼働判定からも除外 (支払い計算と一貫させる)
+        if(!c||admPayIsNonPaidShift(c))return;
+        const byCourse=admPayAreaOfCourse(c,areaNames);
+        if(byCourse)strong[byCourse]=(strong[byCourse]||0)+1;
+        else weak[area]=(weak[area]||0)+1;
+      });
     });
-    counts[area]=(counts[area]||0)+days;
   });
-  let maxArea='',maxDays=0;
-  Object.entries(counts).forEach(([a,d])=>{if(d>maxDays){maxDays=d;maxArea=a;}});
-  return maxArea;
+  const pick=obj=>{let a='',n=0;Object.entries(obj).forEach(([k,v])=>{if(v>n){n=v;a=k;}});return a;};
+  return pick(strong)||pick(weak);
 }
 
 // シフトに入っているが明細が作れないスタッフを診断
