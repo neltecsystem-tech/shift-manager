@@ -19286,8 +19286,20 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
 
 // ナビの経由地ラベル: Place IDがあれば店名(place_idで正確位置+店名表示)、無ければ座標。
 // ※テキスト(店名/住所)を経由地にすると店名が出ない(過去検証で失敗)ためPlace ID必須。
+// Googleに渡す地点テキスト。
+// 🚨 以前は社内の略称(「LA練馬土支田二丁目」「LALS大泉学園町八丁目店」等)を送っていた。
+// Google(特にPC版)は waypoint_place_ids を無視してこのテキストを検索することがあり、
+// 「LA」「FM」「LALS」を解釈できずに近隣の別の店を拾う。結果、競馬コースを開いたのに
+// 夕刊コースの店が並ぶ、という取り違えが起きていた(2026-09-01 城北9で発覚)。
+// → 店舗検索側のナビと同じく「正式店舗名 + 住所」を送る。Place IDが効く環境では従来どおり
+//   IDが優先されるので、どちらの環境でも正しい店に着く。
 function diagNavLabel(s){
-  return s.placeId?(s.name||s.addr||`${s.lat},${s.lng}`):`${s.lat},${s.lng}`;
+  const nm=((s.official||'').trim())||((s.name||'').trim());
+  const addr=(s.addr||'').trim();
+  if(nm&&addr)return `${nm} ${addr}`;
+  if(nm)return nm;
+  if(addr)return addr;
+  return `${s.lat},${s.lng}`;
 }
 
 // 任意の店舗から「現在地→その店舗以降9件」のナビを開く (中断後の再開用)
