@@ -19286,21 +19286,38 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
 
 // ナビの経由地ラベル: Place IDがあれば店名(place_idで正確位置+店名表示)、無ければ座標。
 // ※テキスト(店名/住所)を経由地にすると店名が出ない(過去検証で失敗)ためPlace ID必須。
+// 店舗名の略称と「正式店舗名」のブランドが一致しているか。
+// 🚨 正式店舗名(AI列)は2026-07の総ズレ事故の名残で、今も509行が別の店の名前になっている
+// (例: LA円山町 → 「ファミリーマート 道玄坂中央」)。住所は正しいことを確認済み。
+// Place ID は正式店舗名から再生成した経緯があるため、名前が信用できない行はIDも信用しない。
+const DIAG_BRANDS=[['LALS',['ローソンストア100','ローソン']],['LAＬ',['ローソン']],['LATF',['ローソン']],['LS',['ローソンストア100','ローソン']],['LA',['ローソン']],['FM',['ファミリーマート','ファミマ']],['MS',['ミニストップ']],['SY',['西友']],['T]7',['セブン']],['T]７',['セブン']],['NL',['ナチュラルローソン','ニューデイズ','NewDays']],['トモニー',['トモニー']],['YS',['ヤマザキ']],['西武',['西武']]];
+function diagOfficialTrusted(s){
+  const nm=(s&&s.name||'').trim(), off=(s&&s.official||'').trim();
+  if(!off)return false;
+  for(const [pre,brands] of DIAG_BRANDS){
+    if(nm.startsWith(pre))return brands.some(b=>off.includes(b));
+  }
+  return true; // 略称の規則に当てはまらない店(駅納品等)は従来どおり信用する
+}
 // Googleに渡す地点テキスト。
-// 🚨 以前は社内の略称(「LA練馬土支田二丁目」「LALS大泉学園町八丁目店」等)を送っていた。
-// Google(特にPC版)は waypoint_place_ids を無視してこのテキストを検索することがあり、
-// 「LA」「FM」「LALS」を解釈できずに近隣の別の店を拾う。結果、競馬コースを開いたのに
-// 夕刊コースの店が並ぶ、という取り違えが起きていた(2026-09-01 城北9で発覚)。
-// → 店舗検索側のナビと同じく「正式店舗名 + 住所」を送る。Place IDが効く環境では従来どおり
-//   IDが優先されるので、どちらの環境でも正しい店に着く。
+// 🚨 以前は社内の略称(「LA練馬土支田二丁目」等)を送っていた。Google(特にPC版)は
+// waypoint_place_ids を無視してこのテキストを検索することがあり、「LA」「FM」「LALS」を
+// 解釈できずに近隣の別の店を拾う。競馬コースを開いたのに夕刊コースの店が並ぶ、という
+// 取り違えはこれが原因(2026-09-01 城北9で発覚)。
+// → 正式店舗名が信用できる行は「正式店舗名 + 住所」、信用できない行は住所だけを送る。
+//   住所はマスタで正しいことを確認済みなので、少なくとも別の店には行かない。
 function diagNavLabel(s){
-  const nm=((s.official||'').trim())||((s.name||'').trim());
   const addr=(s.addr||'').trim();
-  if(nm&&addr)return `${nm} ${addr}`;
-  if(nm)return nm;
+  if(diagOfficialTrusted(s)){
+    const nm=(s.official||'').trim();
+    return addr?`${nm} ${addr}`:nm;
+  }
   if(addr)return addr;
   return `${s.lat},${s.lng}`;
 }
+// 正式店舗名が信用できない行の Place ID は、その名前から作られたもので別の店を指している
+// 可能性が高いため使わない(座標と住所で誘導する)。
+function diagNavPid(s){ return diagOfficialTrusted(s)?(s.placeId||null):null; }
 
 // 任意の店舗から「現在地→その店舗以降9件」のナビを開く (中断後の再開用)
 async function diagNavFromHere(id){
@@ -19322,10 +19339,11 @@ async function diagNavFromHere(id){
     const params=new URLSearchParams();
     params.set('api','1');
     params.set('destination',labelOf(last));
-    if(last.placeId)params.set('destination_place_id',last.placeId);
+    const lastPid=diagNavPid(last);
+    if(lastPid)params.set('destination_place_id',lastPid);
     if(rest.length>0){
       params.set('waypoints',rest.map(labelOf).join('|'));
-      if(rest.some(s=>s.placeId))params.set('waypoint_place_ids',rest.map(s=>s.placeId||'').join('|'));
+      if(rest.every(s=>diagNavPid(s)))params.set('waypoint_place_ids',rest.map(s=>diagNavPid(s)).join('|'));
     }
     params.set('travelmode','driving');
     const url=`https://www.google.com/maps/dir/?${params.toString()}`;
@@ -19361,10 +19379,11 @@ async function diagNavOpen(routeId){
     const params=new URLSearchParams();
     params.set('api','1');
     params.set('destination',labelOf(last));
-    if(last.placeId)params.set('destination_place_id',last.placeId);
+    const lastPid=diagNavPid(last);
+    if(lastPid)params.set('destination_place_id',lastPid);
     if(rest.length>0){
       params.set('waypoints',rest.map(labelOf).join('|'));
-      if(rest.some(s=>s.placeId))params.set('waypoint_place_ids',rest.map(s=>s.placeId||'').join('|'));
+      if(rest.every(s=>diagNavPid(s)))params.set('waypoint_place_ids',rest.map(s=>diagNavPid(s)).join('|'));
     }
     params.set('travelmode','driving');
     const url=`https://www.google.com/maps/dir/?${params.toString()}`;
@@ -19616,10 +19635,11 @@ function diagExportPdf(){
     const params=new URLSearchParams();
     params.set('api','1');
     params.set('destination',labelOf(last));
-    if(last.placeId)params.set('destination_place_id',last.placeId);
+    const lastPid=diagNavPid(last);
+    if(lastPid)params.set('destination_place_id',lastPid);
     if(rest.length>0){
       params.set('waypoints',rest.map(labelOf).join('|'));
-      if(rest.some(s=>s.placeId))params.set('waypoint_place_ids',rest.map(s=>s.placeId||'').join('|'));
+      if(rest.every(s=>diagNavPid(s)))params.set('waypoint_place_ids',rest.map(s=>diagNavPid(s)).join('|'));
     }
     params.set('travelmode','driving');
     return 'https://www.google.com/maps/dir/?'+params.toString();
