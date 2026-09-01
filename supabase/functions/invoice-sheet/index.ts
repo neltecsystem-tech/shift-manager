@@ -589,6 +589,74 @@ Deno.serve(async(req:Request)=>{
       return jsonResp({success:true, synced:recs.length});
     }
 
+    // ── 氏名の表記ゆれ検知(2026-09-01) ──
+    // 氏名を鍵にしているシートが4つある(単価マスタ/月次シフト表/特別日当/人員名簿)。
+    // どれか1つだけ表記を変えると、そこだけ照合が外れて金額が静かに落ちる。
+    //   実例: 2026-08-13に単価マスタを「屋号/氏名」へ統一 → 特別日当シートが旧表記のまま残り、
+    //         TLCの日曜特別日当 7,000円×5週が8月分の請求・支払に乗らなくなった(9/1に発覚)。
+    // 単価マスタを正として、他3シートの氏名を突合する。判定は「単価マスタに無い」かつ
+    // 「空白・区切り記号・異体字を無視すると一致する候補がある」= 表記ゆれ。
+    if(action==='name_consistency'){
+      const cronSecret = req.headers.get('x-sync-secret') || '';
+      const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
+      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      const VAR: Record<string,string> = {'齋':'斉','斎':'斉','齊':'斉','髙':'高','﨑':'崎','嵜':'崎','濵':'浜','濱':'浜','邊':'辺','邉':'辺','澤':'沢','瀨':'瀬','眞':'真','德':'徳','冨':'富','栁':'柳','郞':'郎','薗':'園','曻':'昇'};
+      const fold=(n:string)=>String(n||'').replace(/[\s　 ]+/g,'').replace(/[齋斎齊髙﨑嵜濵濱邊邉澤瀨眞德冨栁郞薗曻]/g,c=>VAR[c]||c).trim();
+      const loose=(n:string)=>fold(n).replace(/[.．/／・]+/g,'');   // 区切りも無視した緩いキー
+      const tok=await getAccessToken();
+      const grab=async(ssId:string,range:string)=>{
+        const r=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${ssId}/values/${encodeURIComponent(range)}`,{headers:{'Authorization':`Bearer ${tok}`}});
+        if(!r.ok)return [] as string[][];
+        return ((await r.json()).values ?? []) as string[][];
+      };
+      // 正 = 単価マスタ A列
+      const rateRows=await grab(SPREADSHEET_ID,'単価マスタ!A2:A300');
+      const master=rateRows.map(r=>String(r?.[0]||'').trim()).filter(Boolean);
+      const exact=new Set(master.map(fold));
+      const byLoose=new Map<string,string>();
+      master.forEach(m=>{ const k=loose(m); if(k&&!byLoose.has(k))byLoose.set(k,m); });
+      const issues:{source:string;name:string;master:string;detail:string}[]=[];
+      const check=(source:string,name:string,detail:string)=>{
+        const n=String(name||'').trim(); if(!n)return;
+        if(exact.has(fold(n)))return;                 // 完全一致(表記ゆれ無し)
+        const hit=byLoose.get(loose(n));
+        if(hit)issues.push({source,name:n,master:hit,detail});   // 区切り/字体だけ違う = 表記ゆれ
+      };
+      // 特別日当(フォーム回答) C列 = 氏名。直近90日分だけ見る(過去の確定分は触らない)
+      const spRows=await grab(SPECIAL_SHEET_ID,`${SPECIAL_SHEET_NAME}!B2:C5000`);
+      const limit=new Date(Date.now()-90*86400000).toISOString().slice(0,10).replace(/-/g,'/');
+      const spSeen=new Set<string>();
+      for(const r of spRows){
+        const d=String(r?.[0]||'').replace(/-/g,'/'), nm=String(r?.[1]||'').trim();
+        if(!nm||d<limit)continue;
+        if(spSeen.has(nm))continue; spSeen.add(nm);
+        check('特別日当',nm,`直近90日で使用`);
+      }
+      // 人員名簿 C列 = 氏名
+      const rosRows=await grab(ROSTER_SHEET_ID,`${ROSTER_SHEET_NAME}!A2:D3000`);
+      const rosSeen=new Set<string>();
+      for(const r of rosRows){
+        const nm=String(r?.[2]||'').trim(); if(!nm||rosSeen.has(nm))continue; rosSeen.add(nm);
+        check('人員名簿',nm,String(r?.[0]||''));
+      }
+      // 当月・翌月のシフト表(氏名がセルに直接入る)
+      const now=new Date(Date.now()+9*3600000);
+      for(const add of [0,1]){
+        const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+add,1));
+        const title=`${d.getUTCMonth()+1}月シフト${d.getUTCFullYear()}`;
+        const cells=await grab(ROSTER_SHEET_ID,`${title}!A1:BZ400`);
+        if(!cells.length)continue;
+        const seen=new Set<string>();
+        for(const row of cells)for(const c of (row||[])){
+          const v=String(c||'').trim();
+          if(!v||v.length<2||v.length>24||seen.has(v))continue;
+          if(/^[0-9０-９:：\/\-\.]+$/.test(v))continue;   // 日付・数値・コース番号は対象外
+          seen.add(v); check(title,v,'シフト表のセル');
+        }
+      }
+      return jsonResp({ok:true,checked:{master:master.length},issues,count:issues.length});
+    }
+
     // ── Phase1(シャドー監視): 単価マスタ(Sheets 最新) と ミラー(shift_rate_master) を突合し差分をログ ──
     //   本番数値は一切変えない(log専用)。差分ゼロが3ヶ月続けば「取得元をSupabaseに替えても計算不変」と証明。
     if(action==='check_rate_parity'){
