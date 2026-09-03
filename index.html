@@ -4401,7 +4401,11 @@ function smReorderMode(){
   const vals=new Set(smFiltered.map(r=>String(r[`col_${smCourseCol}`]||'').trim()).filter(Boolean));
   if(vals.size!==1)return null;                       // コースが1つに絞れていないと不可
   if(smFiltered.length<2||smFiltered.length>smRenderLimit)return null; // 全行が画面に出ている状態のみ
-  return {course:[...vals][0], orderCol:SM_COURSE_SUB[smCourseCol][0]};
+  const timeCol=SM_COURSE_SUB[smCourseCol][1];
+  // 店着時間の振り直しは、そのコースの全店に時間が入っているときだけ許可する。
+  // 一部だけ空欄の状態でやると「どの店に何時を割り当てるか」が決められない。
+  const allTimed=smFiltered.every(r=>String(r[`col_${timeCol}`]||'').trim());
+  return {course:[...vals][0], orderCol:SM_COURSE_SUB[smCourseCol][0], timeCol, allTimed};
 }
 function smMoveRow(rowNumber,delta){
   const i=smFiltered.findIndex(r=>r.row_number===rowNumber);
@@ -4428,25 +4432,44 @@ function smDrop(e,targetRow){
 async function smSaveOrder(){
   const mode=smReorderMode();
   if(!mode){alert('並べ替えできる状態ではありません（1コース分だけを表示してください）');return;}
+  // 店着時間も振り直すか(チェックボックス)。コース全体の時刻の集合はそのままに、
+  // 「何番目に回る店が何時か」だけを新しい順序へ割り当て直す。
+  // コース全体の所要時間や出発時刻を勝手に変えないので、実運用とズレにくい。
+  const tcEl=document.getElementById('sm-reorder-time');
+  const withTime=!!(tcEl&&tcEl.checked&&mode.allTimed);
   const updates=[],touched=[];
+  const times=withTime?smFiltered.map(r=>String(r[`col_${mode.timeCol}`]||'').trim())
+    .sort((a,b)=>a.localeCompare(b,'ja',{numeric:true})):null;
   smFiltered.forEach((r,i)=>{
     const now=String(r[`col_${mode.orderCol}`]||'').trim();
     const next=String(i+1);
-    if(now!==next){updates.push({row_number:r.row_number,col_index:mode.orderCol,value:next});touched.push(`${i+1}. ${r[`col_${smColMap.name??3}`]||''}`);}
+    let changed=false;
+    if(now!==next){updates.push({row_number:r.row_number,col_index:mode.orderCol,value:next});changed=true;}
+    if(withTime){
+      const tNow=String(r[`col_${mode.timeCol}`]||'').trim();
+      if(tNow!==times[i]){updates.push({row_number:r.row_number,col_index:mode.timeCol,value:times[i]});changed=true;}
+    }
+    if(changed)touched.push(`${i+1}. ${r[`col_${smColMap.name??3}`]||''}${withTime?` (${times[i]})`:''}`);
   });
   if(!updates.length){alert('順番の変更はありません');smOrderDirty=false;smRender();return;}
   const NL=String.fromCharCode(10);
-  if(!window.confirm(`「${mode.course}」の順番を 1〜${smFiltered.length} で振り直します。`+NL+`変更 ${updates.length}件`+NL+NL+touched.slice(0,10).join(NL)+(touched.length>10?NL+'…他'+(touched.length-10)+'件':'')+NL+NL+'続行しますか?'))return;
+  if(!window.confirm(`「${mode.course}」の順番を 1〜${smFiltered.length} で振り直します。`+NL
+    +(withTime?'店着時間も新しい順番に合わせて割り当て直します（時刻の集合は変わりません）。'+NL:'店着時間は変更しません。'+NL)
+    +`変更 ${touched.length}店 / 書き込み ${updates.length}セル`+NL+NL
+    +touched.slice(0,10).join(NL)+(touched.length>10?NL+'…他'+(touched.length-10)+'件':'')+NL+NL+'続行しますか?'))return;
   const bar=document.getElementById('sm-reorder-bar');
   if(bar)bar.textContent='保存中...';
   try{
     const resp=await smPost({action:'batch_update_cells',updates});
     const json=await resp.json().catch(()=>({}));
     if(json&&json.error)throw new Error(json.error);
-    smFiltered.forEach((r,i)=>{r[`col_${mode.orderCol}`]=String(i+1);});
+    smFiltered.forEach((r,i)=>{
+      r[`col_${mode.orderCol}`]=String(i+1);
+      if(withTime)r[`col_${mode.timeCol}`]=times[i];
+    });
     smOrderDirty=false;
     invalidateShopMasterCache();
-    alert(`✅ 「${mode.course}」の順番を保存しました（${updates.length}件）`);
+    alert(`✅ 「${mode.course}」の順番を保存しました（${touched.length}店）${withTime?String.fromCharCode(10)+'店着時間も割り当て直しました。':''}`);
     await smLoad(true);
   }catch(e){alert('保存に失敗しました: '+(e&&e.message?e.message:e));}
   smRender();
@@ -4511,9 +4534,14 @@ function smRender(){
   if(rbar){
     if(reorder){
       rbar.style.display='';
+      const tcChecked=document.getElementById('sm-reorder-time');
+      const keep=tcChecked?tcChecked.checked:reorder.allTimed;
       rbar.innerHTML=`🔀 <b>${reorder.course}</b> の配達順を編集できます（行をドラッグ、スマホは ▲▼）`
         +`<button onclick="smSaveOrder()" style="margin-left:12px;background:${smOrderDirty?'#dc2626':'#94a3b8'};color:#fff;border:none;padding:5px 14px;border-radius:6px;cursor:pointer;font-weight:700;font-size:12px;">💾 順番を保存${smOrderDirty?'（未保存あり）':''}</button>`
-        +`<span style="margin-left:10px;font-size:11px;">※ 保存するまでシートには書き込みません</span>`;
+        +`<label style="margin-left:12px;font-size:12px;${reorder.allTimed?'':'color:#94a3b8;'}">`
+        +`<input type="checkbox" id="sm-reorder-time" ${keep&&reorder.allTimed?'checked':''} ${reorder.allTimed?'':'disabled'}> 店着時間も割り当て直す`
+        +`</label>`
+        +`<span style="margin-left:10px;font-size:11px;">※ 保存するまでシートには書き込みません${reorder.allTimed?'':' / 時間が空欄の店があるため時刻の振り直しは不可'}</span>`;
     }else{
       rbar.style.display='none';rbar.innerHTML='';
       if(smOrderDirty)smOrderDirty=false;
@@ -19451,20 +19479,21 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
   const timeCol=type==='am'?diagColMap.amTime:type==='pm'?diagColMap.pmTime:diagColMap.keibaTime;
   let shops=diagShopData.filter(r=>r[`col_${courseCol}`]===courseName&&!diagIsSuspended(r)&&!diagIsFutureOpen(r)); // 休店中・未開店(開店日未来)は配達対象外
   if(areaFilter)shops=shops.filter(r=>diagAreaMatch(r,areaFilter,type));
-  // 店着時間の早い順でソート。時間なしは末尾。同時刻は順番→店舗コードでタイブレーク
+  // 🚨 2026-09-01: 並び順の基準を「店着時間 → 順番」から「順番 → 店着時間」へ変更。
+  // 店舗マスタでドラッグして配達順を変えても、時間が入っている店では並びが動かず
+  // 「順番を変えたのに反映されない」状態だったため(夕刊はほぼ全店に時間が入っている)。
+  // 回る順の正は人が決める「順番」列とし、順番が空の店だけ店着時間で位置を決める。
   shops.sort((a,b)=>{
+    const oa=orderCol!==undefined?parseFloat(a[`col_${orderCol}`]):NaN;
+    const ob=orderCol!==undefined?parseFloat(b[`col_${orderCol}`]):NaN;
+    const xa=isFinite(oa)?oa:Infinity;
+    const xb=isFinite(ob)?ob:Infinity;
+    if(xa!==xb)return xa-xb;
     const ta=timeCol!==undefined?diagParseTime(a[`col_${timeCol}`]):null;
     const tb=timeCol!==undefined?diagParseTime(b[`col_${timeCol}`]):null;
     const va=ta!=null?ta:Infinity;
     const vb=tb!=null?tb:Infinity;
     if(va!==vb)return va-vb;
-    if(orderCol!==undefined){
-      const oa=parseFloat(a[`col_${orderCol}`]);
-      const ob=parseFloat(b[`col_${orderCol}`]);
-      const xa=isFinite(oa)?oa:99999;
-      const xb=isFinite(ob)?ob:99999;
-      if(xa!==xb)return xa-xb;
-    }
     const ca=(diagColMap.code!==undefined?(a[`col_${diagColMap.code}`]||''):'').toString();
     const cb=(diagColMap.code!==undefined?(b[`col_${diagColMap.code}`]||''):'').toString();
     return ca.localeCompare(cb);
