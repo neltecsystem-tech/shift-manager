@@ -299,8 +299,10 @@ tbody tr:hover { background:var(--primary-light); }
       <div class="filters">
         <div><label>営業所</label><div id="sm-area-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px;"></div><select id="sm-area" style="display:none;"><option value="">すべて</option><option>城北</option><option>立川</option><option>川越</option><option>川崎高津</option></select></div>
         <div><label>ナビ判定</label><select id="sm-verify-filter" onchange="smFilter()"><option value="">すべて</option><option value="mismatch">✕ 不一致のみ</option><option value="partial">△ 部分一致のみ</option><option value="match">◎ 一致のみ</option><option value="empty">未検証のみ</option></select></div>
+        <div><label>区分</label><select id="sm-edition" onchange="smFilter()"><option value="">すべて</option><option value="am">朝刊</option><option value="pm">夕刊</option><option value="keiba">競馬</option></select></div>
         <div><label>検索</label><input type="search" id="sm-search" autocomplete="off" placeholder="店舗名・コード・コース名..." oninput="dbInput('smFilter')" style="width:240px;"></div>
       </div>
+      <div id="sm-reorder-bar" style="display:none;margin-bottom:8px;padding:10px 12px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;font-size:13px;color:#92400e;"></div>
       <div id="sm-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
       <div class="table-wrap" id="sm-table"></div>
     </div>
@@ -4300,11 +4302,17 @@ function smFilter(){
   const nIdx=smColMap.name??3;
   const vIdx=smColMap.verify;
   // コース名でも探せるようにする(2026-09-01)。「立川19」で入力するとそのコースの店だけが出る。
+  // 区分(朝刊/夕刊/競馬)を選ぶと、その区分のコース列だけを見る。同じ番号のコースが
+  // 朝刊にも夕刊にもある(立川19)ため、区分を指定しないと両方の店が混ざる。
+  const edition=(document.getElementById('sm-edition')||{}).value||'';
   const courseIdxs=[smColMap.amCourse??5, smColMap.pmCourse, smColMap.keibaCourse].filter(i=>i!=null);
+  const edCol=edition==='am'?(smColMap.amCourse??5):edition==='pm'?smColMap.pmCourse:edition==='keiba'?smColMap.keibaCourse:null;
+  const searchIdxs=edCol!=null?[edCol]:courseIdxs;
   smFiltered=smData.filter(r=>{
     if(area&&!smRowInArea(r,area,aIdx))return false;
+    if(edCol!=null&&!String(r[`col_${edCol}`]||'').trim())return false;   // その区分のコースが無い店は出さない
     if(q){
-      const text=[r[`col_${nIdx}`],r[`col_${cIdx}`],r[`col_${aIdx}`],...courseIdxs.map(i=>r[`col_${i}`])]
+      const text=[r[`col_${nIdx}`],r[`col_${cIdx}`],r[`col_${aIdx}`],...searchIdxs.map(i=>r[`col_${i}`])]
         .join(' ').normalize('NFKC').toLowerCase();
       if(!text.includes(q))return false;
     }
@@ -4315,14 +4323,20 @@ function smFilter(){
     }
     return true;
   });
-  // コース名で検索したときは、並び替え未指定ならそのコースの配達順(順番→店着時間)で出す。
-  // 「立川19」と打ったら回る順に並んでいてほしい、が現場の見方のため。
-  if(smSortCol==null&&q){
-    const hit=courseIdxs.find(i=>smFiltered.length&&smFiltered.every(r=>
-      String(r[`col_${i}`]||'').normalize('NFKC').toLowerCase().includes(q)));
-    if(hit!=null&&SM_COURSE_SUB[hit]){
+  // 配達順(順番→店着時間)で出す。「立川19」と打ったら回る順に並んでいてほしい、が現場の見方。
+  // 区分が選ばれていればその区分で、選ばれていなければ全行が同じコースに収まる列を探して使う。
+  smCourseCol=null;
+  if(smSortCol==null){
+    let hit=edCol!=null&&SM_COURSE_SUB[edCol]?edCol:null;
+    if(hit==null&&q){
+      hit=courseIdxs.find(i=>smFiltered.length&&SM_COURSE_SUB[i]&&smFiltered.every(r=>
+        String(r[`col_${i}`]||'').normalize('NFKC').toLowerCase().includes(q)))??null;
+    }
+    if(hit!=null){
       const sub=SM_COURSE_SUB[hit];
-      smFiltered.sort((x,y)=>smCmpVal(x[`col_${sub[0]}`],y[`col_${sub[0]}`])||smCmpVal(x[`col_${sub[1]}`],y[`col_${sub[1]}`]));
+      smFiltered.sort((x,y)=>smCmpVal(x[`col_${hit}`],y[`col_${hit}`])
+        ||smCmpVal(x[`col_${sub[0]}`],y[`col_${sub[0]}`])||smCmpVal(x[`col_${sub[1]}`],y[`col_${sub[1]}`]));
+      smCourseCol=hit;
       smRender();
       return;
     }
@@ -4341,6 +4355,9 @@ let smRenderLimit=SM_PAGE;  // 現在の表示件数上限(「さらに表示」
 // コース列で並べたときは、コース内が配達順(順番→店着時間)になるようにする。
 // 単に文字で並べると「立川10」が「立川9」より前に来てしまうため、数字は数値として比較する。
 let smSortCol=null, smSortDir=1;
+// 配達順で表示中のコース列(順番の編集はこの状態のときだけ許可する)。
+// どのコースの順番を書き換えるのかが一意でないと、別コースの順番まで壊すため。
+let smCourseCol=null, smOrderDirty=false;
 const SM_COURSE_SUB={          // コース列 → [順番列, 店着時間列]
   5:[12,13],                   // 朝刊コース名
   14:[17,18],                  // 夕刊コース名
@@ -4374,6 +4391,65 @@ function smApplySort(){
     }
     return smCmpVal(x[`col_${smColMap.code??2}`],y[`col_${smColMap.code??2}`]);
   });
+}
+// ── 配達順の並べ替え(2026-09-01) ────────────────────────────────
+// 1コース分だけを配達順で表示しているときに、行をドラッグ(スマホは▲▼)で入れ替えて
+// 「順番」列を 1..N で振り直す。保存するまでシートには書かない。
+// 🚨 コースが複数混ざった一覧では触らせない(他コースの順番まで書き換えてしまうため)。
+function smReorderMode(){
+  if(smCourseCol==null||smSortCol!=null)return null;
+  const vals=new Set(smFiltered.map(r=>String(r[`col_${smCourseCol}`]||'').trim()).filter(Boolean));
+  if(vals.size!==1)return null;                       // コースが1つに絞れていないと不可
+  if(smFiltered.length<2||smFiltered.length>smRenderLimit)return null; // 全行が画面に出ている状態のみ
+  return {course:[...vals][0], orderCol:SM_COURSE_SUB[smCourseCol][0]};
+}
+function smMoveRow(rowNumber,delta){
+  const i=smFiltered.findIndex(r=>r.row_number===rowNumber);
+  const j=i+delta;
+  if(i<0||j<0||j>=smFiltered.length)return;
+  const t=smFiltered[i];smFiltered[i]=smFiltered[j];smFiltered[j]=t;
+  smOrderDirty=true;smRender();
+}
+let smDragRow=null;
+function smDragStart(e,rowNumber){smDragRow=rowNumber;try{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',String(rowNumber));}catch(_){}}
+function smDragOver(e){e.preventDefault();try{e.dataTransfer.dropEffect='move';}catch(_){}}
+function smDrop(e,targetRow){
+  e.preventDefault();
+  const src=smDragRow??Number(e.dataTransfer.getData('text/plain'));
+  smDragRow=null;
+  if(!src||src===targetRow)return;
+  const from=smFiltered.findIndex(r=>r.row_number===src);
+  const to=smFiltered.findIndex(r=>r.row_number===targetRow);
+  if(from<0||to<0)return;
+  const [moved]=smFiltered.splice(from,1);
+  smFiltered.splice(to,0,moved);
+  smOrderDirty=true;smRender();
+}
+async function smSaveOrder(){
+  const mode=smReorderMode();
+  if(!mode){alert('並べ替えできる状態ではありません（1コース分だけを表示してください）');return;}
+  const updates=[],touched=[];
+  smFiltered.forEach((r,i)=>{
+    const now=String(r[`col_${mode.orderCol}`]||'').trim();
+    const next=String(i+1);
+    if(now!==next){updates.push({row_number:r.row_number,col_index:mode.orderCol,value:next});touched.push(`${i+1}. ${r[`col_${smColMap.name??3}`]||''}`);}
+  });
+  if(!updates.length){alert('順番の変更はありません');smOrderDirty=false;smRender();return;}
+  const NL=String.fromCharCode(10);
+  if(!window.confirm(`「${mode.course}」の順番を 1〜${smFiltered.length} で振り直します。`+NL+`変更 ${updates.length}件`+NL+NL+touched.slice(0,10).join(NL)+(touched.length>10?NL+'…他'+(touched.length-10)+'件':'')+NL+NL+'続行しますか?'))return;
+  const bar=document.getElementById('sm-reorder-bar');
+  if(bar)bar.textContent='保存中...';
+  try{
+    const resp=await smPost({action:'batch_update_cells',updates});
+    const json=await resp.json().catch(()=>({}));
+    if(json&&json.error)throw new Error(json.error);
+    smFiltered.forEach((r,i)=>{r[`col_${mode.orderCol}`]=String(i+1);});
+    smOrderDirty=false;
+    invalidateShopMasterCache();
+    alert(`✅ 「${mode.course}」の順番を保存しました（${updates.length}件）`);
+    await smLoad(true);
+  }catch(e){alert('保存に失敗しました: '+(e&&e.message?e.message:e));}
+  smRender();
 }
 function smRender(){
   // ゲート: 営業所未選択(かつ検索なし)なら一覧を描画せず営業所選択を促す
@@ -4429,7 +4505,22 @@ function smRender(){
   const addrColIdx=showCols.indexOf(smColMap.addr);
   const verifyColIdx=showCols.indexOf(smColMap.verify);
 
+  // 配達順の並べ替えができる状態か(1コース分だけを配達順で表示中)
+  const reorder=smReorderMode();
+  const rbar=document.getElementById('sm-reorder-bar');
+  if(rbar){
+    if(reorder){
+      rbar.style.display='';
+      rbar.innerHTML=`🔀 <b>${reorder.course}</b> の配達順を編集できます（行をドラッグ、スマホは ▲▼）`
+        +`<button onclick="smSaveOrder()" style="margin-left:12px;background:${smOrderDirty?'#dc2626':'#94a3b8'};color:#fff;border:none;padding:5px 14px;border-radius:6px;cursor:pointer;font-weight:700;font-size:12px;">💾 順番を保存${smOrderDirty?'（未保存あり）':''}</button>`
+        +`<span style="margin-left:10px;font-size:11px;">※ 保存するまでシートには書き込みません</span>`;
+    }else{
+      rbar.style.display='none';rbar.innerHTML='';
+      if(smOrderDirty)smOrderDirty=false;
+    }
+  }
   let h='<table><thead><tr>';
+  if(reorder)h+='<th style="width:64px;">順</th>';
   showHeaders.forEach((hd,i)=>{
     const ci=showCols[i];
     const on=smSortCol===ci;
@@ -4438,10 +4529,22 @@ function smRender(){
     h+=`<th onclick="smSortBy(${ci})" title="${tip}" style="cursor:pointer;user-select:none;${on?'background:#dbeafe;':''}">${hd}${i===addrColIdx?' <span style="font-size:10px;font-weight:normal;color:#94a3b8;">(精度)</span>':''}${mark}</th>`;
   });
   h+='<th></th></tr></thead><tbody>';
-  smFiltered.slice(0,smRenderLimit).forEach(r=>{
+  smFiltered.slice(0,smRenderLimit).forEach((r,rowIdx)=>{
     const areaVal=r[`col_${smColMap.area??1}`]||'';
     const accVal=smColMap.accuracy!=null?(r[`col_${smColMap.accuracy}`]||''):'';
-    h+='<tr>';
+    if(reorder){
+      const cur=String(r[`col_${reorder.orderCol}`]||'').trim();
+      const moved=cur!==String(rowIdx+1);
+      h+=`<tr draggable="true" ondragstart="smDragStart(event,${r.row_number})" ondragover="smDragOver(event)" ondrop="smDrop(event,${r.row_number})" style="${moved?'background:#fef9c3;':''}">`;
+      h+=`<td style="white-space:nowrap;text-align:center;cursor:grab;" title="ドラッグで移動">`
+        +`<span style="color:#94a3b8;">⠿</span> <b>${rowIdx+1}</b>`
+        +`<div style="margin-top:2px;">`
+        +`<button onclick="smMoveRow(${r.row_number},-1)" ${rowIdx===0?'disabled':''} style="border:1px solid #cbd5e1;background:#fff;border-radius:4px;cursor:pointer;font-size:11px;padding:0 5px;">▲</button>`
+        +`<button onclick="smMoveRow(${r.row_number},1)" ${rowIdx===smFiltered.length-1?'disabled':''} style="border:1px solid #cbd5e1;background:#fff;border-radius:4px;cursor:pointer;font-size:11px;padding:0 5px;margin-left:2px;">▼</button>`
+        +`</div></td>`;
+    }else{
+      h+='<tr>';
+    }
     showCols.forEach((ci,idx)=>{
       let val=r[`col_${ci}`]||'';
       if(idx===0&&areaVal)val=`<span class="badge ${bc(areaVal)}">${areaVal}</span>`;
