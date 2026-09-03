@@ -4312,6 +4312,7 @@ function smFilter(){
     }
     return true;
   });
+  smApplySort();   // 絞り込み後も選択中の並び順を保つ
   smRender();
 }
 
@@ -4319,6 +4320,46 @@ function smFilter(){
 function isMobile(){return !!(window.matchMedia&&window.matchMedia('(max-width:768px)').matches);}
 const SM_PAGE=500;          // 店舗マスタ一覧の1ページ件数
 let smRenderLimit=SM_PAGE;  // 現在の表示件数上限(「さらに表示」で加算)
+
+// ── 一覧の並び替え (2026-09-01追加) ──────────────────────────────
+// 見出しをタップすると、その列で並び替える。もう一度押すと降順、3回目で解除(元の並び)。
+// コース列で並べたときは、コース内が配達順(順番→店着時間)になるようにする。
+// 単に文字で並べると「立川10」が「立川9」より前に来てしまうため、数字は数値として比較する。
+let smSortCol=null, smSortDir=1;
+const SM_COURSE_SUB={          // コース列 → [順番列, 店着時間列]
+  5:[12,13],                   // 朝刊コース名
+  14:[17,18],                  // 夕刊コース名
+  19:[23,24],                  // 競馬コース名
+};
+function smSortBy(col){
+  if(smSortCol===col){
+    if(smSortDir===1)smSortDir=-1;      // 昇順 → 降順
+    else {smSortCol=null;smSortDir=1;}  // 降順 → 解除
+  }else{smSortCol=col;smSortDir=1;}
+  smRenderLimit=SM_PAGE;
+  smApplySort();
+  smRender();
+}
+function smCmpVal(a,b){
+  const ea=!String(a??'').trim(), eb=!String(b??'').trim();
+  if(ea&&eb)return 0;
+  if(ea)return 1;   // 空欄は方向に関わらず常に最後
+  if(eb)return -1;
+  return String(a).localeCompare(String(b),'ja',{numeric:true,sensitivity:'base'});
+}
+function smApplySort(){
+  if(smSortCol==null)return;
+  const col=smSortCol, sub=SM_COURSE_SUB[col];
+  smFiltered.sort((x,y)=>{
+    const r=smCmpVal(x[`col_${col}`],y[`col_${col}`]);
+    if(r!==0)return r*smSortDir;
+    if(sub){   // 同じコース内は配達順(順番 → 店着時間)。方向を反転させない=常に配達順
+      const o=smCmpVal(x[`col_${sub[0]}`],y[`col_${sub[0]}`]); if(o!==0)return o;
+      const t=smCmpVal(x[`col_${sub[1]}`],y[`col_${sub[1]}`]); if(t!==0)return t;
+    }
+    return smCmpVal(x[`col_${smColMap.code??2}`],y[`col_${smColMap.code??2}`]);
+  });
+}
 function smRender(){
   // ゲート: 営業所未選択(かつ検索なし)なら一覧を描画せず営業所選択を促す
   const _area=document.getElementById('sm-area').value;
@@ -4374,7 +4415,13 @@ function smRender(){
   const verifyColIdx=showCols.indexOf(smColMap.verify);
 
   let h='<table><thead><tr>';
-  showHeaders.forEach((hd,i)=>{h+=`<th>${hd}${i===addrColIdx?' <span style="font-size:10px;font-weight:normal;color:#94a3b8;">(精度)</span>':''}</th>`;});
+  showHeaders.forEach((hd,i)=>{
+    const ci=showCols[i];
+    const on=smSortCol===ci;
+    const mark=on?(smSortDir===1?' ▲':' ▼'):'<span style="color:#cbd5e1;font-size:10px;"> ⇅</span>';
+    const tip=SM_COURSE_SUB[ci]?'コース順（コース内は順番→店着時間）':'この列で並び替え';
+    h+=`<th onclick="smSortBy(${ci})" title="${tip}" style="cursor:pointer;user-select:none;${on?'background:#dbeafe;':''}">${hd}${i===addrColIdx?' <span style="font-size:10px;font-weight:normal;color:#94a3b8;">(精度)</span>':''}${mark}</th>`;
+  });
   h+='<th></th></tr></thead><tbody>';
   smFiltered.slice(0,smRenderLimit).forEach(r=>{
     const areaVal=r[`col_${smColMap.area??1}`]||'';
