@@ -299,7 +299,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div class="filters">
         <div><label>営業所</label><div id="sm-area-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px;"></div><select id="sm-area" style="display:none;"><option value="">すべて</option><option>城北</option><option>立川</option><option>川越</option><option>川崎高津</option></select></div>
         <div><label>ナビ判定</label><select id="sm-verify-filter" onchange="smFilter()"><option value="">すべて</option><option value="mismatch">✕ 不一致のみ</option><option value="partial">△ 部分一致のみ</option><option value="match">◎ 一致のみ</option><option value="empty">未検証のみ</option></select></div>
-        <div><label>検索</label><input type="search" id="sm-search" autocomplete="off" placeholder="店舗名・コード..." oninput="dbInput('smFilter')" style="width:200px;"></div>
+        <div><label>検索</label><input type="search" id="sm-search" autocomplete="off" placeholder="店舗名・コード・コース名..." oninput="dbInput('smFilter')" style="width:240px;"></div>
       </div>
       <div id="sm-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
       <div class="table-wrap" id="sm-table"></div>
@@ -4271,7 +4271,7 @@ function smRenderAreaTabs(){
 function smShowAreaGate(){
   smRenderAreaTabs();
   const cnt=document.getElementById('sm-count');if(cnt)cnt.innerHTML='';
-  const t=document.getElementById('sm-table');if(t)t.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">↑ 上の<b>営業所</b>を選んでください（店舗マスタは件数が多いため。検索ボックスでも探せます）</p>';
+  const t=document.getElementById('sm-table');if(t)t.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">↑ 上の<b>営業所</b>を選んでください（店舗マスタは件数が多いため。検索ボックスは<b>店舗名・コード・コース名</b>で探せます。例: 立川19）</p>';
 }
 async function smPickArea(a){
   const s=document.getElementById('sm-area');if(s)s.value=a;
@@ -4299,10 +4299,13 @@ function smFilter(){
   const cIdx=smColMap.code??2;
   const nIdx=smColMap.name??3;
   const vIdx=smColMap.verify;
+  // コース名でも探せるようにする(2026-09-01)。「立川19」で入力するとそのコースの店だけが出る。
+  const courseIdxs=[smColMap.amCourse??5, smColMap.pmCourse, smColMap.keibaCourse].filter(i=>i!=null);
   smFiltered=smData.filter(r=>{
     if(area&&!smRowInArea(r,area,aIdx))return false;
     if(q){
-      const text=[r[`col_${nIdx}`],r[`col_${cIdx}`],r[`col_${aIdx}`]].join(' ').normalize('NFKC').toLowerCase();
+      const text=[r[`col_${nIdx}`],r[`col_${cIdx}`],r[`col_${aIdx}`],...courseIdxs.map(i=>r[`col_${i}`])]
+        .join(' ').normalize('NFKC').toLowerCase();
       if(!text.includes(q))return false;
     }
     if(verify&&vIdx!=null){
@@ -4312,6 +4315,18 @@ function smFilter(){
     }
     return true;
   });
+  // コース名で検索したときは、並び替え未指定ならそのコースの配達順(順番→店着時間)で出す。
+  // 「立川19」と打ったら回る順に並んでいてほしい、が現場の見方のため。
+  if(smSortCol==null&&q){
+    const hit=courseIdxs.find(i=>smFiltered.length&&smFiltered.every(r=>
+      String(r[`col_${i}`]||'').normalize('NFKC').toLowerCase().includes(q)));
+    if(hit!=null&&SM_COURSE_SUB[hit]){
+      const sub=SM_COURSE_SUB[hit];
+      smFiltered.sort((x,y)=>smCmpVal(x[`col_${sub[0]}`],y[`col_${sub[0]}`])||smCmpVal(x[`col_${sub[1]}`],y[`col_${sub[1]}`]));
+      smRender();
+      return;
+    }
+  }
   smApplySort();   // 絞り込み後も選択中の並び順を保つ
   smRender();
 }
