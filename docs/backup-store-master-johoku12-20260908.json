@@ -1,0 +1,394 @@
+[
+ {
+  "row_number": 1276,
+  "code": "624509",
+  "name": "FM早稲田大学理工学部前",
+  "official": "ファミリーマート西新宿オークテラス",
+  "place_id": "ChIJV66eUtSMGGARVhqeqPv1qxk"
+ },
+ {
+  "row_number": 1278,
+  "code": "604702",
+  "name": "LA東新宿明治通",
+  "official": "ローソン西早稲田二丁目",
+  "place_id": "ChIJLaiBPBiNGGARyu6YwaOak3U"
+ },
+ {
+  "row_number": 1281,
+  "code": "604673",
+  "name": "LA東大久保",
+  "official": "ファミリーマート西新宿アトラスタワー",
+  "place_id": "ChIJvda7QtTyGGARNw2nniY7T_w"
+ },
+ {
+  "row_number": 749,
+  "code": "604690",
+  "name": "LA都営東新宿駅前",
+  "official": "ローソン都営東新宿駅前",
+  "place_id": "ChIJsc7fOd-MGGAR2dWLiH0sLGs"
+ },
+ {
+  "row_number": 755,
+  "code": "604668",
+  "name": "NL新宿フロントタワー",
+  "official": "ナチュラルローソン新宿フロントタワー",
+  "place_id": "ChIJH7qdmtTyGGARk6KBtqATlho"
+ },
+ {
+  "row_number": 2099,
+  "code": "611481",
+  "name": "FM西新宿八丁目",
+  "official": "ファミリーマート東中野ギンザ通り",
+  "place_id": "ChIJmXnYps7yGGARwfjo_bK-gA4"
+ },
+ {
+  "row_number": 1194,
+  "code": "614917",
+  "name": "FM西新宿青梅街道",
+  "official": "ファミリーマート西新宿柏木公園前",
+  "place_id": "ChIJLYBA8CmNGGARn-EmSSfw9A4"
+ },
+ {
+  "row_number": 2111,
+  "code": "604691",
+  "name": "LA西新宿小滝橋通",
+  "official": "ファミリーマート東中野駅北",
+  "place_id": "ChIJTwsNIMryGGARNiTpOl4rIOk"
+ },
+ {
+  "row_number": 2113,
+  "code": "624561",
+  "name": "FM西新宿柏木公園前",
+  "official": "ファミリーマート東中野駅前",
+  "place_id": "ChIJ6ezIQ8jyGGARXss447xy7Mo"
+ },
+ {
+  "row_number": 2143,
+  "code": "624571",
+  "name": "FM西新宿七丁目",
+  "official": "ファミリーマート東中野五丁目",
+  "place_id": "ChIJ804UJ4rzGGARDQYYUNWBYLI"
+ },
+ {
+  "row_number": 1307,
+  "code": "624587",
+  "name": "FM西新宿1丁目",
+  "official": "ローソンストア100北新宿",
+  "place_id": "ChIJZfDnXC2NGGARmZy0HhxnFl8"
+ },
+ {
+  "row_number": 1263,
+  "code": "611491",
+  "name": "FM新宿損保ジャパン",
+  "official": "ファミリーマート新宿損保ジャパン",
+  "place_id": "ChIJy5k0wtWMGGARNx5nmiKsOqg"
+ },
+ {
+  "row_number": 2030,
+  "code": "604665",
+  "name": "NL東京医科大学病院",
+  "official": "ローソン代々木三丁目",
+  "place_id": "ChIJtXhHHwCNGGARCByz5SGzZrg"
+ },
+ {
+  "row_number": 2031,
+  "code": "611162",
+  "name": "FM西新宿オークテラス",
+  "official": "ローソン新宿御苑北",
+  "place_id": "ChIJGTCZ68KMGGARS4DP298HS-0"
+ },
+ {
+  "row_number": 1279,
+  "code": "611027",
+  "name": "FM西新宿三井ビル",
+  "official": "ファミリーマート西新宿三井ビル",
+  "place_id": "ChIJiUyU89TyGGAR4KK8aR95C30"
+ },
+ {
+  "row_number": 1280,
+  "code": "604593",
+  "name": "LA中野本町1丁目東",
+  "official": "ローソン中野本町1丁目東",
+  "place_id": "ChIJY8g24dPyGGARJ2PXLSp9qBk"
+ },
+ {
+  "row_number": 2033,
+  "code": "611361",
+  "name": "FM西新宿アトラスタワー",
+  "official": "ローソン新宿御苑駅前",
+  "place_id": "ChIJG8YQ6OmMGGARysIItMvy_tU"
+ },
+ {
+  "row_number": 2035,
+  "code": "611470",
+  "name": "FM新宿アイタウン",
+  "official": "ミニストップ新宿花園通り",
+  "place_id": "ChIJmW6fTOiMGGARaG6SSlAMQPs"
+ },
+ {
+  "row_number": 1291,
+  "code": "624545",
+  "name": "FM新宿十二社",
+  "official": "ファミリーマート新宿十二社",
+  "place_id": "ChIJVVXFBirzGGAR6su64PsWUgA"
+ },
+ {
+  "row_number": 1294,
+  "code": "611197",
+  "name": "FMサンズ西新宿",
+  "official": "ファミリーマート西新宿五丁目",
+  "place_id": "ChIJW3gO_CnzGGARHaNdNszIDM8"
+ },
+ {
+  "row_number": 1297,
+  "code": "624800",
+  "name": "FM西新宿五丁目駅前",
+  "official": "ファミリーマート西新宿五丁目駅前",
+  "place_id": "ChIJY6LfaQDzGGARwSSOBeJkPvY"
+ },
+ {
+  "row_number": 1314,
+  "code": "624594",
+  "name": "FM西新宿五丁目",
+  "official": "ファミリーマートサンズ西新宿",
+  "place_id": "ChIJ-b_p2ynzGGARSWyu8yE0hj8"
+ },
+ {
+  "row_number": 1327,
+  "code": "604523",
+  "name": "LAＳ新宿グリーンﾀﾜｰﾋﾞﾙ",
+  "official": "ローソンＳ新宿グリーンﾀﾜｰﾋﾞﾙ",
+  "place_id": "ChIJO0D5HADzGGAR6h_OzbCvn8U"
+ },
+ {
+  "row_number": 1513,
+  "code": "611064",
+  "name": "FM新宿第1生命ビル",
+  "official": "ローソン西新宿1丁目",
+  "place_id": "ChIJObe0cNGMGGARN8zh7pHac80"
+ },
+ {
+  "row_number": 1471,
+  "code": "611046",
+  "name": "FM新宿中央公園",
+  "official": "ファミリーマート新宿中央公園",
+  "place_id": "ChIJA7RZeSvzGGARMuK6N7OveqU"
+ },
+ {
+  "row_number": 1472,
+  "code": "624604",
+  "name": "FM西新宿三丁目",
+  "official": "ローソン新宿ワシントンホテルＢ",
+  "place_id": "ChIJubWgiCaNGGARe0vbjfZqnhs"
+ },
+ {
+  "row_number": 1478,
+  "code": "604692",
+  "name": "LA西新宿三丁目",
+  "official": "ファミリーマート西新宿三丁目",
+  "place_id": "ChIJPz7b8yzzGGARwCxonSItY08"
+ },
+ {
+  "row_number": 1480,
+  "code": "604684",
+  "name": "LA京王プレッソイン新宿",
+  "official": "ローソン西新宿三丁目",
+  "place_id": "ChIJewp74SzzGGARbXKHsrCBohk"
+ },
+ {
+  "row_number": 1484,
+  "code": "611070",
+  "name": "FM新宿新都心",
+  "official": "ローソン京王プレッソイン新宿",
+  "place_id": "ChIJX6VK5tKMGGAR2Z8dKBNOnb0"
+ },
+ {
+  "row_number": 1506,
+  "code": "611456",
+  "name": "FMＫ２新宿駅西",
+  "official": "ナチュラルローソン新宿駅西",
+  "place_id": "ChIJsVGNUNGMGGARje-B0m2yMLI"
+ },
+ {
+  "row_number": 1308,
+  "code": "624600",
+  "name": "FM西新宿地下歩道",
+  "official": "ローソン北新宿1丁目",
+  "place_id": "ChIJTRTtqdLyGGARXA2XOrKz2wY"
+ },
+ {
+  "row_number": 1310,
+  "code": "604667",
+  "name": "NL新宿駅西",
+  "official": "ローソンストア100中野中央",
+  "place_id": "ChIJpeI_3hzzGGARSmyINW3fYF4"
+ },
+ {
+  "row_number": 1311,
+  "code": "604689",
+  "name": "LA西新宿",
+  "official": "ローソンスリーエフ北新宿",
+  "place_id": "ChIJ5W8F69PyGGARZFaCIuEGTvQ"
+ },
+ {
+  "row_number": 1312,
+  "code": "604678",
+  "name": "LA西新宿1丁目",
+  "official": "ファミリーマート新宿税務署通り",
+  "place_id": "ChIJHT9nWSuNGGARdIcls084BDc"
+ },
+ {
+  "row_number": 2027,
+  "code": "624799",
+  "name": "FM代々木三丁目",
+  "official": "ファミリーマート代々木三丁目",
+  "place_id": "ChIJ0QHLhdKMGGARwo9MExChh0k"
+ },
+ {
+  "row_number": 1315,
+  "code": "604662",
+  "name": "LA代々木三丁目",
+  "official": "ローソンシタディーンセントラル",
+  "place_id": "ChIJu1g2c9mMGGARd_AmuGkOeqo"
+ },
+ {
+  "row_number": 2034,
+  "code": "604500",
+  "name": "LA代々木西参道",
+  "official": "ローソン代々木西参道",
+  "place_id": "ChIJTatGHM2MGGARhHPKEgG3X0Y"
+ },
+ {
+  "row_number": 2045,
+  "code": "624601",
+  "name": "FM参宮橋駅前",
+  "official": "ファミリーマート参宮橋駅前",
+  "place_id": "ChIJKxeoDraMGGAReTNQjgofgh4"
+ },
+ {
+  "row_number": 2052,
+  "code": "604716",
+  "name": "LAＳ 青少年総合センター",
+  "official": "ローソンＳ 青少年総合センター",
+  "place_id": "ChIJJ_qwKACNGGAR0T1z1KAWyyQ"
+ },
+ {
+  "row_number": 1336,
+  "code": "604502",
+  "name": "LA代々木1丁目",
+  "official": "ファミリーマート新宿第1生命ビル",
+  "place_id": ""
+ },
+ {
+  "row_number": 2380,
+  "code": "604507",
+  "name": "NL代々木駅西",
+  "official": "ファミリーマート南新宿駅前",
+  "place_id": "ChIJqZ04VM6MGGARZv9f-arj6EM"
+ },
+ {
+  "row_number": 1497,
+  "code": "614720",
+  "name": "FM南新宿駅前",
+  "official": "ファミリーマート東中野駅西口",
+  "place_id": "ChIJo2WttsnyGGAR1RyULSHiQZA"
+ },
+ {
+  "row_number": 1504,
+  "code": "614856",
+  "name": "FM代々木二丁目北",
+  "official": "ファミリーマート西新宿地下歩道",
+  "place_id": "ChIJPbnhr9aMGGAR2bkA6XXEOTw"
+ },
+ {
+  "row_number": 2400,
+  "code": "624590",
+  "name": "FM新宿駅南",
+  "official": "ファミリーマート代々木二丁目北",
+  "place_id": "ChIJQxQ8jtGMGGARZEvco9uUeWo"
+ },
+ {
+  "row_number": 2406,
+  "code": "624614",
+  "name": "FM代々木1丁目",
+  "official": "ファミリーマート新宿駅南",
+  "place_id": "ChIJBeLBOdCMGGARIlKi-gfZovM"
+ },
+ {
+  "row_number": 2409,
+  "code": "604536",
+  "name": "LAクオール代々木駅前",
+  "official": "ローソン代々木1丁目",
+  "place_id": "ChIJR7zfzs6MGGARLlQnA0Ic8e4"
+ },
+ {
+  "row_number": 1487,
+  "code": "624602",
+  "name": "FM代々木駅前店",
+  "official": "ファミリーマート新宿新都心",
+  "place_id": ""
+ },
+ {
+  "row_number": 2416,
+  "code": "624605",
+  "name": "FM代々木駅西",
+  "official": "ファミリーマート代々木駅西",
+  "place_id": "ChIJa9G36riMGGARVeNLnp6Djo4"
+ },
+ {
+  "row_number": 2417,
+  "code": "624615",
+  "name": "FM千駄ヶ谷鳩森",
+  "official": "ファミリーマート代々木駅前店",
+  "place_id": "ChIJW8r8AMaMGGAR_jlNWSQ5e90"
+ },
+ {
+  "row_number": 2418,
+  "code": "604510",
+  "name": "LA渋谷千駄ヶ谷五丁目",
+  "official": "ローソンクオール代々木駅前",
+  "place_id": ""
+ },
+ {
+  "row_number": 2420,
+  "code": "614690",
+  "name": "トモニー西武新宿駅北口",
+  "official": "ファミリーマート小田急エース",
+  "place_id": "ChIJXaZzPdeMGGARl9RKR2_XqZc"
+ },
+ {
+  "row_number": 2421,
+  "code": "604681",
+  "name": "LA西武新宿駅北口",
+  "official": "ファミリーマート都営線新宿西口駅",
+  "place_id": ""
+ },
+ {
+  "row_number": 2424,
+  "code": "614672",
+  "name": "トモニー西武新宿駅",
+  "official": "トモニー西武新宿駅北口",
+  "place_id": ""
+ },
+ {
+  "row_number": 2635,
+  "code": "611079",
+  "name": "FM都営線新宿西口駅",
+  "official": "ミニストップ北新宿４丁目",
+  "place_id": "ChIJjf8unjSNGGARgamF6iaEUcA"
+ },
+ {
+  "row_number": 1508,
+  "code": "614918",
+  "name": "FM小田急エース",
+  "official": "ローソン西新宿",
+  "place_id": "ChIJwcBwkyqNGGARj0ofT87cS44"
+ },
+ {
+  "row_number": 2521,
+  "code": "604700",
+  "name": "LAメトロス新宿東口",
+  "official": "ローソンメトロス新宿東口",
+  "place_id": ""
+ }
+]

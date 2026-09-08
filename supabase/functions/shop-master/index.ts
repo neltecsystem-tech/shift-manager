@@ -1227,6 +1227,7 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else if (action === 'batch_update_addr') {
+      await invalidateShopCache(); // 🚨これが無いと、書き込み成功後も一覧が最大90秒古い値を返す
       if (!Array.isArray(updates) || updates.length === 0) {
         return new Response(JSON.stringify({ error: 'updates array required' }), {
           status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -1267,6 +1268,7 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else if (action === 'batch_update_official') {
+      await invalidateShopCache(); // 🚨これが無いと、書き込み成功後も一覧が最大90秒古い値を返す
       // 正式店舗名(AI列/col34) だけを行番号指定で一括書き込み。updates=[{row_number, official}]
       if (!Array.isArray(updates) || updates.length === 0) {
         return new Response(JSON.stringify({ error: 'updates array required' }), {
@@ -1302,6 +1304,7 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else if (action === 'batch_update_placeid') {
+      await invalidateShopCache(); // 🚨これが無いと、書き込み成功後も一覧が最大90秒古い値を返す
       // Place ID(AK列/col36) を行番号指定で一括書き込み(空文字でクリア可)。updates=[{row_number, place_id}]
       if (!Array.isArray(updates) || updates.length === 0) {
         return new Response(JSON.stringify({ error: 'updates array required' }), {
@@ -1428,6 +1431,7 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else if (action === 'batch_update_cells') {
+      await invalidateShopCache(); // 🚨これが無いと、書き込み成功後も一覧が最大90秒古い値を返す
       // 任意の (row_number, col_index, value) を一括更新する汎用 API
       // updates: [{ row_number: number, col_index: number, value: string }]
       if (!Array.isArray(updates) || updates.length === 0) {
@@ -1469,6 +1473,7 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else if (action === 'batch_update_official_name') {
+      await invalidateShopCache(); // 🚨これが無いと、書き込み成功後も一覧が最大90秒古い値を返す
       if (!Array.isArray(updates) || updates.length === 0) {
         return new Response(JSON.stringify({ error: 'updates array required' }), {
           status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
