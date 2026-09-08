@@ -19694,6 +19694,7 @@ const DIAG_KANJI_NUM={'〇':'0','一':'1','二':'2','三':'3','四':'4','五':'5
 function diagNormPlace(s){
   let t=String(s==null?'':s).normalize('NFKC').replace(/[\s　]/g,'');
   t=t.replace(/[〇一二三四五六七八九十]/g,c=>DIAG_KANJI_NUM[c]||c);
+  t=t.replace(/[ヶヵ]/g,'ケ');// 「清水ヶ丘」と「清水ケ丘」を同じ地名として扱う
   t=t.replace(/丁目|番地|番|号/g,'').replace(/店$/,'');
   t=t.replace(/[‐‑–—−ー－\-]/g,'');
   return t.toLowerCase();
