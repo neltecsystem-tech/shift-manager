@@ -1889,6 +1889,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-09-08', tag:'修正', title:'ナビが同じチェーンの別の店へ誘導していた問題（城北12 朝刊など）',
+   desc:'コースのナビを開くと、店舗マスタの「正式店舗名」とそこから作った Place ID を Google マップに渡しています。ところが正式店舗名は2026年7月のズレ事故の名残で、今も他の行の店名が入っている行があります。これまでは「略称のブランドと正式店舗名のチェーンが合っているか」だけを見ていたため、同じチェーンの別店とすり替わっていても通ってしまい、その別店へ誘導していました（例: 城北12 朝刊の「FM西新宿青梅街道」の正式店舗名が「ファミリーマート西新宿柏木公園前」）。城北12 朝刊では56店のうち21店がこの状態でした。略称の地名部分が正式店舗名に含まれているかまで確認し、一致しない行は店名とPlace IDを使わず住所で誘導するようにしました（住所と座標はナビ判定で照合済みなので、少なくとも別の店には行きません）。ダイヤグラムのナビリンクと Place ID の自動取得も同じ判定に揃えました。全マスタ2742店のうち416店が住所での誘導に切り替わります。'},
   {date:'2026-08-27', tag:'新機能', title:'シフト編集: 日曜の競馬配送日を登録できるようにしました',
    desc:'日曜は夕刊・競馬が休刊のため、シフト表の夕刊セルは黒塗りで担当者を入れられませんでした。競馬配送がある日曜のために、シフト編集に「🏇 日曜の競馬配送日」を追加しました。押すと読み込んでいる月の日曜が並ぶので、競馬配送がある日にチェックして「適用」を押してください。その日の夕刊セルのうち、マスタで「金土(競馬)」に✔が付いているコースだけ黒塗りが外れて入力できるようになります（朝刊だけ・夕刊だけのコースは黒塗りのままです）。既定で「直前の土曜の担当者をコピーする」が入っているので、空欄のセルには前の土曜と同じ担当者が入った状態から直せます。チェックを外して適用すれば休刊（担当クリア＋黒塗り）に戻ります。この設定は請求条件の「🏇 競馬配送有り」と同じ場所に保存されるので、請求・明細・自動確定にもそのまま反映されます（別々に登録する必要はありません）。空き確認も、登録した日曜の競馬セルが空なら「PM(競馬)」として拾います。新規月作成でも、その月に登録済みの日曜があれば最初から黒塗りせずに作ります。'},
   {date:'2026-08-18', tag:'修正', title:'シフト編集: 「引継 立川43」などが氏名の警告に出ていた問題',
@@ -8827,13 +8829,21 @@ function admDgBuildNavUrls(stops){
     if(i+CHUNK>=pts.length)break;
     i+=CHUNK-1;
   }
-  const nameOf=(s)=>(s.official_name||s.master_name||s.name||s.address||'').toString();
+  // 正式店舗名が他の行のものになっている行があるため、信用できる行だけ名前とPlace IDを使う
+  // (判定は diagOfficialTrusted と共通。信用できない行は住所で誘導する)。
+  const offOf=(s)=>{
+    const off=(s.official_name||'').trim();
+    if(!off)return '';
+    return diagOfficialTrusted({name:(s.master_name||s.name||'').trim(),official:off})?off:'';
+  };
+  const pidOf=(s)=>(offOf(s)?(s.place_id||''):'');
+  const nameOf=(s)=>(offOf(s)||s.master_name||s.name||s.address||'').toString();
   // Google Maps URL の公式仕様:
   // - waypoints: 名前/住所/座標のテキスト
   // - waypoint_place_ids: それと同順の Place ID 配列 (text を override する)
   // → waypoints は店名 (place_id がない場合は座標)、 waypoint_place_ids に Place ID
   const textOf=(s)=>{
-    const nm=(s.official_name||s.master_name||s.name||'').trim();
+    const nm=offOf(s);
     const addr=(s.address||'').trim();
     if(nm&&addr)return nm+' '+addr;
     if(nm)return nm;
@@ -8849,14 +8859,14 @@ function admDgBuildNavUrls(stops){
     params.set('api','1');
     // origin: depot は座標 (place_id なし)、その他は店名テキスト
     params.set('origin',first.isStart?(first.lat+','+first.lng):textOf(first));
-    if(first.place_id&&!first.isStart)params.set('origin_place_id',first.place_id);
+    if(pidOf(first)&&!first.isStart)params.set('origin_place_id',pidOf(first));
     params.set('destination',textOf(last));
-    if(last.place_id)params.set('destination_place_id',last.place_id);
+    if(pidOf(last))params.set('destination_place_id',pidOf(last));
     if(mids.length>0){
       params.set('waypoints',mids.map(textOf).join('|'));
       // waypoint_place_ids は同順・同数で揃える必要がある (該当なしは空)
-      if(mids.some(s=>s.place_id)){
-        params.set('waypoint_place_ids',mids.map(s=>s.place_id||'').join('|'));
+      if(mids.some(s=>pidOf(s))){
+        params.set('waypoint_place_ids',mids.map(s=>pidOf(s)).join('|'));
       }
     }
     params.set('travelmode','driving');
@@ -9066,6 +9076,13 @@ function admDgNormalizeForMatch(s){
 }
 async function admDgFetchPlaceId(stop){
   if(stop.isStart)return null;
+  // 正式店舗名が別の行のものになっている行では、その名前で探すと近くの別の店を掴む。
+  // 名前が信用できない行は Place ID を持たせない(住所で誘導する)。
+  const off=(stop.official_name||'').trim();
+  if(off&&!diagOfficialTrusted({name:(stop.master_name||stop.name||'').trim(),official:off})){
+    admDgPlaceIdCache[admDgPlaceIdKey(stop)]=null;
+    return null;
+  }
   const k=admDgPlaceIdKey(stop);
   if(admDgPlaceIdCache[k]!==undefined)return admDgPlaceIdCache[k];
   if(stop.lat==null||stop.lng==null){admDgPlaceIdCache[k]=null;return null;}
@@ -19563,13 +19580,36 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
 // (例: LA円山町 → 「ファミリーマート 道玄坂中央」)。住所は正しいことを確認済み。
 // Place ID は正式店舗名から再生成した経緯があるため、名前が信用できない行はIDも信用しない。
 const DIAG_BRANDS=[['LALS',['ローソンストア100','ローソン']],['LAＬ',['ローソン']],['LATF',['ローソン']],['LS',['ローソンストア100','ローソン']],['LA',['ローソン']],['FM',['ファミリーマート','ファミマ']],['MS',['ミニストップ']],['SY',['西友']],['T]7',['セブン']],['T]７',['セブン']],['NL',['ナチュラルローソン','ニューデイズ','NewDays']],['トモニー',['トモニー']],['YS',['ヤマザキ']],['西武',['西武']]];
+// 地名の表記ゆれを潰して比較する(全角/半角・漢数字・丁目・ハイフン・末尾の「店」)。
+const DIAG_KANJI_NUM={'〇':'0','一':'1','二':'2','三':'3','四':'4','五':'5','六':'6','七':'7','八':'8','九':'9','十':'10'};
+function diagNormPlace(s){
+  let t=String(s==null?'':s).normalize('NFKC').replace(/[\s　]/g,'');
+  t=t.replace(/[〇一二三四五六七八九十]/g,c=>DIAG_KANJI_NUM[c]||c);
+  t=t.replace(/丁目|番地|番|号/g,'').replace(/店$/,'');
+  t=t.replace(/[‐‑–—−ー－\-]/g,'');
+  return t.toLowerCase();
+}
+// この行の「正式店舗名」を信用してよいか(= Google に名前と Place ID を渡してよいか)。
+// 🚨 ブランド(チェーン)の一致だけでは足りない。2026-07の総ズレ事故で正式店舗名が
+//    他の行の名前になっているため、同じチェーンの別店とすり替わっていても通ってしまう。
+//    例(城北12 朝刊): 「FM西新宿青梅街道」の正式名が「ファミリーマート西新宿柏木公園前」。
+//    どちらもファミマなのでブランド判定は通り、その別店の Place ID でナビが誘導されていた。
+//    → 略称の地名部分が正式店舗名に含まれているかまで見る。含まれなければ住所で誘導する。
 function diagOfficialTrusted(s){
   const nm=(s&&s.name||'').trim(), off=(s&&s.official||'').trim();
   if(!off)return false;
+  let place=null;
   for(const [pre,brands] of DIAG_BRANDS){
-    if(nm.startsWith(pre))return brands.some(b=>off.includes(b));
+    if(nm.startsWith(pre)){
+      if(!brands.some(b=>off.includes(b)))return false; // ブランド違い = 別の店
+      place=nm.slice(pre.length);
+      break;
+    }
   }
-  return true; // 略称の規則に当てはまらない店(駅納品等)は従来どおり信用する
+  if(place===null)return true; // 略称の規則に当てはまらない店(駅納品等)は従来どおり信用する
+  const a=diagNormPlace(place);
+  if(!a)return true;           // 略称がブランドだけの店は地名で判定できない
+  return diagNormPlace(off).includes(a);
 }
 // Googleに渡す地点テキスト。
 // 🚨 以前は社内の略称(「LA練馬土支田二丁目」等)を送っていた。Google(特にPC版)は
