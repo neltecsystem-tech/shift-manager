@@ -127,6 +127,7 @@ tbody tr:hover { background:var(--primary-light); }
     <button onclick="showView('measure',this)">測定</button>
     <button onclick="showView('diagram',this)">ダイヤグラム</button>
     <button onclick="showView('keytag',this)">🔑 鍵マップ</button>
+    <button onclick="showView('docs',this)">📁 資料</button>
     <button onclick="showView('changelog',this)">📢 更新履歴</button>
     <a href="manual.html" target="_blank" rel="noopener" style="margin-left:auto;background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);text-decoration:none;padding:6px 12px;border-radius:6px;font-size:12px;align-self:center;" title="管理者マニュアルを開く">📖 マニュアル</a>
     <button onclick="adminShowLogin()" style="background:rgba(255,255,255,.15);color:#fff;">🔧 管理</button>
@@ -664,6 +665,38 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="keytag-events"></div>
     </div>
     <div id="keytag-list" style="margin-top:12px;"></div>
+  </div>
+
+  <!-- 📁 資料 (営業所ごとの資料置き場) -->
+  <div id="view-docs" class="hidden">
+    <div class="card">
+      <h2 style="margin-bottom:4px;">📁 資料 <span style="font-size:13px;color:var(--text-sub);font-weight:normal;">営業所ごとの資料置き場（PDF・Excel・Word・画像など / 1ファイル15MBまで）</span></h2>
+      <div id="docs-office-tabs" style="display:flex;gap:6px;margin:12px 0;flex-wrap:wrap;"></div>
+
+      <details id="docs-upload-box" style="border:1px dashed var(--primary);border-radius:10px;padding:12px;margin-bottom:14px;">
+        <summary style="cursor:pointer;font-weight:600;color:var(--primary);">＋ 資料を追加する</summary>
+        <div style="margin-top:10px;display:grid;gap:8px;max-width:640px;">
+          <div>
+            <label style="font-size:12px;color:var(--text-sub);">ファイル</label>
+            <input type="file" id="docs-file" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:#fff;">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--text-sub);">タイトル（空ならファイル名）</label>
+            <input type="text" id="docs-title" placeholder="例: 立川 朝刊 配達ルート図 2026年9月" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:13px;">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--text-sub);">メモ（任意）</label>
+            <input type="text" id="docs-note" placeholder="例: 9/15から変更 / 旧版は削除予定" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:13px;">
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <button id="docs-upload-btn" onclick="docsUpload()" style="background:var(--primary);color:#fff;border:none;padding:10px 18px;border-radius:8px;font-weight:600;cursor:pointer;">アップロード</button>
+            <span id="docs-upload-msg" style="font-size:12px;color:var(--text-sub);"></span>
+          </div>
+        </div>
+      </details>
+
+      <div class="table-wrap" id="docs-list"><p style="text-align:center;padding:24px;color:var(--text-sub);">読み込み中...</p></div>
+    </div>
   </div>
 
   <!-- 更新履歴 (新機能・修正一覧) -->
@@ -1890,6 +1923,13 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-09-08', tag:'新機能', title:'📁 資料タブを追加（営業所ごとの資料置き場）',
+   desc:'ナビに「📁 資料」を追加しました。立川・城北・川越・川崎高津・共通のタブごとに資料を置けます。'
+     +'使い方は、営業所のタブを選ぶ →「＋ 資料を追加する」を開く → ファイルを選び（必要ならタイトルとメモを入れて）アップロード、です。'
+     +'PDF・Excel・Word・画像など何でも置けます（1ファイル15MBまで）。一覧の「開く」でその場で表示、「保存」で元のファイル名のままダウンロードできます。'
+     +'タブには営業所ごとの件数が出ます。登録者名（ログインしている方の氏名）と登録日時も残ります。'
+     +'資料は非公開の保管場所に置き、開くときだけ1時間有効なURLを発行しているので、URLを知られても後から勝手に開かれることはありません。'
+     +'閲覧と追加はこのツールに入れる方全員、削除は管理者パスワードが必要です（誤削除防止）。'},
   {date:'2026-09-08', tag:'新機能', title:'店舗マスタ: 「正式名/ID引き直し」を追加（ナビの誘導先を直す）',
    desc:'店舗マスタに「🏷 正式名/ID引き直し」を追加しました。絞り込み中の店について、マスタの緯度経度の近くにある同じチェーンの店をGoogleから探し直し、「正式店舗名」と「Place ID」を入れ替えます。2026年7月のズレ事故で正式店舗名に他の行の店名が入ってしまい、ナビが別の店へ誘導していた行を直すためのものです。使い方は、検索欄にコース名（例: 城北12）や営業所を入れて絞り込み → ボタン → 「0（🔒修正済みも含めて全件）」を選ぶ → 引き直しの内容を確認して書き込み、です。誤りを増やさないよう、①略称のブランドと一致する店 ②略称の地名が店名に含まれる ③同じ店を2行に割り当てない、の3つを満たす店だけを採用します。どれにも当てはまらない行は、別店の名前とIDを残さず空にします（住所でナビされるので、少なくとも別の店には行きません）。書き込む前に必ず内容が一覧で出ます。'},
   {date:'2026-09-08', tag:'修正', title:'ナビが同じチェーンの別の店へ誘導していた問題（城北12 朝刊など）',
@@ -2001,7 +2041,122 @@ function showView(v,btn){
   const e=document.getElementById('view-'+v);if(e)e.classList.remove('hidden');
   document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
   if(btn)btn.classList.add('active');
-  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit,invoice:invInit,myshift:initMyShift,changelog:renderChangelog,ownermembers:invOwnerRenderView,keytag:renderKeyTag}[v]||function(){})();
+  ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit,invoice:invInit,myshift:initMyShift,changelog:renderChangelog,ownermembers:invOwnerRenderView,keytag:renderKeyTag,docs:docsInit}[v]||function(){})();
+}
+
+// ==== 📁 資料 (営業所ごとの資料置き場) ====
+// ファイルは Storage(private) に置き、EF `shift-docs` 経由でのみ触る。
+// 閲覧・追加はこのツールに入れる人、削除は管理者パスワードが必要。
+const DOCS_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shift-docs';
+const DOCS_OFFICES=['立川','城北','川越','川崎高津','共通'];
+let docsOffice='立川', docsRows=[], docsCounts={};
+
+function docsEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function docsSize(n){const v=Number(n)||0;if(v>=1048576)return (v/1048576).toFixed(1)+'MB';if(v>=1024)return Math.round(v/1024)+'KB';return v+'B';}
+function docsDate(s){try{return new Date(s).toLocaleString('ja-JP',{year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}catch(_e){return String(s||'');}}
+
+async function docsApi(payload){
+  const r=await fetch(DOCS_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  let j=null; try{j=await r.json();}catch(_e){}
+  if(!r.ok||!j||j.success===false) throw new Error((j&&j.error)||('通信エラー ('+r.status+')'));
+  return j;
+}
+
+function docsInit(){ docsRenderTabs(); docsLoad(); }
+
+function docsRenderTabs(){
+  const el=document.getElementById('docs-office-tabs'); if(!el)return;
+  el.innerHTML=DOCS_OFFICES.map(o=>{
+    const on=o===docsOffice, n=docsCounts[o]||0;
+    return `<button onclick="docsSelect('${o}')" style="padding:8px 14px;border-radius:999px;border:1px solid ${on?'var(--primary)':'var(--border)'};background:${on?'var(--primary)':'#fff'};color:${on?'#fff':'var(--text)'};font-weight:600;cursor:pointer;font-size:13px;">${o} ${n}</button>`;
+  }).join('');
+}
+
+function docsSelect(o){ docsOffice=o; docsRenderTabs(); docsLoad(); }
+
+async function docsLoad(){
+  const list=document.getElementById('docs-list'); if(!list)return;
+  list.innerHTML='<p style="text-align:center;padding:24px;color:var(--text-sub);">読み込み中...</p>';
+  try{
+    const r=await docsApi({action:'list',office:docsOffice});
+    docsRows=r.docs||[]; docsCounts=r.counts||{};
+    docsRenderTabs(); docsRenderList();
+  }catch(e){
+    list.innerHTML='<p style="text-align:center;padding:24px;color:var(--danger);">読み込みに失敗しました: '+docsEsc(e.message)+'</p>';
+  }
+}
+
+function docsRenderList(){
+  const list=document.getElementById('docs-list'); if(!list)return;
+  if(!docsRows.length){
+    list.innerHTML='<p style="text-align:center;padding:24px;color:var(--text-sub);">'+docsEsc(docsOffice)+'の資料はまだありません。「＋ 資料を追加する」から登録してください。</p>';
+    return;
+  }
+  let h='<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr>'
+    +'<th style="text-align:left;">タイトル</th><th style="text-align:left;">ファイル</th>'
+    +'<th style="text-align:left;">メモ</th><th style="text-align:left;">登録</th><th></th></tr></thead><tbody>';
+  for(const d of docsRows){
+    h+=`<tr>
+      <td style="font-weight:600;">${docsEsc(d.title)}</td>
+      <td style="font-size:12px;color:var(--text-sub);">${docsEsc(d.file_name)}<br>${docsSize(d.file_size)}</td>
+      <td style="font-size:12px;">${docsEsc(d.note||'')}</td>
+      <td style="font-size:11px;color:var(--text-sub);white-space:nowrap;">${docsDate(d.created_at)}${d.uploaded_by?'<br>'+docsEsc(d.uploaded_by):''}</td>
+      <td style="white-space:nowrap;text-align:right;">
+        <button onclick="docsOpen('${d.id}',false)" style="background:#0ea5e9;color:#fff;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">開く</button>
+        <button onclick="docsOpen('${d.id}',true)" style="background:#64748b;color:#fff;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;margin-left:4px;">保存</button>
+        <button onclick="docsDelete('${d.id}','${docsEsc(d.title).replace(/'/g,'')}')" style="background:#fff;color:var(--danger);border:1px solid var(--danger);padding:5px 9px;border-radius:6px;cursor:pointer;font-size:12px;margin-left:4px;">削除</button>
+      </td></tr>`;
+  }
+  list.innerHTML=h+'</tbody></table>';
+}
+
+async function docsOpen(id,download){
+  try{
+    const r=await docsApi({action:'url',id,download:!!download});
+    window.open(r.url,'_blank');
+  }catch(e){ alert('開けませんでした: '+e.message); }
+}
+
+function docsUpload(){
+  const fileEl=document.getElementById('docs-file');
+  const msg=document.getElementById('docs-upload-msg');
+  const btn=document.getElementById('docs-upload-btn');
+  const f=fileEl&&fileEl.files&&fileEl.files[0];
+  if(!f){ msg.textContent='ファイルを選んでください'; msg.style.color='var(--danger)'; return; }
+  if(f.size>15*1024*1024){ msg.textContent='ファイルが大きすぎます('+docsSize(f.size)+' / 上限15MB)'; msg.style.color='var(--danger)'; return; }
+  const reader=new FileReader();
+  reader.onerror=()=>{ msg.textContent='ファイルを読み取れませんでした'; msg.style.color='var(--danger)'; };
+  reader.onload=async()=>{
+    btn.disabled=true; msg.style.color='var(--text-sub)'; msg.textContent='アップロード中...';
+    try{
+      await docsApi({action:'upload',office:docsOffice,file_name:f.name,mime_type:f.type||'application/octet-stream',
+        content_base64:String(reader.result),
+        title:(document.getElementById('docs-title').value||'').trim(),
+        note:(document.getElementById('docs-note').value||'').trim(),
+        uploaded_by:(typeof invStaffName!=='undefined'&&invStaffName)?invStaffName:'管理者'});
+      msg.style.color='var(--primary)'; msg.textContent='登録しました';
+      fileEl.value=''; document.getElementById('docs-title').value=''; document.getElementById('docs-note').value='';
+      await docsLoad();
+    }catch(e){ msg.style.color='var(--danger)'; msg.textContent='失敗: '+e.message; }
+    finally{ btn.disabled=false; }
+  };
+  reader.readAsDataURL(f);
+}
+
+async function docsDelete(id,title){
+  if(!confirm('「'+title+'」を削除しますか？（元に戻せません）'))return;
+  // 削除は管理者パスワードが必要。未ログインなら管理者ログインを出す。
+  try{
+    await docsApi({action:'delete',id,admin_password:(typeof adminPw!=='undefined'?adminPw:'')});
+  }catch(e){
+    if(/管理者パスワード/.test(e.message)){
+      const ok=await showPermLogin('🔧 資料の削除（管理者）',(typeof adminPw!=='undefined'?adminPw:''),'admin');
+      if(!ok)return;
+      try{ await docsApi({action:'delete',id,admin_password:(typeof adminPw!=='undefined'?adminPw:'')}); }
+      catch(e2){ alert('削除できませんでした: '+e2.message); return; }
+    }else{ alert('削除できませんでした: '+e.message); return; }
+  }
+  await docsLoad();
 }
 
 // ==== 🔑 鍵マップ (スマートタグ位置 + 営業所ジオフェンス) ====
