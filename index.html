@@ -20413,6 +20413,7 @@ function sysApplyPermissions(perms){
     'measure':{always:true, tier:'public'},
     'diagram':{always:true, tier:'public'},
     'changelog':{always:true, tier:'public'},
+    'docs':{always:true, tier:'public'},          // 📁 資料 = 誰でも閲覧可(機能表示設定でON/OFF可)
     // 月別シフト = 管理者 / プランナー(shiftedit) / 法人オーナー のみ → 緑
     'shift':{perms:['admin','shiftedit','owner'], tier:'owner'},
     // 自社管理 = 法人オーナーのみ → 緑
