@@ -23,29 +23,51 @@ body { font-family:'Segoe UI','Meiryo',sans-serif; background:var(--bg); color:v
 /* Leafletは内部で最大1000程度のz-indexを使うため、そのままだと上部メニュー(.nav=100)の
    上に地図やズームボタンが乗ってしまう。地図ごとに重なり順を閉じ込める。 */
 .leaflet-container { z-index:1; position:relative; }
-.nav { background:var(--primary); color:#fff; padding:0 20px; display:flex; align-items:center; height:52px; position:sticky; top:0; z-index:100; box-shadow:0 2px 8px rgba(0,0,0,.15); }
-.nav h1 { font-size:16px; font-weight:600; margin-right:32px; white-space:nowrap; }
-.nav-links { display:flex; gap:4px; overflow-x:auto; align-items:center; }
-.nav-links button { position:relative; background:none; border:none; color:rgba(255,255,255,.75); padding:8px 16px 8px 22px; cursor:pointer; font-size:13px; border-radius:6px 6px 0 0; transition:.15s; white-space:nowrap; }
-.nav-links button:hover { background:rgba(255,255,255,.15); color:#fff; }
-.nav-links button.active { background:var(--bg); color:var(--primary); font-weight:600; }
-/* 権限ティア色: 左側の縦カラーバー + 微弱な背景 */
-.nav-links button.tier-public::before,
-.nav-links button.tier-owner::before,
-.nav-links button.tier-admin::before,
-.nav-links button.tier-perm::before {
-  content:''; position:absolute; left:6px; top:50%; transform:translateY(-50%);
-  width:8px; height:8px; border-radius:50%; box-shadow:0 0 0 1.5px rgba(255,255,255,.4);
+/* ── 画面の骨組み: 左サイドバー(固定) + 上部バー ────────────────────────
+   画面本体(.container)のDOMは触らず、body に左余白を付けてサイドバーを重ねる方式。
+   スマホ(900px以下)ではサイドバーを引き出し(ドロワー)にして ☰ で開閉する。 */
+body { padding-left:220px; }
+.nav { background:var(--primary); color:#fff; padding:0 16px; display:flex; align-items:center; gap:8px; height:52px; position:sticky; top:0; z-index:100; box-shadow:0 2px 8px rgba(0,0,0,.15); }
+.nav h1 { font-size:15px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.nav .nav-right { margin-left:auto; display:flex; align-items:center; gap:6px; flex-wrap:nowrap; }
+.nav .nav-right a, .nav .nav-right button { background:rgba(255,255,255,.14); color:#fff; border:none; text-decoration:none; padding:6px 11px; border-radius:6px; font-size:12px; cursor:pointer; white-space:nowrap; }
+.nav .nav-right a:hover, .nav .nav-right button:hover { background:rgba(255,255,255,.26); }
+.hamburger { display:none; background:rgba(255,255,255,.14); color:#fff; border:none; font-size:17px; line-height:1; padding:6px 10px; border-radius:6px; cursor:pointer; }
+
+.sidebar { position:fixed; left:0; top:0; bottom:0; width:220px; background:#0f172a; color:#cbd5e1; display:flex; flex-direction:column; z-index:200; box-shadow:2px 0 8px rgba(0,0,0,.15); }
+.sb-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:14px 16px; color:#fff; font-size:14px; font-weight:700; border-bottom:1px solid #334155; }
+.sb-close { display:none; background:none; border:none; color:#fff; font-size:17px; cursor:pointer; padding:0 4px; }
+.sb-nav { display:flex; flex-direction:column; padding:8px 0; overflow-y:auto; flex:1; }
+.sb-nav button { position:relative; display:block; width:100%; text-align:left; background:none; border:none; border-left:3px solid transparent; color:#cbd5e1; padding:10px 14px 10px 26px; font-size:13px; cursor:pointer; white-space:nowrap; }
+.sb-nav button:hover { background:#1e293b; color:#fff; }
+.sb-nav button.active { background:#1e293b; color:#fff; font-weight:700; border-left-color:var(--primary); }
+/* 権限ティアの色ドット(灰=誰でも / 緑=オーナー以上 / 黒=管理者 / 橙=個別権限) */
+.sb-nav button.tier-public::before,
+.sb-nav button.tier-owner::before,
+.sb-nav button.tier-admin::before,
+.sb-nav button.tier-perm::before {
+  content:''; position:absolute; left:12px; top:50%; transform:translateY(-50%);
+  width:7px; height:7px; border-radius:50%;
 }
-.nav-links button.tier-public::before { background:#94a3b8; }   /* 灰: 誰でも */
-.nav-links button.tier-owner::before  { background:#22c55e; }   /* 緑: 法人オーナー以上 */
-.nav-links button.tier-admin::before  { background:#0f172a; box-shadow:0 0 0 1.5px rgba(255,255,255,.6); }   /* 黒: 管理者のみ */
-.nav-links button.tier-perm::before   { background:#f97316; }   /* 橙: 個別権限 */
-/* active時はリングを濃く */
-.nav-links button.active.tier-public::before { box-shadow:0 0 0 1.5px #94a3b8; }
-.nav-links button.active.tier-owner::before  { box-shadow:0 0 0 1.5px #16a34a; }
-.nav-links button.active.tier-admin::before  { box-shadow:0 0 0 1.5px #0f172a; }
-.nav-links button.active.tier-perm::before   { box-shadow:0 0 0 1.5px #ea580c; }
+.sb-nav button.tier-public::before { background:#94a3b8; }
+.sb-nav button.tier-owner::before  { background:#22c55e; }
+.sb-nav button.tier-admin::before  { background:#e2e8f0; }
+.sb-nav button.tier-perm::before   { background:#f97316; }
+.sb-foot { padding:10px 14px; border-top:1px solid #334155; font-size:10.5px; color:#64748b; line-height:1.6; }
+.sb-backdrop { display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:150; }
+
+@media (max-width:900px){
+  body { padding-left:0; }
+  .sidebar { transform:translateX(-100%); transition:transform .2s ease; }
+  .sidebar.open { transform:translateX(0); }
+  .sb-close { display:block; }
+  .hamburger { display:block; }
+  .sb-backdrop.open { display:block; }
+}
+@media print {
+  body { padding-left:0 !important; }
+  .sidebar, .nav, .sb-backdrop { display:none !important; }
+}
 .container { max-width:1400px; margin:0 auto; padding:16px; }
 .card { background:var(--card); border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,.08); padding:20px; margin-bottom:16px; }
 .card h2 { font-size:16px; margin-bottom:12px; color:var(--primary); border-bottom:2px solid var(--primary-light); padding-bottom:8px; }
@@ -111,29 +133,29 @@ tbody tr:hover { background:var(--primary-light); }
   </div>
 </div>
 
+<!-- 左サイドバー(メニュー) + 上部バー(アカウント操作)。項目は SB_ITEMS から sbRender() で生成する -->
+<aside class="sidebar" id="sidebar">
+  <div class="sb-head">
+    <span>📰 新聞シフト管理</span>
+    <button class="sb-close" onclick="sbClose()" aria-label="メニューを閉じる">✕</button>
+  </div>
+  <nav class="sb-nav" id="sb-nav"></nav>
+  <div class="sb-foot">
+    ● 誰でも　<span style="color:#22c55e;">●</span> オーナー以上<br>
+    <span style="color:#e2e8f0;">●</span> 管理者のみ　<span style="color:#f97316;">●</span> 専用権限
+  </div>
+</aside>
+<div class="sb-backdrop" id="sb-backdrop" onclick="sbClose()"></div>
+
 <div class="nav">
-  <h1>新聞シフト管理</h1>
-  <div class="nav-links">
-    <button class="active" onclick="showView('dashboard',this)">ダッシュボード</button>
-    <button onclick="showView('myshift',this)">📅 シフト</button>
-    <button onclick="showView('shift',this)">月別シフト</button>
-    <button onclick="showView('tenpo',this)">店舗検索</button>
-    <button onclick="showView('search',this)" style="display:none">検索</button>
-    <button onclick="showView('staff',this)">スタッフ一覧</button>
-    <button onclick="showView('defects',this)">不具合管理</button>
-    <button onclick="showView('shopmaster',this)" onpointerenter="smPrefetch()" ontouchstart="smPrefetch()">店舗マスタ</button>
-    <button onclick="showView('invoice',this)">請求書</button>
-    <button onclick="showView('ownermembers',this)">👥 自社管理</button>
-    <button onclick="showView('measure',this)">測定</button>
-    <button onclick="showView('diagram',this)">ダイヤグラム</button>
-    <button onclick="showView('keytag',this)">🔑 鍵マップ</button>
-    <button onclick="showView('docs',this)">📁 資料</button>
-    <button onclick="showView('changelog',this)">📢 更新履歴</button>
-    <a href="manual.html" target="_blank" rel="noopener" style="margin-left:auto;background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);text-decoration:none;padding:6px 12px;border-radius:6px;font-size:12px;align-self:center;" title="管理者マニュアルを開く">📖 マニュアル</a>
-    <button onclick="adminShowLogin()" style="background:rgba(255,255,255,.15);color:#fff;">🔧 管理</button>
-    <span id="sys-user-label" style="color:rgba(255,255,255,.7);font-size:12px;margin-left:8px;"></span>
-    <button id="sys-changepw-btn" onclick="invShowChangePw()" style="display:none;background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;margin-left:4px;" title="自分のログインパスワードを変更">🔑 PW変更</button>
-    <button onclick="sysLogout()" style="background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;margin-left:4px;">ログアウト</button>
+  <button class="hamburger" onclick="sbOpen()" aria-label="メニューを開く">☰</button>
+  <h1 id="nav-title">ダッシュボード</h1>
+  <div class="nav-right">
+    <span id="sys-user-label" style="color:rgba(255,255,255,.75);font-size:12px;"></span>
+    <a href="manual.html" target="_blank" rel="noopener" title="管理者マニュアルを開く">📖 マニュアル</a>
+    <button id="nav-admin-btn" onclick="adminShowLogin()">🔧 管理</button>
+    <button id="sys-changepw-btn" onclick="invShowChangePw()" style="display:none;" title="自分のログインパスワードを変更">🔑 PW変更</button>
+    <button onclick="sysLogout()">ログアウト</button>
   </div>
 </div>
 <div class="container">
@@ -1723,7 +1745,7 @@ function init(){
     // 公開ダイヤグラムURL (?dg=xxxx) のときは公開ビュー表示
     const pubSlug=new URLSearchParams(location.search).get('dg');
     if(pubSlug){pubDgShow(pubSlug);return;}
-    showView('dashboard',document.querySelector('.nav-links button'));
+    showView('dashboard');
     // 起動直後にサーバーキャッシュ (Supabase pg_cron が 0/8/16 JST に更新) から最新を取得
     // localStorage より新ければ画面を再描画
     loadServerShiftCache(false);
@@ -1923,6 +1945,12 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-09-08', tag:'新機能', title:'メニューを画面左のサイドバーに変更（アスクル管理と同じ形）',
+   desc:'画面上部に横並びだったメニューを、左側のサイドバーに変えました。項目が15個を超えて横スクロールしないと見えない状態だったのを解消し、いまどの画面にいるかが常に分かるようにしています。'
+     +'上のバーには「氏名／📖マニュアル／🔧管理／🔑PW変更／ログアウト」を残しました（画面名も上のバーに出ます）。'
+     +'スマホでは左上の ☰ でメニューを開き、項目を選ぶと自動で閉じます。'
+     +'メニュー左端の色ドットの意味は今までと同じで、灰=誰でも／緑=法人オーナー以上／白=管理者のみ／橙=専用権限です（サイドバー下部に凡例を置きました）。'
+     +'表示される項目・権限の制限・機能表示設定（管理画面）の動きは一切変わりません。画面の中身も変更していません。'},
   {date:'2026-09-08', tag:'新機能', title:'📁 資料タブを追加（営業所ごとの資料置き場）',
    desc:'ナビに「📁 資料」を追加しました。立川・城北・川越・川崎高津・共通のタブごとに資料を置けます。'
      +'使い方は、営業所のタブを選ぶ →「＋ 資料を追加する」を開く → ファイルを選び（必要ならタイトルとメモを入れて）アップロード、です。'
@@ -2035,12 +2063,63 @@ function renderChangelog(){
   body.innerHTML=h;
 }
 
+// ── メニュー(左サイドバー) ───────────────────────────────────────────
+// 項目はここだけで定義する。tier は権限の色分け(sysApplyPermissions が使う)。
+// 追加するときはこの配列に1行足すだけ(HTML側は触らない)。
+const SB_ITEMS=[
+  {view:'dashboard',    label:'ダッシュボード',  tier:'public'},
+  {view:'myshift',      label:'📅 シフト',       tier:'public'},
+  {view:'shift',        label:'月別シフト',      tier:'owner'},
+  {view:'tenpo',        label:'店舗検索',        tier:'admin'},
+  {view:'staff',        label:'スタッフ一覧',    tier:'admin'},
+  {view:'defects',      label:'不具合管理',      tier:'perm'},
+  {view:'shopmaster',   label:'店舗マスタ',      tier:'perm', prefetch:true},
+  {view:'invoice',      label:'請求書',          tier:'public'},
+  {view:'ownermembers', label:'👥 自社管理',     tier:'owner'},
+  {view:'measure',      label:'測定',            tier:'public'},
+  {view:'diagram',      label:'ダイヤグラム',    tier:'public'},
+  {view:'keytag',       label:'🔑 鍵マップ',     tier:'admin'},
+  {view:'docs',         label:'📁 資料',         tier:'public'},
+  {view:'changelog',    label:'📢 更新履歴',     tier:'public'},
+  {view:'search',       label:'検索',            tier:'admin', hidden:true},
+];
+function sbLabelOf(v){if(v==='admin')return '🔧 管理';const it=SB_ITEMS.find(x=>x.view===v);return it?it.label:'';}
+function sbRender(){
+  const nav=document.getElementById('sb-nav'); if(!nav)return;
+  nav.innerHTML=SB_ITEMS.map(it=>
+    `<button data-view="${it.view}" class="tier-${it.tier}"${it.hidden?' style="display:none"':''}`
+    +`${it.prefetch?' onpointerenter="smPrefetch()" ontouchstart="smPrefetch()"':''}`
+    +` onclick="showView('${it.view}')">${it.label}</button>`).join('');
+  sbMarkActive(currentView);
+}
+function sbMarkActive(v){
+  document.querySelectorAll('#sb-nav button').forEach(b=>b.classList.toggle('active',b.getAttribute('data-view')===v));
+  const t=document.getElementById('nav-title'); if(t)t.textContent=sbLabelOf(v)||'新聞シフト管理';
+}
+window.addEventListener('DOMContentLoaded',()=>{try{sbRender();}catch(_e){}});
+function sbOpen(){document.getElementById('sidebar')?.classList.add('open');document.getElementById('sb-backdrop')?.classList.add('open');}
+function sbClose(){
+  document.getElementById('sidebar')?.classList.remove('open');
+  document.getElementById('sb-backdrop')?.classList.remove('open');
+  sbFixMaps();
+}
+/** サイドバーの開閉やビュー切替で表示幅が変わるので、開いている地図のサイズを直す */
+function sbFixMaps(){
+  setTimeout(()=>{
+    [typeof keytagMap!=='undefined'?keytagMap:null,
+     typeof smEditMap!=='undefined'?smEditMap:null,
+     typeof admStoreMap!=='undefined'?admStoreMap:null].forEach(m=>{
+      try{ if(m&&m.invalidateSize)m.invalidateSize(); }catch(_e){}
+    });
+  },200);
+}
+
 function showView(v,btn){
   currentView=v;
   document.querySelectorAll('[id^="view-"]').forEach(e=>e.classList.add('hidden'));
   const e=document.getElementById('view-'+v);if(e)e.classList.remove('hidden');
-  document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
-  if(btn)btn.classList.add('active');
+  sbMarkActive(v);
+  sbClose();   // スマホでは選んだら引き出しを閉じる
   ({dashboard:renderDash,staff:renderStaffView,courses:renderCourse,shift:renderShiftView,tenpo:renderTenpoView,defects:defectInit,shopmaster:smInit,invoice:invInit,myshift:initMyShift,changelog:renderChangelog,ownermembers:invOwnerRenderView,keytag:renderKeyTag,docs:docsInit}[v]||function(){})();
 }
 
@@ -3660,7 +3739,7 @@ function showPermLogin(title,adminPw,permKey){
 async function defectInit(){
   if(!defectAuthed){
     const ok=await showPermLogin('🔧 不具合管理ログイン',DEFECT_PASSWORD,'defects');
-    if(!ok){showView('dashboard',document.querySelector('.nav-links button'));return;}
+    if(!ok){showView('dashboard');return;}
     defectAuthed=true;
   }
   if(!defectInited){
@@ -4148,7 +4227,7 @@ let smColMap={};
 async function smInit(){
   if(!smAuthed){
     const ok=await showPermLogin('🏪 店舗マスタログイン',SM_PASSWORD,'shopmaster');
-    if(!ok){showView('dashboard',document.querySelector('.nav-links button'));return;}
+    if(!ok){showView('dashboard');return;}
     smAuthed=true;
   }
   if(!smInited){smInited=true;}
@@ -6868,7 +6947,7 @@ function invShowLogin(){
     <div id="inv-login-err" style="color:var(--danger);font-size:13px;margin-bottom:12px;display:none;"></div>
     <button onclick="invDoLogin()" style="width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;margin-bottom:10px;">ログイン</button>
     <button onclick="invAdminLogin()" style="width:100%;background:#6366f1;color:#fff;border:none;padding:10px;border-radius:10px;font-size:13px;cursor:pointer;">管理者ログイン</button>
-    <button onclick="document.getElementById('inv-login-modal').remove();showView('dashboard',document.querySelector('.nav-links button'))" style="margin-top:10px;background:none;border:none;color:var(--text-sub);cursor:pointer;font-size:13px;">キャンセル</button>
+    <button onclick="document.getElementById('inv-login-modal').remove();showView('dashboard')" style="margin-top:10px;background:none;border:none;color:var(--text-sub);cursor:pointer;font-size:13px;">キャンセル</button>
   </div>`;
   document.body.appendChild(modal);
 }
@@ -8392,7 +8471,6 @@ async function adminShowLogin(){
   adminAuthed=true;
   applyAdminTabPermissions();
   showView('admin');
-  document.querySelectorAll('.nav-links button').forEach(b=>b.classList.remove('active'));
   adminTab('invoices');
 }
 
@@ -8421,7 +8499,7 @@ function applyAdminTabPermissions(){
 
 function adminLogout(){
   adminAuthed=false;
-  showView('dashboard',document.querySelector('.nav-links button'));
+  showView('dashboard');
 }
 
 // === 通常スタッフ向け 機能表示設定 ===
@@ -9149,8 +9227,9 @@ function admDgEsc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&l
 // ===== 公開ダイヤグラムビュー (Googleサイト等の埋込用) =====
 async function pubDgShow(slug){
   // ナビ・ヘッダー全部隠す
-  const root=document.querySelector('.nav-links')?.parentElement;
-  if(root)root.style.display='none';
+  ['sidebar','sb-backdrop'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none';});
+  const topbar=document.querySelector('.nav'); if(topbar)topbar.style.display='none';
+  document.body.style.paddingLeft='0';
   document.querySelectorAll('main > *').forEach(el=>{ if(el.id!=='pub-dg-root')el.style.display='none'; });
   let host=document.getElementById('pub-dg-root');
   if(!host){
@@ -18627,7 +18706,7 @@ function msrShowLogin(){
     <div style="margin-bottom:16px;text-align:left;"><label style="font-size:12px;color:var(--text-sub)">パスワード</label><input type="password" id="msr-login-pw" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="パスワードを入力"></div>
     <div id="msr-login-err" style="color:var(--danger);font-size:13px;margin-bottom:12px;display:none;"></div>
     <button onclick="msrDoLogin()" id="msr-login-btn" style="width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;margin-bottom:8px;">ログイン</button>
-    <button onclick="document.getElementById('msr-login-modal').remove();showView('dashboard',document.querySelector('.nav-links button'))" style="background:none;border:none;color:var(--text-sub);cursor:pointer;font-size:13px;padding:8px;">キャンセル</button>
+    <button onclick="document.getElementById('msr-login-modal').remove();showView('dashboard')" style="background:none;border:none;color:var(--text-sub);cursor:pointer;font-size:13px;padding:8px;">キャンセル</button>
   </div>`;
   document.body.appendChild(modal);
 }
@@ -18740,7 +18819,7 @@ function msrLogout(){
   msrAuthed=false;msrStaffName='';msrLoaded=false;
   if(msrGpsWatchId!==null)msrStopGps();
   document.getElementById('msr-staff-label').textContent='';
-  showView('dashboard',document.querySelector('.nav-links button'));
+  showView('dashboard');
 }
 
 async function msrLoadData(){
@@ -20430,10 +20509,11 @@ function sysApplyPermissions(perms){
   // 通常スタッフ (admin 権限なし) には機能表示設定を適用
   const featCfg=(typeof admFeatureVisLoad==='function')?admFeatureVisLoad():{};
   const isRegular=!isAll&&!perms.includes('admin');
-  document.querySelectorAll('.nav-links button[onclick*="showView"]').forEach(btn=>{
-    const m=btn.getAttribute('onclick').match(/showView\('(\w+)'/);
-    if(!m)return;
-    const view=m[1];
+  document.querySelectorAll('#sb-nav button[data-view]').forEach(btn=>{
+    const view=btn.getAttribute('data-view');
+    if(!view)return;
+    // 元から隠している項目(検索)はそのまま隠す
+    if(SB_ITEMS.find(x=>x.view===view)?.hidden){btn.style.display='none';return;}
     const rule=navMap[view];
     // tier 色を反映 (常に) + ツールチップ
     btn.classList.remove('tier-public','tier-owner','tier-admin','tier-perm');
@@ -20450,11 +20530,8 @@ function sysApplyPermissions(perms){
     if(rule.perms&&rule.perms.some(p=>perms.includes(p))){btn.style.display='';return;}
     btn.style.display='none';
   });
-  // 管理ボタンも黒ティアに
-  const admBtn=document.querySelector('.nav-links button[onclick*="adminShowLogin"]');
-  if(admBtn){admBtn.classList.remove('tier-public','tier-owner','tier-perm');admBtn.classList.add('tier-admin');}
-  // 管理ボタン: admin or shiftedit のいずれかで表示
-  const adminBtn=document.querySelector('.nav-links button[onclick*="adminShowLogin"]');
+  // 上部バーの「🔧 管理」: admin or shiftedit のいずれかで表示
+  const adminBtn=document.getElementById('nav-admin-btn');
   if(adminBtn)adminBtn.style.display=(isAll||perms.includes('admin')||perms.includes('shiftedit'))?'':'none';
 }
 
@@ -20470,7 +20547,8 @@ function sysLogout(){
   document.getElementById('sys-login-err').style.display='none';
   document.getElementById('sys-admin-area').style.display='none';
   document.getElementById('sys-login-btn').textContent='ログイン';
-  document.querySelectorAll('.nav-links button').forEach(b=>b.style.display='');
+  document.querySelectorAll('#sb-nav button').forEach(b=>b.style.display='');
+  sbClose();
 }
 
 // init()はログイン後に呼ばれる
@@ -20486,19 +20564,14 @@ function sysLogout(){
     window.sysPublicMode=true;
     sysLoggedIn=true;sysUserName='閲覧者';sysIsAdmin=false;
     sysUserPerms=['shiftedit'];// 月別シフト 表示権限のみ与える (編集系は別 authed フラグ無しで弾かれる)
-    // ナビは「ダッシュボード」「月別シフト」「ダイヤグラム」だけ残す
-    document.querySelectorAll('.nav-links button[onclick*="showView"]').forEach(btn=>{
-      const m=btn.getAttribute('onclick').match(/showView\('(\w+)'/);
-      if(!m){btn.style.display='none';return;}
-      const v=m[1];
+    // メニューは「ダッシュボード」「月別シフト」「ダイヤグラム」だけ残す
+    try{sbRender();}catch(_e){}
+    document.querySelectorAll('#sb-nav button[data-view]').forEach(btn=>{
+      const v=btn.getAttribute('data-view');
       btn.style.display=(v==='dashboard'||v==='shift'||v==='diagram')?'':'none';
     });
-    // 右上のユーザーラベル/PW変更/管理/ログアウト 等は非表示 (ID 無いものは onclick で特定)
-    ['sys-user-label','sys-changepw-btn'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none';});
-    document.querySelectorAll('.nav-links button').forEach(btn=>{
-      const oc=btn.getAttribute('onclick')||'';
-      if(oc.includes('adminShowLogin')||oc.includes('sysLogout'))btn.style.display='none';
-    });
+    // 上部バーのアカウント操作(氏名/PW変更/管理/ログアウト/マニュアル)はまとめて非表示
+    const right=document.querySelector('.nav .nav-right'); if(right)right.style.display='none';
     init();
   });
 })();
