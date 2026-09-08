@@ -8430,6 +8430,38 @@ function admSpEdit(rowNum){
   const btn=document.getElementById('adm-sp-save-btn');if(btn)btn.textContent='💾 更新';
   window.scrollTo({top:0,behavior:'smooth'});
 }
+// 入力された氏名を単価マスタの表記に寄せる。
+// 戻り値: 保存に使う氏名 / null=利用者が中止
+// 判定は invoice-sheet の name_consistency と同じ考え方(空白・区切り記号・異体字を無視して比較)。
+async function admSpFixName(name){
+  try{
+    if(!invRates.length){const r=await invApi({action:'get_rates'});invRates=r.rates||[];}
+  }catch(_){ return name; }               // 単価マスタが取れないときは邪魔をしない
+  const master=[...new Set((invRates||[]).map(r=>r.name).filter(Boolean))];
+  if(!master.length) return name;
+
+  const VAR={'齋':'斉','斎':'斉','齊':'斉','髙':'高','﨑':'崎','嵜':'崎','濵':'浜','濱':'浜','邊':'辺','邉':'辺','澤':'沢','瀨':'瀬','眞':'真','德':'徳','冨':'富','栁':'柳','郞':'郎','薗':'園','曻':'昇'};
+  const fold=n=>String(n||'').replace(/[\s　]+/g,'').replace(/[齋斎齊髙﨑嵜濵濱邊邉澤瀨眞德冨栁郞薗曻]/g,c=>VAR[c]||c);
+  const loose=n=>fold(n).replace(/[.．/／・]+/g,'');
+
+  if(master.some(m=>m===name)) return name;                      // 完全一致
+  const exact=master.find(m=>fold(m)===fold(name));
+  if(exact){                                                      // 空白だけの違い
+    if(!confirm(`単価マスタの表記は「${exact}」です。\nこの表記で保存します。よろしいですか？\n(空白の幅が違うだけでも照合が外れ、金額が反映されません)`)) return null;
+    document.getElementById('adm-sp-name').value=exact;
+    return exact;
+  }
+  const near=master.find(m=>loose(m)===loose(name));
+  if(near){                                                       // 区切り記号だけの違い(今回の事故と同型)
+    if(!confirm(`単価マスタの表記は「${near}」です。\n入力された「${name}」は区切り記号が違うため、このままでは金額が反映されません。\n\n「${near}」で保存しますか？`)) return null;
+    document.getElementById('adm-sp-name').value=near;
+    return near;
+  }
+  // 候補が無い = 単価マスタに存在しない氏名。止めはしないが、支払に乗らないことを伝える
+  if(!confirm(`「${name}」は単価マスタにありません。\nこのまま保存しても支払・請求には反映されません。\n\n続けますか？`)) return null;
+  return name;
+}
+
 async function admSpSave(){
   const msg=document.getElementById('adm-sp-msg');
   const date=(document.getElementById('adm-sp-date').value||'').trim();
@@ -8441,6 +8473,12 @@ async function admSpSave(){
   if(!date){alert('日付を入力してください');return;}
   if(!name){alert('氏名を入力してください');return;}
   if(!amount||isNaN(Number(amount))){alert('金額を数字で入力してください');return;}
+  // 氏名は自由入力(datalistは候補にすぎない)。単価マスタと1文字でも違うと照合が外れ、
+  // 金額がエラーも出さずに落ちる。実例: 2026-08-13に単価マスタを「TLC.」→「TLC/」へ改名した後、
+  // ここが旧表記のまま入り続け、日曜特別日当 7,000円×5週=35,000円が8月分に乗らなかった(9/1発覚)。
+  // → 保存前に単価マスタと突き合わせ、区切り記号・空白だけの違いならマスタの表記に直す。
+  const spName = await admSpFixName(name);
+  if(spName === null) return;   // 利用者が中止した(この時点ではまだボタンを無効化していない)
   const btn=document.getElementById('adm-sp-save-btn');if(btn)btn.disabled=true;
   msg.textContent='保存中...';msg.style.color='#3b82f6';
   try{
@@ -8452,12 +8490,12 @@ async function admSpSave(){
       ||(typeof sysUserName!=='undefined'&&sysUserName)||(typeof invStaffName!=='undefined'&&invStaffName)||'管理画面';
     // 区分(朝刊/夕刊)は必須。 空で保存すると計算側の applySpecial が
     // category.includes('朝刊'|'夕刊') で弾くため、金額に一切反映されない。
-    const rec={date,name,type,amount:String(amount),reason,applicant:who,category};
+    const rec={date,name:spName,type,amount:String(amount),reason,applicant:who,category};
     const payload={action:'save_special_rate',record:rec};
     if(editRow)payload.row_number=Number(editRow);
     const res=await invApi(payload);
     if(res&&res.error)throw new Error(res.error);
-    msg.textContent=`✓ ${editRow?'更新':'追加'}しました (${date} ${name} ${type} ¥${Number(amount).toLocaleString()})`;msg.style.color='#16a34a';
+    msg.textContent=`✓ ${editRow?'更新':'追加'}しました (${date} ${spName} ${type} ¥${Number(amount).toLocaleString()})`;msg.style.color='#16a34a';
     admSpClearForm();
     const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];
     admSpRender();
