@@ -286,6 +286,7 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button onclick="smBatchAddrUnified()" id="sm-addr-btn" style="background:#10b981;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📝 住所を一括取得</button>
           <button onclick="smBatchGpsAndVerify()" id="sm-gps-btn" style="background:#0ea5e9;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">📍 GPS取得＆ナビ検証</button>
+          <button onclick="smRefetchOfficial()" id="sm-off-btn" style="background:#a855f7;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;" title="絞り込み中の店の「正式店舗名」と「Place ID」を、マスタの座標にある同ブランド店から引き直します(ナビの誘導先を直す)">🏷 正式名/ID引き直し</button>
           <button onclick="smAddCourse()" style="background:#14b8a6;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">➕ 新コース追加</button>
           <button onclick="smBulkLockGps()" style="background:#475569;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔒 GPSあり一括ロック</button>
           <button onclick="smShowReplace()" style="background:#f59e0b;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">🔄 コース一括置換</button>
@@ -1889,6 +1890,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-09-08', tag:'新機能', title:'店舗マスタ: 「正式名/ID引き直し」を追加（ナビの誘導先を直す）',
+   desc:'店舗マスタに「🏷 正式名/ID引き直し」を追加しました。絞り込み中の店について、マスタの緯度経度の近くにある同じチェーンの店をGoogleから探し直し、「正式店舗名」と「Place ID」を入れ替えます。2026年7月のズレ事故で正式店舗名に他の行の店名が入ってしまい、ナビが別の店へ誘導していた行を直すためのものです。使い方は、検索欄にコース名（例: 城北12）や営業所を入れて絞り込み → ボタン → 「0（🔒修正済みも含めて全件）」を選ぶ → 引き直しの内容を確認して書き込み、です。誤りを増やさないよう、①略称のブランドと一致する店 ②略称の地名が店名に含まれる ③同じ店を2行に割り当てない、の3つを満たす店だけを採用します。どれにも当てはまらない行は、別店の名前とIDを残さず空にします（住所でナビされるので、少なくとも別の店には行きません）。書き込む前に必ず内容が一覧で出ます。'},
   {date:'2026-09-08', tag:'修正', title:'ナビが同じチェーンの別の店へ誘導していた問題（城北12 朝刊など）',
    desc:'コースのナビを開くと、店舗マスタの「正式店舗名」とそこから作った Place ID を Google マップに渡しています。ところが正式店舗名は2026年7月のズレ事故の名残で、今も他の行の店名が入っている行があります。これまでは「略称のブランドと正式店舗名のチェーンが合っているか」だけを見ていたため、同じチェーンの別店とすり替わっていても通ってしまい、その別店へ誘導していました（例: 城北12 朝刊の「FM西新宿青梅街道」の正式店舗名が「ファミリーマート西新宿柏木公園前」）。城北12 朝刊では56店のうち21店がこの状態でした。略称の地名部分が正式店舗名に含まれているかまで確認し、一致しない行は店名とPlace IDを使わず住所で誘導するようにしました（住所と座標はナビ判定で照合済みなので、少なくとも別の店には行きません）。ダイヤグラムのナビリンクと Place ID の自動取得も同じ判定に揃えました。全マスタ2742店のうち416店が住所での誘導に切り替わります。'},
   {date:'2026-08-27', tag:'新機能', title:'シフト編集: 日曜の競馬配送日を登録できるようにしました',
@@ -6127,6 +6130,112 @@ async function smCsvSubmit(){
 const SM_BRANDS=[['LALS',['ローソンストア100']],['LAＬ',['ローソン']],['LATF',['ローソン']],['LS',['ローソンストア100','ローソン']],['LA',['ローソン']],['FM',['ファミリーマート']],['MS',['ミニストップ']],['SY',['西友']],['T]7',['セブン-イレブン','セブンイレブン']],['T]７',['セブン-イレブン','セブンイレブン']],['NL',['ナチュラルローソン','ニューデイズ','NewDays']],['トモニー',['トモニー']],['YS',['ヤマザキ']]];
 function smBrandOf(name){const n=String(name||'').trim();for(const [p,b] of SM_BRANDS){if(n.startsWith(p))return b;}return null;}
 const SM_PLACE_NG=/ATM|銀行|ゆうちょ|コインランドリー|駐車場/;
+// ── 正式店舗名 / Place ID の引き直し ────────────────────────────
+// 🚨 2026-07のズレ事故で「正式店舗名」に他の行の店名が入っている行が残っており、
+//    そこから作った Place ID もその別店を指すため、ナビが別の店へ誘導していた
+//    (2026-09-08 城北12 朝刊: 56店のうち21店)。座標と住所は正しいので、
+//    「マスタ座標の近くにある同ブランド店」を引き直して名前とIDを入れ替える。
+//
+// 採用の条件(誤りを増やさないため厳しめ):
+//   ① 略称から決まるブランドの店であること (FM→ファミリーマート 等)
+//   ② 略称の地名部分が店名に含まれること   ← 隣の同チェーン店を掴まないための要
+//   ③ 同じ店を2行に割り当てない (先に採った行を優先)
+//   ④ ①〜③に合う店が無ければ 名前とIDを空にする (住所で誘導させる。誤誘導より安全)
+// 検索は距離順(rankPreference:DISTANCE)。人気順だと20件上限で目的の店が漏れる。
+async function smRefetchOfficial(){
+  if(!smFiltered||smFiltered.length===0){alert('対象店舗がありません。営業所やコースで絞り込んでから実行してください');return;}
+  if(typeof GEOCODING_API_KEY==='undefined'||!GEOCODING_API_KEY){alert('APIキーが設定されていません');return;}
+  const H=smHeaders,ci=n=>H.indexOf(n);
+  const iName=ci('店舗名'),iOff=ci('正式店舗名'),iPid=ci('Place ID'),iLa=ci('緯度'),iLo=ci('経度'),iArea=ci('営業所');
+  if(iName<0||iOff<0||iPid<0||iLa<0||iLo<0){alert('必要な列(店舗名/正式店舗名/Place ID/緯度/経度)が見つかりません');return;}
+  const lockedCount=smFiltered.filter(r=>smIsLocked(r)).length;
+  const NL=String.fromCharCode(10);
+  const ans=prompt(`🏷 正式名/Place ID の引き直し${NL}対象: 絞り込み中の ${smFiltered.length}件${lockedCount?`（うち🔒修正済み ${lockedCount}件）`:''}${NL}${NL}`
+    +`マスタの座標にある同ブランド店を探し、略称の地名が一致する店の名前とPlace IDに入れ替えます。`
+    +`見つからない行は名前とIDを空にします（住所でナビされます）。${NL}${NL}`
+    +`0: 🔒修正済みも含めて全件やり直す（ズレ事故の後片付けはこちら）${NL}1: 🔒修正済み以外だけ${NL}空欄: キャンセル${NL}${NL}0 か 1 を入力:`);
+  if(ans!=='0'&&ans!=='1')return;
+  const includeLocked=ans==='0';
+  const targets=smFiltered.filter(r=>{
+    if(!includeLocked&&smIsLocked(r))return false;
+    if(String(r[`col_${iArea}`]||'').includes('納品中止'))return false;
+    return !!String(r[`col_${iName}`]||'').trim();
+  });
+  if(!targets.length){alert('対象がありません');return;}
+  const btn=document.getElementById('sm-off-btn');
+  const prog=document.getElementById('sm-geocode-progress');
+  if(btn){btn.disabled=true;btn.textContent='引き直し中...';}
+  if(prog){prog.style.display='block';prog.innerHTML='🏷 引き直し中...';}
+  const plan=[],notFound=[],unchanged=[];
+  const used=new Map();
+  try{
+    for(let n=0;n<targets.length;n++){
+      const r=targets[n];
+      const nm=String(r[`col_${iName}`]||'').trim();
+      const offNow=String(r[`col_${iOff}`]||'').trim();
+      const pidNow=String(r[`col_${iPid}`]||'').trim();
+      const lat=parseFloat(r[`col_${iLa}`]),lng=parseFloat(r[`col_${iLo}`]);
+      if(prog&&n%5===0)prog.innerHTML=`🏷 引き直し中... ${n}/${targets.length}（一致 ${plan.length} / 見つからず ${notFound.length}）`;
+      const brands=smBrandOf(nm);
+      const pre=(SM_BRANDS.find(([p])=>nm.startsWith(p))||[])[0]||'';
+      const place=diagNormPlace(nm.slice(pre.length));
+      if(!brands||!place||!(isFinite(lat)&&isFinite(lng))){unchanged.push(nm);continue;}// 略称の規則外/座標なしは触らない
+      let hit=null,hitD=null;
+      for(const radius of [80,200,500]){
+        let resp=null;
+        try{
+          resp=await fetch('https://places.googleapis.com/v1/places:searchNearby',{method:'POST',
+            headers:{'Content-Type':'application/json','X-Goog-Api-Key':GEOCODING_API_KEY,'X-Goog-FieldMask':'places.id,places.displayName,places.location'},
+            body:JSON.stringify({includedTypes:['convenience_store','supermarket','store'],maxResultCount:20,rankPreference:'DISTANCE',languageCode:'ja',
+              locationRestriction:{circle:{center:{latitude:lat,longitude:lng},radius}}})});
+        }catch(_){continue;}
+        if(!resp||!resp.ok)continue;
+        const places=((await resp.json()).places)||[];
+        const cand=places.filter(p=>{
+          const t=(p.displayName&&p.displayName.text)||'';
+          return brands.some(b=>t.includes(b))&&!SM_PLACE_NG.test(t)&&diagNormPlace(t).includes(place);
+        });
+        if(cand.length){
+          cand.sort((a,b)=>msrCalcDist(lat,lng,a.location.latitude,a.location.longitude)-msrCalcDist(lat,lng,b.location.latitude,b.location.longitude));
+          hit=cand[0];hitD=Math.round(msrCalcDist(lat,lng,hit.location.latitude,hit.location.longitude));break;
+        }
+      }
+      if(hit&&used.has(hit.id)){notFound.push(`${nm}（${used.get(hit.id)}と同じ店になるため見送り）`);hit=null;}
+      if(!hit){
+        if(offNow||pidNow)notFound.push(nm);
+        continue;
+      }
+      used.set(hit.id,nm);
+      const newOff=hit.displayName.text;
+      if(newOff===offNow&&hit.id===pidNow){unchanged.push(nm);continue;}
+      plan.push({row_number:r.row_number,official:newOff,place_id:hit.id,_nm:nm,_old:offNow,_d:hitD});
+    }
+    const clears=notFound.filter(x=>x.indexOf('見送り')<0);
+    const head=plan.slice(0,12).map(p=>`${p._nm} → ${p.official}（${p._d}m）`).join(NL);
+    const okMsg=`🏷 引き直しの内容${NL}${NL}入れ替え: ${plan.length}件${NL}空にする(住所で誘導): ${notFound.length}件${NL}変更なし: ${unchanged.length}件${NL}${NL}${head}${plan.length>12?NL+'…他'+(plan.length-12)+'件':''}${NL}${NL}この内容で書き込みますか?`;
+    if(!plan.length&&!notFound.length){if(prog)prog.innerHTML='変更はありませんでした';if(btn){btn.disabled=false;btn.textContent='🏷 正式名/ID引き直し';}return;}
+    if(!window.confirm(okMsg)){if(prog)prog.style.display='none';if(btn){btn.disabled=false;btn.textContent='🏷 正式名/ID引き直し';}return;}
+    if(prog)prog.innerHTML='💾 書き込み中...';
+    const offUpd=plan.map(p=>({row_number:p.row_number,official:p.official}));
+    const pidUpd=plan.map(p=>({row_number:p.row_number,place_id:p.place_id}));
+    // 見つからなかった行は「別店の名前/ID」を残さず空にする(住所でナビさせる)
+    for(const r of targets){
+      const nm=String(r[`col_${iName}`]||'').trim();
+      if(!clears.some(c=>c===nm))continue;
+      offUpd.push({row_number:r.row_number,official:''});
+      pidUpd.push({row_number:r.row_number,place_id:''});
+    }
+    if(offUpd.length){const j=await (await smPost({action:'batch_update_official',updates:offUpd})).json();if(j.error)throw new Error(j.error);}
+    if(pidUpd.length){const j=await (await smPost({action:'batch_update_placeid',updates:pidUpd})).json();if(j.error)throw new Error(j.error);}
+    if(prog)prog.innerHTML=`✅ 引き直し完了: 入れ替え ${plan.length}件 / 空にした ${clears.length}件 / 変更なし ${unchanged.length}件`;
+    await smLoad(true);
+  }catch(e){
+    if(prog)prog.innerHTML=`<span style="color:#dc2626;">引き直し失敗: ${e.message||e}</span>`;
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='🏷 正式名/ID引き直し';}
+  }
+}
+
 async function smAutoFetchPlaceId(codes){
   try{
     if(!codes||!codes.length||typeof GEOCODING_API_KEY==='undefined'||!GEOCODING_API_KEY)return 0;
