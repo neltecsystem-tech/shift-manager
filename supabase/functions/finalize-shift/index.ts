@@ -360,12 +360,29 @@ Deno.serve(async (req) => {
       .replace(/[・.,'’`\-ー（）()]/g, '');
     const phoneByName = new Map<string, string>();
     const phoneByCompany = new Map<string, string>(); // 会社 → 代表(オーナー)/担当の電話
+    const phoneAmbiguous: string[] = [];              // 同名で電話が割れている人(名簿の要修正)
     {
-      const { data: sm } = await sb.from('staff_master').select('full_name, phone, company_name, is_company_owner, is_company_contact, hidden');
-      for (const r of (sm ?? []) as any[]) {
+      const { data: sm } = await sb.from('staff_master')
+        .select('full_name, phone, company_name, is_company_owner, is_company_contact, hidden, profile_id, shift_login_id, updated_at');
+      // 🚨 2026-09-09: 同名の重複行で hidden 側の電話を拾い、8月の佐々田伸吾/庄司正志が
+      //    「本人がビューアを開いても0件・支払通知も届かない」状態になっていた。
+      //    確定明細の phone は明細ビューアの本人照合キー(完全一致)なので、必ず
+      //    「本人が実際にログインする番号」を採る。以前は hidden を見ず、順序も不定だった。
+      //    優先順: ①表示中(hidden でない) ②NexPortアカウント紐付きあり ③単価マスタ login_id あり
+      //            ④更新が新しい。※hidden 行しか無い名前は、電話なしで確定するより
+      //            ましなので最後の砦として使う(順序が決定的なので再実行しても同じ結果になる)。
+      const rank = (r: any) => (r.hidden ? 8 : 0) + (r.profile_id ? 0 : 4) + (r.shift_login_id ? 0 : 2);
+      const smRows = ((sm ?? []) as any[]).slice().sort((a, b) =>
+        rank(a) - rank(b) || String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? '')));
+      const phoneSeen = new Map<string, Set<string>>();
+      for (const r of smRows) {
         const ph = String(r.phone ?? '').replace(/[^0-9]/g, '');
         const k = nk2(r.full_name);
-        if (k && ph && !phoneByName.has(k)) phoneByName.set(k, ph);
+        if (k && ph) {
+          if (!phoneSeen.has(k)) phoneSeen.set(k, new Set<string>());
+          phoneSeen.get(k)!.add(ph);
+          if (!phoneByName.has(k)) phoneByName.set(k, ph);
+        }
         // 法人の枠行(人名なし・電話なし)は会社の代表/担当の電話で確定できるようにする。
         // オーナー優先(先に入れる)、居なければ担当。非表示の人は使わない。
         if (ph && r.company_name && !r.hidden && (r.is_company_owner || r.is_company_contact)) {
@@ -374,6 +391,10 @@ Deno.serve(async (req) => {
             if (r.is_company_owner || !phoneByCompany.has(ck)) phoneByCompany.set(ck, ph);
           }
         }
+      }
+      // 同名で電話が2種類以上ある = 名簿の打ち間違いか重複行。採用した番号を添えて応答に出す。
+      for (const [k, set] of phoneSeen) {
+        if (set.size > 1) phoneAmbiguous.push(`${k}: ${[...set].join(' / ')} → ${phoneByName.get(k)} を採用`);
       }
       const { data: past } = await sb.from('closed_pay_statements').select('staff_name, phone').not('phone', 'is', null).order('year', { ascending: false }).order('month', { ascending: false }).limit(2000);
       for (const r of (past ?? []) as any[]) { const k = nk2(r.staff_name); const ph = String(r.phone ?? '').replace(/[^0-9]/g, ''); if (k && ph && !phoneByName.has(k)) phoneByName.set(k, ph); }
@@ -464,7 +485,8 @@ Deno.serve(async (req) => {
         .eq('key', `kw_course_rate_missing:${ym}`).eq('status', 'open').then(() => {}, () => {});
     }
     return json({ ok: true, mode: 'finalize', year: y, month: m, count: targets.length, saved, locked: locked.size, total: totalAll,
-      skipped_no_phone: noPhone, phone_from_company: byCompanyUsed, company_renamed: renamedCo, company_cleared: clearedCo,
+      skipped_no_phone: noPhone, phone_from_company: byCompanyUsed, phone_ambiguous: phoneAmbiguous,
+      company_renamed: renamedCo, company_cleared: clearedCo,
       kawagoe_rate_missing: kwMissList, errors: errs });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 500);
