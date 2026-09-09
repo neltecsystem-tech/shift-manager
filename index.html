@@ -6361,9 +6361,36 @@ async function smCsvSubmit(){
 // → 店舗名の略称(FM/LA/T]7 等)からブランドを決め、そのブランドの店だけを候補にする。
 //   見つからなければ何も入れない(住所でナビする方が、別の店に行くより安全)。
 // 正式店舗名は空欄のときだけ候補で埋める。既に入っている値や🔒修正済みの行は触らない。
-const SM_BRANDS=[['LALS',['ローソンストア100']],['LAＬ',['ローソン']],['LATF',['ローソン']],['LS',['ローソンストア100','ローソン']],['LA',['ローソン']],['FM',['ファミリーマート']],['MS',['ミニストップ']],['SY',['西友']],['T]7',['セブン-イレブン','セブンイレブン']],['T]７',['セブン-イレブン','セブンイレブン']],['NL',['ナチュラルローソン','ニューデイズ','NewDays']],['トモニー',['トモニー']],['YS',['ヤマザキ']]];
+// 🚨 略称がここに無いと「ブランド不明」で引き直しの対象外になり、7月の事故で入った
+//    別店の名前がそのまま残る。実際に NYDS(ボートレース多摩川)と D)(三鷹井口四丁目)が
+//    抜けており、セブンイレブン府中紅葉丘 / ファミリーマート境南通り店 が残っていた。
+const SM_BRANDS=[['LALS',['ローソンストア100']],['LAＬ',['ローソン']],['LATF',['ローソン']],['LS',['ローソンストア100','ローソン']],['LA',['ローソン']],['FM',['ファミリーマート','ファミマ']],['MS',['ミニストップ']],['SY',['西友']],['T]7',['セブン-イレブン','セブンイレブン']],['T]７',['セブン-イレブン','セブンイレブン']],['NYDS',['ニューヤマザキデイリーストア','ヤマザキデイリーストア','デイリーヤマザキ']],['NL',['ナチュラルローソン','ニューデイズ','NewDays']],['トモニー',['トモニー']],['D)',['デイリーヤマザキ']],['YS',['ヤマザキ']]];
 function smBrandOf(name){const n=String(name||'').trim();for(const [p,b] of SM_BRANDS){if(n.startsWith(p))return b;}return null;}
 const SM_PLACE_NG=/ATM|銀行|ゆうちょ|コインランドリー|駐車場/;
+
+// 住所の照合。引き直しの2段目(住所テキスト検索)で「同じ店か」を判定する。
+//   町名 + 丁目/番地の数字2つが一致すれば同じ場所とみなす。
+//   🚨 漢数字→数字の変換を町名にかけてはいけない(「八王子」→「8王子」「三軒茶屋」→「3軒茶屋」)。
+//   🚨 空白を削除してはいけない(「17-9 1号館」が「1791号館」になり番地が壊れる)。
+function smAddrParts(s){
+  let t=String(s||'').normalize('NFKC');
+  t=t.replace(/〒?\d{3}-\d{4}/g,'').replace(/^日本[,、]?\s*/,'');
+  t=t.replace(/(東京都|神奈川県|埼玉県|千葉県)/g,'');
+  t=t.replace(/丁目|番地|番|号/g,'-').replace(/[−–—ー―]/g,'-');
+  t=t.replace(/[\s　]+/g,'|');
+  const i=t.search(/\d/);
+  if(i<0)return null;
+  const town=t.slice(0,i).replace(/[^぀-ヿ一-鿿A-Za-z]/g,'');
+  const nums=(t.slice(i).match(/\d+/g)||[]).slice(0,3).map(Number);
+  if(!town||nums.length<2)return null;
+  return {town:town,nums:nums};
+}
+function smAddrSame(a,b){
+  const x=smAddrParts(a),y=smAddrParts(b);
+  if(!x||!y)return false;
+  if(!(x.town.indexOf(y.town)>=0||y.town.indexOf(x.town)>=0))return false;
+  return x.nums[0]===y.nums[0]&&x.nums[1]===y.nums[1];
+}
 // ── 正式店舗名 / Place ID の引き直し ────────────────────────────
 // 🚨 2026-07のズレ事故で「正式店舗名」に他の行の店名が入っている行が残っており、
 //    そこから作った Place ID もその別店を指すため、ナビが別の店へ誘導していた
@@ -6381,6 +6408,8 @@ async function smRefetchOfficial(){
   if(typeof GEOCODING_API_KEY==='undefined'||!GEOCODING_API_KEY){alert('APIキーが設定されていません');return;}
   const H=smHeaders,ci=n=>H.indexOf(n);
   const iName=ci('店舗名'),iOff=ci('正式店舗名'),iPid=ci('Place ID'),iLa=ci('緯度'),iLo=ci('経度'),iArea=ci('営業所');
+  const iAddr=ci('住所');           // 2段目(住所テキスト検索)の照合に使う
+  const smAll=smData||[];          // 他の行が使用中の Place ID を避けるため全行を見る
   if(iName<0||iOff<0||iPid<0||iLa<0||iLo<0){alert('必要な列(店舗名/正式店舗名/Place ID/緯度/経度)が見つかりません');return;}
   const lockedCount=smFiltered.filter(r=>smIsLocked(r)).length;
   const NL=String.fromCharCode(10);
@@ -6400,7 +6429,7 @@ async function smRefetchOfficial(){
   const prog=document.getElementById('sm-geocode-progress');
   if(btn){btn.disabled=true;btn.textContent='引き直し中...';}
   if(prog){prog.style.display='block';prog.innerHTML='🏷 引き直し中...';}
-  const plan=[],notFound=[],unchanged=[];
+  const plan=[],notFound=[],unchanged=[],byText=[];
   const used=new Map();
   try{
     for(let n=0;n<targets.length;n++){
@@ -6434,6 +6463,50 @@ async function smRefetchOfficial(){
           hit=cand[0];hitD=Math.round(msrCalcDist(lat,lng,hit.location.latitude,hit.location.longitude));break;
         }
       }
+      // ── 2段目: 近傍で見つからないときは「住所テキスト検索」で拾う ─────────────
+      // 近傍検索が空振りする主因はマスタの座標ズレ。実測で 76m〜1287m ずれている行があり、
+      // 半径500mでも同ブランドが1件も出てこない(例: T]7府中四谷4丁目 は 1287m ずれ)。
+      // 駅構内・地下街の店は includedTypes でも漏れる(FM小田急エース / LAメトロス新宿東口)。
+      // そこで店名で検索し、①ブランド一致 ②住所が一致(smAddrSame) または略称の地名が
+      // 店名に含まれる の順で確認する。住所は緯度経度と別系統の情報なので、座標が
+      // ずれていても「同じ店か」を独立に判定できる。
+      if(!hit){
+        const addrNow=iAddr>=0?String(r[`col_${iAddr}`]||'').trim():'';
+        try{
+          const resp=await fetch('https://places.googleapis.com/v1/places:searchText',{method:'POST',
+            headers:{'Content-Type':'application/json','X-Goog-Api-Key':GEOCODING_API_KEY,'X-Goog-FieldMask':'places.id,places.displayName,places.location,places.formattedAddress,places.businessStatus'},
+            body:JSON.stringify({textQuery:`${brands[0]} ${nm.slice(pre.length)}`,languageCode:'ja',regionCode:'JP',maxResultCount:10,
+              locationBias:{circle:{center:{latitude:lat,longitude:lng},radius:5000}}})});
+          if(resp.ok){
+            const ps=((await resp.json()).places)||[];
+            const cand=ps.filter(p=>{
+              const t=(p.displayName&&p.displayName.text)||'';
+              if(!brands.some(b=>t.includes(b))||SM_PLACE_NG.test(t))return false;
+              if(p.businessStatus==='CLOSED_PERMANENTLY')return false;   // 閉店店舗は入れない
+              // 住所が一致すれば距離は問わない(座標ズレを住所で救うのがこの2段目の目的)。
+              // 住所で判定できない行(マスタの住所が「西新宿1」のように丁目までしか無い等)は
+              // 略称の地名一致だけが根拠になるので、400m以内に限る。
+              // 🚨 これが無いと NYDSボートレース多摩川店(場内の売店) が 602m 先の
+              //    「ボートレース多摩川前店」(場外の別店)を掴む。
+              if(addrNow&&smAddrSame(addrNow,p.formattedAddress))return true;
+              if(!diagNormPlace(t).includes(place))return false;
+              return msrCalcDist(lat,lng,p.location.latitude,p.location.longitude)<=400;
+            });
+            // 他の行が既に使っている Place ID は採らない(別行とすり替わるため)
+            const taken=new Set(smAll.map(x=>String(x[`col_${iPid}`]||'').trim()).filter(Boolean));
+            const free=cand.filter(p=>!taken.has(p.id)||String(r[`col_${iPid}`]||'').trim()===p.id);
+            if(free.length===1){
+              hit=free[0];
+              hitD=Math.round(msrCalcDist(lat,lng,hit.location.latitude,hit.location.longitude));
+              byText.push(nm);
+            }else if(cand.length&&!free.length){
+              notFound.push(`${nm}（見つかった店は他の行が使用中のため見送り）`);
+            }else if(free.length>1){
+              notFound.push(`${nm}（住所一致が${free.length}件あり確定できないため見送り）`);
+            }
+          }
+        }catch(_){}
+      }
       if(hit&&used.has(hit.id)){notFound.push(`${nm}（${used.get(hit.id)}と同じ店になるため見送り）`);hit=null;}
       if(!hit){
         if(offNow||pidNow)notFound.push(nm);
@@ -6446,7 +6519,8 @@ async function smRefetchOfficial(){
     }
     const clears=notFound.filter(x=>x.indexOf('見送り')<0);
     const head=plan.slice(0,12).map(p=>`${p._nm} → ${p.official}（${p._d}m）`).join(NL);
-    const okMsg=`🏷 引き直しの内容${NL}${NL}入れ替え: ${plan.length}件${NL}空にする(住所で誘導): ${notFound.length}件${NL}変更なし: ${unchanged.length}件${NL}${NL}${head}${plan.length>12?NL+'…他'+(plan.length-12)+'件':''}${NL}${NL}この内容で書き込みますか?`;
+    const textNote=byText.length?`${NL}うち ${byText.length}件は住所で確認して拾いました（座標がずれていて近くに見つからなかった行）`:'';
+    const okMsg=`🏷 引き直しの内容${NL}${NL}入れ替え: ${plan.length}件${textNote}${NL}空にする(住所で誘導): ${notFound.length}件${NL}変更なし: ${unchanged.length}件${NL}${NL}${head}${plan.length>12?NL+'…他'+(plan.length-12)+'件':''}${NL}${NL}この内容で書き込みますか?`;
     if(!plan.length&&!notFound.length){if(prog)prog.innerHTML='変更はありませんでした';if(btn){btn.disabled=false;btn.textContent='🏷 正式名/ID引き直し';}return;}
     if(!window.confirm(okMsg)){if(prog)prog.style.display='none';if(btn){btn.disabled=false;btn.textContent='🏷 正式名/ID引き直し';}return;}
     if(prog)prog.innerHTML='💾 書き込み中...';
@@ -6461,7 +6535,7 @@ async function smRefetchOfficial(){
     }
     if(offUpd.length){const j=await (await smPost({action:'batch_update_official',updates:offUpd})).json();if(j.error)throw new Error(j.error);}
     if(pidUpd.length){const j=await (await smPost({action:'batch_update_placeid',updates:pidUpd})).json();if(j.error)throw new Error(j.error);}
-    if(prog)prog.innerHTML=`✅ 引き直し完了: 入れ替え ${plan.length}件 / 空にした ${clears.length}件 / 変更なし ${unchanged.length}件`;
+    if(prog)prog.innerHTML=`✅ 引き直し完了: 入れ替え ${plan.length}件（うち住所で確認 ${byText.length}件） / 空にした ${clears.length}件 / 変更なし ${unchanged.length}件`;
     await smLoad(true);
   }catch(e){
     if(prog)prog.innerHTML=`<span style="color:#dc2626;">引き直し失敗: ${e.message||e}</span>`;
