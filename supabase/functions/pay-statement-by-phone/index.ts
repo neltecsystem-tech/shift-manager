@@ -21,11 +21,14 @@ interface Payload {
 
 function normalizePhone(s: string): string {
   if (!s) return '';
-  return s
-    .replace(/[０-９]/g, (ch) =>
-      String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30),
-    )
+  const d = s
+    .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30))
     .replace(/[^\d]/g, '');
+  // 🔧 先頭0落ちの携帯を11桁へ戻す(2026-09-09)。NexPortアカウントの電話が
+  //    「8073405889」のように0落ちで入っていると、確定明細の「08073405889」と
+  //    一致せず、本人がログインしても自分の明細が0件になる(平松鼓で実際に発生)。
+  //    中央人材マスタ側の normJpPhone と同じ規則。0始まりの固定電話は10桁でも対象外。
+  return d.length === 10 && /^[789]/.test(d) ? '0' + d : d;
 }
 
 // 氏名/会社名の異体字(旧字体・許容字体)と小書きカナを代表字へ畳み込む。
