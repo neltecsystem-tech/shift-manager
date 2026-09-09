@@ -14836,7 +14836,10 @@ function admBillCols(){
     if(h==='夕刊特殊納品')cols.pmTokushu=i;
     if(h.includes('競馬コース'))cols.keibaCourse=i;
     if(h==='競馬特殊納品')cols.keibaTokushu=i;
-    if(h.includes('店舗名'))cols.name=i;
+    // 「正式店舗名」も includes('店舗名') に一致して name を上書きしてしまうので完全一致にする。
+    // 特殊請求店の一覧と店舗一覧CSVの「店舗名」欄が正式店舗名になっており、それが空の25店は
+    // 空欄で出ていた(金額は店舗コードで集計するので請求額には影響していない)。
+    if(h==='店舗名')cols.name=i;
     if(h.includes('店舗コード'))cols.code=i;
   });
   return cols;
@@ -18835,7 +18838,11 @@ async function msrLoadData(){
     msrHeaders.forEach((h,i)=>{
       if(h.includes('営業所'))msrColMap.area=i;
       if(h.includes('店舗コード'))msrColMap.code=i;
-      if(h.includes('店舗名'))msrColMap.name=i;
+      // 「正式店舗名」も includes('店舗名') に一致して name を上書きしてしまうため完全一致で分ける。
+      // 上書きされていた間は正式店舗名を表示しており、それが空の25店(立川11/城北7/川崎高津7)が
+      // 名前の無い行として出ていた。表示は msrShopName() に集約し、空なら社内名へ落とす。
+      if(h==='店舗名')msrColMap.name=i;
+      else if(h==='正式店舗名')msrColMap.officialName=i;
       if(h.includes('朝刊コース'))msrColMap.amCourse=i;
       if(h.includes('朝刊順番'))msrColMap.amOrder=i;
       if(/^[新旧]夕刊コース/.test(h))msrColMap.pmCourseNew=i;
@@ -18862,6 +18869,16 @@ async function msrLoadData(){
   }catch(e){
     document.getElementById('msr-table').innerHTML=`<p style="color:var(--danger);padding:20px;">${e.message}</p>`;
   }
+}
+
+// 測定の店名表示。正式店舗名を優先し、無ければ社内名(店舗名)に落とす。
+// 2026-07のズレ事故の復旧で「別店の名前を残すより空にする」判断をした行があり、
+// 正式店舗名だけを見ていると名前の無い行になってしまう(現地で一番迷う地下街・駅構内の店が該当した)。
+function msrShopName(s){
+  if(!s)return '';
+  const off=msrColMap.officialName!==undefined?String(s[`col_${msrColMap.officialName}`]||'').trim():'';
+  if(off)return off;
+  return String(s[`col_${msrColMap.name??3}`]||'').trim();
 }
 
 // 測定用: 行の営業所が選択営業所にマッチするか (城北は池袋を含む、 納品中止は常に除外)
@@ -18904,7 +18921,6 @@ function msrRender(){
   if(!course){document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">コースを選択してください</p>';return;}
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
   const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
-  const nameCol=msrColMap.name??3;
   const codeCol=msrColMap.code??2;
   let shops=msrData.filter(r=>{
     if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
@@ -18988,7 +19004,7 @@ function msrRender(){
   h+='<table><thead><tr><th style="width:40px">#</th><th>店舗名</th><th style="width:50px">予定</th>'+(hasGps?'<th style="width:60px">距離</th>':'')+'<th style="width:100px">到着時刻</th><th style="width:80px"></th></tr></thead><tbody>';
   shops.forEach((s,i)=>{
     const code=s[`col_${codeCol}`]||'';
-    const name=s[`col_${nameCol}`]||'';
+    const name=msrShopName(s)||'';
     const key=`${course}|${code}`;
     const time=msrTimes[key]||'';
     const done=!!time;
@@ -19098,7 +19114,6 @@ function msrCurrentRouteShops(){
   const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
   const timeCol=type==='am'?msrColMap.amTime:type==='keiba'?msrColMap.keibaTime:msrColMap.pmTime;
   const codeCol=msrColMap.code??2;
-  const nameCol=msrColMap.name??3;
   const latCol=msrColMap.lat, lngCol=msrColMap.lng;
   let shops=msrData.filter(r=>msrAreaMatch(r[`col_${msrColMap.area??1}`],area)&&r[`col_${courseCol}`]===course);
   const pt=t=>{
@@ -19121,7 +19136,7 @@ function msrCurrentRouteShops(){
     return (a[`col_${codeCol}`]||'').toString().localeCompare((b[`col_${codeCol}`]||'').toString());
   });
   const out=shops.map((s,i)=>({
-    seq:i+1, code:s[`col_${codeCol}`]||'', name:s[`col_${nameCol}`]||'',
+    seq:i+1, code:s[`col_${codeCol}`]||'', name:msrShopName(s)||'',
     lat:parseFloat(s[`col_${latCol}`]), lng:parseFloat(s[`col_${lngCol}`])
   })).filter(s=>!isNaN(s.lat)&&!isNaN(s.lng));
   return {course, shops:out};
@@ -19245,7 +19260,6 @@ async function msrSendProgress(){
   const type=document.getElementById('msr-type').value;
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
   const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
-  const nameCol=msrColMap.name??3;
   const codeCol=msrColMap.code??2;
   const shops=msrData.filter(r=>{
     if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
@@ -19265,12 +19279,12 @@ async function msrSendProgress(){
   text+='【到着済み】\n';
   done.forEach((s,i)=>{
     const code=s[`col_${codeCol}`]||'';
-    const name=s[`col_${nameCol}`]||'';
+    const name=msrShopName(s)||'';
     text+=`  ${name} → ${msrTimes[`${course}|${code}`]}\n`;
   });
   if(undone.length){
     text+='【未到着】\n';
-    undone.forEach(s=>{text+=`  ${s[`col_${nameCol}`]||''}\n`;});
+    undone.forEach(s=>{text+=`  ${msrShopName(s)||''}\n`;});
   }
   // スプレッドシートに保存
   const btn=document.getElementById('msr-progress-btn');
@@ -19279,7 +19293,7 @@ async function msrSendProgress(){
   const times=done.map(s=>msrTimes[`${course}|${s[`col_${codeCol}`]}`]).sort();
   const startTime=times.length?times[0]:'';
   const saveShops=shops.map(s=>({
-    name:s[`col_${nameCol}`]||'',
+    name:msrShopName(s)||'',
     time:msrTimes[`${course}|${s[`col_${codeCol}`]}`]||''
   }));
   try{
@@ -19303,7 +19317,6 @@ async function msrFinish(){
   const type=document.getElementById('msr-type').value;
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
   const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
-  const nameCol=msrColMap.name??3;
   const codeCol=msrColMap.code??2;
   const shops=msrData.filter(r=>{
     if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
@@ -19330,12 +19343,12 @@ async function msrFinish(){
   h+=`<table><thead><tr><th>#</th><th>店舗名</th><th>到着時刻</th></tr></thead><tbody>`;
   shops.forEach((s,i)=>{
     const code=s[`col_${codeCol}`]||'';
-    const name=s[`col_${nameCol}`]||'';
+    const name=msrShopName(s)||'';
     const time=msrTimes[`${course}|${code}`]||'';
     h+=`<tr style="${time?'':'color:#dc2626;'}"><td>${i+1}</td><td>${name}</td><td style="font-weight:bold;">${time||'未到着'}</td></tr>`;
   });
   h+=`</tbody></table>`;
-  if(undone.length)h+=`<p style="color:#dc2626;font-size:13px;margin-top:8px;">⚠ 未到着: ${undone.map(s=>s[`col_${nameCol}`]).join(', ')}</p>`;
+  if(undone.length)h+=`<p style="color:#dc2626;font-size:13px;margin-top:8px;">⚠ 未到着: ${undone.map(s=>msrShopName(s)).join(', ')}</p>`;
   h+=`<div style="display:flex;gap:8px;margin-top:16px;">`;
   h+=`<div id="msr-save-status" style="margin-bottom:8px;color:var(--text-sub);font-size:13px;">📝 スプレッドシートに保存中...</div>`;
   h+=`<button onclick="msrFinishExport('${course}','${startTime}','${endTime}',${done.length},${shops.length})" style="background:#22c55e;color:#fff;border:none;padding:8px 20px;border-radius:8px;cursor:pointer;font-weight:600;">📋 結果をコピー</button>`;
@@ -19345,7 +19358,7 @@ async function msrFinish(){
   // スプレッドシートに保存
   const typeLabel=type==='am'?'朝刊':type==='pm'?'夕刊':'競馬';
   const saveShops=shops.map(s=>({
-    name:s[`col_${nameCol}`]||'',
+    name:msrShopName(s)||'',
     time:msrTimes[`${course}|${s[`col_${codeCol}`]}`]||''
   }));
   try{
@@ -19363,7 +19376,6 @@ function msrFinishExport(course,startTime,endTime,doneCount,total){
   const type=document.getElementById('msr-type').value;
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
   const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
-  const nameCol=msrColMap.name??3;
   const codeCol=msrColMap.code??2;
   const shops=msrData.filter(r=>{
     if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
@@ -19377,7 +19389,7 @@ function msrFinishExport(course,startTime,endTime,doneCount,total){
   text+='─'.repeat(30)+'\n';
   shops.forEach((s,i)=>{
     const code=s[`col_${codeCol}`]||'';
-    const name=s[`col_${nameCol}`]||'';
+    const name=msrShopName(s)||'';
     const time=msrTimes[`${course}|${code}`]||'未到着';
     text+=`${i+1}. ${name}（${code}）→ ${time}\n`;
   });
