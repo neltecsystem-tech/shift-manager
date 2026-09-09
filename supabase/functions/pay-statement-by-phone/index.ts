@@ -101,6 +101,18 @@ async function noticePublished(nx: any, profileId: string, ym: string): Promise<
   return !!(data as any)?.issued_at;
 }
 
+// 🔧 2026-09-09: 本人照合の電話は profiles.phone だけを見ていたが、この欄は
+//    ビューアで本人が手入力する値で、空だったり桁が壊れていることがある
+//    (平松鼓=先頭0落ち / 零井上=9桁 / アカウント17件は空)。明細は phone の完全一致で
+//    引くため、そうなると本人には「明細がありません」としか見えない。
+//    使える形でなければ中央人材マスタ(profile_id で紐付く・日次同期で正規化済み)を採る。
+async function callerPhone(admin: any, uid: string, profPhone: unknown): Promise<string> {
+  const ph = normalizePhone(String(profPhone ?? ''));
+  if (ph.length >= 10) return ph;
+  const { data: sm } = await admin.from('staff_master').select('phone').eq('profile_id', uid).not('phone', 'is', null).limit(1);
+  return normalizePhone(String((sm ?? [])[0]?.phone ?? ''));
+}
+
 // 呼び出し元(本人)の role/phone/オーナー情報。電話番号での明細取得を「本人/管理者/自社オーナー」に限定するため。
 async function getCaller(admin: any, authToken: string | undefined): Promise<{ role: string; phone: string; is_company_owner: boolean; company: string; uid: string } | null> {
   if (!authToken) return null;
@@ -109,7 +121,8 @@ async function getCaller(admin: any, authToken: string | undefined): Promise<{ r
     if (!user) return null;
     const { data: prof } = await admin.from('profiles').select('role, phone, is_company_owner, company').eq('id', user.id).maybeSingle();
     if (!prof) return null;
-    return { role: prof.role, phone: normalizePhone(prof.phone || ''), is_company_owner: !!prof.is_company_owner, company: String(prof.company || ''), uid: user.id };
+    const phone = await callerPhone(admin, user.id, prof.phone);
+    return { role: prof.role, phone, is_company_owner: !!prof.is_company_owner, company: String(prof.company || ''), uid: user.id };
   } catch (_) { return null; }
 }
 
