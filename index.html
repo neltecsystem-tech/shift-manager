@@ -10092,16 +10092,23 @@ async function loadBillPrices(){
   }catch(_){ billPricesFailed=true; }
   return getBillPrices();
 }
-// 請求計算の入口で使う。読めていなければ理由付きで止める。
-// 呼び出し元に try が無い経路もあるので、投げる前に必ず画面へ出す(45コース分は1回だけ)。
-let _billPriceAlertShown=false;
+// 単価シートが読めないときの扱い。
+// 🚨 2026-09-10 に「読めなければ計算を止める」を入れたが、これは行き過ぎだった。
+//    単価は BILL_PRICE_DEFAULTS があり、シートはその上書きにすぎない。読めないだけで
+//    請求書が一切作れなくなり、業務が止まった。止めるべきなのは「単価0で計算すること」
+//    であって「シートが読めないこと」ではない。
+//    → 既定値での計算は許可し、画面に警告だけ出す。0円での確定保存は admBillConfirm 系で止める。
 function assertBillPricesLoaded(){
-  if(!(billPricesFailed||!billPricesCache))return;
-  const msg='請求単価を読み込めませんでした（Sheetsの読み取り上限の可能性があります）。'+String.fromCharCode(10,10)
-    +'単価が0のまま請求書を作らないよう中止しました。'+String.fromCharCode(10)
-    +'少し待ってから「単価一覧」タブを開き、単価が表示されることを確認してからやり直してください。';
-  if(!_billPriceAlertShown){_billPriceAlertShown=true;alert(msg);setTimeout(()=>{_billPriceAlertShown=false;},3000);}
-  throw new Error(msg);
+  const p=getBillPrices();
+  const keys=['am_shop','pm_normal','keiba_only'];
+  if(keys.every(k=>!(Number(p[k])>0))){
+    throw new Error('請求単価がすべて0です。単価一覧を確認してください。');
+  }
+}
+// 単価シートが読めなかったことを請求画面に出す(既定値で計算している旨)
+function renderBillPriceWarning(){
+  const el=document.getElementById('adm-bill-src');if(!el||!billPricesFailed)return;
+  el.insertAdjacentHTML('afterend','<div id="adm-bill-pricewarn" style="margin-top:6px;font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;padding:6px 10px;border-radius:8px;">⚠ <b>請求単価シートを読み込めませんでした</b>（Sheetsの読み取り上限の可能性）。<b>既定の単価</b>で計算しています。単価をシートで変更している場合は金額がずれます。「単価一覧」で確認してください。</div>');
 }
 async function saveBillPrices(){
   const p={};
@@ -14847,6 +14854,7 @@ function admBillRenderSource(){
     el.innerHTML=`📁 <b>${m} は月初スナップの保持期間が終了</b>しています。確定時に保存した店舗数・金額を表示します（再計算しません）。`;
     el.style.cssText='margin-top:6px;font-size:12px;color:#1e40af;background:#eff6ff;border:1px solid #93c5fd;padding:6px 10px;border-radius:8px;';
   }else{el.innerHTML='';}
+  try{ const w=document.getElementById('adm-bill-pricewarn'); if(w)w.remove(); renderBillPriceWarning(); }catch(_){}
 }
 
 // 指定月の店舗マスタ(スナップ優先/無ければライブ)を admBillShopData にロード

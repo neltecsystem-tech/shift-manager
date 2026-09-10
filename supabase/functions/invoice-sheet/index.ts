@@ -965,6 +965,36 @@ Deno.serve(async(req:Request)=>{
       return jsonResp({year_month:ym, by_area:byArea, by_area_courses:byAreaCourses, extras, extra_detail:extraDetail});
     }
 
+    // ── 氏名だけを書き換える (A列のみ) ──────────────────────────────────
+    //  save_rate は行まるごと(A:X)を上書きするため、login_pw(K列)を渡し忘れると
+    //  本人のログインパスワードが消える。parseRates は login_pw を返さないので
+    //  読み直して補うこともできない。氏名の表記統一は A列だけ触れば済むので分ける。
+    //  行番号は位置ベースなので、delete_rate と同じく expect_name で現物を照合してから書く。
+    if(action==='rename_rate'){
+      const cronSecret = req.headers.get('x-sync-secret') || '';
+      const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
+      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      const newName = String(record?.name ?? '').trim();
+      const expName = String(expect_name ?? '').trim();
+      if(!row_number) return jsonResp({error:'row_number required'}, 400);
+      if(!newName) return jsonResp({error:'record.name required'}, 400);
+      if(!expName) return jsonResp({error:'expect_name required(取り違え防止のため必須)'}, 400);
+      const curR = parseRates(await getRateRowsCached(true));
+      const tgtR = curR.find((r:any)=>r.row_number===Number(row_number));
+      if(!tgtR) return jsonResp({error:'対象の行が見つかりません', code:'ROW_NOT_FOUND'}, 404);
+      if(tgtR.name!==expName){
+        return jsonResp({error:`対象が一致しません(指定:「${expName}」/ 実際の${row_number}行目:「${tgtR.name}」)`, code:'NAME_MISMATCH'}, 409);
+      }
+      if(curR.some((r:any)=>r.row_number!==Number(row_number) && r.name===newName)){
+        return jsonResp({error:`「${newName}」は既に別の行にあります(確定明細は氏名で一意のため重複させない)`, code:'DUP_NAME'}, 409);
+      }
+      const tkR = await getAccessToken();
+      const putR = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${tkR}`,'Content-Type':'application/json'},body:JSON.stringify({values:[[newName]]})});
+      if(!putR.ok) return jsonResp({error:'sheet update failed: '+putR.status+' '+(await putR.text()).slice(0,200)}, 500);
+      await invalidateRateCache();
+      return jsonResp({success:true, row_number:Number(row_number), from:expName, to:newName});
+    }
+
     // ---- 以下はトークン必須 ----
     const claims = await verifyToken(auth_token);
     if (!claims) return authErr();
@@ -1352,18 +1382,23 @@ Deno.serve(async(req:Request)=>{
       //    45コース一括作成はSheetsを大量に読むので429に当たりやすく、実際に
       //    2026-08 立川の請求が全額¥0で作られ、そのまま確定保存された。
       //    他の取得箇所と同じく軽リトライ+503にし、0を返さない。
+      // 🚨 元は resp.ok も見ずに Number(row[i])||0 としており、読み取り失敗で
+      //    全単価が黙って0になっていた(2026-08 立川が¥0で確定保存された原因)。
+      //    ただし 503 で止めると、単価シートが未整備な環境で請求書が一切作れなくなる。
+      //    → 読めなければ prices を返さず ok:false を返し、呼び出し側に「既定値で計算し、
+      //      画面に警告を出す」を選ばせる。0 は絶対に返さない。
       let row: any[]=[];
+      let readErr='';
       try{
         const vals=await fetchSheetValuesWithRetry(`${BILL_PRICE_SHEET}!A2:W2`, ()=>getAccessToken());
         row=vals[0]||[];
-      }catch(e){
-        return jsonResp({error:'請求単価を読み込めませんでした（Sheetsの読み取り上限の可能性）。少し待ってからやり直してください。', code:'SHEET_UNAVAILABLE', detail:String((e as any)?.message??e).slice(0,200)}, 503);
-      }
+      }catch(e){ readErr=String((e as any)?.message??e).slice(0,200); }
+      if(readErr) return jsonResp({ok:false, error:'請求単価を読み込めませんでした（Sheetsの読み取り上限の可能性）', code:'SHEET_UNAVAILABLE', detail:readErr});
       const prices:any={};
       BILL_PRICE_KEYS.forEach((k,i)=>{prices[k]=Number(row[i])||0;});
-      // 空行や全0で返すと、呼び出し側が「単価0」で請求書を作ってしまう。読めていない扱いにする。
+      // 空行/全0は「読めていない」扱い。0の単価を返して請求書を¥0にしない。
       if(!BILL_PRICE_KEYS.some(k=>prices[k]>0)){
-        return jsonResp({error:'請求単価がすべて0でした。単価設定シートを確認してください（読み取り失敗の可能性もあります）。', code:'BILL_PRICES_EMPTY'}, 503);
+        return jsonResp({ok:false, error:'請求単価設定シートが空です（既定の単価で計算します）', code:'BILL_PRICES_EMPTY'});
       }
       return jsonResp({prices});
     }
