@@ -14805,7 +14805,10 @@ async function snapshotMonthExists(month){
       const r=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_list'})});
       if(r.ok){
         const j=await r.json();
-        if(Array.isArray(j.months))return j.months.includes(month);
+        // 🚨 空配列を「無い」と断定しない。読み取り失敗で months:[] が返ることがあり、
+        //    それを信じると請求が「保持期間が終了」扱いになって確定保存値に落ちる。
+        //    スナップが1件も無いのは異常なので、確認不能として扱う。
+        if(Array.isArray(j.months)&&j.months.length)return j.months.includes(month);
       }
     }catch(_){}
     if(i<2)await new Promise(r=>setTimeout(r,600*(i+1)));

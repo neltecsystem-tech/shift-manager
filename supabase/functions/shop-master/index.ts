@@ -778,8 +778,22 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'snapshot_list') {
+      // 🚨 2026-09-10: metaResp.ok を見ておらず、Sheetsの読取上限(429)等で失敗すると
+      //    sheets が無いまま months:[] を 200 で返していた。呼び出し側はそれを
+      //    「その月のスナップは存在しない」と断定し、請求が「保持期間が終了」扱いになって
+      //    確定時保存値(このときは¥0)を表示していた。失敗は 503 で返す。
       const metaResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties.title`, { headers: { 'Authorization': `Bearer ${token}` } });
-      const months = ((await metaResp.json()).sheets || [])
+      if (!metaResp.ok) {
+        const t = await metaResp.text().catch(() => '');
+        return new Response(JSON.stringify({ error: 'スナップ一覧を取得できませんでした' + (metaResp.status === 429 ? '(Sheetsの読み取り上限。少し待つと回復します)' : ''), code: 'SHEET_UNAVAILABLE', status: metaResp.status, detail: t.slice(0, 200) }),
+          { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const sheets = (await metaResp.json().catch(() => ({}))).sheets;
+      if (!Array.isArray(sheets)) {
+        return new Response(JSON.stringify({ error: 'スナップ一覧の応答が不正です', code: 'SHEET_UNAVAILABLE' }),
+          { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const months = sheets
         .map((s: any) => s.properties.title)
         .filter((t: string) => SNAP_RE.test(t))
         .map((t: string) => t.slice(SNAP_PREFIX.length))
