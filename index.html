@@ -63,6 +63,14 @@ body { padding-left:220px; }
   .sb-close { display:block; }
   .hamburger { display:block; }
   .sb-backdrop.open { display:block; }
+  /* スマホで横スクロールが出ると、画面右に何も無い白い余白ができる。
+     表は .table-wrap が自前で横スクロールするので、それ以外は
+     ビューポート幅を超えないようにする(固定幅の入力欄が主因)。 */
+  .container { padding:12px; max-width:100%; }
+  .card { padding:14px; }
+  .card input[type="text"], .card input[type="search"], .card select { max-width:100%; min-width:0; }
+  /* gap付きの横並びは、折り返せないと固定幅の合計がそのまま最小幅になる */
+  .card div[style*="display:flex"] { flex-wrap:wrap; }
 }
 @media print {
   body { padding-left:0 !important; }
@@ -170,10 +178,11 @@ tbody tr:hover { background:var(--primary-light); }
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
         <h2 style="margin:0;">📅 マイシフト <span id="myshift-name" style="font-size:14px;color:var(--text-sub);font-weight:normal;margin-left:8px;"></span></h2>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-          <div id="myshift-staff-wrap" style="display:none;gap:6px;align-items:center;">
+          <!-- 折り返せないと 140px+140px+ラベル が最小幅になり、スマホで横スクロール(右に白い余白)が出る -->
+          <div id="myshift-staff-wrap" style="display:none;gap:6px;align-items:center;flex-wrap:wrap;">
             <label style="font-size:12px;color:var(--text-sub);">スタッフ</label>
-            <input type="text" id="myshift-staff-filter" placeholder="名前で絞り込み..." oninput="updateMyShiftStaffOptions()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;width:140px;">
-            <select id="myshift-staff" onchange="renderMyShift()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;min-width:140px;"></select>
+            <input type="text" id="myshift-staff-filter" placeholder="名前で絞り込み..." oninput="updateMyShiftStaffOptions()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;width:140px;max-width:100%;flex:1 1 120px;min-width:0;">
+            <select id="myshift-staff" onchange="renderMyShift()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;min-width:0;max-width:100%;flex:1 1 140px;"></select>
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
             <label style="font-size:12px;color:var(--text-sub);">月</label>
