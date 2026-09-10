@@ -4300,6 +4300,7 @@ async function smSnapshotNow(){
   const orig=btn.textContent;btn.disabled=true;btn.textContent='作成中...';
   try{
     const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_create',month:ym})});
+    invalidateSnapCache(ym);
     const json=await resp.json();
     if(json.error)throw new Error(json.error);
     alert(`✅ ${json.month} の月初スナップを作成しました（${json.rows}件）。\nこれで店舗マスタを自由に編集しても ${json.month} の請求には影響しません。`);
@@ -14780,18 +14781,31 @@ let admBillShopData=null;
 let admBillSource='';        // 'snapshot:YYYY-MM' | 'live'
 let admBillLoadedMonth='';   // 現在 admBillShopData が対応する月
 
-async function fetchShopMasterSnapshot(month){
-  // Sheets の読取上限(429)などで一時的に失敗する。ここで諦めると請求が
-  // 「保持期間終了」扱いになるので、間隔を空けて3回まで粘る。
-  for(let attempt=0;attempt<3;attempt++){
+// 🚨 月初スナップは「その月の月初時点で凍結した店舗マスタ」で、二度と変わらない。
+//    にもかかわらず操作のたびに 2.15MB を取り直しており、連続操作で
+//    Edge Function の呼び出しレート制限(Retry after 28s)に当たって
+//    「読込に失敗しました」「保持期間が終了」に落ちていた(2026-09-10)。
+//    一度取れたら以後はメモリから返す。取り直したい時だけ force。
+const _snapMemCache={};
+// スナップを書き換えた/作り直した後は必ず呼ぶ(古い内容で請求を作らないため)
+function invalidateSnapCache(month){ if(month)delete _snapMemCache[month]; else Object.keys(_snapMemCache).forEach(k=>delete _snapMemCache[k]); _snapMonthsCache=null; }
+async function fetchShopMasterSnapshot(month,force){
+  if(!force&&_snapMemCache[month])return _snapMemCache[month];
+  // 一時失敗(Sheetsの読取上限 / EFの呼び出しレート制限)に備えて間隔を空けて粘る。
+  // レート制限は「28秒後に再試行」と言われることがあるので、待ちを長めに取る。
+  const waits=[1000,3000,8000];
+  for(let attempt=0;attempt<4;attempt++){
     try{
       const resp=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_read',month})});
       if(resp.ok){
         const json=await resp.json();
-        if(json&&json.snapshot&&Array.isArray(json.records)&&json.records.length)return json;
+        if(json&&json.snapshot&&Array.isArray(json.records)&&json.records.length){
+          _snapMemCache[month]=json;   // 成功したものだけ残す(失敗はキャッシュしない)
+          return json;
+        }
       }
     }catch(_){}
-    if(attempt<2)await new Promise(r=>setTimeout(r,800*(attempt+1)));
+    if(attempt<3)await new Promise(r=>setTimeout(r,waits[attempt]));
   }
   return null;
 }
@@ -14799,7 +14813,9 @@ async function fetchShopMasterSnapshot(month){
 // 戻り値: true=有る / false=無い / null=確認できなかった
 // ★ 確認できなかったときに false を返してはいけない。「保持期間が終了しています」と
 //   断定してしまい、実際にはスナップがあるのに保存値表示へ落ちる(2026-07で発生)。
+let _snapMonthsCache=null;   // スナップ一覧も操作のたびに叩かない(月が増えるのは月初だけ)
 async function snapshotMonthExists(month){
+  if(_snapMonthsCache)return _snapMonthsCache.includes(month);
   for(let i=0;i<3;i++){
     try{
       const r=await fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'snapshot_list'})});
@@ -14808,7 +14824,7 @@ async function snapshotMonthExists(month){
         // 🚨 空配列を「無い」と断定しない。読み取り失敗で months:[] が返ることがあり、
         //    それを信じると請求が「保持期間が終了」扱いになって確定保存値に落ちる。
         //    スナップが1件も無いのは異常なので、確認不能として扱う。
-        if(Array.isArray(j.months)&&j.months.length)return j.months.includes(month);
+        if(Array.isArray(j.months)&&j.months.length){_snapMonthsCache=j.months;return j.months.includes(month);}
       }
     }catch(_){}
     if(i<2)await new Promise(r=>setTimeout(r,600*(i+1)));
@@ -14837,7 +14853,7 @@ function admBillRenderSource(){
 async function admBillLoadForMonth(monthVal,force){
   monthVal=monthVal||document.getElementById('adm-bill-month').value;
   if(!force&&admBillShopData&&admBillLoadedMonth===monthVal)return admBillShopData;
-  const snap=monthVal?await fetchShopMasterSnapshot(monthVal):null;
+  const snap=monthVal?await fetchShopMasterSnapshot(monthVal,force):null;
   if(snap){admBillShopData=snap;admBillSource='snapshot:'+monthVal;}
   else{
     // ── ライブの店舗マスタでは計算しない ──
@@ -17725,7 +17741,7 @@ async function admShopListEnsureMaster(){
     // Sheets読み取り上限(429)等の一時失敗があるのでリトライする
     for(let i=0;i<3;i++){
       if(i>0)await new Promise(r=>setTimeout(r,1200*i));
-      json=await fetchShopMasterSnapshot(month);
+      json=await fetchShopMasterSnapshot(month,true);   // 「🔄 スナップ再取得」は必ず取り直す
       if(json&&!json.error&&(json.records||[]).length)break;
     }
   }
@@ -18450,6 +18466,7 @@ async function admSlFixCourse(code,cat,toCourse,name){
   if(!confirm(`${name}（${code}）の${cat}コースを\n\n　「${toCourse}」\n\nに変更します。対象＝${month} の月初スナップ。\n${month} の請求金額に反映されます。\n\nよろしいですか？`))return;
   try{
     const resp=await smPost({action:'snapshot_update_cells',month,updates:[{code:String(code),col_index:ci,value:toCourse}]});
+    invalidateSnapCache(month);
     const j=await resp.json();
     if(j.error)throw new Error(j.error);
     if(!j.matched){alert(`⚠ ${month} のスナップに コード ${code} が見つかりませんでした。`);return;}
@@ -18482,6 +18499,7 @@ async function admSlFixCourseAll(){
       updates:list.map(s=>({code:String(s.code),col_index:ci,value:s.ship}))});
     const j=await resp.json();
     if(j.error)throw new Error(j.error);
+    invalidateSnapCache(month);
     alert(`✓ ${j.matched}件を修正しました${(j.notFound||[]).length?`／スナップに無い ${j.notFound.length}件はスキップ`:''}。\n${month} の請求に反映されます。\n\n※現行の店舗マスタは変更していません。翌月以降のために、店舗マスタ側も個別に修正してください。`);
     admSlMaster=null;await admShopListEnsureMaster();admShopListAnalyze();
   }catch(e){alert('一括修正エラー: '+e.message);}
@@ -18557,6 +18575,7 @@ async function admSlApplyCodeChange(){
       try{
         const su=doable.map(p=>({code:p.master.code,col_index:2,value:p.ship.code}));
         const sresp=await smPost({action:'snapshot_update_cells',month:snapMonth,updates:su});
+        invalidateSnapCache(snapMonth);
         const sj=await sresp.json().catch(()=>({}));
         if(sj&&sj.success)snapMsg=`\n月初スナップ(${snapMonth})も ${sj.matched}件 更新${(sj.notFound&&sj.notFound.length)?`（スナップ未該当 ${sj.notFound.length}件）`:''}`;
         else snapMsg=`\n⚠ 月初スナップ更新エラー: ${(sj&&sj.error)||''}`;
