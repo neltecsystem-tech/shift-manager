@@ -14407,24 +14407,21 @@ function admRevRender(){
 
       let openDateCol=-1;
       ((admBillShopData?.headers)||[]).forEach((h,i)=>{if(h.includes('開店日'))openDateCol=i;});
-      // 期中に開店した店舗は開店日から計上する(請求書側 feesOn と同じ規則)。
-      // 月初固定だと、コースごと期中に立ち上がった月の売上が丸ごと0になる。
+      // 対象は「月初時点で開店済みの店舗」だけ。請求書側と同じ規則。
+      // 🚨 2026-08-13〜2026-09-10 は期中開店を日割りしていたが、依頼のない独自ルール
+      //    だったため撤去(2026-09-10)。ここを請求書と揃えないと収支が請求額とずれる。
       function isOpenBy(shop,ymd){if(openDateCol<0)return true;const od=normalizeDateYmd(shop[`col_${openDateCol}`]||'');if(!od)return true;return od<=ymd;}
+      const _monthFirstDay=`${y}-${String(m).padStart(2,'0')}-01`;
       // 競馬を請求しない特殊店舗(JRA)立川 32006 / ｳｲﾝｽﾞ立川A 32001)は競馬から除外する。
       // 請求書側(SPECIAL_BILLING_SHOPS の noKeiba)と同じ規則。ここを外すと日次収支の
       // 競馬売上が請求額より多く出る。
       const KEIBA_NO_BILL=new Set(['32006','32001']);
-      const _openByDay={};
-      function openOn(d){
-        if(_openByDay[d])return _openByDay[d];
-        const ymd=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-        const f=s=>isOpenBy(s,ymd);
-        return _openByDay[d]={
-          oAm:amShops.filter(f),
-          oPm:pmShops.filter(f),
-          oK:keibaShops.filter(f).filter(s=>!KEIBA_NO_BILL.has(s[`col_${colsB.code}`])),
-        };
-      }
+      const _openFixedD={
+        oAm:amShops.filter(s=>isOpenBy(s,_monthFirstDay)),
+        oPm:pmShops.filter(s=>isOpenBy(s,_monthFirstDay)),
+        oK:keibaShops.filter(s=>isOpenBy(s,_monthFirstDay)).filter(s=>!KEIBA_NO_BILL.has(s[`col_${colsB.code}`])),
+      };
+      function openOn(_d){ return _openFixedD; }
       const specialPriceShops=new Set(['622179','602271','622183','612322','622068','762049','602267','761537','761536','761538','601719']);
       const allPmCodes=new Set(records.filter(r=>notCancelled(r)&&r[`col_${colsB.pmCourse}`]).map(s=>s[`col_${colsB.code}`]));
       const cond=getBillConditions(monthVal);
@@ -15609,25 +15606,28 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   const reiwa=y-2018;
   const cond=getBillConditions(monthVal);
 
-  // 開店日の扱い: 月途中に開店した店舗は「開店日から月末まで」を日割りで請求する。
-  // 以前は月初以前に開店済みの店舗だけを月内固定でカウントしていたため、コースごと期中に
-  // 立ち上がった場合(2026-07 城北8 = 全48店が7/13開店)に請求が丸ごと0円になっていた。
+  // 開店日の扱い: 請求対象は「月初時点で開店済みの店舗」だけ。月内固定で数える。
+  //   1日開店はカウント / 2日以降の開店はその月は請求しない(翌月から)。
+  // 🚨 2026-08-13〜2026-09-10 のあいだ、期中開店を開店日から日割りで請求していた。
+  //    これは依頼のない独自ルールだったため撤去した(2026-09-10)。
+  //    期中開店を請求するかどうかは運用の判断であり、ツールが勝手に決めない。
+  //    請求書には「請求していない期中開店」を注記として出すので、必要なら人が判断する。
   const monthFirstDay=`${y}-${String(m).padStart(2,'0')}-01`;
   const monthLastDay=`${y}-${String(m).padStart(2,'0')}-${String(daysInMonth).padStart(2,'0')}`;
   function isOpenBy(shop,ymd){
     if(openDateCol<0)return true;
     const od=normalizeDateYmd(shop[`col_${openDateCol}`]||'');
     if(!od)return true;
-    return od<=ymd;// その日までに開店済み(当日開店はその日から計上)
+    return od<=ymd;
   }
-  // 「その日までに開店済み」の店舗集合。日付ごとにキャッシュする
-  const _openCache={};
-  function openSetsOn(ymd){
-    if(_openCache[ymd])return _openCache[ymd];
-    const f=s=>isOpenBy(s,ymd);
-    return _openCache[ymd]={am:amShops.filter(f),pm:pmShops.filter(f),keiba:keibaShops.filter(f)};
-  }
-  // 当月に期中開店した店舗(日割りの対象。0件なら従来と完全に同じ結果になる)
+  // 請求対象の店舗集合。日付によらず「月初時点で開店済み」で固定する。
+  const _openFixed={
+    am:amShops.filter(s=>isOpenBy(s,monthFirstDay)),
+    pm:pmShops.filter(s=>isOpenBy(s,monthFirstDay)),
+    keiba:keibaShops.filter(s=>isOpenBy(s,monthFirstDay)),
+  };
+  function openSetsOn(_ymd){ return _openFixed; }
+  // 当月に期中開店した店舗(請求には入れない。注記で知らせるだけ)
   const midMonthOpen=[...new Set(
     [...amShops,...pmShops,...keibaShops]
       .filter(s=>!isOpenBy(s,monthFirstDay)&&isOpenBy(s,monthLastDay))
@@ -15755,7 +15755,8 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   }
 
   function calcDay(dow,day){
-    // その日までに開店済みの店舗数で計算する(期中開店の日割り)
+    // 店舗数は月内固定(月初時点で開店済みの店舗)。feesOn に日付を渡すのは
+    // 曜日で変わる特殊請求店舗(JRA)立川/ｳｲﾝｽﾞ立川A)の判定に使うため。
     const F=feesOn(`${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`);
     const isHoliday=(cond.holiday||[]).includes(day);
     const isNoAm=(cond.noam||[]).includes(day);
@@ -15903,7 +15904,7 @@ function admBillTachikawa(area,course,monthVal,returnTotals){
   h+=isKawagoe
     ?`<div style="color:var(--text-sub);">朝刊×¥${bp.kw_am_shop} 特殊×¥${bp.kw_am_tokushu} 距離増×¥${bp.kw_kyori} 雑誌×¥${bp.kw_am_zasshi} 同梱×¥${bp.kw_am_dokkon} 管理×¥${bp.kw_am_kanri} ／ 夕刊・競馬×¥${bp.kw_pm} 特殊×¥${bp.kw_pm_tokushu} 管理×¥${bp.kw_pm_kanri}</div>`
     :`<div style="color:var(--text-sub);">朝刊×¥${bp.am_shop} 特殊×¥${bp.am_tokushu} 雑誌×¥${bp.am_zasshi} 同梱×¥${bp.am_dokkon} 管理×¥${bp.am_kanri} ／ 夕刊×¥${bp.pm_normal} 特殊×¥${bp.pm_tokushu} 管理×¥${bp.pm_kanri} ／ 金土のみ×¥${bp.keiba_only}${keibaOnlyCount?'('+keibaOnlyCount+'店)':''}</div>`;
-  if(midMonthOpen.length)h+=`<div style="color:var(--text-sub);">※ 当月に開店した${midMonthOpen.length}店は開店日から日割りで計上（日別の「数」欄をご確認ください）</div>`;
+  if(midMonthOpen.length)h+=`<div style="color:#b45309;">※ 当月に開店した${midMonthOpen.length}店は<b>この請求に含めていません</b>（請求対象は月初時点で開店済みの店舗）。請求する場合は個別にご指示ください</div>`;
   h+=`</div>`;
   h+=`</div>`;
 
