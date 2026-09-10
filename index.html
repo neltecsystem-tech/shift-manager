@@ -20557,9 +20557,14 @@ function diagExportPdf(){
   win.document.close();
 }
 
-// showView拡張: 測定画面初期化
+// showView拡張: 測定画面初期化 + 開いている画面を控える(再読込で同じ画面に戻すため)
 const origShowView=showView;
-showView=function(v,btn){origShowView(v,btn);if(v==='measure')showView_measure();if(v==='diagram')diagInit();};
+showView=function(v,btn){
+  origShowView(v,btn);
+  try{sessionStorage.setItem('sm_view',v);}catch(_e){}
+  if(v==='measure')showView_measure();
+  if(v==='diagram')diagInit();
+};
 
 // ===== システムログイン =====
 let sysLoggedIn=false;
@@ -20569,6 +20574,98 @@ let sysUserPerms=[];
 
 function sysShowAdminLogin(){
   document.getElementById('sys-admin-area').style.display='block';
+}
+
+// ===== ログイン状態の保持 (リロード復帰) =====
+// 🚨 認証状態が JS 変数だけだったため、ページが再読込されるたびにログイン画面へ戻っていた。
+//    ダイヤグラムの「ナビ」は popup がブロックされると同じタブで Google マップへ飛ぶ
+//    (diagNavOpen の location.href フォールバック) ため、戻ってくると必ず再読込になる。
+//    測定画面を開いたままスマホのブラウザがタブを破棄した時も同じ。
+//    → トークンを sessionStorage に置いて復帰する。タブを閉じれば消え、別タブには渡らない。
+//      トークン自体はサーバが12時間で失効させる (invoice-sheet の TOKEN_EXPIRY_MS)。
+const SYS_SESS_KEY='sm_session_v1';
+
+// トークン payload の exp(ミリ秒) を読む。読めなければ 0 = 判定しない (サーバの401に委ねる)
+function sysTokenExp(token){
+  try{
+    const raw=atob(String(token||'').split('.')[0].replace(/-/g,'+').replace(/_/g,'/'));
+    const m=raw.match(/"exp":\s*(\d+)/); // 氏名に日本語が入るのでJSON.parseせず exp だけ拾う
+    return m?Number(m[1]):0;
+  }catch(_e){return 0;}
+}
+function sysSessionSave(){
+  try{
+    if(!invAuthToken)return;
+    sessionStorage.setItem(SYS_SESS_KEY,JSON.stringify({
+      token:invAuthToken,name:sysUserName,isAdmin:sysIsAdmin,perms:sysUserPerms
+    }));
+  }catch(_e){/* プライベートモード等で保存できなくても動作は変えない */}
+}
+function sysSessionClear(){
+  try{sessionStorage.removeItem(SYS_SESS_KEY);}catch(_e){}
+}
+function sysSessionLoad(){
+  try{
+    const raw=sessionStorage.getItem(SYS_SESS_KEY);
+    if(!raw)return null;
+    const s=JSON.parse(raw);
+    if(!s||!s.token)return null;
+    const exp=sysTokenExp(s.token);
+    // 残り1分未満なら復元しない (復帰した直後に「セッションが切れました」を出さないため)
+    if(exp&&exp<=Date.now()+60*1000){sysSessionClear();return null;}
+    return s;
+  }catch(_e){return null;}
+}
+
+/**
+ * ログイン直後 / リロード復帰で共通の適用処理。
+ * 🚨 権限適用と先読みをここ以外にコピーしないこと。片方だけ古くなって
+ *    「ログインし直すと見えるのに復帰すると見えない」類の事故になる。
+ */
+function sysStartSession(sess){
+  const perms=(sess.perms||[]).filter(Boolean);
+  sysLoggedIn=true;sysUserName=sess.name||'';sysIsAdmin=!!sess.isAdmin;sysUserPerms=perms;
+  invStaffPerms=perms.join(',');
+  document.getElementById('sys-login').style.display='none';
+  document.getElementById('sys-user-label').textContent=(sysIsAdmin?'👑 ':'👤 ')+sysUserName;
+  document.getElementById('sys-changepw-btn').style.display=sysIsAdmin?'none':'';
+  sysApplyPermissions(perms);
+  msrAuthed=true;msrStaffName=sysUserName;
+  invAuthed=true;invIsAdmin=sysIsAdmin;invStaffName=sysIsAdmin?'':sysUserName;
+  sysSessionSave();
+  if(sysIsAdmin){
+    // 全画面の認証をスキップ
+    defectAuthed=true;smAuthed=true;adminAuthed=true;
+    init();
+    smPrefetch(); // 管理者は店舗マスタ権限あり。裏で先読み
+    // スタッフ管理を即出せるよう 単価/稼働/人員名簿 を裏で先読み
+    invLoadAll().catch(()=>{});
+    if(typeof loadLiveStaff==='function')loadLiveStaff().catch(()=>{});
+    return;
+  }
+  // 機能表示制御をサーバから取得して再適用 (admin の設定を全スタッフに反映)
+  admFeatureVisFetchFromServer().then(()=>sysApplyPermissions(perms)).catch(()=>{});
+  // 各画面の認証をスキップ
+  if(perms.includes('defects'))defectAuthed=true;
+  if(perms.includes('shopmaster'))smAuthed=true;
+  // admin or shiftedit 権限でも管理画面に入れる (タブはタブ側で制限)
+  if(perms.includes('admin')||perms.includes('shiftedit')){adminAuthed=true;adminPw=INV_PW;}
+  // admin/all 権限のスタッフ(小林さん等)は請求書も「管理者ビュー=全スタッフ閲覧」にする。
+  // → システム確認のたびに管理者アカウントへログインし直す手間をなくす。
+  // サーバ側権限判定のため、請求書の管理者トークンを裏で取得してから全データ読込。
+  if(perms.includes('all')||perms.includes('admin')){
+    invServerAdminLogin(INV_PW).then(r=>{
+      if(r&&r.success){ invIsAdmin=true; invStaffName=''; sysSessionSave(); invLoadAll();
+        // スタッフ管理を開いた瞬間に出せるよう、人員名簿(営業所判定)も裏で先読み
+        if(typeof loadLiveStaff==='function')loadLiveStaff().catch(()=>{});
+      }
+    }).catch(()=>{});
+  }else{
+    // 一般スタッフ: 本人の単価・稼働を裏で先読み(稼働登録の金額が即出るように)
+    invLoadAllBackground().catch(()=>{});
+  }
+  init();
+  if(smAuthed)smPrefetch(); // 店舗マスタ権限があれば裏で先読み(開いた瞬間に表示できるように)
 }
 
 async function sysDoLogin(){
@@ -20583,42 +20680,11 @@ async function sysDoLogin(){
     errEl.textContent=res?.error||'IDまたはパスワードが正しくありません';errEl.style.display='block';
     document.getElementById('sys-login-btn').textContent='ログイン';return;
   }
-  sysLoggedIn=true;sysUserName=res.staff_name;sysIsAdmin=false;
   const perms=(res.permissions||'').split(',').filter(Boolean);
-  sysUserPerms=perms;
   // 自分のrateだけ手元に
   if(res.rates)invRates=res.rates;
   if(res.work)invWork=res.work;
-  document.getElementById('sys-login').style.display='none';
-  document.getElementById('sys-user-label').textContent='👤 '+sysUserName;
-  document.getElementById('sys-changepw-btn').style.display='';
-  sysApplyPermissions(perms);
-  // 機能表示制御をサーバから取得して再適用 (admin の設定を全スタッフに反映)
-  admFeatureVisFetchFromServer().then(()=>sysApplyPermissions(perms));
-  // 各画面の認証をスキップ
-  if(perms.includes('defects'))defectAuthed=true;
-  if(perms.includes('shopmaster'))smAuthed=true;
-  // admin or shiftedit 権限でも管理画面に入れる (タブはタブ側で制限)
-  if(perms.includes('admin')||perms.includes('shiftedit')){adminAuthed=true;adminPw=INV_PW;}
-  msrAuthed=true;msrStaffName=sysUserName;
-  // 請求書もログイン済みにする
-  invAuthed=true;invIsAdmin=false;invStaffName=sysUserName;
-  // admin/all 権限のスタッフ(小林さん等)は請求書も「管理者ビュー=全スタッフ閲覧」にする。
-  // → システム確認のたびに管理者アカウントへログインし直す手間をなくす。
-  // サーバ側権限判定のため、請求書の管理者トークンを裏で取得してから全データ読込。
-  if(perms.includes('all')||perms.includes('admin')){
-    invServerAdminLogin(INV_PW).then(r=>{
-      if(r&&r.success){ invIsAdmin=true; invStaffName=''; invLoadAll();
-        // スタッフ管理を開いた瞬間に出せるよう、人員名簿(営業所判定)も裏で先読み
-        if(typeof loadLiveStaff==='function')loadLiveStaff().catch(()=>{});
-      }
-    }).catch(()=>{});
-  }else{
-    // 一般スタッフ: 本人の単価・稼働を裏で先読み(稼働登録の金額が即出るように)
-    invLoadAllBackground().catch(()=>{});
-  }
-  init();
-  if(smAuthed)smPrefetch(); // 店舗マスタ権限があれば裏で先読み(開いた瞬間に表示できるように)
+  sysStartSession({name:res.staff_name,isAdmin:false,perms});
 }
 
 async function sysAdminLogin(){
@@ -20629,20 +20695,7 @@ async function sysAdminLogin(){
   if(!res?.success){
     errEl.textContent='管理者パスワードが正しくありません';errEl.style.display='block';return;
   }
-  sysLoggedIn=true;sysUserName='管理者';sysIsAdmin=true;
-  sysUserPerms=['all'];
-  document.getElementById('sys-login').style.display='none';
-  document.getElementById('sys-user-label').textContent='👑 管理者';
-  document.getElementById('sys-changepw-btn').style.display='none';
-  sysApplyPermissions(['all']);
-  // 全画面の認証をスキップ
-  defectAuthed=true;smAuthed=true;adminAuthed=true;msrAuthed=true;msrStaffName='管理者';
-  invAuthed=true;invIsAdmin=true;invStaffName='';
-  init();
-  smPrefetch(); // 管理者は店舗マスタ権限あり。裏で先読み
-  // スタッフ管理を即出せるよう 単価/稼働/人員名簿 を裏で先読み
-  invLoadAll().catch(()=>{});
-  if(typeof loadLiveStaff==='function')loadLiveStaff().catch(()=>{});
+  sysStartSession({name:'管理者',isAdmin:true,perms:['all']});
 }
 
 function sysApplyPermissions(perms){
@@ -20700,6 +20753,7 @@ function sysApplyPermissions(perms){
 }
 
 function sysLogout(){
+  sysSessionClear(); // 保存したトークンも消す (残すと次の読込で復帰してしまう)
   sysLoggedIn=false;sysUserName='';sysIsAdmin=false;sysUserPerms=[];
   defectAuthed=false;smAuthed=false;adminAuthed=false;msrAuthed=false;msrStaffName='';
   invAuthed=false;invIsAdmin=false;invStaffName='';invAuthToken='';invStaffPerms='';
@@ -20738,6 +20792,38 @@ function sysLogout(){
     const right=document.querySelector('.nav .nav-right'); if(right)right.style.display='none';
     init();
   });
+})();
+
+// ─── リロード復帰 ─── sessionStorage に生きたトークンがあればログイン画面を出さずに戻す
+(function(){
+  const p=new URLSearchParams(location.search);
+  if(p.get('public')==='1')return; // 公開モードは上で処理
+  const s=sysSessionLoad();
+  if(!s)return;
+  invAuthToken=s.token;
+  // ログイン画面のちらつきを防ぐため、DOM準備を待たずに先に隠す
+  const lg=document.getElementById('sys-login'); if(lg)lg.style.display='none';
+  // init() が showView('dashboard') で上書きするので、開いていた画面は先に読む
+  let lastView=''; try{lastView=sessionStorage.getItem('sm_view')||'';}catch(_e){}
+  const go=()=>{
+    try{
+      sysStartSession(s);
+      // 開いていた画面に戻す (ナビでGoogleマップへ行って帰ってきた時に測定画面が消えないように)。
+      // 権限で隠れているボタンには戻さない (sysApplyPermissions が display を決めている)
+      if(lastView&&lastView!=='dashboard'&&!new URLSearchParams(location.search).get('dg')){
+        const btn=document.querySelector('#sb-nav button[data-view="'+lastView+'"]');
+        if(btn&&btn.style.display!=='none')showView(lastView,btn);
+      }
+    }
+    catch(e){
+      // 復元に失敗したら中途半端な状態で使わせず、ログイン画面へ戻す
+      console.error('session restore failed',e);
+      invAuthToken='';
+      try{sysLogout();}catch(_e){ if(lg)lg.style.display='flex'; }
+    }
+  };
+  if(document.readyState==='loading')window.addEventListener('DOMContentLoaded',go);
+  else go();
 })();
 
 </script>
