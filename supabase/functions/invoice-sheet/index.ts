@@ -1347,10 +1347,24 @@ Deno.serve(async(req:Request)=>{
     }
     if(action==='get_bill_prices'){
       if(!admin) return forbid();
-      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(BILL_PRICE_SHEET)}!A2:W2`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
-      const row=(await resp.json()).values?.[0]||[];
+      // 🚨 2026-09-10: ここだけリトライも resp.ok チェックも無く、Sheetsの読取上限(429)等で
+      //    失敗すると values が無く row=[] → 全単価が黙って0になっていた。
+      //    45コース一括作成はSheetsを大量に読むので429に当たりやすく、実際に
+      //    2026-08 立川の請求が全額¥0で作られ、そのまま確定保存された。
+      //    他の取得箇所と同じく軽リトライ+503にし、0を返さない。
+      let row: any[]=[];
+      try{
+        const vals=await fetchSheetValuesWithRetry(`${BILL_PRICE_SHEET}!A2:W2`, ()=>getAccessToken());
+        row=vals[0]||[];
+      }catch(e){
+        return jsonResp({error:'請求単価を読み込めませんでした（Sheetsの読み取り上限の可能性）。少し待ってからやり直してください。', code:'SHEET_UNAVAILABLE', detail:String((e as any)?.message??e).slice(0,200)}, 503);
+      }
       const prices:any={};
       BILL_PRICE_KEYS.forEach((k,i)=>{prices[k]=Number(row[i])||0;});
+      // 空行や全0で返すと、呼び出し側が「単価0」で請求書を作ってしまう。読めていない扱いにする。
+      if(!BILL_PRICE_KEYS.some(k=>prices[k]>0)){
+        return jsonResp({error:'請求単価がすべて0でした。単価設定シートを確認してください（読み取り失敗の可能性もあります）。', code:'BILL_PRICES_EMPTY'}, 503);
+      }
       return jsonResp({prices});
     }
     if(action==='save_bill_prices'){

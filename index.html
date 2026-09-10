@@ -10076,12 +10076,31 @@ function getBillPrices(){
   if(billPricesCache)return {...BILL_PRICE_DEFAULTS,...billPricesCache};
   return {...BILL_PRICE_DEFAULTS};
 }
+// 🚨 単価が読めなかったときに「0のまま請求書を作る」のを防ぐ。
+//    2026-08 立川で、Sheetsの読取上限で単価が全0になり、¥0の請求書がそのまま
+//    45コース確定保存された。読めなければ計算させない(月初スナップと同じ扱い)。
+let billPricesFailed=false;
 async function loadBillPrices(){
   try{
     const res=await invApi({action:'get_bill_prices'});
-    if(res.prices){billPricesCache=res.prices;}
-  }catch(_){}
+    if(res&&res.prices&&Object.values(res.prices).some(v=>Number(v)>0)){
+      billPricesCache=res.prices;billPricesFailed=false;
+    }else{
+      billPricesFailed=true;  // 0だけ/エラー応答はキャッシュに入れない(既定値で誤魔化さない)
+    }
+  }catch(_){ billPricesFailed=true; }
   return getBillPrices();
+}
+// 請求計算の入口で使う。読めていなければ理由付きで止める。
+// 呼び出し元に try が無い経路もあるので、投げる前に必ず画面へ出す(45コース分は1回だけ)。
+let _billPriceAlertShown=false;
+function assertBillPricesLoaded(){
+  if(!(billPricesFailed||!billPricesCache))return;
+  const msg='請求単価を読み込めませんでした（Sheetsの読み取り上限の可能性があります）。'+String.fromCharCode(10,10)
+    +'単価が0のまま請求書を作らないよう中止しました。'+String.fromCharCode(10)
+    +'少し待ってから「単価一覧」タブを開き、単価が表示されることを確認してからやり直してください。';
+  if(!_billPriceAlertShown){_billPriceAlertShown=true;alert(msg);setTimeout(()=>{_billPriceAlertShown=false;},3000);}
+  throw new Error(msg);
 }
 async function saveBillPrices(){
   const p={};
@@ -15580,6 +15599,7 @@ function billCountsFrom(r){
 }
 
 function admBillTachikawa(area,course,monthVal,returnTotals){
+  assertBillPricesLoaded();   // 単価が読めていないなら計算しない(¥0の請求書を作らせない)
   const records=(admBillShopData?.records)||[];
   const cols=admBillCols();
 
