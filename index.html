@@ -69,8 +69,21 @@ body { padding-left:220px; }
   .container { padding:12px; max-width:100%; }
   .card { padding:14px; }
   .card input[type="text"], .card input[type="search"], .card select { max-width:100%; min-width:0; }
-  /* gap付きの横並びは、折り返せないと固定幅の合計がそのまま最小幅になる */
-  .card div[style*="display:flex"] { flex-wrap:wrap; }
+}
+/* 🚨 全画面で右に余白が出ていた主因はヘッダー。
+   .nav-right が flex-wrap:nowrap、各ボタンが white-space:nowrap のため、
+   ☰＋画面名＋氏名＋マニュアル＋管理＋PW変更＋ログアウト の合計がスマホ幅を超え、
+   ページ全体が横スクロールになっていた(最後のログアウトが見切れる)。
+   .nav h1 も min-width:0 が無いので縮まず、省略表示(…)が効いていなかった。 */
+@media (max-width:700px){
+  .nav { padding:0 8px; gap:4px; }
+  .nav h1 { min-width:0; flex:1 1 auto; font-size:14px; }
+  #sys-user-label { display:none !important; }   /* 氏名は各画面側に出る */
+  .nav .nav-right { gap:4px; flex-shrink:0; }
+  .nav .nav-right a, .nav .nav-right button { padding:6px 8px; }
+  .nav .nav-right .nav-lbl { display:none; }     /* 絵文字だけにして幅を詰める */
+  /* 固定幅の横並びは折り返す。表(.table-wrap)は自前で横スクロールするので対象外 */
+  .card div[style*="display:flex"]:not(.table-wrap) { flex-wrap:wrap; }
 }
 @media print {
   body { padding-left:0 !important; }
@@ -160,10 +173,10 @@ tbody tr:hover { background:var(--primary-light); }
   <h1 id="nav-title">ダッシュボード</h1>
   <div class="nav-right">
     <span id="sys-user-label" style="color:rgba(255,255,255,.75);font-size:12px;"></span>
-    <a href="manual.html" target="_blank" rel="noopener" title="管理者マニュアルを開く">📖 マニュアル</a>
-    <button id="nav-admin-btn" onclick="adminShowLogin()">🔧 管理</button>
-    <button id="sys-changepw-btn" onclick="invShowChangePw()" style="display:none;" title="自分のログインパスワードを変更">🔑 PW変更</button>
-    <button onclick="sysLogout()">ログアウト</button>
+    <a href="manual.html" target="_blank" rel="noopener" title="管理者マニュアルを開く">📖<span class="nav-lbl"> マニュアル</span></a>
+    <button id="nav-admin-btn" onclick="adminShowLogin()" title="管理画面">🔧<span class="nav-lbl"> 管理</span></button>
+    <button id="sys-changepw-btn" onclick="invShowChangePw()" style="display:none;" title="自分のログインパスワードを変更">🔑<span class="nav-lbl"> PW変更</span></button>
+    <button onclick="sysLogout()" title="ログアウト">ログアウト</button>
   </div>
 </div>
 <div class="container">
