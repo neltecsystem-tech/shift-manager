@@ -328,17 +328,43 @@ Deno.serve(async (req) => {
     const summary = targets.map((t) => ({ staff_name: t.staff_name, grand_total: t.grand_total, primary_area: t.primary_area, company_name: t.company_name })).sort((a, b) => b.grand_total - a.grand_total);
     const totalAll = targets.reduce((a, t) => a + t.grand_total, 0);
 
+    // finalize: 反映済み + 手動確定は保護(上書き禁止)。
+    // 🚨 手動確定した行を自動確定が上書きすると、人が直した金額が黙って計算値に戻る。
+    //    判定は pay_finalize_locks の3段(行ごと → 営業所 → ツール全体)。
+    //    既定(設定が無い/ON)では「finalized_by が cron: 以外 = 人が確定した」をロックする。
+    //    null(列追加前の既存行)はロックしない。manual扱いにすると過去分が全部凍結される。
+    const force = body.force === true; // 変更を反映ボタン: 反映済みでも上書き再確定
+    const { data: existing } = await sb.from('closed_pay_statements')
+      .select('staff_name, reflected_at, finalized_by, lock_auto, primary_area').eq('year', y).eq('month', m);
+    const { data: lockCfg } = await sb.from('pay_finalize_locks').select('scope, enabled').eq('tool', 'shift');
+    const lockByScope = new Map<string, boolean>();
+    for (const c of ((lockCfg ?? []) as any[])) lockByScope.set(String(c.scope), c.enabled !== false);
+    const lockOn = (area: string): boolean => {
+      if (lockByScope.has(area)) return lockByScope.get(area)!;   // 営業所ごと
+      if (lockByScope.has('*')) return lockByScope.get('*')!;     // ツール全体
+      return true;                                               // 設定が無ければ守る側に倒す
+    };
+    // ロックされる理由。'' ならロックなし。確定側と警告側で必ずこの関数を使う。
+    const lockedReason = (r: any): string => {
+      if (!r) return '';
+      if (r.lock_auto === true) return 'lock_on';
+      if (r.lock_auto === false) return '';
+      const by = String(r.finalized_by ?? '');
+      if (by && !by.startsWith('cron:') && lockOn(String(r.primary_area ?? ''))) return 'manual';
+      if (r.reflected_at) return 'reflected';
+      return '';
+    };
+    const lockDetail = (existing ?? []).filter((r: any) => !!lockedReason(r))
+      .map((r: any) => ({ name: String(r.staff_name), area: r.primary_area ?? '', reason: lockedReason(r) }));
+    const locked = force ? new Set<string>() : new Set(lockDetail.map((r) => r.name));
     if (dryRun) {
       let debug: any = undefined;
       if (body.debug_staff) { const dk = invNormName(body.debug_staff); const t = targets.find((x) => invNormName(x.staff_name) === dk); debug = t ? { staff_name: t.staff_name, grand_total: t.grand_total, am_sum: t.am_sum, pm_sum: t.pm_sum, primary_area: t.primary_area, rows: (t.rows || []).filter((r: any) => r.total > 0) } : { note: 'not found in targets (no 稼働?)' }; }
       return json({ ok: true, mode: 'dry_run', year: y, month: m, count: targets.length, total: totalAll, skipped_count: skipped.length,
+        locked: lockDetail.length, locked_detail: lockDetail,
         kawagoe_rate_missing: [...kwMisses.entries()].map(([k, days]) => `${k} (${days}日分)`), summary, debug });
     }
 
-    // finalize: reflected_at済みは保護(上書き禁止)。未反映のみ upsert。
-    const force = body.force === true; // 変更を反映ボタン: 反映済みでも上書き再確定
-    const { data: existing } = await sb.from('closed_pay_statements').select('staff_name, reflected_at').eq('year', y).eq('month', m);
-    const locked = force ? new Set<string>() : new Set((existing ?? []).filter((r: any) => r.reflected_at).map((r: any) => String(r.staff_name)));
     // 既存行の反映日時。再確定で公開を取り消さないよう引き継ぐ。
     const prevReflected = new Map<string, string | null>(
       (existing ?? []).map((r: any) => [String(r.staff_name), r.reflected_at ?? null]),
@@ -489,7 +515,7 @@ Deno.serve(async (req) => {
       await sb.from('sm_active_alerts').update({ status: 'resolved', resolved_at: new Date().toISOString(), cnt: 0, updated_at: new Date().toISOString() })
         .eq('key', `kw_course_rate_missing:${ym}`).eq('status', 'open').then(() => {}, () => {});
     }
-    return json({ ok: true, mode: 'finalize', year: y, month: m, count: targets.length, saved, locked: locked.size, total: totalAll,
+    return json({ ok: true, mode: 'finalize', year: y, month: m, count: targets.length, saved, locked: locked.size, locked_detail: force ? [] : lockDetail, total: totalAll,
       skipped_no_phone: noPhone, phone_from_company: byCompanyUsed, phone_ambiguous: phoneAmbiguous,
       company_renamed: renamedCo, company_cleared: clearedCo,
       kawagoe_rate_missing: kwMissList, errors: errs });
