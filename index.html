@@ -1967,6 +1967,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-09-15', tag:'修正', title:'城北の正式店舗名/Place IDが別の店になっていた問題を修復しました（460行）',
+   desc:'城北の550店のうち465店で、「正式店舗名」と「Place ID」が<b>別の店</b>のものになっていました（例: 新宿区の「FM西早稲田」に渋谷区の「ローソン神宮前三丁目店」のIDと名前。1.1〜6.1km離れた店です）。住所・緯度経度・社内名は正しく、ズレていたのはこの2列だけです。座標のそばにある同じチェーン・同じ地名の店を引き直し、<b>440店を正しい店に入れ替え（ずれ0〜31m）、確定できなかった20店は空にしました</b>（空の行は住所でナビされます）。<br><b>原因</b>: 正式店舗名とPlace IDの書き戻しが「シートの行番号」だけを頼りにしていたため、読み込んでから書き込むまでの間にシート側で行の挿入・削除・並べ替えが起きると、そのまま別の店の行に書き込まれていました。<b>対策として、書き込む直前にその行の店舗コードを照合し、一致しない行には書かないようにしました</b>（食い違った行は書かずに画面で知らせます）。これで同じズレは起きません。'},
   {date:'2026-09-15', tag:'修正', title:'測定の店舗と並び順をダイヤグラムと一致させました',
    desc:'測定とダイヤグラムが別々の実装になっており、同じコースを開いても<b>並び順も店舗も違う</b>状態でした。①並び順: ダイヤグラムは「順番 → 店着時間」（2026-09-01に決めた、人が決める順番を正とする規則）ですが、測定だけ「店着時間 → 順番」のままでした。②店舗: 測定は休店中・開店前の店も出していました（立川19・立川20の休店中2店、立川1・立川23の開店前2店）。③店名: 測定は正式店舗名を優先して表示していましたが、2026年7月の総ズレ事故の影響で<b>城北の245店は正式店舗名に別の店の名前が入っている</b>ため（例: 城北11の「LA西早稲田二丁目」に「ローソン新宿上落合」）、測定画面に渋谷・杉並・中野など別の店名が並んでいました。住所・座標・社内名は正しいので、ダイヤグラムと同じ社内名を表示し、正式店舗名はナビと同じ信頼性チェックを通ったものだけ小さく併記します。<br>「どの店をどの順で回るか」を決める処理を1か所に統一したので、今後この2画面がずれることはありません（全129コース・5,463店で一致を確認）。なお測定記録シートに残る店名も、今後は社内名になります。'},
   {date:'2026-09-15', tag:'修正', title:'測定: 他の営業所のコースが混ざって出る問題を修正しました',
@@ -6555,17 +6557,23 @@ async function smRefetchOfficial(){
     if(!plan.length&&!notFound.length){if(prog)prog.innerHTML='変更はありませんでした';if(btn){btn.disabled=false;btn.textContent='🏷 正式名/ID引き直し';}return;}
     if(!window.confirm(okMsg)){if(prog)prog.style.display='none';if(btn){btn.disabled=false;btn.textContent='🏷 正式名/ID引き直し';}return;}
     if(prog)prog.innerHTML='💾 書き込み中...';
-    const offUpd=plan.map(p=>({row_number:p.row_number,official:p.official}));
-    const pidUpd=plan.map(p=>({row_number:p.row_number,place_id:p.place_id}));
+    // code(店舗コード)を一緒に送る。EF側が書き込む直前にシートの店舗コードと照合し、
+    // 一致しない行には書かない(読んでから書くまでに行が動いても別店に書かないため)。
+    const iCode=ci('店舗コード');
+    const codeOf=rn=>{const t=smAll.find(x=>x.row_number===rn);return t&&iCode>=0?String(t[`col_${iCode}`]||'').trim():'';};
+    const offUpd=plan.map(p=>({row_number:p.row_number,official:p.official,code:codeOf(p.row_number)}));
+    const pidUpd=plan.map(p=>({row_number:p.row_number,place_id:p.place_id,code:codeOf(p.row_number)}));
     // 見つからなかった行は「別店の名前/ID」を残さず空にする(住所でナビさせる)
     for(const r of targets){
       const nm=String(r[`col_${iName}`]||'').trim();
       if(!clears.some(c=>c===nm))continue;
-      offUpd.push({row_number:r.row_number,official:''});
-      pidUpd.push({row_number:r.row_number,place_id:''});
+      offUpd.push({row_number:r.row_number,official:'',code:codeOf(r.row_number)});
+      pidUpd.push({row_number:r.row_number,place_id:'',code:codeOf(r.row_number)});
     }
-    if(offUpd.length){const j=await (await smPost({action:'batch_update_official',updates:offUpd})).json();if(j.error)throw new Error(j.error);}
-    if(pidUpd.length){const j=await (await smPost({action:'batch_update_placeid',updates:pidUpd})).json();if(j.error)throw new Error(j.error);}
+    let mism=[];
+    if(offUpd.length){const j=await (await smPost({action:'batch_update_official',updates:offUpd})).json();if(j.error)throw new Error(j.error);mism=mism.concat(j.mismatched||[]);}
+    if(pidUpd.length){const j=await (await smPost({action:'batch_update_placeid',updates:pidUpd})).json();if(j.error)throw new Error(j.error);mism=mism.concat(j.mismatched||[]);}
+    if(mism.length)alert(`⚠ ${mism.length}件は書き込みを見送りました。${NL}読み込んでから書き込むまでの間にシート側で行が動いた可能性があります(店舗コードが一致しませんでした)。${NL}画面を再読み込みして、もう一度実行してください。`);
     if(prog)prog.innerHTML=`✅ 引き直し完了: 入れ替え ${plan.length}件（うち住所で確認 ${byText.length}件） / 空にした ${clears.length}件 / 変更なし ${unchanged.length}件`;
     await smLoad(true);
   }catch(e){

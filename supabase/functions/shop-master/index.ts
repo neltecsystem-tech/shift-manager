@@ -120,6 +120,30 @@ const AUTHED_WRITE_ACTIONS = new Set(['batch_update_latlng','batch_update_verify
 // admin_password による代替認証も許可(cron/自動化フォールバック)。
 const SM_ADMIN_PASSWORD = Deno.env.get('SHIFT_ADMIN_PASSWORD') || '';
 
+// 🚨 行番号だけで書き戻すと「読んでから書くまでの間にシート側で行の挿入・削除・並べ替えが
+//    起きた」場合、そのまま別の店に書き込んでしまう。2026-07の正式店舗名/PlaceIDの総ズレ
+//    (城北245店が別店の名前とID)はこれで起きている。
+//    → updates に code(店舗コード) を載せてもらい、書き込む直前にシートの C列と照合して、
+//      一致した行にだけ書く。食い違った行は書かずに返す(呼び側で気付けるように)。
+async function filterByShopCode(token: string, updates: any[]): Promise<{ ok: any[]; mismatched: any[] }> {
+  const withCode = updates.filter((u) => u && u.row_number && u.code != null && String(u.code).trim() !== '');
+  if (!withCode.length) return { ok: updates, mismatched: [] };
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!C1:C20000`, { headers: { 'Authorization': `Bearer ${token}` } });
+  const j = await r.json();
+  if (!r.ok) throw new Error('店舗コードの読み取りに失敗: ' + JSON.stringify(j?.error?.message || '').slice(0, 200));
+  const col = (j.values || []) as string[][];
+  const codeAt = (rowNumber: number) => String((col[rowNumber - 1] || [])[0] || '').trim();
+  const ok: any[] = []; const mismatched: any[] = [];
+  for (const u of updates) {
+    if (!u || !u.row_number) continue;
+    if (u.code == null || String(u.code).trim() === '') { ok.push(u); continue; }
+    const actual = codeAt(u.row_number);
+    if (actual === String(u.code).trim()) ok.push(u);
+    else mismatched.push({ row_number: u.row_number, expected_code: String(u.code).trim(), actual_code: actual });
+  }
+  return { ok, mismatched };
+}
+
 async function ensureExtraHeaders(token: string) {
   // AF=住所, AG=住所精度, AH=ナビ判定, AI=正式店舗名, AJ=旧夕刊コース(参照用残置), AK=Place ID, AL=修正済み
   const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AF2:AO2`, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -1290,8 +1314,10 @@ Deno.serve(async (req: Request) => {
         });
       }
       await ensureExtraHeaders(token);
+      // code(店舗コード)が付いている行は、シートの実際の店舗コードと一致した行にだけ書く
+      const offChecked = await filterByShopCode(token, updates);
       const data: any[] = [];
-      for (const u of updates) {
+      for (const u of offChecked.ok) {
         if (!u.row_number) continue;
         data.push({
           range: `'${SHEET_NAME}'!AI${u.row_number}:AI${u.row_number}`,
@@ -1314,7 +1340,7 @@ Deno.serve(async (req: Request) => {
           status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-      return new Response(JSON.stringify({ success: true, updated: data.length }), {
+      return new Response(JSON.stringify({ success: true, updated: data.length, mismatched: offChecked.mismatched }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else if (action === 'batch_update_placeid') {
@@ -1326,8 +1352,9 @@ Deno.serve(async (req: Request) => {
         });
       }
       await ensureExtraHeaders(token);
+      const pidChecked = await filterByShopCode(token, updates);
       const data: any[] = [];
-      for (const u of updates) {
+      for (const u of pidChecked.ok) {
         if (!u.row_number) continue;
         data.push({
           range: `'${SHEET_NAME}'!AK${u.row_number}:AK${u.row_number}`,
@@ -1350,7 +1377,7 @@ Deno.serve(async (req: Request) => {
           status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-      return new Response(JSON.stringify({ success: true, updated: data.length }), {
+      return new Response(JSON.stringify({ success: true, updated: data.length, mismatched: pidChecked.mismatched }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else if (action === 'batch_update_verify') {
