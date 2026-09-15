@@ -1968,7 +1968,7 @@ function parseShiftEv(key){parseShift(key);}
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
   {date:'2026-09-15', tag:'修正', title:'測定: 他の営業所のコースが混ざって出る問題を修正しました',
-   desc:'測定画面を開くと、担当コースから営業所を自動で選ぶようにしていますが、店舗マスタの営業所欄が「池袋, 城北」のように2つ書かれている店（124店）だと、その文字が営業所の選択肢と一致せず営業所が未選択の状態になり、コース一覧に全営業所のコースが並んでしまっていました（城北で発生）。営業所欄が複数書かれていても正しい営業所に揃えるようにしました。あわせて、選んだ営業所に該当コースが無いときに「黙って営業所の選択を外して全営業所から出す」動きを廃止し、該当なしと表示するようにしました（この動きも混ざる原因でした）。営業所が未選択のときは、コース名の後ろに営業所を出して区別できるようにしています。'},
+   desc:'測定画面を開くと、担当コースから営業所を自動で選ぶようにしていますが、店舗マスタの営業所欄が「池袋, 城北」のように2つ書かれている店（124店）だと、その文字が営業所の選択肢と一致せず営業所が未選択の状態になり、コース一覧に全営業所のコースが並んでしまっていました（城北で発生）。コース名は全コース（朝刊60・夕刊14・競馬55）が営業所名で始まっているため、どの営業所のコースかは店舗の営業所欄ではなく<b>コース名で判定</b>するように変えました。あわせて、選んだ営業所に該当コースが無いときに「黙って営業所の選択を外して全営業所から出す」動きを廃止し、該当なしと表示するようにしました（この動きも混ざる原因でした）。この変更で、営業所欄が「立川, 川崎高津」と書かれている多摩センター周辺の7店が川崎高津側で落ちていた問題も直り、<b>夕刊 川崎高津9 と 競馬 川崎高津15 が4店→11店</b>になります（他の127コースの店舗数は変わりません）。'},
   {date:'2026-09-15', tag:'修正', title:'測定: 9/13以降の測定データが管理画面に出なくなっていました',
    desc:'管理→測定データの読み取り範囲が1万行で固定されていたため、記録シートが1万行を超えた9月13日以降の測定が1件も表示されなくなっていました（記録自体は保存されており、消えてはいません）。行数で切らない読み方に変更し、9/13〜9/15分も表示されます。行数が急に増えた原因は「📤 途中送信」で、押すたびにコースの全店舗を追記していたため、1日1コースで最大255行が作られていました。今後は同じ日・同じコース・同じ担当者の記録はその場で上書きし、増えないようにしました。過去分の重複は、同じ店をまとめて表示します。'},
   {date:'2026-09-15', tag:'修正', title:'測定: 前日の到着時刻が翌日も「到着済み」で残っていました',
@@ -18923,14 +18923,9 @@ function msrLoadTimes(){
 // select.value に入れると一致せず空になり、営業所の絞り込みが外れて全営業所の
 // コースが混ざっていた(「他のコースも入り混じった」状態の正体)。
 function msrCanonArea(raw){
-  const sel=document.getElementById('msr-area');
-  const opts=[...sel.options].map(o=>o.value).filter(Boolean);
-  const tokens=String(raw||'').split(/[,、]/).map(t=>t.trim()).filter(t=>t&&t!=='納品中止');
-  for(const t of tokens){
-    if(opts.includes(t))return t;
-    if(t==='池袋'&&opts.includes('城北'))return '城北';// 池袋は城北営業所に含める
-  }
-  return '';
+  const opts=[...document.getElementById('msr-area').options].map(o=>o.value).filter(Boolean);
+  const canon=msrCanonAreaOf(raw);
+  return opts.includes(canon)?canon:'';
 }
 
 function msrShowLogin(){
@@ -19020,14 +19015,14 @@ function msrAutoSelectCourse(){
     return;
   }
 
-  // コースから営業所を特定
+  // コースから営業所を特定。コース名の先頭が営業所名なのでコース名から決める。
+  // (店舗の営業所欄から取ると「池袋, 城北」等が選択肢に一致せず未選択になり、
+  //  営業所の絞り込みが外れて全営業所のコースが混ざっていた)
   const colIdx=targetType==='am'?msrColMap.amCourse:targetType==='keiba'?msrColMap.keibaCourse:msrColMap.pmCourse;
   const matchShop=msrData.find(r=>r[`col_${colIdx}`]===targetCourse);
-  const area=matchShop?matchShop[`col_${areaCol}`]:'';
+  const area=msrCourseArea(targetCourse)||(matchShop?matchShop[`col_${areaCol}`]:'');
 
   // 自動選択
-  // ★セル値をそのまま入れると「池袋, 城北」が選択肢に無く value が空になり、
-  //   営業所の絞り込みが外れて全営業所のコースが混ざる。必ず正規化して入れる。
   const canonArea=msrCanonArea(area);
   document.getElementById('msr-area').value=canonArea;
   if(area&&!canonArea)console.warn('[測定] 営業所を特定できませんでした:',area);
@@ -19120,14 +19115,34 @@ function msrShopName(s){
   return String(s[`col_${msrColMap.name??3}`]||'').trim();
 }
 
-// 測定用: 行の営業所が選択営業所にマッチするか (城北は池袋を含む、 納品中止は常に除外)
-function msrAreaMatch(rowArea,selectedArea){
-  const raw=String(rowArea||'');
-  if(raw.includes('納品中止'))return false;
-  if(!selectedArea)return true;
-  const first=raw.split(',')[0].trim();
-  const targets=selectedArea==='城北'?['城北','池袋']:[selectedArea];
-  return targets.includes(first);
+// コース名の先頭から営業所を決める。
+// 店舗マスタの営業所欄は「池袋, 城北」「立川, 川崎高津」のような複数表記があり、
+// 先頭だけを見ていたため 夕刊 川崎高津9 が11店のうち4店しか出ていなかった
+// (多摩センター周辺の7店は営業所欄が「立川, 川崎高津」)。
+// コース名は全コース(朝刊61/夕刊14/競馬56)が営業所名で始まっているので、
+// どの営業所のコースかはコース名だけで判定できる。営業所欄は納品中止の判定にだけ使う。
+const MSR_OFFICES=['川崎高津','立川','城北','川越'];// 長いものから一致させる
+function msrCourseArea(course){
+  const c=String(course||'').trim();
+  return MSR_OFFICES.find(o=>c.startsWith(o))||'';
+}
+// 営業所欄の表記(「池袋, 城北」等)を選択肢の営業所名に寄せる。池袋は城北営業所に含める。
+function msrCanonAreaOf(raw){
+  const tokens=String(raw||'').split(/[,、]/).map(t=>t.trim()).filter(t=>t&&t!=='納品中止');
+  for(const t of tokens){
+    if(MSR_OFFICES.includes(t))return t;
+    if(t==='池袋')return '城北';
+  }
+  return '';
+}
+
+// そのコースの店舗。店舗はコースで決まるので営業所では絞らない(納品中止だけ除外)。
+function msrShopsOfCourse(courseCol,course){
+  if(courseCol===undefined||!course)return [];
+  return msrData.filter(r=>
+    !String(r[`col_${msrColMap.area??1}`]||'').includes('納品中止')
+    && String(r[`col_${courseCol}`]||'').trim()===String(course).trim()
+  );
 }
 
 function msrFilter(){
@@ -19135,10 +19150,17 @@ function msrFilter(){
   const type=document.getElementById('msr-type').value;
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
   if(courseCol===undefined){document.getElementById('msr-course').innerHTML='<option value="">該当列なし</option>';return;}
-  // コース一覧を取得（営業所未選択なら全データから）
-  let filtered=msrData;
-  filtered=filtered.filter(r=>msrAreaMatch(r[`col_${msrColMap.area??1}`],area));
-  const courses=[...new Set(filtered.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  // コース一覧。どの営業所のコースかは「コース名の先頭」で判定する
+  // (店舗の営業所欄は複数表記があり、そこで絞ると他営業所のコースが混ざる/落ちる)。
+  // 営業所名で始まらないコースが増えた場合は、どこからも選べなくならないよう全営業所に出す。
+  const allCourses=[...new Set(msrData
+    .filter(r=>!String(r[`col_${msrColMap.area??1}`]||'').includes('納品中止'))
+    .map(r=>String(r[`col_${courseCol}`]||'').trim())
+    .filter(c=>c&&c!=='納品中止')
+  )];
+  const courses=allCourses
+    .filter(c=>!area||msrCourseArea(c)===area||!msrCourseArea(c))
+    .sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   const sel=document.getElementById('msr-course');
   // ★以前はここで「候補が無ければ営業所の選択を黙って外して全営業所から出す」
   //   フォールバックがあり、それが他営業所のコースが混ざる原因になっていた。
@@ -19149,11 +19171,10 @@ function msrFilter(){
     return;
   }
   // 営業所が未選択のときだけ、どの営業所のコースか分かるようにラベルに営業所を出す
-  const areaLabelOf=c=>{
-    const r=filtered.find(x=>x[`col_${courseCol}`]===c);
-    return r?String(r[`col_${msrColMap.area??1}`]||'').split(/[,、]/).map(t=>t.trim()).filter(t=>t&&t!=='納品中止')[0]||'':'';
-  };
-  sel.innerHTML='<option value="">選択してください</option>'+courses.map(c=>`<option value="${c}">${c}${area?'':`（${areaLabelOf(c)}）`}</option>`).join('');
+  sel.innerHTML='<option value="">選択してください</option>'+courses.map(c=>{
+    const lbl=area?c:`${c}${msrCourseArea(c)?`（${msrCourseArea(c)}）`:''}`;
+    return `<option value="${c}">${lbl}</option>`;
+  }).join('');
   document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">コースを選択してください</p>';
 }
 
@@ -19165,10 +19186,7 @@ function msrRender(){
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
   const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
   const codeCol=msrColMap.code??2;
-  let shops=msrData.filter(r=>{
-    if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
-    return r[`col_${courseCol}`]===course;
-  });
+  let shops=msrShopsOfCourse(courseCol,course);
   const latCol0=msrColMap.lat;
   const lngCol0=msrColMap.lng;
   const gpsActive=msrGpsPos&&latCol0!==undefined&&lngCol0!==undefined;
@@ -19356,7 +19374,7 @@ function msrCurrentRouteShops(){
   const timeCol=type==='am'?msrColMap.amTime:type==='keiba'?msrColMap.keibaTime:msrColMap.pmTime;
   const codeCol=msrColMap.code??2;
   const latCol=msrColMap.lat, lngCol=msrColMap.lng;
-  let shops=msrData.filter(r=>msrAreaMatch(r[`col_${msrColMap.area??1}`],area)&&r[`col_${courseCol}`]===course);
+  let shops=msrShopsOfCourse(courseCol,course);
   const pt=t=>{
     if(t==null)return null;const s=String(t).trim();if(!s)return null;
     let m=s.match(/(\d{1,2}):(\d{2})/);if(m)return parseInt(m[1],10)*60+parseInt(m[2],10);
@@ -19474,10 +19492,7 @@ function msrCheckAutoArrive(){
   const latCol=msrColMap.lat;
   const lngCol=msrColMap.lng;
   if(latCol===undefined||lngCol===undefined)return;
-  const shops=msrData.filter(r=>{
-    if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
-    return r[`col_${courseCol}`]===course;
-  });
+  const shops=msrShopsOfCourse(courseCol,course);
   shops.forEach(s=>{
     const code=s[`col_${codeCol}`]||'';
     const key=`${course}|${code}`;
@@ -19501,10 +19516,7 @@ async function msrSendProgress(){
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
   const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
   const codeCol=msrColMap.code??2;
-  const shops=msrData.filter(r=>{
-    if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
-    return r[`col_${courseCol}`]===course;
-  });
+  const shops=msrShopsOfCourse(courseCol,course);
   if(orderCol!==undefined)shops.sort((a,b)=>(parseInt(a[`col_${orderCol}`])||99999)-(parseInt(b[`col_${orderCol}`])||99999));
   const now=new Date();
   const nowTime=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
@@ -19560,10 +19572,7 @@ async function msrFinish(){
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
   const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
   const codeCol=msrColMap.code??2;
-  const shops=msrData.filter(r=>{
-    if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
-    return r[`col_${courseCol}`]===course;
-  });
+  const shops=msrShopsOfCourse(courseCol,course);
   if(orderCol!==undefined)shops.sort((a,b)=>(parseInt(a[`col_${orderCol}`])||99999)-(parseInt(b[`col_${orderCol}`])||99999));
   const now=new Date();
   const endTime=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
@@ -19620,10 +19629,7 @@ function msrFinishExport(course,startTime,endTime,doneCount,total){
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
   const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
   const codeCol=msrColMap.code??2;
-  const shops=msrData.filter(r=>{
-    if(!msrAreaMatch(r[`col_${msrColMap.area??1}`],area))return false;
-    return r[`col_${courseCol}`]===course;
-  });
+  const shops=msrShopsOfCourse(courseCol,course);
   if(orderCol!==undefined)shops.sort((a,b)=>(parseInt(a[`col_${orderCol}`])||99999)-(parseInt(b[`col_${orderCol}`])||99999));
   const now=new Date();
   const today=`${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`;
