@@ -1967,6 +1967,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-09-15', tag:'修正', title:'測定の店舗と並び順をダイヤグラムと一致させました',
+   desc:'測定とダイヤグラムが別々の実装になっており、同じコースを開いても<b>並び順も店舗も違う</b>状態でした。①並び順: ダイヤグラムは「順番 → 店着時間」（2026-09-01に決めた、人が決める順番を正とする規則）ですが、測定だけ「店着時間 → 順番」のままでした。②店舗: 測定は休店中・開店前の店も出していました（立川19・立川20の休店中2店、立川1・立川23の開店前2店）。③店名: 測定は正式店舗名を優先して表示していましたが、2026年7月の総ズレ事故の影響で<b>城北の245店は正式店舗名に別の店の名前が入っている</b>ため（例: 城北11の「LA西早稲田二丁目」に「ローソン新宿上落合」）、測定画面に渋谷・杉並・中野など別の店名が並んでいました。住所・座標・社内名は正しいので、ダイヤグラムと同じ社内名を表示し、正式店舗名はナビと同じ信頼性チェックを通ったものだけ小さく併記します。<br>「どの店をどの順で回るか」を決める処理を1か所に統一したので、今後この2画面がずれることはありません（全129コース・5,463店で一致を確認）。なお測定記録シートに残る店名も、今後は社内名になります。'},
   {date:'2026-09-15', tag:'修正', title:'測定: 他の営業所のコースが混ざって出る問題を修正しました',
    desc:'測定画面を開くと、担当コースから営業所を自動で選ぶようにしていますが、店舗マスタの営業所欄が「池袋, 城北」のように2つ書かれている店（124店）だと、その文字が営業所の選択肢と一致せず営業所が未選択の状態になり、コース一覧に全営業所のコースが並んでしまっていました（城北で発生）。コース名は全コース（朝刊60・夕刊14・競馬55）が営業所名で始まっているため、どの営業所のコースかは店舗の営業所欄ではなく<b>コース名で判定</b>するように変えました。あわせて、選んだ営業所に該当コースが無いときに「黙って営業所の選択を外して全営業所から出す」動きを廃止し、該当なしと表示するようにしました（この動きも混ざる原因でした）。この変更で、営業所欄が「立川, 川崎高津」と書かれている多摩センター周辺の7店が川崎高津側で落ちていた問題も直り、<b>夕刊 川崎高津9 と 競馬 川崎高津15 が4店→11店</b>になります（他の127コースの店舗数は変わりません）。'},
   {date:'2026-09-15', tag:'修正', title:'測定: 9/13以降の測定データが管理画面に出なくなっていました',
@@ -19092,28 +19094,9 @@ async function msrLoadData(){
     if(json.error)throw new Error(json.error);
     msrHeaders=json.headers||[];
     msrData=json.records||[];
-    msrColMap={};
-    msrHeaders.forEach((h,i)=>{
-      if(h.includes('営業所'))msrColMap.area=i;
-      if(h.includes('店舗コード'))msrColMap.code=i;
-      // 「正式店舗名」も includes('店舗名') に一致して name を上書きしてしまうため完全一致で分ける。
-      // 上書きされていた間は正式店舗名を表示しており、それが空の25店(立川11/城北7/川崎高津7)が
-      // 名前の無い行として出ていた。表示は msrShopName() に集約し、空なら社内名へ落とす。
-      if(h==='店舗名')msrColMap.name=i;
-      else if(h==='正式店舗名')msrColMap.officialName=i;
-      if(h.includes('朝刊コース'))msrColMap.amCourse=i;
-      if(h.includes('朝刊順番'))msrColMap.amOrder=i;
-      if(/^[新旧]夕刊コース/.test(h))msrColMap.pmCourseNew=i;
-      else if(h.includes('夕刊コース'))msrColMap.pmCourse=i;
-      if(h.includes('夕刊順番'))msrColMap.pmOrder=i;
-      if(h.includes('競馬コース'))msrColMap.keibaCourse=i;
-      if(h.includes('競馬順番'))msrColMap.pmOrder2=i;
-      if(i===13&&h.includes('店着時間'))msrColMap.amTime=i;
-      if(i===18&&h.includes('店着時間'))msrColMap.pmTime=i;
-      if(i===24&&h.includes('店着時間'))msrColMap.keibaTime=i;
-      if(h==='緯度')msrColMap.lat=i;
-      if(h==='経度')msrColMap.lng=i;
-    });
+    // 列の対応づけはダイヤグラムと共通(diagBuildColMap)。別実装にしていたため
+    // 休店中・開店日・住所・PlaceID を測定側が持っておらず、配達対象外の店が出ていた。
+    msrColMap=diagBuildColMap(msrHeaders);
     // 営業所セレクタ (納品中止は除外、 城北は池袋を含む)
     const areas=[...new Set(msrData
       .map(r=>String(r[`col_${msrColMap.area??1}`]||''))
@@ -19129,14 +19112,22 @@ async function msrLoadData(){
   }
 }
 
-// 測定の店名表示。正式店舗名を優先し、無ければ社内名(店舗名)に落とす。
-// 2026-07のズレ事故の復旧で「別店の名前を残すより空にする」判断をした行があり、
-// 正式店舗名だけを見ていると名前の無い行になってしまう(現地で一番迷う地下街・駅構内の店が該当した)。
+// 測定の店名表示。ダイヤグラムと同じ「社内名(店舗名)」を出す。
+// 🚨 2026-09-15まで正式店舗名を優先していたが、2026-07の総ズレ事故の影響で城北の245店は
+//    正式店舗名に別の店の名前が入っており(例: 城北11「LA西早稲田二丁目」→「ローソン新宿上落合」)、
+//    測定画面に別コース・別区の店名が並んでいた。住所・座標・社内名は正しいので社内名を正とする。
+//    正式店舗名は diagOfficialTrusted() を通ったものだけ補助表示する(ナビと同じ判定)。
 function msrShopName(s){
   if(!s)return '';
-  const off=msrColMap.officialName!==undefined?String(s[`col_${msrColMap.officialName}`]||'').trim():'';
-  if(off)return off;
   return String(s[`col_${msrColMap.name??3}`]||'').trim();
+}
+// 補助表示用: 信用できる正式店舗名(社内名と同じチェーン・同じ地名)だけ返す
+function msrOfficialSub(s){
+  if(!s||msrColMap.officialName==null)return '';
+  const off=String(s[`col_${msrColMap.officialName}`]||'').trim();
+  const nm=msrShopName(s);
+  if(!off||off===nm)return '';
+  return diagOfficialTrusted({name:nm,official:off})?off:'';
 }
 
 // コース名の先頭から営業所を決める。
@@ -19160,13 +19151,10 @@ function msrCanonAreaOf(raw){
   return '';
 }
 
-// そのコースの店舗。店舗はコースで決まるので営業所では絞らない(納品中止だけ除外)。
-function msrShopsOfCourse(courseCol,course){
-  if(courseCol===undefined||!course)return [];
-  return msrData.filter(r=>
-    !String(r[`col_${msrColMap.area??1}`]||'').includes('納品中止')
-    && String(r[`col_${courseCol}`]||'').trim()===String(course).trim()
-  );
+// そのコースの店舗を「回る順」で返す。ダイヤグラムと同じ shopRouteRows を使うので、
+// 対象店舗も並び順も必ずダイヤグラムと一致する(店舗はコースで決まるため営業所では絞らない)。
+function msrShopsOfCourse(type,course){
+  return shopRouteRows(msrData,msrColMap,type,course,'');
 }
 
 function msrFilter(){
@@ -19208,9 +19196,8 @@ function msrRender(){
   const course=document.getElementById('msr-course').value;
   if(!course){document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">コースを選択してください</p>';return;}
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
-  const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
   const codeCol=msrColMap.code??2;
-  let shops=msrShopsOfCourse(courseCol,course);
+  let shops=msrShopsOfCourse(type,course);
   const latCol0=msrColMap.lat;
   const lngCol0=msrColMap.lng;
   const gpsActive=msrGpsPos&&latCol0!==undefined&&lngCol0!==undefined;
@@ -19224,36 +19211,7 @@ function msrRender(){
     });
   }
 
-  // ソート: 店着時間の早い順（時間なしは末尾）、同時刻は順番→店舗コード
-  const timeColForSort=type==='am'?msrColMap.amTime:type==='keiba'?msrColMap.keibaTime:msrColMap.pmTime;
-  const parseTimeForSort=t=>{
-    if(t==null)return null;
-    const s=String(t).trim();if(!s)return null;
-    let m=s.match(/(\d{1,2}):(\d{2})/);
-    if(m)return parseInt(m[1],10)*60+parseInt(m[2],10);
-    m=s.match(/(\d{1,2})時(\d{1,2})分?/);
-    if(m)return parseInt(m[1],10)*60+parseInt(m[2],10);
-    m=s.match(/^(\d{3,4})$/);
-    if(m){const v=m[1].padStart(4,'0');return parseInt(v.slice(0,2),10)*60+parseInt(v.slice(2,4),10);}
-    return null;
-  };
-  shops.sort((a,b)=>{
-    const ta=timeColForSort!==undefined?parseTimeForSort(a[`col_${timeColForSort}`]):null;
-    const tb=timeColForSort!==undefined?parseTimeForSort(b[`col_${timeColForSort}`]):null;
-    const va=ta!=null?ta:Infinity;
-    const vb=tb!=null?tb:Infinity;
-    if(va!==vb)return va-vb;
-    if(orderCol!==undefined){
-      const oa=parseFloat(a[`col_${orderCol}`]);
-      const ob=parseFloat(b[`col_${orderCol}`]);
-      const xa=isFinite(oa)?oa:99999;
-      const xb=isFinite(ob)?ob:99999;
-      if(xa!==xb)return xa-xb;
-    }
-    const ca=(a[`col_${codeCol}`]||'').toString();
-    const cb=(b[`col_${codeCol}`]||'').toString();
-    return ca.localeCompare(cb);
-  });
+  // 並び順は shopRouteRows(=ダイヤグラムと共通)で確定済み。ここで並べ替えない。
   if(!shops.length){document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">該当する店舗がありません</p>';return;}
 
   // GPS有効時: 未到着・近い3店舗のサマリーを上部に表示
@@ -19305,7 +19263,7 @@ function msrRender(){
     const nearby=distM<=MSR_ARRIVE_DIST&&!done;
     h+=`<tr style="${done?'background:#f0fdf4;':nearby?'background:#fefce8;':''}">
       <td style="text-align:center;color:var(--text-sub);">${i+1}</td>
-      <td><b>${name}</b>${nearby?' <span style="color:#f59e0b;font-size:11px;">⚡近い!</span>':''}</td>
+      <td><b>${name}</b>${nearby?' <span style="color:#f59e0b;font-size:11px;">⚡近い!</span>':''}${(()=>{const off=msrOfficialSub(s);return off?`<div style="font-size:11px;color:var(--text-sub);">${off}</div>`:'';})()}</td>
       <td style="text-align:center;font-size:11px;color:var(--text-sub);">${timeCol!==undefined?(s[`col_${timeCol}`]||''):''}  </td>
       ${hasGps?`<td style="text-align:center;font-size:12px;color:${distM<=MSR_ARRIVE_DIST?'#f59e0b':distM<=200?'#3498DB':'var(--text-sub)'};font-weight:${distM<=MSR_ARRIVE_DIST?'bold':'normal'}">${distStr}</td>`:''}
       <td style="text-align:center;font-weight:bold;color:${done?'#22c55e':'#94a3b8'};">${time||'--:--'}</td>
@@ -19394,30 +19352,11 @@ function msrCurrentRouteShops(){
   const course=document.getElementById('msr-course').value;
   if(!course)return {course:'',shops:[]};
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
-  const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
   const timeCol=type==='am'?msrColMap.amTime:type==='keiba'?msrColMap.keibaTime:msrColMap.pmTime;
   const codeCol=msrColMap.code??2;
   const latCol=msrColMap.lat, lngCol=msrColMap.lng;
-  let shops=msrShopsOfCourse(courseCol,course);
-  const pt=t=>{
-    if(t==null)return null;const s=String(t).trim();if(!s)return null;
-    let m=s.match(/(\d{1,2}):(\d{2})/);if(m)return parseInt(m[1],10)*60+parseInt(m[2],10);
-    m=s.match(/(\d{1,2})時(\d{1,2})分?/);if(m)return parseInt(m[1],10)*60+parseInt(m[2],10);
-    m=s.match(/^(\d{3,4})$/);if(m){const v=m[1].padStart(4,'0');return parseInt(v.slice(0,2),10)*60+parseInt(v.slice(2,4),10);}
-    return null;
-  };
-  shops.sort((a,b)=>{
-    const ta=timeCol!==undefined?pt(a[`col_${timeCol}`]):null;
-    const tb=timeCol!==undefined?pt(b[`col_${timeCol}`]):null;
-    const va=ta!=null?ta:Infinity, vb=tb!=null?tb:Infinity;
-    if(va!==vb)return va-vb;
-    if(orderCol!==undefined){
-      const oa=parseFloat(a[`col_${orderCol}`]), ob=parseFloat(b[`col_${orderCol}`]);
-      const xa=isFinite(oa)?oa:99999, xb=isFinite(ob)?ob:99999;
-      if(xa!==xb)return xa-xb;
-    }
-    return (a[`col_${codeCol}`]||'').toString().localeCompare((b[`col_${codeCol}`]||'').toString());
-  });
+  let shops=msrShopsOfCourse(type,course);
+  // 並び順は shopRouteRows(=ダイヤグラムと共通)で確定済み。ここで並べ替えない。
   const out=shops.map((s,i)=>({
     seq:i+1, code:s[`col_${codeCol}`]||'', name:msrShopName(s)||'',
     lat:parseFloat(s[`col_${latCol}`]), lng:parseFloat(s[`col_${lngCol}`])
@@ -19516,7 +19455,7 @@ function msrCheckAutoArrive(){
   const latCol=msrColMap.lat;
   const lngCol=msrColMap.lng;
   if(latCol===undefined||lngCol===undefined)return;
-  const shops=msrShopsOfCourse(courseCol,course);
+  const shops=msrShopsOfCourse(type,course);
   shops.forEach(s=>{
     const code=s[`col_${codeCol}`]||'';
     const key=`${course}|${code}`;
@@ -19538,10 +19477,8 @@ async function msrSendProgress(){
   const area=document.getElementById('msr-area').value;
   const type=document.getElementById('msr-type').value;
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
-  const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
   const codeCol=msrColMap.code??2;
-  const shops=msrShopsOfCourse(courseCol,course);
-  if(orderCol!==undefined)shops.sort((a,b)=>(parseInt(a[`col_${orderCol}`])||99999)-(parseInt(b[`col_${orderCol}`])||99999));
+  const shops=msrShopsOfCourse(type,course);
   const now=new Date();
   const nowTime=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
   const today=`${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`;
@@ -19594,10 +19531,8 @@ async function msrFinish(){
   const area=document.getElementById('msr-area').value;
   const type=document.getElementById('msr-type').value;
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
-  const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
   const codeCol=msrColMap.code??2;
-  const shops=msrShopsOfCourse(courseCol,course);
-  if(orderCol!==undefined)shops.sort((a,b)=>(parseInt(a[`col_${orderCol}`])||99999)-(parseInt(b[`col_${orderCol}`])||99999));
+  const shops=msrShopsOfCourse(type,course);
   const now=new Date();
   const endTime=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
   const today=`${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`;
@@ -19651,10 +19586,8 @@ function msrFinishExport(course,startTime,endTime,doneCount,total){
   const area=document.getElementById('msr-area').value;
   const type=document.getElementById('msr-type').value;
   const courseCol=type==='am'?msrColMap.amCourse:type==='pm'?msrColMap.pmCourse:msrColMap.keibaCourse;
-  const orderCol=type==='am'?msrColMap.amOrder:type==='keiba'?msrColMap.pmOrder2:msrColMap.pmOrder;
   const codeCol=msrColMap.code??2;
-  const shops=msrShopsOfCourse(courseCol,course);
-  if(orderCol!==undefined)shops.sort((a,b)=>(parseInt(a[`col_${orderCol}`])||99999)-(parseInt(b[`col_${orderCol}`])||99999));
+  const shops=msrShopsOfCourse(type,course);
   const now=new Date();
   const today=`${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()}`;
   let text=`${today} ${course} 測定結果\n`;
@@ -19828,20 +19761,23 @@ function diagBuildColMap(headers){
 // 休店中(配達対象外)判定: 休店中フラグTRUE かつ 期間内(開始前/終了後は対象)
 function diagTodayYmd(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
 function diagNormYmd(s){if(!s)return '';const t=String(s).trim().replace(/\//g,'-');const m=t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);return m?`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`:'';}
-function diagIsSuspended(r){
-  if(diagColMap.suspend==null)return false;
-  if(String(r[`col_${diagColMap.suspend}`]||'').trim().toUpperCase()!=='TRUE')return false;
+// cm を渡せるようにしてあるのは、測定画面(msrColMap)からも同じ判定を使うため。
+function diagIsSuspended(r,cm){
+  cm=cm||diagColMap;
+  if(cm.suspend==null)return false;
+  if(String(r[`col_${cm.suspend}`]||'').trim().toUpperCase()!=='TRUE')return false;
   const today=diagTodayYmd();
-  const start=diagNormYmd(r[`col_${diagColMap.suspendStart}`]);
-  const end=diagNormYmd(r[`col_${diagColMap.suspendEnd}`]);
+  const start=diagNormYmd(r[`col_${cm.suspendStart}`]);
+  const end=diagNormYmd(r[`col_${cm.suspendEnd}`]);
   if(start&&today<start)return false; // 休店開始前はまだ配達
   if(end&&today>end)return false;     // 休店終了後(cleanup前の念のため)
   return true;
 }
 // 開店日が今日より後(=まだ開店していない)店舗は配達対象外 → ダイヤグラムに出さない
-function diagIsFutureOpen(r){
-  if(diagColMap.openDate==null)return false;
-  const od=diagNormYmd(r[`col_${diagColMap.openDate}`]);
+function diagIsFutureOpen(r,cm){
+  cm=cm||diagColMap;
+  if(cm.openDate==null)return false;
+  const od=diagNormYmd(r[`col_${cm.openDate}`]);
   return !!od && od>diagTodayYmd();
 }
 
@@ -19897,22 +19833,67 @@ async function diagLoad(){
 }
 
 // 夕刊基準モード (現コース or 新コース) を考慮して、type に対応する コース列インデックスを返す
-function diagCourseColFor(type){
-  if(type==='am')return diagColMap.amCourse;
-  if(type==='keiba')return diagColMap.keibaCourse;
-  return diagColMap.pmCourse; // 夕刊は現行O列のみ(新コース切替トグルは廃止)
+function diagCourseColFor(type,cm){
+  cm=cm||diagColMap;
+  if(type==='am')return cm.amCourse;
+  if(type==='keiba')return cm.keibaCourse;
+  return cm.pmCourse; // 夕刊は現行O列のみ(新コース切替トグルは廃止)
+}
+// 区分ごとの「順番」「店着時間」列。
+function diagOrderColFor(type,cm){
+  cm=cm||diagColMap;
+  return type==='am'?cm.amOrder:type==='keiba'?cm.keibaOrder:cm.pmOrder;
+}
+function diagTimeColFor(type,cm){
+  cm=cm||diagColMap;
+  return type==='am'?cm.amTime:type==='keiba'?cm.keibaTime:cm.pmTime;
+}
+
+// ★「どの店をどの順で回るか」を決めるのはここだけ。ダイヤグラムと測定が同じ結果になるよう
+//   両方からこの関数を呼ぶ(別実装にしていたため、同じコースでも店と並び順が違っていた)。
+//   除外: 納品中止 / 休店中(期間内) / 未開店(開店日が未来)
+//   並び順: 順番 → 店着時間 → 店舗コード (2026-09-01の決定。人が決める順番が正)
+function shopRouteRows(data,cm,type,courseName,areaFilter){
+  const courseCol=diagCourseColFor(type,cm);
+  const orderCol=diagOrderColFor(type,cm);
+  const timeCol=diagTimeColFor(type,cm);
+  if(courseCol==null||!courseName)return [];
+  const target=String(courseName).trim();
+  let shops=(data||[]).filter(r=>
+    String(r[`col_${courseCol}`]||'').trim()===target
+    && !String(r[`col_${cm.area}`]||'').includes('納品中止')
+    && !diagIsSuspended(r,cm) && !diagIsFutureOpen(r,cm)
+  );
+  if(areaFilter)shops=shops.filter(r=>diagAreaMatch(r,areaFilter,type,cm));
+  shops.sort((a,b)=>{
+    const oa=orderCol!=null?parseFloat(a[`col_${orderCol}`]):NaN;
+    const ob=orderCol!=null?parseFloat(b[`col_${orderCol}`]):NaN;
+    const xa=isFinite(oa)?oa:Infinity;
+    const xb=isFinite(ob)?ob:Infinity;
+    if(xa!==xb)return xa-xb;
+    const ta=timeCol!=null?diagParseTime(a[`col_${timeCol}`]):null;
+    const tb=timeCol!=null?diagParseTime(b[`col_${timeCol}`]):null;
+    const va=ta!=null?ta:Infinity;
+    const vb=tb!=null?tb:Infinity;
+    if(va!==vb)return va-vb;
+    const ca=(cm.code!=null?(a[`col_${cm.code}`]||''):'').toString();
+    const cb=(cm.code!=null?(b[`col_${cm.code}`]||''):'').toString();
+    return ca.localeCompare(cb);
+  });
+  return shops;
 }
 // 営業所フィルタヘルパー: 店舗マスタの営業所列が複合(「池袋, 城北」)でも対応 + 空欄ならコース名から推定
-function diagAreaMatch(r,area,type){
+function diagAreaMatch(r,area,type,cm){
+  cm=cm||diagColMap;
   if(!area)return true;
   const targets=area==='城北'?['城北','池袋']:[area]; // 池袋は城北に統合
-  const a=(r[`col_${diagColMap.area}`]||'').trim();
+  const a=(r[`col_${cm.area}`]||'').trim();
   if(a){
     return a.split(/[,、]/).some(x=>targets.includes(x.trim()));
   }
   // 営業所空欄: コース名から推定
   type=type||(document.getElementById('diag-type')?.value)||'pm';
-  const courseCol=diagCourseColFor(type);
+  const courseCol=diagCourseColFor(type,cm);
   if(courseCol==null)return false;
   const course=(r[`col_${courseCol}`]||'').trim();
   return targets.includes(areaOfCourse(course));
@@ -20160,27 +20141,9 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
   const courseCol=diagCourseColFor(type);
   const orderCol=type==='am'?diagColMap.amOrder:type==='pm'?diagColMap.pmOrder:diagColMap.keibaOrder;
   const timeCol=type==='am'?diagColMap.amTime:type==='pm'?diagColMap.pmTime:diagColMap.keibaTime;
-  let shops=diagShopData.filter(r=>r[`col_${courseCol}`]===courseName&&!diagIsSuspended(r)&&!diagIsFutureOpen(r)); // 休店中・未開店(開店日未来)は配達対象外
-  if(areaFilter)shops=shops.filter(r=>diagAreaMatch(r,areaFilter,type));
-  // 🚨 2026-09-01: 並び順の基準を「店着時間 → 順番」から「順番 → 店着時間」へ変更。
-  // 店舗マスタでドラッグして配達順を変えても、時間が入っている店では並びが動かず
-  // 「順番を変えたのに反映されない」状態だったため(夕刊はほぼ全店に時間が入っている)。
-  // 回る順の正は人が決める「順番」列とし、順番が空の店だけ店着時間で位置を決める。
-  shops.sort((a,b)=>{
-    const oa=orderCol!==undefined?parseFloat(a[`col_${orderCol}`]):NaN;
-    const ob=orderCol!==undefined?parseFloat(b[`col_${orderCol}`]):NaN;
-    const xa=isFinite(oa)?oa:Infinity;
-    const xb=isFinite(ob)?ob:Infinity;
-    if(xa!==xb)return xa-xb;
-    const ta=timeCol!==undefined?diagParseTime(a[`col_${timeCol}`]):null;
-    const tb=timeCol!==undefined?diagParseTime(b[`col_${timeCol}`]):null;
-    const va=ta!=null?ta:Infinity;
-    const vb=tb!=null?tb:Infinity;
-    if(va!==vb)return va-vb;
-    const ca=(diagColMap.code!==undefined?(a[`col_${diagColMap.code}`]||''):'').toString();
-    const cb=(diagColMap.code!==undefined?(b[`col_${diagColMap.code}`]||''):'').toString();
-    return ca.localeCompare(cb);
-  });
+  // 🚨 2026-09-01: 並び順の基準は「順番 → 店着時間」(人が決める順番が正)。
+  //    2026-09-15: 対象の絞り込みと並び順は shopRouteRows に集約し、測定画面と共有。
+  const shops=shopRouteRows(diagShopData,diagColMap,type,courseName,areaFilter);
   return shops.map((r,i)=>{
     const lat=parseFloat(r[`col_${diagColMap.lat}`]);
     const lng=parseFloat(r[`col_${diagColMap.lng}`]);
