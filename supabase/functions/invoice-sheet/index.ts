@@ -1325,7 +1325,10 @@ Deno.serve(async(req:Request)=>{
       return jsonResp({success:true,unconfirmed:row_numbers.length});
     }
     if(action==='list_measure'){
-      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MEASURE_SHEET)}!A2:H10000`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+      // ★範囲を A2:H10000 で切っていたため、シートが1万行を超えた 2026-09-13 以降の
+      //   測定が管理画面に1件も出なくなっていた(追記はされているので消えてはいない)。
+      //   行数を決め打ちしない A2:H にする。
+      const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MEASURE_SHEET)}!A2:H`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
       const rows=(await sheetVals(resp)).filter((r:string[])=>r[0]||r[1]);
       const records=rows.map((r:string[])=>({date:r[0]||'',course:r[1]||'',type:r[2]||'',start_time:r[3]||'',end_time:r[4]||'',shop_name:r[5]||'',arrival_time:r[6]||'',staff:r[7]||''}));
       return jsonResp({records});
@@ -1336,8 +1339,42 @@ Deno.serve(async(req:Request)=>{
       // staff は自分の名前のみ
       const staffName = admin ? (staff || '') : callerName;
       const rows=(shops||[]).map((s:any)=>[date||'',course||'',type||'',start_time||'',end_time||'',s.name||'',s.time||'',staffName]);
-      if(rows.length){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MEASURE_SHEET)}!A1:H1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:rows})});}
-      return jsonResp({success:true,saved:rows.length});
+      // 店舗0件は通常ありえない(誤って1ブロック消すのを防ぐ)。
+      // 管理者が clear_block:true を明示した時だけ、そのブロックの行を空にする。
+      if(!rows.length && !(admin && measure_data.clear_block === true)) return jsonResp({success:true,saved:0});
+      // ★1測定=1ブロック。
+      //   従来は「📤 途中送信」が毎回全店舗を追記していたため、1日1コースで
+      //   48店→192行(4回送信)のように増殖し、測定記録シートが1万行を超えた。
+      //   replace_block 指定時は 日付+コース+区分+担当者 が同じ既存行を
+      //   その場で上書きし、余りは空にする(他人・他日・他コースの行は触らない)。
+      //   キーのどれかが空だと別人・別日の行まで掴んでしまうため、揃っている時だけ上書きする。
+      const wantReplace = (measure_data.replace_block === true || (admin && measure_data.clear_block === true)) && !!date && !!course && !!type && !!staffName;
+      let replaced = 0;
+      if(wantReplace){
+        const exResp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MEASURE_SHEET)}!A2:H`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+        const exRows=await sheetVals(exResp,'測定記録');
+        const same=(v:any,w:any)=>String(v||'').trim()===String(w||'').trim();
+        const hitRowNumbers:number[]=[];
+        exRows.forEach((r:string[],i:number)=>{
+          if(same(r[0],date)&&same(r[1],course)&&same(r[2],type)&&same(r[7],staffName))hitRowNumbers.push(i+2);
+        });
+        const data:any[]=[];
+        const n=Math.min(hitRowNumbers.length,rows.length);
+        for(let i=0;i<n;i++)data.push({range:`'${MEASURE_SHEET}'!A${hitRowNumbers[i]}:H${hitRowNumbers[i]}`,values:[rows[i]]});
+        // 既存が多い(店舗が減った)場合は余剰行を空にする
+        for(let i=n;i<hitRowNumbers.length;i++)data.push({range:`'${MEASURE_SHEET}'!A${hitRowNumbers[i]}:H${hitRowNumbers[i]}`,values:[['','','','','','','','']]});
+        if(data.length){
+          const upd=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'USER_ENTERED',data})});
+          if(!upd.ok){const t=await upd.text();return jsonResp({error:'測定記録の更新に失敗しました: '+upd.status+' '+t.slice(0,200)},500);}
+        }
+        replaced=n;
+        rows.splice(0,n);// 上書きできた分は追記しない
+      }
+      if(rows.length){
+        const ap=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(MEASURE_SHEET)}!A1:H1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:rows})});
+        if(!ap.ok){const t=await ap.text();return jsonResp({error:'測定記録の保存に失敗しました: '+ap.status+' '+t.slice(0,200)},500);}
+      }
+      return jsonResp({success:true,saved:replaced+rows.length,replaced,appended:rows.length});
     }
     // ── 請求条件(休刊日/朝刊なし/夕刊なし/同梱有無/競馬日 など) ───────────────
     // 画面(localStorage)の billConditions を DB(bill_conditions)へ同期する。

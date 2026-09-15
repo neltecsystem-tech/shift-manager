@@ -1967,6 +1967,12 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-09-15', tag:'修正', title:'測定: 他の営業所のコースが混ざって出る問題を修正しました',
+   desc:'測定画面を開くと、担当コースから営業所を自動で選ぶようにしていますが、店舗マスタの営業所欄が「池袋, 城北」のように2つ書かれている店（124店）だと、その文字が営業所の選択肢と一致せず営業所が未選択の状態になり、コース一覧に全営業所のコースが並んでしまっていました（城北で発生）。営業所欄が複数書かれていても正しい営業所に揃えるようにしました。あわせて、選んだ営業所に該当コースが無いときに「黙って営業所の選択を外して全営業所から出す」動きを廃止し、該当なしと表示するようにしました（この動きも混ざる原因でした）。営業所が未選択のときは、コース名の後ろに営業所を出して区別できるようにしています。'},
+  {date:'2026-09-15', tag:'修正', title:'測定: 9/13以降の測定データが管理画面に出なくなっていました',
+   desc:'管理→測定データの読み取り範囲が1万行で固定されていたため、記録シートが1万行を超えた9月13日以降の測定が1件も表示されなくなっていました（記録自体は保存されており、消えてはいません）。行数で切らない読み方に変更し、9/13〜9/15分も表示されます。行数が急に増えた原因は「📤 途中送信」で、押すたびにコースの全店舗を追記していたため、1日1コースで最大255行が作られていました。今後は同じ日・同じコース・同じ担当者の記録はその場で上書きし、増えないようにしました。過去分の重複は、同じ店をまとめて表示します。'},
+  {date:'2026-09-15', tag:'修正', title:'測定: 前日の到着時刻が翌日も「到着済み」で残っていました',
+   desc:'到着時刻を端末に保存する際、日付を持っていなかったため、前日に測定したコースをもう一度測定すると前日の時刻が入ったままになっていました（手動リセットするしかありませんでした）。記録から12時間を過ぎたものは自動で消えるようにしました（朝刊の測定が0時をまたぐため、日付ではなく経過時間で判定しています）。'},
   {date:'2026-09-08', tag:'新機能', title:'メニューを画面左のサイドバーに変更（アスクル管理と同じ形）',
    desc:'画面上部に横並びだったメニューを、左側のサイドバーに変えました。項目が15個を超えて横スクロールしないと見えない状態だったのを解消し、いまどの画面にいるかが常に分かるようにしています。'
      +'上のバーには「氏名／📖マニュアル／🔧管理／🔑PW変更／ログアウト」を残しました（画面名も上のバーに出ます）。'
@@ -17622,6 +17628,17 @@ function admMsrRender(){
     groups[key].shops.push({name:r.shop_name,time:r.arrival_time});
     if(r.end_time&&!groups[key].end_time)groups[key].end_time=r.end_time;
   });
+  // 2026-09-15以前の途中送信は毎回全店舗を追記していたため、同じ店が同一グループに
+  // 何度も並ぶ(城北14で48店→192行)。店舗名でまとめ、到着時刻のある方を残す。
+  Object.values(groups).forEach(g=>{
+    const seen=new Map();
+    g.shops.forEach(s=>{
+      const prev=seen.get(s.name);
+      if(!prev){seen.set(s.name,s);return;}
+      if(!prev.time&&s.time)prev.time=s.time;
+    });
+    g.shops=[...seen.values()];
+  });
   const gList=Object.values(groups).sort((a,b)=>(b.date+b.start_time).localeCompare(a.date+a.start_time));
   admMsrGroups=gList;// CSV出力用に保持
 
@@ -18860,6 +18877,8 @@ let msrData=[];
 let msrHeaders=[];
 let msrColMap={};
 let msrTimes={};// key: "course|shopCode" → arrival time
+let msrTimeStamps={};// 同じキー → 記録した時刻(epoch ms)
+const MSR_TIME_TTL_MS=12*60*60*1000;// これより古い到着記録は読み込み時に破棄
 let msrLoaded=false;
 let msrGpsWatchId=null;
 let msrGpsPos=null;// {lat,lng,accuracy}
@@ -18870,6 +18889,48 @@ const MSR_ARRIVE_DIST=50;// 到着判定距離(m)
 function showView_measure(){
   if(!msrAuthed){msrShowLogin();return;}
   if(!msrLoaded)msrLoadData();
+}
+
+// 到着記録の読み書きは必ずこの3つを通す(時刻印を一緒に残すため)。
+function msrPersistTimes(){
+  localStorage.setItem('msrTimes',JSON.stringify(msrTimes));
+  localStorage.setItem('msrTimeStamps',JSON.stringify(msrTimeStamps));
+}
+function msrSaveTime(key,val){
+  msrTimes[key]=val;msrTimeStamps[key]=Date.now();
+  msrPersistTimes();
+}
+function msrDeleteTime(key){
+  delete msrTimes[key];delete msrTimeStamps[key];
+  msrPersistTimes();
+}
+// 到着記録に日付が入っておらず、前日の時刻が翌日も「到着済み」として残っていた。
+// 日付で切らずに経過時間で切るのは、朝刊の測定が0時を挟むため(日付だと測定中に消える)。
+function msrLoadTimes(){
+  try{msrTimes=JSON.parse(localStorage.getItem('msrTimes')||'{}');}catch(_){msrTimes={};}
+  try{msrTimeStamps=JSON.parse(localStorage.getItem('msrTimeStamps')||'{}');}catch(_){msrTimeStamps={};}
+  const now=Date.now();let dropped=0;
+  Object.keys(msrTimes).forEach(k=>{
+    const ts=msrTimeStamps[k];
+    if(!ts||now-ts>MSR_TIME_TTL_MS){delete msrTimes[k];delete msrTimeStamps[k];dropped++;}
+  });
+  if(dropped)msrPersistTimes();
+  return dropped;
+}
+
+// 営業所セルは「池袋, 城北」「立川, 納品中止」のような複合表記がある(池袋,城北=124店)。
+// 営業所プルダウンの選択肢は先頭トークンから作っているため、セル値をそのまま
+// select.value に入れると一致せず空になり、営業所の絞り込みが外れて全営業所の
+// コースが混ざっていた(「他のコースも入り混じった」状態の正体)。
+function msrCanonArea(raw){
+  const sel=document.getElementById('msr-area');
+  const opts=[...sel.options].map(o=>o.value).filter(Boolean);
+  const tokens=String(raw||'').split(/[,、]/).map(t=>t.trim()).filter(t=>t&&t!=='納品中止');
+  for(const t of tokens){
+    if(opts.includes(t))return t;
+    if(t==='池袋'&&opts.includes('城北'))return '城北';// 池袋は城北営業所に含める
+  }
+  return '';
 }
 
 function msrShowLogin(){
@@ -18965,7 +19026,11 @@ function msrAutoSelectCourse(){
   const area=matchShop?matchShop[`col_${areaCol}`]:'';
 
   // 自動選択
-  if(area)document.getElementById('msr-area').value=area;
+  // ★セル値をそのまま入れると「池袋, 城北」が選択肢に無く value が空になり、
+  //   営業所の絞り込みが外れて全営業所のコースが混ざる。必ず正規化して入れる。
+  const canonArea=msrCanonArea(area);
+  document.getElementById('msr-area').value=canonArea;
+  if(area&&!canonArea)console.warn('[測定] 営業所を特定できませんでした:',area);
   document.getElementById('msr-type').value=targetType;
   msrFilter();
   setTimeout(()=>{
@@ -19037,9 +19102,9 @@ async function msrLoadData(){
       .map(a=>a.split(',')[0].trim())
     )].filter(a=>a&&a!=='池袋');
     document.getElementById('msr-area').innerHTML='<option value="">選択してください</option>'+areas.map(a=>`<option>${a}</option>`).join('');
-    // 保存済みデータをlocalStorageから復元
-    try{msrTimes=JSON.parse(localStorage.getItem('msrTimes')||'{}');}catch(_){msrTimes={};}
-    document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">営業所とコースを選択してください</p>';
+    // 保存済みデータをlocalStorageから復元 (12時間より古い到着記録は破棄)
+    const dropped=msrLoadTimes();
+    document.getElementById('msr-table').innerHTML=`${dropped?`<p style="text-align:center;color:#a16207;background:#fefce8;border:1px solid #fde68a;border-radius:8px;padding:8px;margin-bottom:8px;font-size:13px;">前回の古い到着記録 ${dropped}件 をクリアしました</p>`:''}<p style="text-align:center;color:var(--text-sub);padding:40px;">営業所とコースを選択してください</p>`;
   }catch(e){
     document.getElementById('msr-table').innerHTML=`<p style="color:var(--danger);padding:20px;">${e.message}</p>`;
   }
@@ -19074,17 +19139,21 @@ function msrFilter(){
   let filtered=msrData;
   filtered=filtered.filter(r=>msrAreaMatch(r[`col_${msrColMap.area??1}`],area));
   const courses=[...new Set(filtered.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
-  // 候補がなく営業所が選択されている場合、営業所を外して再検索
-  if(!courses.length&&area){
-    const allCourses=[...new Set(msrData.map(r=>r[`col_${courseCol}`]).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
-    if(allCourses.length){
-      document.getElementById('msr-area').value='';
-      filtered=msrData;
-      courses.push(...allCourses);
-    }
-  }
   const sel=document.getElementById('msr-course');
-  sel.innerHTML='<option value="">選択してください</option>'+courses.map(c=>`<option>${c}</option>`).join('');
+  // ★以前はここで「候補が無ければ営業所の選択を黙って外して全営業所から出す」
+  //   フォールバックがあり、それが他営業所のコースが混ざる原因になっていた。
+  //   混ぜずに、該当が無いことを知らせる。
+  if(!courses.length){
+    sel.innerHTML='<option value="">該当するコースがありません</option>';
+    document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">この営業所・区分に該当するコースがありません。<br>営業所または区分を選び直してください。</p>';
+    return;
+  }
+  // 営業所が未選択のときだけ、どの営業所のコースか分かるようにラベルに営業所を出す
+  const areaLabelOf=c=>{
+    const r=filtered.find(x=>x[`col_${courseCol}`]===c);
+    return r?String(r[`col_${msrColMap.area??1}`]||'').split(/[,、]/).map(t=>t.trim()).filter(t=>t&&t!=='納品中止')[0]||'':'';
+  };
+  sel.innerHTML='<option value="">選択してください</option>'+courses.map(c=>`<option value="${c}">${c}${area?'':`（${areaLabelOf(c)}）`}</option>`).join('');
   document.getElementById('msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">コースを選択してください</p>';
 }
 
@@ -19214,21 +19283,19 @@ function msrRender(){
 
 function msrArrive(key){
   const now=new Date();
-  msrTimes[key]=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-  localStorage.setItem('msrTimes',JSON.stringify(msrTimes));
+  msrSaveTime(key,`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`);
   msrRender();
 }
 
 function msrClear(key){
-  delete msrTimes[key];
-  localStorage.setItem('msrTimes',JSON.stringify(msrTimes));
+  msrDeleteTime(key);
   msrRender();
 }
 
 function msrResetAll(){
   if(!confirm('全ての到着記録をリセットしますか？'))return;
-  msrTimes={};
-  localStorage.setItem('msrTimes',JSON.stringify(msrTimes));
+  msrTimes={};msrTimeStamps={};
+  msrPersistTimes();
   msrRender();
 }
 
@@ -19421,8 +19488,7 @@ function msrCheckAutoArrive(){
     const dist=msrCalcDist(msrGpsPos.lat,msrGpsPos.lng,sLat,sLng);
     if(dist<=MSR_ARRIVE_DIST){
       const now=new Date();
-      msrTimes[key]=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-      localStorage.setItem('msrTimes',JSON.stringify(msrTimes));
+      msrSaveTime(key,`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`);
     }
   });
 }
@@ -19471,7 +19537,9 @@ async function msrSendProgress(){
     time:msrTimes[`${course}|${s[`col_${codeCol}`]}`]||''
   }));
   try{
-    const res=await invApi({action:'save_measure',measure_data:{date:today,course,type:typeLabel,start_time:startTime+'(途中)',end_time:nowTime+'(途中)',staff:msrStaffName,shops:saveShops}});
+    // replace_block: 同じ 日付+コース+区分+担当 の行をその場で上書き。
+    // 付けないと途中送信の回数だけ全店舗が追記され、1日1コースで200行近く増える。
+    const res=await invApi({action:'save_measure',measure_data:{date:today,course,type:typeLabel,start_time:startTime+'(途中)',end_time:nowTime+'(途中)',staff:msrStaffName,shops:saveShops,replace_block:true}});
     btn.textContent=res.success?'✅ 送信済':'❌ エラー';
     btn.style.background=res.success?'#22c55e':'var(--danger)';
   }catch(e){
@@ -19536,7 +19604,8 @@ async function msrFinish(){
     time:msrTimes[`${course}|${s[`col_${codeCol}`]}`]||''
   }));
   try{
-    const res=await invApi({action:'save_measure',measure_data:{date:today,course,type:typeLabel,start_time:startTime,end_time:endTime,staff:msrStaffName,shops:saveShops}});
+    // 終了時も同じブロックを上書き(途中送信の行が確定値に置き換わる)
+    const res=await invApi({action:'save_measure',measure_data:{date:today,course,type:typeLabel,start_time:startTime,end_time:endTime,staff:msrStaffName,shops:saveShops,replace_block:true}});
     const el=document.getElementById('msr-save-status');
     if(el)el.innerHTML=res.success?`✅ スプレッドシートに${res.saved}件保存しました`:`❌ 保存エラー: ${res.error||''}`;
   }catch(e){
