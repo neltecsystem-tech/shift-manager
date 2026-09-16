@@ -19276,7 +19276,7 @@ function msrRender(){
       ${hasGps?`<td style="text-align:center;font-size:12px;color:${distM<=MSR_ARRIVE_DIST?'#f59e0b':distM<=200?'#3498DB':'var(--text-sub)'};font-weight:${distM<=MSR_ARRIVE_DIST?'bold':'normal'}">${distStr}</td>`:''}
       <td style="text-align:center;font-weight:bold;color:${done?'#22c55e':'#94a3b8'};">${time||'--:--'}</td>
       <td style="text-align:center;">${done
-        ?`<button onclick="msrClear('${key}')" style="background:#f1f5f9;color:var(--text-sub);border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">取消</button>`
+        ?`<button onclick="msrClear('${key}','${encodeURIComponent(name)}','${encodeURIComponent(time)}')" style="background:#f1f5f9;color:var(--text-sub);border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">取消</button>`
         :`<button onclick="msrArrive('${key}')" style="background:#06C755;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">到着</button>`
       }</td>
     </tr>`;
@@ -19295,7 +19295,13 @@ function msrArrive(key){
   msrRender();
 }
 
-function msrClear(key){
+function msrClear(key,nameEnc,timeEnc){
+  const name=nameEnc?decodeURIComponent(nameEnc):'';
+  const time=timeEnc?decodeURIComponent(timeEnc):'';
+  if(!confirm(`到着記録を取り消します。よろしいですか？
+
+${name}${time?`
+到着時刻 ${time}`:''}`))return;
   msrDeleteTime(key);
   msrRender();
 }
