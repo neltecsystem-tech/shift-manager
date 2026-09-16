@@ -6445,18 +6445,32 @@ async function smRefetchOfficial(){
   const smAll=smData||[];          // 他の行が使用中の Place ID を避けるため全行を見る
   if(iName<0||iOff<0||iPid<0||iLa<0||iLo<0){alert('必要な列(店舗名/正式店舗名/Place ID/緯度/経度)が見つかりません');return;}
   const lockedCount=smFiltered.filter(r=>smIsLocked(r)).length;
+  // 🚨 Places API は従量課金(Pro枠 $32/1000件・無料は月5,000件まで)。
+  //    既に正式名とPlace IDが入っている行を毎回引き直すと、ただ金を払って
+  //    同じ値を書き戻すだけになる。既定は「まだ入っていない行だけ」。
+  const smOffFilled=r=>!!String(r[`col_${iOff}`]||'').trim()&&!!String(r[`col_${iPid}`]||'').trim();
+  const emptyCount=smFiltered.filter(r=>!smOffFilled(r)).length;
   const NL=String.fromCharCode(10);
-  const ans=prompt(`🏷 正式名/Place ID の引き直し${NL}対象: 絞り込み中の ${smFiltered.length}件${lockedCount?`（うち🔒修正済み ${lockedCount}件）`:''}${NL}${NL}`
+  const ans=prompt(`🏷 正式名/Place ID の引き直し${NL}対象: 絞り込み中の ${smFiltered.length}件`
+    +`（うち未入力 ${emptyCount}件${lockedCount?` / 🔒修正済み ${lockedCount}件`:''}）${NL}${NL}`
     +`マスタの座標にある同ブランド店を探し、略称の地名が一致する店の名前とPlace IDに入れ替えます。`
     +`見つからない行は名前とIDを空にします（住所でナビされます）。${NL}${NL}`
-    +`0: 🔒修正済みも含めて全件やり直す（ズレ事故の後片付けはこちら）${NL}1: 🔒修正済み以外だけ${NL}空欄: キャンセル${NL}${NL}0 か 1 を入力:`);
-  if(ans!=='0'&&ans!=='1')return;
+    +`※ Places API は1件ごとに課金対象（無料は月5,000件まで）。`
+    +`既に入っている行を引き直しても同じ値が入るだけなので、通常は 2 を使ってください。${NL}${NL}`
+    +`2: 未入力の行だけ（${emptyCount}件・推奨）${NL}`
+    +`1: 🔒修正済み以外を全部やり直す${NL}`
+    +`0: 🔒修正済みも含めて全件やり直す（ズレ事故の後片付けはこちら）${NL}`
+    +`空欄: キャンセル${NL}${NL}0 か 1 か 2 を入力:`);
+  if(ans!=='0'&&ans!=='1'&&ans!=='2')return;
   const includeLocked=ans==='0';
+  const emptyOnly=ans==='2';
   const targets=smFiltered.filter(r=>{
     if(!includeLocked&&smIsLocked(r))return false;
+    if(emptyOnly&&smOffFilled(r))return false;   // 既に入っている行は API を呼ばない
     if(String(r[`col_${iArea}`]||'').includes('納品中止'))return false;
     return !!String(r[`col_${iName}`]||'').trim();
   });
+  if(emptyOnly&&!targets.length){alert('未入力の行はありません（API呼び出しゼロで終了します）');return;}
   if(!targets.length){alert('対象がありません');return;}
   const btn=document.getElementById('sm-off-btn');
   const prog=document.getElementById('sm-geocode-progress');
