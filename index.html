@@ -793,6 +793,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('revenue')" id="adm-tab-revenue" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💰 収支管理</button>
         <button onclick="adminTab('billcond')" id="adm-tab-billcond" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 請求条件</button>
         <button onclick="adminTab('paystatement')" id="adm-tab-paystatement" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">💴 支払い明細</button>
+        <button onclick="adminTab('paysuspend')" id="adm-tab-paysuspend" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🚫 支払停止</button>
         <button onclick="adminTab('specialrate')" id="adm-tab-specialrate" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🎁 特別日当</button>
         <button onclick="adminTab('employee')" id="adm-tab-employee" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">👤 社員管理</button>
         <button onclick="adminTab('shiftedit')" id="adm-tab-shiftedit" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📝 シフト編集</button>
@@ -1179,6 +1180,31 @@ tbody tr:hover { background:var(--primary-light); }
 
       <!-- 測定データ -->
       <!-- 支払い明細 -->
+      <!-- 🚫 支払停止(明細発行STOP) ─────────────────────────────────
+           重大な契約違反などで支払いを保留する人を登録する。
+           🚨 会計の金額は止まらない(未払いとして残る)。止まるのは明細と通知だけ。
+           登録先は NexPort の pay_suspensions。新聞・アスクル・デリバリーで共通。 -->
+      <div id="adm-paysuspend" class="adm-panel" style="display:none;">
+        <div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px;margin-bottom:14px;font-size:13px;color:#7f1d1d;line-height:1.7;">
+          重大な契約違反などで<b>支払いを保留する方</b>を登録します。登録すると、指定した月から
+          <b>明細ビューアに出なくなり、支払通知メールも送られなくなります</b>。<br>
+          🚨 <b>会計の金額は止まりません</b>（未払いとして残ります）。止まるのは発行だけです。<br>
+          🚨 <b>全現場（新聞・アスクル・ヤマト・東スポ）がまとめて止まります</b>。この画面から登録しても新聞だけではありません。<br>
+          本人の画面には理由を出さず「担当者にお問い合わせください」とだけ表示します。
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+          <div><label style="font-size:12px;color:var(--text-sub);font-weight:600;">氏名 または 電話番号</label>
+            <input id="psus-who" placeholder="例: 山田 太郎 / 09012345678" style="width:220px;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;display:block;margin-top:4px;"></div>
+          <div><label style="font-size:12px;color:var(--text-sub);font-weight:600;">停止を始める月</label>
+            <input id="psus-from" type="month" style="width:160px;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;display:block;margin-top:4px;"></div>
+          <div style="flex:1;min-width:240px;"><label style="font-size:12px;color:var(--text-sub);font-weight:600;">理由（社内用・本人には出ません）</label>
+            <input id="psus-reason" placeholder="例: 重大な契約違反のため支払保留" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;display:block;margin-top:4px;"></div>
+          <button onclick="psusAdd()" style="background:#dc2626;color:#fff;border:none;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:700;">🚫 停止を登録</button>
+        </div>
+        <label style="font-size:13px;color:var(--text-sub);"><input type="checkbox" id="psus-inc-released" onchange="psusLoad()"> 解除済みも表示</label>
+        <div id="psus-list" style="margin-top:10px;"></div>
+      </div>
+
       <div id="adm-paystatement" class="adm-panel" style="display:none;">
         <div class="filters">
           <div><label>年月</label><input type="month" id="adm-pay-month" onchange="admPayRender()"></div>
@@ -8752,6 +8778,81 @@ function admHistoryLoad(){
     })
     .catch(e=>{box.innerHTML='<p style="text-align:center;padding:30px;color:#dc2626;">読み込みエラー: '+esc(e&&e.message||e)+'</p>';});
 }
+// ── 🚫 支払停止(明細発行STOP) ───────────────────────────────────────
+// 登録先は NexPort の pay_suspensions(全ツール共通)。このツール固有の表は作らない。
+// 🚨 会計の金額は止めない。止めるのは明細ビューアと支払通知だけ。
+const PSUS_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/pay-suspension';
+async function psusApi(payload){
+  const r=await fetch(PSUS_EF,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(Object.assign({admin_password:(typeof adminPw!=='undefined'?adminPw:''),tool:'shift'},payload))});
+  const j=await r.json().catch(()=>({error:'応答を読めませんでした'}));
+  if(!r.ok||j.error)throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+function psusEsc(v){return String(v==null?'':v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+async function psusLoad(){
+  const box=document.getElementById('psus-list'); if(!box)return;
+  box.innerHTML='<p style="color:var(--text-sub);padding:12px;">読み込み中...</p>';
+  try{
+    const inc=document.getElementById('psus-inc-released').checked;
+    const {rows}=await psusApi({action:'list',include_released:inc});
+    if(!rows.length){box.innerHTML='<p style="color:var(--text-sub);padding:12px;">停止中の方はいません。</p>';return;}
+    box.innerHTML='<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+      +'<tr style="background:#f8fafc;"><th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);">氏名</th>'
+      +'<th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);">停止期間</th>'
+      +'<th style="text-align:left;padding:8px;border-bottom:1px solid var(--border);">理由</th>'
+      +'<th style="padding:8px;border-bottom:1px solid var(--border);"></th></tr>'
+      +rows.map(r=>{
+        const active=!r.to_ym;
+        const period=active?(psusEsc(r.from_ym)+' 分〜 <b style="color:#dc2626;">停止中</b>')
+          :(psusEsc(r.from_ym)+' 〜 '+psusEsc(r.to_ym)+' 分で解除'+(r.reopen_past?'（過去分も公開）':'（止めた月は非公開のまま）'));
+        return '<tr><td style="padding:8px;border-bottom:1px solid var(--border);">'+psusEsc(r.name_at_reg||r.subject_key)+'</td>'
+          +'<td style="padding:8px;border-bottom:1px solid var(--border);">'+period+'</td>'
+          +'<td style="padding:8px;border-bottom:1px solid var(--border);color:var(--text-sub);">'+psusEsc(r.reason)+'</td>'
+          +'<td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;">'
+          +(active?'<button data-psus-id="'+psusEsc(r.id)+'" onclick="psusRelease(this.dataset.psusId)" style="background:#0ea5e9;color:#fff;border:none;padding:6px 12px;border-radius:8px;cursor:pointer;font-weight:600;">解除</button>':'')
+          +'</td></tr>';
+      }).join('')+'</table>';
+  }catch(e){box.innerHTML='<p style="color:#dc2626;padding:12px;">読み込めませんでした: '+psusEsc(e.message)+'</p>';}
+}
+async function psusAdd(){
+  const who=document.getElementById('psus-who').value.trim();
+  const from=document.getElementById('psus-from').value;
+  const reason=document.getElementById('psus-reason').value.trim();
+  if(!who){alert('氏名または電話番号を入力してください');return;}
+  if(!from){alert('停止を始める月を選んでください');return;}
+  if(reason.length<2){alert('理由を入力してください（後から「なぜ止めたか」を追えるようにするためです）');return;}
+  // 🚨 全現場が止まることを必ず確認させる。新聞だけのつもりで押されると事故になる。
+  if(!confirm([
+    who+' さんの支払いを '+from+' 分から停止します。','',
+    '・明細ビューアに出なくなります',
+    '・支払通知メールも送られなくなります',
+    '・新聞だけでなく【全現場】が止まります',
+    '・会計の金額は残ります（未払い）','',
+    'よろしいですか？'].join('\n')))return;
+  try{
+    // 数字だけなら電話番号、それ以外は氏名として中央マスタを引く
+    const isPhone=/^[0-9-]{10,}$/.test(who);
+    const r=await psusApi(Object.assign({action:'set',from_ym:from,reason:reason},
+      isPhone?{phone:who}:{subject_key:'n:'+who.replace(/[\s　]/g,'')}));
+    alert((r.row.name_at_reg||who)+' さんを '+r.row.from_ym+' 分から停止しました。');
+    document.getElementById('psus-who').value='';document.getElementById('psus-reason').value='';
+    psusLoad();
+  }catch(e){alert('登録できませんでした: '+e.message);}
+}
+async function psusRelease(id){
+  if(!confirm('この方の支払停止を解除します。よろしいですか？'))return;
+  // 止めていた月ぶんを見せるかどうかは運用が分かれるので必ず選ばせる
+  const reopen=confirm([
+    '止めていた月の明細も本人に見せますか？','',
+    '「OK」= 見せる（支払いを再開して過去分も精算する場合）',
+    '「キャンセル」= 止めた月は非公開のまま（解除した月から再開）'].join('\n'));
+  try{
+    await psusApi({action:'release',id:id,reopen_past:reopen});
+    alert('解除しました。');psusLoad();
+  }catch(e){alert('解除できませんでした: '+e.message);}
+}
+
 function adminTab(t){
   document.querySelectorAll('.adm-panel').forEach(p=>p.style.display='none');
   document.querySelectorAll('.adm-tab').forEach(b=>{b.style.background='#f1f5f9';b.style.color='var(--text-sub)';});
@@ -8767,6 +8868,7 @@ function adminTab(t){
   if(t==='billcond')admBcInit();
   if(t==='pricelist'){document.getElementById('adm-pricelist-content').innerHTML='<p style="text-align:center;padding:40px;color:var(--text-sub);">読み込み中...</p>';loadBillPrices().then(()=>admPriceListRender());}
   if(t==='check')adminInitCheck();
+  if(t==='paysuspend')psusLoad();
   if(t==='measure')admMsrInit();
   if(t==='paystatement')admPayInit().catch(()=>{});
   if(t==='specialrate')admSpInit().catch(()=>{});
