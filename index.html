@@ -859,7 +859,7 @@ tbody tr:hover { background:var(--primary-light); }
             <div><label style="font-size:12px;color:var(--text-sub);display:block;">担当（任意）</label><input type="text" id="btob-staff" placeholder="例: 株式会社NELTEC 小林 雄太" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
             <details style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
               <summary style="font-size:12px;color:var(--text-sub);font-weight:600;cursor:pointer;">振込先（BtoB CSV用・この端末に記憶されます）</summary>
-              <p style="font-size:11px;color:var(--text-sub);margin:6px 0 8px;">🚨 口座情報はコードに書けない（このリポジトリは公開）ため、ここで一度入力してください。カナは先方指定が半角です。空のままでも出力はできます（BtoB側の振込先マスタで補える場合）。</p>
+              <p style="font-size:11px;color:var(--text-sub);margin:6px 0 8px;">アスクルと同じ口座をサーバから自動で読み込みます（管理者のみ）。🚨 口座情報はコードに書けない（このリポジトリは公開）ため、Supabaseに置いています。読めなかったときだけ手入力してください。カナは先方指定が半角です。</p>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"><div><label style="font-size:11px;color:var(--text-sub);display:block;">振込先コード</label><input type="text" id="btob-bkcode" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">金融機関コード</label><input type="text" id="btob-bkbank" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">金融機関名</label><input type="text" id="btob-bkbankname" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">金融機関名カナ(半角)</label><input type="text" id="btob-bkbankkana" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">支店コード</label><input type="text" id="btob-bkbranch" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">支店名</label><input type="text" id="btob-bkbranchname" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">支店名カナ(半角)</label><input type="text" id="btob-bkbranchkana" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">預金種別</label><input type="text" id="btob-bktype" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">口座番号</label><input type="text" id="btob-bkno" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">預金者名</label><input type="text" id="btob-bkname" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">預金者名カナ(半角)</label><input type="text" id="btob-bknamekana" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div></div>
             </details>
             <div style="display:flex;gap:10px;">
@@ -16478,7 +16478,7 @@ async function admBillBtoB(){
     const shime=new Date(y,m,0);       // 請求月の末日
     const due=new Date(y,m+1,0);       // 翌月末日 = 入金期限
     document.getElementById('btob-client').value=localStorage.getItem('sm_btob_client')||'株式会社東京即売';
-    document.getElementById('btob-code').value=localStorage.getItem('sm_btob_code')||'';
+    document.getElementById('btob-code').value=localStorage.getItem('sm_btob_code')||'10002'; // 東京即売のBtoB支払先コード
     document.getElementById('btob-subject').value=`R${reiwa}年${m}月分請求書`;
     document.getElementById('btob-company').value=localStorage.getItem('sm_btob_company')||'株式会社NELTEC';
     document.getElementById('btob-regno').value=localStorage.getItem('sm_btob_regno')||'T8011601022911';
@@ -16487,9 +16487,11 @@ async function admBillBtoB(){
     document.getElementById('btob-shime').value=ymd(shime);
     document.getElementById('btob-due').value=ymd(due);
     document.getElementById('btob-tax').checked=(localStorage.getItem('sm_btob_tax')!=='0');
-    // 振込先(CSV用)。 口座はコードに持てないので、この端末に保存したものを戻す
+    // 振込先(CSV用)。 まず端末に残っているものを戻し、そのあとサーバの設定で上書きする。
+    // サーバ(sm_billing_settings)には アスクルと同じ口座 が入っている。読めなければ手入力のまま。
     ['bkcode','bkbank','bkbankname','bkbankkana','bkbranch','bkbranchname','bkbranchkana','bktype','bkno','bkname','bknamekana']
       .forEach(i=>{const el=document.getElementById('btob-'+i);if(el)el.value=localStorage.getItem('sm_btob_'+i)||'';});
+    admBillLoadBtobSettings();
     document.getElementById('btob-total-preview').textContent=`税抜 ¥${grand.toLocaleString()}（${confirmedCnt}/${courses}コース確定）`;
     document.getElementById('sm-btob-modal').style.display='flex';
   }catch(e){alert('エラー: '+e.message);}
@@ -16593,6 +16595,26 @@ function admBillBtoBLines(monthVal,records,cols,areas){
     if(t.extraFee>0)lines.push({area,item:`庫内・直送便 ${area}${suffix}`,amount:t.extraFee});
   });
   return {lines,missing};
+}
+
+// 振込先と支払先コードをサーバから読む(アスクルと同じ口座を共用)。
+// 🚨 口座情報は公開リポジトリに置けないので Supabase(sm_billing_settings) にあり、
+//    invoice-sheet EF が管理者認証のうえ service_role で読んで返す。
+// 失敗しても画面は止めない(手入力のまま出せる)。誤った口座を出すより空欄が安全。
+async function admBillLoadBtobSettings(){
+  try{
+    const res=await invApi({action:'get_btob_settings'});
+    const st=res?.settings;if(!st)return;
+    const map={bkcode:'code',bkbank:'bankCode',bkbankname:'bankName',bkbankkana:'bankNameKana',
+      bkbranch:'branchCode',bkbranchname:'branchName',bkbranchkana:'branchNameKana',
+      bktype:'accountType',bkno:'accountNo',bkname:'accountName',bknamekana:'accountNameKana'};
+    Object.entries(map).forEach(([id,k])=>{
+      const el=document.getElementById('btob-'+id);
+      if(el&&st.bank&&st.bank[k])el.value=st.bank[k];
+    });
+    const codeEl=document.getElementById('btob-code');
+    if(codeEl&&!codeEl.value&&st.partnerCode)codeEl.value=st.partnerCode;
+  }catch(e){/* 読めなければ手入力のまま */}
 }
 
 async function admBillBtoBCsv46(){

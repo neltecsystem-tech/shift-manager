@@ -1446,6 +1446,25 @@ Deno.serve(async(req:Request)=>{
       await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(BILL_PRICE_SHEET)}!A2:W2?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});
       return jsonResp({success:true});
     }
+    if(action==='get_btob_settings'){
+      // BtoBプラットフォーム用の振込先と支払先コード。
+      // 🚨 shift-manager のリポジトリは公開なので口座情報をコードに置けない。
+      //    アスクルと同じ値を sm_billing_settings(key='btob') に持ち、ここからだけ返す。
+      //    テーブルは RLS 有効でポリシー無し(= service_role 以外は読めない)。
+      if(!admin) return forbid();
+      const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+      const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if(!SB_URL || !SRK) return jsonResp({ok:false, error:'設定を読み出せませんでした'});
+      try{
+        const r = await fetch(`${SB_URL}/rest/v1/sm_billing_settings?select=data&key=eq.btob`,
+          { headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } });
+        const j = await r.json();
+        // 読めなかったときは空で返す。誤った口座を出すより空欄のほうが安全。
+        return jsonResp({ settings: (Array.isArray(j) && j[0]?.data) ? j[0].data : null });
+      }catch(e){
+        return jsonResp({ok:false, error:String((e as any)?.message??e).slice(0,200)});
+      }
+    }
     if(action==='get_kawagoe_course_prices'){
       // 川越コース単価マスタ — 請求側の参照に使う。staff には不要なので admin のみ
       if(!admin) return forbid();
