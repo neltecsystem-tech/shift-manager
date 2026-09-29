@@ -846,7 +846,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="sm-btob-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center;">
         <div style="background:#fff;border-radius:12px;padding:22px;max-width:520px;width:92%;max-height:90vh;overflow:auto;">
           <h3 style="color:#0d9488;margin:0 0 4px;">🧾 BtoB請求書を作成</h3>
-          <p style="font-size:12px;color:var(--text-sub);margin:0 0 14px;">全営業所の総額を、取引先1社宛の請求書（総額1行）にします。<span id="btob-total-preview" style="font-weight:bold;color:#92400e;"></span></p>
+          <p style="font-size:12px;color:var(--text-sub);margin:0 0 14px;">全営業所を取引先1社宛にまとめます。PDFは総額1行、CSV（明細あり）は営業所×コース×朝刊/夕刊の明細付きです。<span id="btob-total-preview" style="font-weight:bold;color:#92400e;"></span></p>
           <div style="display:flex;flex-direction:column;gap:10px;">
             <div><label style="font-size:12px;color:var(--text-sub);display:block;">取引先名（宛先）*</label><input type="text" id="btob-client" placeholder="例: 株式会社◯◯" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
             <div><label style="font-size:12px;color:var(--text-sub);display:block;">発行先コード（インフォマートCSV用・任意）</label><input type="text" id="btob-code" placeholder="インフォマートの発行先コード" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
@@ -857,6 +857,11 @@ tbody tr:hover { background:var(--primary-light); }
             <div><label style="font-size:12px;color:var(--text-sub);display:block;">登録番号（適格請求書 T番号・任意）</label><input type="text" id="btob-regno" placeholder="例: T1234567890123" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
             <div><label style="font-size:12px;color:var(--text-sub);display:block;">振込先など（任意・複数行可）</label><textarea id="btob-bank" rows="2" placeholder="例: ◯◯銀行 ◯◯支店 普通 1234567 カ)ネルテック" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;resize:vertical;"></textarea></div>
             <div><label style="font-size:12px;color:var(--text-sub);display:block;">担当（任意）</label><input type="text" id="btob-staff" placeholder="例: 株式会社NELTEC 小林 雄太" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
+            <details style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
+              <summary style="font-size:12px;color:var(--text-sub);font-weight:600;cursor:pointer;">振込先（BtoB CSV用・この端末に記憶されます）</summary>
+              <p style="font-size:11px;color:var(--text-sub);margin:6px 0 8px;">🚨 口座情報はコードに書けない（このリポジトリは公開）ため、ここで一度入力してください。カナは先方指定が半角です。空のままでも出力はできます（BtoB側の振込先マスタで補える場合）。</p>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"><div><label style="font-size:11px;color:var(--text-sub);display:block;">振込先コード</label><input type="text" id="btob-bkcode" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">金融機関コード</label><input type="text" id="btob-bkbank" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">金融機関名</label><input type="text" id="btob-bkbankname" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">金融機関名カナ(半角)</label><input type="text" id="btob-bkbankkana" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">支店コード</label><input type="text" id="btob-bkbranch" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">支店名</label><input type="text" id="btob-bkbranchname" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">支店名カナ(半角)</label><input type="text" id="btob-bkbranchkana" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">預金種別</label><input type="text" id="btob-bktype" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">口座番号</label><input type="text" id="btob-bkno" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">預金者名</label><input type="text" id="btob-bkname" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div><div><label style="font-size:11px;color:var(--text-sub);display:block;">預金者名カナ(半角)</label><input type="text" id="btob-bknamekana" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;"></div></div>
+            </details>
             <div style="display:flex;gap:10px;">
               <div style="flex:1;"><label style="font-size:12px;color:var(--text-sub);display:block;">締日</label><input type="date" id="btob-shime" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
               <div style="flex:1;"><label style="font-size:12px;color:var(--text-sub);display:block;">入金期限</label><input type="date" id="btob-due" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;"></div>
@@ -865,7 +870,8 @@ tbody tr:hover { background:var(--primary-light); }
           </div>
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
             <button onclick="document.getElementById('sm-btob-modal').style.display='none'" style="background:#e2e8f0;color:#334155;border:none;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:600;">キャンセル</button>
-            <button onclick="admBillBtoBCsv()" style="background:#2563eb;color:#fff;border:none;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:700;" title="インフォマート一括アップロード用CSV(31列/SJIS)">📤 CSV出力</button>
+            <button onclick="admBillBtoBCsv46()" style="background:#2563eb;color:#fff;border:none;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:700;" title="BtoB側のフォーマット設定に合わせた46列CSV。明細=営業所×コース×朝刊/夕刊">📤 CSV出力（明細あり）</button>
+            <button onclick="admBillBtoBCsv()" style="background:#94a3b8;color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:12px;" title="旧: 先方の標準フォーマット(31列)・総額1行。46列版が通ったら廃止">旧31列</button>
             <button onclick="admBillBtoBGenerate()" style="background:#0d9488;color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:700;">PDF用に生成</button>
           </div>
         </div>
@@ -16476,11 +16482,14 @@ async function admBillBtoB(){
     document.getElementById('btob-subject').value=`R${reiwa}年${m}月分請求書`;
     document.getElementById('btob-company').value=localStorage.getItem('sm_btob_company')||'株式会社NELTEC';
     document.getElementById('btob-regno').value=localStorage.getItem('sm_btob_regno')||'T8011601022911';
-    document.getElementById('btob-bank').value=localStorage.getItem('sm_btob_bank')||'(1356)巣鴨信用金庫 (009)練馬支店 普通預金 3211674 株式会社NELTEC 代表取締役吉田希';
+    document.getElementById('btob-bank').value=localStorage.getItem('sm_btob_bank')||''; // 🚨 口座は既定値に書かない(このリポジトリは公開)。初回は手入力→localStorageに残る
     document.getElementById('btob-staff').value=localStorage.getItem('sm_btob_staff')||'株式会社NELTEC 小林 雄太';
     document.getElementById('btob-shime').value=ymd(shime);
     document.getElementById('btob-due').value=ymd(due);
     document.getElementById('btob-tax').checked=(localStorage.getItem('sm_btob_tax')!=='0');
+    // 振込先(CSV用)。 口座はコードに持てないので、この端末に保存したものを戻す
+    ['bkcode','bkbank','bkbankname','bkbankkana','bkbranch','bkbranchname','bkbranchkana','bktype','bkno','bkname','bknamekana']
+      .forEach(i=>{const el=document.getElementById('btob-'+i);if(el)el.value=localStorage.getItem('sm_btob_'+i)||'';});
     document.getElementById('btob-total-preview').textContent=`税抜 ¥${grand.toLocaleString()}（${confirmedCnt}/${courses}コース確定）`;
     document.getElementById('sm-btob-modal').style.display='flex';
   }catch(e){alert('エラー: '+e.message);}
@@ -16532,6 +16541,121 @@ function admBillBtoBPrint(){
   win.document.write(`<!DOCTYPE html><html><head><title>${client}_請求書</title><style>${css}</style></head><body>${area.outerHTML}<script>setTimeout(()=>window.print(),400)<\/script></body></html>`);
   win.document.close();
 }
+// ── BtoBプラットフォーム 46列CSV (明細あり) ────────────────────────────────
+// 🚨 この46列の並びは BtoB側の「アップロードフォーマット設定」に登録済みの対応付け
+//    (貴社データの何番目か)と一対一。**順番も列数も変えたら全部ズレて取り込めない**。
+//    2026-09-28 にアスクルの請求でこの並びの取り込みが通っている。
+//    足したい項目が出ても列を増やさないこと(増やすなら先方の設定もやり直す前提)。
+//    下の31列版(admBillBtoBCsv)は「先方の標準フォーマット」に合わせたもので、
+//    アスクルではこのやり方が通らなかった。46列版が通ったら31列版は整理する。
+const BTOB46_COLUMNS=['請求書番号','支払先コード','事業者区分','事業者登録番号','件名','支払期限',
+  '前回請求金額','入金額','調整金額','繰越金額',
+  '今回請求金額（税抜）','今回消費税額','今回請求金額（税込）','おもての請求金額',
+  '10%請求金額（税抜）','10%消費税額','10%請求金額（税込）','締日','備考',
+  '振込先コード','金融機関コード','金融機関名','金融機関名カナ','支店コード','支店名','支店名カナ',
+  '預金種別','口座番号','預金者名','預金者名カナ',
+  '明細日付','明細番号','商品コード','明細項目','数量','単価','単位','金額','消費税額','請求金額',
+  '税区分（課税／非課税／免税／不課税）','税率','税額入力形式（税抜／税込／手入力）',
+  '部門コード','部門名','明細備考'];
+
+// 明細行を作る。粒度 = 営業所 × コース × {朝刊, 夕刊} + 営業所ごとの加算。
+// 🚨 金額は「確定売上」をそのまま使う(再計算しない)。確定が無いコースだけ計算値で埋める。
+//    競馬は夕刊(dayPm)に含まれているので分けない(確定売上が朝刊小計/夕刊小計しか持たないため。
+//    3分割にすると合計が確定値とズレる恐れがある)。
+function admBillBtoBLines(monthVal,records,cols,areas){
+  const lines=[],missing=[];
+  const [y,m]=monthVal.split('-').map(Number);
+  const reiwa=y-2018;
+  const suffix=`（令和${reiwa}年${m}月分）`;
+  areas.forEach(area=>{
+    const bulkAreas=area==='城北'?['城北','池袋']:[area];
+    const filtered=records.filter(r=>!(r[`col_${cols.area}`]||'').includes('納品中止'));
+    const allC=new Set();
+    filtered.forEach(r=>{
+      if(r[`col_${cols.amCourse}`])allC.add(r[`col_${cols.amCourse}`]);
+      if(r[`col_${cols.pmCourse}`])allC.add(r[`col_${cols.pmCourse}`]);
+      if(r[`col_${cols.keibaCourse}`])allC.add(r[`col_${cols.keibaCourse}`]);
+    });
+    const courses=[...allC].filter(c=>bulkAreas.some(a=>c.includes(a))).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+    courses.forEach(course=>{
+      const confirmed=typeof getConfirmedSale==='function'?getConfirmedSale(monthVal,area,course):null;
+      const r=admBillRenderWithTotals(area,course,monthVal);
+      const am=confirmed?confirmed.am_total:r.totalAmSum;
+      const pm=confirmed?confirmed.pm_total:r.totalPmSum;
+      if(!confirmed)missing.push(course);
+      // 0円の区分は行にしない(先方の明細が無駄に増えるだけ)
+      if(am>0)lines.push({area,item:`新聞配送業務委託料 ${course} 朝刊${suffix}`,amount:am});
+      if(pm>0)lines.push({area,item:`新聞配送業務委託料 ${course} 夕刊${suffix}`,amount:pm});
+    });
+    // 営業所ごとの加算(コースに属さない)。admBillComputeAreaTotal と同じ条件で出す。
+    const t=admBillComputeAreaTotal(area,monthVal,records,cols);
+    if(t.workFee>0)lines.push({area,item:`作業料 ${area}${suffix}`,amount:t.workFee});
+    if(t.extraFee>0)lines.push({area,item:`庫内・直送便 ${area}${suffix}`,amount:t.extraFee});
+  });
+  return {lines,missing};
+}
+
+async function admBillBtoBCsv46(){
+  const ctx=admBillBtoBCtx;if(!ctx){alert('先に「🧾 BtoB請求書」を押してください');return;}
+  const v=id=>(document.getElementById(id).value||'').trim();
+  const code=v('btob-code');
+  if(!code&&!window.confirm('支払先コードが未入力です。BtoB側の支払先コードが無いと取込に失敗します。このまま出力しますか?'))return;
+  const subject=v('btob-subject')||`R${ctx.reiwa}年${ctx.m}月分請求書`;
+  const regno=v('btob-regno');
+  const shime=v('btob-shime'),due=v('btob-due');
+  const addTax=document.getElementById('btob-tax').checked;
+  const bankIds=['bkcode','bkbank','bkbankname','bkbankkana','bkbranch','bkbranchname','bkbranchkana','bktype','bkno','bkname','bknamekana'];
+  const bank=bankIds.map(i=>v('btob-'+i));
+  // 口座は公開リポジトリに書けないので、この端末にだけ残す
+  bankIds.forEach((i,k)=>localStorage.setItem('sm_btob_'+i,bank[k]));
+  localStorage.setItem('sm_btob_code',code);
+  const jd=s=>{const m2=(s||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);return m2?`${m2[1]}/${m2[2]}/${m2[3]}`:'';};
+
+  const records=(admBillShopData?.records)||[];
+  const cols=admBillCols();
+  const sel=document.getElementById('adm-bill-area');
+  const areas=Array.from(sel.options).map(o=>o.value).filter(Boolean);
+  const {lines,missing}=admBillBtoBLines(ctx.monthVal,records,cols,areas);
+  if(!lines.length){alert('明細が0件です。年月と確定状況を確認してください');return;}
+
+  const net=lines.reduce((a,l)=>a+l.amount,0);
+  // 🚨 おもての金額は既存のPDF請求書と1円も違わないようにする(あちらは切り捨て)
+  const totalTax=addTax?Math.floor(net*0.1):0;
+  const gross=net+totalTax;
+  if(net!==ctx.grand&&!window.confirm(`明細の合計(¥${net.toLocaleString()})が画面の総額(¥${ctx.grand.toLocaleString()})と一致しません。\nこのまま出力しますか?`))return;
+  // 行ごとに切ると合計とズレるので、按分して端数は最終行で吸収する
+  let assigned=0;
+  const taxes=lines.map((l,i)=>{
+    if(!addTax)return 0;
+    if(i===lines.length-1)return totalTax-assigned;
+    const t=Math.floor(l.amount*0.1);assigned+=t;return t;
+  });
+
+  const invoiceNo=`TS-${ctx.monthVal.replace('-','')}`;
+  const head=[invoiceNo,code,'1',regno,subject,jd(due),
+    0,0,0,0,
+    net,totalTax,gross,gross,
+    net,totalTax,gross,jd(shime),''].concat(bank);
+  const rows=lines.map((l,i)=>head.concat([
+    jd(shime),i+1,'',l.item,1,l.amount,'式',l.amount,taxes[i],l.amount+taxes[i],
+    '課税',addTax?10:0,'税抜','',l.area,'']));
+  const cell=x=>{const t=x==null?'':String(x);return /[",\r\n]/.test(t)?'"'+t.replace(/"/g,'""')+'"':t;};
+  const csv=[BTOB46_COLUMNS].concat(rows).map(r=>r.map(cell).join(',')).join('\r\n');
+  const fname=`BtoB請求書_${invoiceNo}.csv`;
+  const dl=(blob,name)=>{const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(()=>URL.revokeObjectURL(url),1000);};
+  const warn=missing.length?`\n\n⚠ 売上が未確定のコースが${missing.length}件あります（計算値で出しました）: ${missing.slice(0,8).join('、')}${missing.length>8?' ほか':''}`:'';
+  try{
+    const Encoding=(await import('https://esm.sh/encoding-japanese@2')).default;
+    const sjis=Encoding.convert(Encoding.stringToCode(csv),{to:'SJIS',from:'UNICODE'});
+    dl(new Blob([new Uint8Array(sjis)],{type:'text/csv'}),fname);
+    document.getElementById('sm-btob-modal').style.display='none';
+    alert(`✅ BtoB請求書CSV(46列/SJIS)を出力しました。\n明細 ${lines.length}行 / 税抜 ¥${net.toLocaleString()} / 税込 ¥${gross.toLocaleString()}${warn}`);
+  }catch(e){
+    dl(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8;'}),fname.replace('.csv','_utf8.csv'));
+    alert('⚠ Shift-JIS変換に失敗したためUTF-8(BOM付)で出力しました。BtoBはSJISです。\nネット接続を確認して再実行してください。\nエラー: '+e.message);
+  }
+}
+
 // インフォマート(BtoBプラットフォーム)一括アップロード用CSV。31列・Shift-JIS・1請求書=1明細。
 // 会計ツール(kaikei) の exportBtoB と同一フォーマット。
 async function admBillBtoBCsv(){
