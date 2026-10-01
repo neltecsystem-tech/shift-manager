@@ -6265,7 +6265,16 @@ async function smSave(){
       record[`col_${i}`]=el.value;
     }
   });
-  smStampUpdateDate(record, smEditRow?(smData.find(r=>r.row_number===smEditRow)||{}):null);
+  const smPrev=smEditRow?(smData.find(r=>r.row_number===smEditRow)||{}):null;
+  // 🚨 座標を手で直したら、その行の Place ID は古い位置のものなので捨てる。
+  //    残すとナビが Place ID 側の位置を使い、せっかく直した座標が無視される
+  //    (2026-10-01: 直した座標が効かないという指摘の元)。空にすれば座標で誘導し、
+  //    次の自動取得で新しい座標から取り直される。
+  if(smPrev&&smColMap.placeId!=null){
+    const cg=(i)=>i!=null&&String(record[`col_${i}`]||'').trim()!==String(smPrev[`col_${i}`]||'').trim();
+    if(cg(smColMap.lat)||cg(smColMap.lng))record[`col_${smColMap.placeId}`]='';
+  }
+  smStampUpdateDate(record, smPrev);
   try{
     const action=smEditRow?'update':'add';
     const body=smEditRow?{action,row_number:smEditRow,record}:{action,record};
