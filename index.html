@@ -20499,6 +20499,33 @@ function diagNavLabel(s){
 // 可能性が高いため使わない(座標と住所で誘導する)。
 function diagNavPid(s){ return diagOfficialTrusted(s)?(s.placeId||null):null; }
 
+function diagNavCoord(s){
+  if(s&&s.lat!=null&&s.lng!=null)return `${s.lat},${s.lng}`;
+  return (s&&s.addr||'').trim();
+}
+
+// ナビURLの経由地を組み立てる。
+// 🚨 店名/住所のテキストは Place ID を一緒に送れる時だけ使う。Place ID の無いテキストは
+//    Googleが勝手に検索して全く別の店(別の市のコンビニ)に解決することがあり、
+//    2026-07-17 と 2026-10-01 の「全然違う店舗へ誘導される」はどちらもこれ。
+//    Place ID が1件でも欠けたら経由地は全部座標にする(位置は必ず正確・店名は出ない)。
+function diagNavParams(chunk){
+  const last=chunk[chunk.length-1];
+  const rest=chunk.slice(0,-1);
+  const params=new URLSearchParams();
+  params.set('api','1');
+  const lastPid=diagNavPid(last);
+  params.set('destination',lastPid?diagNavLabel(last):diagNavCoord(last));
+  if(lastPid)params.set('destination_place_id',lastPid);
+  if(rest.length>0){
+    const allPid=rest.every(x=>diagNavPid(x));
+    params.set('waypoints',rest.map(x=>allPid?diagNavLabel(x):diagNavCoord(x)).join('|'));
+    if(allPid)params.set('waypoint_place_ids',rest.map(x=>diagNavPid(x)).join('|'));
+  }
+  params.set('travelmode','driving');
+  return params;
+}
+
 // 任意の店舗から「現在地→その店舗以降9件」のナビを開く (中断後の再開用)
 async function diagNavFromHere(id){
   const r=window.__diagNavFromHere&&window.__diagNavFromHere[id];
@@ -20511,21 +20538,7 @@ async function diagNavFromHere(id){
     if(startIdx<0){if(w)w.close();alert('対象店舗が見つかりません (マスタ変更？)');return;}
     const chunk=shops.slice(startIdx,startIdx+9);
     if(chunk.length===0){if(w)w.close();alert('対象店舗がありません');return;}
-    // 公式仕様: waypoints=店舗名 + waypoint_place_ids=ChIJ で 名前表示+正確位置
-    // Place ID なしの店舗は lat,lng で fallback (座標表示)
-    const labelOf=diagNavLabel;
-    const last=chunk[chunk.length-1];
-    const rest=chunk.slice(0,-1);
-    const params=new URLSearchParams();
-    params.set('api','1');
-    params.set('destination',labelOf(last));
-    const lastPid=diagNavPid(last);
-    if(lastPid)params.set('destination_place_id',lastPid);
-    if(rest.length>0){
-      params.set('waypoints',rest.map(labelOf).join('|'));
-      if(rest.every(s=>diagNavPid(s)))params.set('waypoint_place_ids',rest.map(s=>diagNavPid(s)).join('|'));
-    }
-    params.set('travelmode','driving');
+    const params=diagNavParams(chunk);
     const url=`https://www.google.com/maps/dir/?${params.toString()}`;
     if(w)w.location.href=url;
     else window.location.href=url;
@@ -20552,20 +20565,7 @@ async function diagNavOpen(routeId){
       alert('対象店舗がありません（マスタが変更された可能性があります）');
       return;
     }
-    const last=chunk[chunk.length-1];
-    const rest=chunk.slice(0,-1);
-    // 公式仕様: waypoints=店舗名 + waypoint_place_ids=ChIJ で 名前表示+正確位置
-    const labelOf=diagNavLabel;
-    const params=new URLSearchParams();
-    params.set('api','1');
-    params.set('destination',labelOf(last));
-    const lastPid=diagNavPid(last);
-    if(lastPid)params.set('destination_place_id',lastPid);
-    if(rest.length>0){
-      params.set('waypoints',rest.map(labelOf).join('|'));
-      if(rest.every(s=>diagNavPid(s)))params.set('waypoint_place_ids',rest.map(s=>diagNavPid(s)).join('|'));
-    }
-    params.set('travelmode','driving');
+    const params=diagNavParams(chunk);
     const url=`https://www.google.com/maps/dir/?${params.toString()}`;
     if(w)w.location.href=url;
     else window.location.href=url; // ポップアップブロックされた場合のフォールバック
@@ -20809,19 +20809,7 @@ function diagExportPdf(){
   // ナビURL構築 (公式仕様: waypoints=店舗名 + waypoint_place_ids=ChIJ で名前表示+正確位置)
   const buildNavUrlFromShops=(chunkShops)=>{
     if(!chunkShops.length)return null;
-    const last=chunkShops[chunkShops.length-1];
-    const rest=chunkShops.slice(0,-1);
-    const labelOf=diagNavLabel;
-    const params=new URLSearchParams();
-    params.set('api','1');
-    params.set('destination',labelOf(last));
-    const lastPid=diagNavPid(last);
-    if(lastPid)params.set('destination_place_id',lastPid);
-    if(rest.length>0){
-      params.set('waypoints',rest.map(labelOf).join('|'));
-      if(rest.every(s=>diagNavPid(s)))params.set('waypoint_place_ids',rest.map(s=>diagNavPid(s)).join('|'));
-    }
-    params.set('travelmode','driving');
+    const params=diagNavParams(chunkShops);
     return 'https://www.google.com/maps/dir/?'+params.toString();
   };
 
