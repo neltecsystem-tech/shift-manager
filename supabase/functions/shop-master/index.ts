@@ -115,7 +115,7 @@ const ADMIN_WRITE_ACTIONS = new Set([
   'partial_stop_add','partial_stop_cancel','snapshot_purge_store_course',
 ]);
 // driver: 測定中にドライバーが書く GPS/判定 → ログイン済みなら誰でも可(role不問)。
-const AUTHED_WRITE_ACTIONS = new Set(['batch_update_latlng','batch_update_verify']);
+const AUTHED_WRITE_ACTIONS = new Set(['batch_update_latlng','batch_update_verify','claim_place_id']);
 // snapshot_create は月初 pg_cron からも叩かれるため意図的にゲート外(作成のみ・破壊性低)。
 // admin_password による代替認証も許可(cron/自動化フォールバック)。
 const SM_ADMIN_PASSWORD = Deno.env.get('SHIFT_ADMIN_PASSWORD') || '';
@@ -1231,8 +1231,10 @@ Deno.serve(async (req: Request) => {
         });
       }
       await ensureExtraHeaders(token);
+      // code を載せてきた更新だけ、シートのC列と突合してから書く(行ズレ対策)
+      const llChecked = await filterByShopCode(token, updates);
       const data: any[] = [];
-      for (const u of updates) {
+      for (const u of llChecked.ok) {
         if (!u.row_number) continue;
         data.push({
           range: `'${SHEET_NAME}'!AD${u.row_number}:AE${u.row_number}`,
@@ -1242,6 +1244,14 @@ Deno.serve(async (req: Request) => {
           data.push({
             range: `'${SHEET_NAME}'!AG${u.row_number}:AG${u.row_number}`,
             values: [[u.accuracy]],
+          });
+        }
+        // 🚨 座標を直したら、その座標から作られていない古い Place ID は捨てる。
+        //    残すとナビが Place ID 側の位置を使い、直した座標が無視される。
+        if (u.clear_place_id) {
+          data.push({
+            range: `'${SHEET_NAME}'!AK${u.row_number}:AK${u.row_number}`,
+            values: [['']],
           });
         }
       }
@@ -1262,6 +1272,49 @@ Deno.serve(async (req: Request) => {
         });
       }
       return new Response(JSON.stringify({ success: true, updated: updates.length }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    } else if (action === 'claim_place_id') {
+      // ドライバーが現場で店の位置を直したあと、その座標から取れた Place ID を入れる。
+      // 🚨 ログイン済みなら誰でも叩けるので、書ける条件を絞る:
+      //    - 店舗コードがシートのC列と一致する行だけ (行ズレ対策)
+      //    - 今 Place ID が空の行だけ (入っているものを現場から塗り替えさせない)
+      await invalidateShopCache();
+      const cpRow = Number(reqBody.row_number || 0);
+      const cpCode = String(reqBody.code || '').trim();
+      const cpPid = String(reqBody.place_id || '').trim();
+      if (!cpRow || !cpCode || !cpPid) {
+        return new Response(JSON.stringify({ error: 'row_number / code / place_id が必要です' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      await ensureExtraHeaders(token);
+      const cpChecked = await filterByShopCode(token, [{ row_number: cpRow, code: cpCode }]);
+      if (!cpChecked.ok.length) {
+        return new Response(JSON.stringify({ error: '店舗コードが一致しません(マスタが変わった可能性があります)' }), {
+          status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const curR = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AK${cpRow}:AK${cpRow}`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const curJ = await curR.json();
+      const curPid = String(((curJ.values || [])[0] || [])[0] || '').trim();
+      if (curPid) {
+        return new Response(JSON.stringify({ success: true, updated: 0, skipped: 'already_set' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const cpResp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!AK${cpRow}:AK${cpRow}?valueInputOption=USER_ENTERED`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [[cpPid]] }),
+      });
+      if (!cpResp.ok) {
+        const t = await cpResp.text();
+        return new Response(JSON.stringify({ error: 'Place IDの書込に失敗: ' + t.slice(0, 200) }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ success: true, updated: 1 }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } else if (action === 'batch_update_addr') {

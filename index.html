@@ -20437,6 +20437,7 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
     return {
       seq:i+1,
       rawOrder,
+      row:r.row_number,
       code:diagColMap.code!==undefined?(r[`col_${diagColMap.code}`]||''):'',
       name:diagColMap.name!==undefined?(r[`col_${diagColMap.name}`]||''):'',
       official:diagColMap.officialName!==undefined?(r[`col_${diagColMap.officialName}`]||'').trim():'',
@@ -20517,6 +20518,62 @@ function diagNavLabel(s){
 //    座標を手で直した行は smSave が Place ID を消すので、直した座標が常に優先される。
 function diagNavPid(s){
   return diagOfficialTrusted(s)?(s.placeId||null):null;
+}
+
+// ── 現場で店の位置を直す ────────────────────────────────────────────────
+// ナビが座標表示のままの店(Place IDが取れていない店)は、たいてい登録座標が実際の
+// 店とズレている。ドライバーが店の前に立ってボタンを押せば、その場で座標を直し、
+// 新しい座標から Place ID を取り直す。次からは地図に店名が出る。
+// 🚨 押し間違いが怖いので、精度が粗い/今の登録位置から離れている時は確認を挟む。
+async function diagFixLocation(id){
+  const s=window.__diagFixLoc&&window.__diagFixLoc[id];
+  if(!s){alert('店舗情報なし。再読み込みしてください。');return;}
+  if(!navigator.geolocation){alert('この端末では現在地を取得できません');return;}
+  if(typeof invAuthToken==='undefined'||!invAuthToken){alert('ログインしてから実行してください');return;}
+  const pos=await new Promise(res=>navigator.geolocation.getCurrentPosition(
+    p=>res(p),()=>res(null),{enableHighAccuracy:true,timeout:15000,maximumAge:0}));
+  if(!pos){alert('現在地を取得できませんでした。屋外でもう一度お試しください。');return;}
+  const la=pos.coords.latitude,lo=pos.coords.longitude,acc=Math.round(pos.coords.accuracy||0);
+  if(acc>50&&!confirm(`現在地の精度が ±${acc}m と粗いです。このまま「${s.name}」の位置にしますか？`))return;
+  const d=(s.lat!=null&&s.lng!=null)?Math.round(msrCalcDist(s.lat,s.lng,la,lo)):null;
+  if(d!=null&&d>500&&!confirm(`今の登録位置から ${d}m 離れています。本当に「${s.name}」の前にいますか？`))return;
+  if(!confirm(`「${s.name}」の位置を、今いる場所に直します。よろしいですか？`))return;
+  try{
+    const r1=await smPost({action:'batch_update_latlng',updates:[{row_number:s.row,code:s.code,lat:la,lng:lo,accuracy:'📍現場',clear_place_id:true}]});
+    const j1=await r1.json();
+    if(!r1.ok||j1.error)throw new Error(j1.error||`保存失敗 (${r1.status})`);
+    // 新しい座標から Place ID を取り直す(取れなくても座標は直っているので致命的ではない)
+    let got='';
+    const brands=typeof smBrandOf==='function'?smBrandOf(s.name):null;
+    if(brands){
+      for(const radius of [80,200]){
+        let resp;
+        try{
+          resp=await fetch('https://places.googleapis.com/v1/places:searchNearby',{method:'POST',
+            headers:{'Content-Type':'application/json','X-Goog-Api-Key':GEOCODING_API_KEY,'X-Goog-FieldMask':'places.id,places.displayName,places.location'},
+            body:JSON.stringify({includedTypes:['convenience_store','supermarket','store'],maxResultCount:20,languageCode:'ja',
+              locationRestriction:{circle:{center:{latitude:la,longitude:lo},radius}}})});
+        }catch(_){continue;}
+        if(!resp||!resp.ok)continue;
+        const cand=((await resp.json()).places||[]).filter(pl=>{const t=pl.displayName?.text||'';return brands.some(b=>t.includes(b))&&!SM_PLACE_NG.test(t);});
+        if(cand.length){
+          cand.sort((a,b)=>msrCalcDist(la,lo,a.location.latitude,a.location.longitude)-msrCalcDist(la,lo,b.location.latitude,b.location.longitude));
+          try{
+            const r2=await smPost({action:'claim_place_id',row_number:s.row,code:s.code,place_id:cand[0].id});
+            const j2=await r2.json();
+            if(r2.ok&&!j2.error)got=cand[0].displayName?.text||'';
+          }catch(_){}
+          break;
+        }
+      }
+    }
+    invalidateShopMasterCache();
+    const NL=String.fromCharCode(10);
+    alert(`✅ 「${s.name}」の位置を直しました (精度 ±${acc}m)`+(got?NL+`ナビの表示: ${got}`:NL+'※ 近くに同じ系列の店が見つからなかったので、ナビは座標のままです'));
+    await diagLoad();
+  }catch(e){
+    alert('保存できませんでした: '+(e&&e.message?e.message:e));
+  }
 }
 
 function diagNavCoord(s){
@@ -20602,6 +20659,7 @@ function diagRender(){
   // ナビボタンの引数保管(各レンダーでリセット)
   window.__diagNavRoutes=[];
   window.__diagNavFromHere=[];
+  window.__diagFixLoc=[];
   const area=document.getElementById('diag-area').value;
   const type=document.getElementById('diag-type').value;
   const course=document.getElementById('diag-course').value;
@@ -20717,6 +20775,13 @@ function diagRender(){
         const fromId=window.__diagNavFromHere.length;
         window.__diagNavFromHere.push({type,cn,area:area||'',fromSeq:s.seq});
         navBtn=`<button onclick="diagNavFromHere(${fromId})" title="現在地→ ${diagEsc(s.name)} 以降9件のナビを開く" style="background:#10b981;color:#fff;border:none;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap;">▶ 現在地から</button>`;
+        // Place IDが無い店=地図に店名が出ない店。登録座標がズレていることが多いので、
+        // 店の前にいるドライバーがその場で直せるようにする。
+        if(!diagNavPid(s)&&s.code&&s.row){
+          const fixId=window.__diagFixLoc.length;
+          window.__diagFixLoc.push({row:s.row,code:s.code,name:s.name,lat:s.lat,lng:s.lng});
+          navBtn+=`<button onclick="diagFixLocation(${fixId})" title="この店の前にいるときに押すと、登録位置を現在地に直します（地図に店名が出るようになります）" style="display:block;margin-top:4px;background:#fff;color:#b45309;border:1px solid #fbbf24;padding:3px 6px;border-radius:5px;cursor:pointer;font-size:10px;font-weight:600;white-space:nowrap;">📍 位置を直す</button>`;
+        }
       }
       h+=`<tr><td style="text-align:center;color:var(--text-sub);">${s.seq}</td><td style="font-weight:600;">${s.name}</td><td style="font-size:12px;">${addrCell}</td><td style="font-weight:bold;color:${tm!=null?'#1e40af':'#cbd5e1'};">${s.schedTime||'--:--'}</td><td style="text-align:center;">${navBtn}</td><td>${noteCell}</td></tr>`;
     });
