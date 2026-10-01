@@ -20027,6 +20027,7 @@ function diagBuildColMap(headers){
     if(h==='緯度')m.lat=i;
     if(h==='経度')m.lng=i;
     if(h==='Place ID')m.placeId=i;
+    if(h==='修正済み')m.locked=i;
     if(h==='休店中')m.suspend=i;
     if(h==='休店開始日')m.suspendStart=i;
     if(h==='休店終了日')m.suspendEnd=i;
@@ -20436,6 +20437,7 @@ function diagBuildCourseRoute(type,courseName,areaFilter){
       lat:isFinite(lat)?lat:null,
       lng:isFinite(lng)?lng:null,
       placeId:diagColMap.placeId!==undefined?((r[`col_${diagColMap.placeId}`]||'').trim()||null):null,
+      locked:diagColMap.locked!==undefined?String(r[`col_${diagColMap.locked}`]||'').trim().toUpperCase()==='TRUE':false,
     };
   });
 }
@@ -20497,7 +20499,19 @@ function diagNavLabel(s){
 }
 // 正式店舗名が信用できない行の Place ID は、その名前から作られたもので別の店を指している
 // 可能性が高いため使わない(座標と住所で誘導する)。
-function diagNavPid(s){ return diagOfficialTrusted(s)?(s.placeId||null):null; }
+// 🚨 さらに「🔒修正済み」= 人が地図を見て座標を直した店は、座標のほうが正しいと分かっている
+//    ので Place ID より座標を優先する。Place ID は Google 側の位置で上書きしてしまうため、
+//    せっかく直した座標が無視されて元のズレた場所に戻る。
+// 🚨 2026-10-01: マスタの Place ID 列が全行まるごと別の店のものになっているのを確認した
+//    (無作為60店中59店が別店・6〜41kmズレ。🔒修正済みでない82店も76店が別店)。
+//    座標・住所・正式店舗名は正常なので、Place ID だけ使わないことでナビは正しく動く。
+//    座標から Place ID を取り直したら true に戻すこと(戻すと地図に店名が出る)。
+const DIAG_PLACE_ID_TRUSTED=false;
+function diagNavPid(s){
+  if(!DIAG_PLACE_ID_TRUSTED)return null;      // マスタのPlace IDが壊れている間は使わない
+  if(s&&s.locked)return null;                 // 手で直した座標が最優先
+  return diagOfficialTrusted(s)?(s.placeId||null):null;
+}
 
 function diagNavCoord(s){
   if(s&&s.lat!=null&&s.lng!=null)return `${s.lat},${s.lng}`;
