@@ -1101,8 +1101,22 @@ tbody tr:hover { background:var(--primary-light); }
         <div class="filters">
           <div><label>シフト月</label><select id="adm-chk-month" onchange="adminRunCheck()"></select></div>
           <div><label>スタッフ</label><select id="adm-chk-staff" onchange="adminRunCheck()"><option value="">すべて</option></select></div>
+          <div><label>状態</label>
+            <select id="adm-chk-type" onchange="admChkRender()">
+              <option value="">すべて</option>
+              <option value="course_mismatch">コース不一致だけ</option>
+              <option value="missing_work">未入力だけ</option>
+              <option value="extra_work">シフト外だけ</option>
+              <option value="diff">不一致だけ(未入力を除く)</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:200px;"><label>検索</label>
+            <input id="adm-chk-q" type="search" oninput="admChkRender()" placeholder="スタッフ名・コース・日付・区分で絞り込み"
+              style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:6px;">
+          </div>
         </div>
         <div id="adm-chk-summary" style="margin-bottom:12px;"></div>
+        <div id="adm-chk-count" style="font-size:12px;color:var(--text-sub);margin-bottom:6px;"></div>
         <div class="table-wrap" id="adm-chk-result"></div>
       </div>
 
@@ -19181,20 +19195,49 @@ async function adminRunCheck(){
   summary+=`</div>`;
   document.getElementById('adm-chk-summary').innerHTML=summary;
 
+  admChkIssues=unique;
+  admChkRender();
+}
+
+// 突合せチェックの一覧。状態の絞り込みと文字検索をかけて描く。
+// 再取得はしない(件数が多いので、絞り込みのたびにシートを読みに行かせない)。
+let admChkIssues=[];
+function admChkRender(){
+  const unique=admChkIssues||[];
+  const cont=document.getElementById('adm-chk-result');
+  const cnt=document.getElementById('adm-chk-count');
+  if(!cont)return;
   if(!unique.length){
-    document.getElementById('adm-chk-result').innerHTML='<p style="text-align:center;color:#22c55e;font-weight:bold;padding:40px;font-size:16px;">✅ すべて一致しています！</p>';
+    if(cnt)cnt.textContent='';
+    cont.innerHTML='<p style="text-align:center;color:#22c55e;font-weight:bold;padding:40px;font-size:16px;">✅ すべて一致しています！</p>';
     return;
   }
-
+  const type=(document.getElementById('adm-chk-type')||{}).value||'';
+  const q=((document.getElementById('adm-chk-q')||{}).value||'').trim().toLowerCase();
+  // 検索は全角/半角と空白の違いを吸収する(「ﾉｱ/岡 浩二」と「ノア/岡浩二」で引けるように)
+  const norm=v=>String(v==null?'':v).toLowerCase().replace(/\s|　/g,'')
+    .replace(/[！-～]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0));
+  const qn=norm(q);
+  const rows=unique.filter(i=>{
+    if(type==='diff'){ if(i.type==='missing_work')return false; }
+    else if(type&&i.type!==type)return false;
+    if(!qn)return true;
+    return [i.date,i.staff,i.category,i.shiftCourse,i.workCourse].some(v=>norm(v).includes(qn));
+  });
+  if(cnt)cnt.textContent=rows.length===unique.length?`${unique.length}件`:`絞り込み ${rows.length}件 / 全${unique.length}件`;
+  if(!rows.length){
+    cont.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:30px;">条件に合うものがありません</p>';
+    return;
+  }
   let h='<table><thead><tr><th>状態</th><th>日付</th><th>スタッフ</th><th>区分</th><th>シフトのコース</th><th>稼働記録のコース</th></tr></thead><tbody>';
-  unique.forEach(i=>{
+  rows.forEach(i=>{
     const badge=i.type==='missing_work'?'<span style="background:#fef2f2;color:#dc2626;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">未入力</span>'
       :i.type==='extra_work'?'<span style="background:#fefce8;color:#a16207;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">シフト外</span>'
       :'<span style="background:#fdf4ff;color:#7c3aed;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">コース不一致</span>';
     h+=`<tr><td>${badge}</td><td>${i.date}</td><td><b>${i.staff}</b></td><td>${i.category}</td><td>${i.shiftCourse}</td><td>${i.workCourse}</td></tr>`;
   });
   h+='</tbody></table>';
-  document.getElementById('adm-chk-result').innerHTML=h;
+  cont.innerHTML=h;
 }
 
 // --- システム設定 ---
