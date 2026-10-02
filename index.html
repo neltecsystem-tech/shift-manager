@@ -18792,6 +18792,22 @@ function admShopListRender(){
 function admSlSnapMonth(){return admSlSource.indexOf('snapshot:')===0?admSlSource.split(':')[1]:null;}
 
 // 月初の訂正: 荷主にあってマスタ未登録の店を、月初スナップ(=請求基準)に反映(現行マスタの値をコピー)。
+// 荷主リストの便番号から復元したコース番号で、その店のその区分のコース名を作る。
+// 営業所名の作り方は突合の courseDiff と同じ(高津→川崎高津 / 池袋→城北)。
+function slShipCourseName(code,cat){
+  const sc=(admSlData&&admSlData.shipCourse)||{};
+  const normA=a=>String(a||'').trim().replace(/^(川崎高津|川崎)$/,'高津').replace(/^池袋$/,'城北');
+  const drillArea=String(admSlCatDrill||'').split('	')[0];
+  for(const key of Object.keys(sc)){
+    const [off,c]=key.split('	');
+    if(c!==cat)continue;
+    if(drillArea&&normA(off)!==drillArea)continue;
+    const n=sc[key][String(code)];
+    if(n){const a=normA(off);return (a==='高津'?'川崎高津':a)+n;}
+  }
+  return '';
+}
+
 // 区分 → マスタ側でその区分を持っているかを見る列(admSlMaster のキー)
 const SL_CAT_FIELD={'朝刊':'amCourse','平日':'pmCourse','競馬':'keibaCourse','朝出し':'asaCourse'};
 // その店がその区分を持っているか。朝出しだけはチェックボックス(TRUE)判定。
@@ -18811,6 +18827,29 @@ async function admSlSnapSync(code,cat){
   //    押しても解決しないことを先に伝える。
   const mRec=(admSlMaster||[]).find(x=>x.code===String(code));
   if(cat&&mRec&&!slHasCat(mRec,cat)){
+    // 荷主リストの便番号からコース番号が復元できていれば、その場で登録まで進められる。
+    // (コース名の作り方は courseDiff の expect と同じ: 高津→川崎高津 + 番号)
+    const want=slShipCourseName(code,cat);
+    if(want&&SL_CAT_COL[cat]!==undefined){
+      if(confirm(`${mRec.name||''}（${code}）には${cat}のコースが登録されていません。
+
+`
+        +`荷主リストの便番号から「${want}」と判定しました。
+`
+        +`店舗マスタに${cat}コース「${want}」を登録し、続けて ${month} の月初スナップへ反映します。
+
+`
+        +`🚨 ${month} の請求に${cat}として加算されます。実際に${cat}を配送している場合のみ実行してください。
+
+よろしいですか？`)){
+        try{
+          const r=await smPost({action:'update_course',code:String(code),cat,value:want,by:(typeof invUserName!=='undefined'?invUserName:'')});
+          const j=await r.json();
+          if(j.error)throw new Error(j.error);
+        }catch(e){alert('店舗マスタへの登録に失敗しました: '+e.message);return;}
+        // 登録した値を月初スナップへ反映(この後の共通処理に流す)
+      }else return;
+    }else{
     alert(`この差異は「${cat}」での未登録です。
 
 ${mRec.name||''}（${code}）は店舗マスタに${cat}のコースが入っていないため、`
@@ -18826,6 +18865,7 @@ ${mRec.name||''}（${code}）は店舗マスタに${cat}のコースが入って
 `
       +`どちらか分からない場合は、配送の実態を確認してから直してください。`);
     return;
+    }
   }
   if(!confirm(`店舗コード ${code} を ${month} の月初スナップに反映します（現行マスタの今の値をコピー）。\n\n月初(${month}-01)時点で在籍していた店の場合のみ実行してください。\n（月途中に開店した店は翌月から。スナップには入れない）\n\nよろしいですか？`))return;
   try{
