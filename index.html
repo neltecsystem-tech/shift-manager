@@ -12495,6 +12495,78 @@ function admJinScanDupNames(){
   return dups;
 }
 
+// 同じ人(氏名+電話が一致)の行に、同じコースが書き写されているのを整理する。
+//
+// 名簿には同じ人が拠点ごとに複数行ある。そこへコースまで同じ値が入っていると、
+// コース重複として誤検知され、ダッシュボードの担当者一覧にも同じ人が並ぶ。
+//
+// 🚨 行を無条件に消さない。拠点ごとの行は「その拠点のプランナー/社員」という
+//    登録そのものなので、消すと手当や営業所の絞り込みに影響しうる。
+//    ・拠点と契約範囲まで同じ行 = 本当の二重登録 → 行ごと空にする
+//    ・拠点か契約範囲が違う行     = 別の登録 → コース欄(4〜17列)だけ空にする
+//    残す行は一番上の行。電話は桁数の多い表記(0落ちしていない方)に寄せる。
+async function admJinCleanupSamePerson(){
+  const NL=String.fromCharCode(10);
+  const groups=new Map();
+  for(let i=2;i<admJinState.rows.length;i++){
+    const name=String(admJinCellValue(i,2)||'').trim();
+    if(!name)continue;
+    const k=admJinPersonKey(i);
+    if(!k||k==='|')continue;
+    if(!groups.has(k))groups.set(k,[]);
+    groups.get(k).push(i);
+  }
+  const plan=[];
+  groups.forEach((rows)=>{
+    if(rows.length<2)return;
+    rows.sort((a,b)=>a-b);
+    const keep=rows[0];
+    const kArea=String(admJinCellValue(keep,0)||'').trim();
+    const kRange=String(admJinCellValue(keep,1)||'').trim();
+    rows.slice(1).forEach(r=>{
+      const same=String(admJinCellValue(r,0)||'').trim()===kArea&&String(admJinCellValue(r,1)||'').trim()===kRange;
+      // 空にする列。同じ登録なら全列、違う登録ならコース欄だけ。
+      const cols=[];
+      const from=same?0:4;
+      for(let c=from;c<=17;c++){ if(String(admJinCellValue(r,c)||'').trim())cols.push(c); }
+      if(cols.length)plan.push({keep,row:r,cols,whole:same,name:String(admJinCellValue(r,2)||'').trim()});
+    });
+    // 電話は桁数の多い方(0落ちしていない方)を残す行へ
+    const phones=rows.map(r=>String(admJinCellValue(r,3)||'').trim()).filter(Boolean);
+    const best=phones.slice().sort((a,b)=>b.replace(/\D/g,'').length-a.replace(/\D/g,'').length)[0];
+    if(best&&best!==String(admJinCellValue(keep,3)||'').trim())plan.push({keep,row:keep,setPhone:best,name:String(admJinCellValue(keep,2)||'').trim()});
+  });
+  if(!plan.length){alert('同じ人の行に重複して書かれたコースはありません');return;}
+  const lines=plan.map(p=>p.setPhone
+    ? `• ${p.name}: 行${p.keep+1} の電話を「${p.setPhone}」に統一`
+    : `• ${p.name}: 行${p.row+1} の${p.whole?'行全体':'コース欄'}を空にする (行${p.keep+1} に残す)`);
+  if(!window.confirm(`次の ${plan.length} 件を整理します。
+
+${lines.slice(0,15).join(NL)}${lines.length>15?`
+…他 ${lines.length-15}件`:''}
+
+`
+    +`拠点や契約範囲が違う行は、登録として残したままコース欄だけ空にします。
+続行しますか?`))return;
+  const updates=[];
+  plan.forEach(p=>{
+    if(p.setPhone){updates.push({row:p.keep,col:3,value:p.setPhone});return;}
+    p.cols.forEach(c=>updates.push({row:p.row,col:c,value:''}));
+  });
+  const msg=document.getElementById('adm-se-msg');
+  if(msg){msg.textContent=`整理中... (${updates.length}セル)`;msg.style.color='#3b82f6';}
+  try{
+    const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:'人員名簿',updates})});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    if(msg){msg.textContent=`✓ 整理完了 (${updates.length}セル)`;msg.style.color='#16a34a';setTimeout(()=>{msg.textContent='';},3000);}
+    admJinState.loaded=false;
+    admJinLoad();
+  }catch(e){
+    if(msg)msg.innerHTML='<span style="color:var(--danger);">整理に失敗: '+e.message+'</span>';
+  }
+}
+
 // 同姓同名を1行に統合: 最も若い行に値をマージし、後続行を空クリア
 async function admJinMergeDupNames(){
   const dups=admJinScanDupNames();
@@ -12638,6 +12710,7 @@ function admJinRender(){
   // シフトはあるのに明細が作られない事故になる(ノアガデル/ノアガベル)。
   // 登録口は「スタッフ管理 → 単価を追加」の一本にし、人員名簿へは同じ氏名で自動追加する。
   h+=`<span style="font-size:12px;color:var(--text-sub);background:#f8fafc;border:1px solid var(--border);border-radius:6px;padding:6px 10px;">💡 新規ドライバーは <b>管理 → スタッフ管理 → 単価を追加</b> から登録してください（人員名簿へ自動で追加されます）</span>`;
+  h+=`<button onclick="admJinCleanupSamePerson()" style="background:#7c3aed;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;" title="同じ人(氏名+電話が一致)の行に同じコースが重複して書かれているのを整理します">🧹 重複コースを整理</button>`;
   h+=`<button onclick="admJinToggleDedupe()" style="background:${toggleBg};color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;" title="同姓同名を表示上で1行に統合 (シート上のデータは保持)">🔍 統合表示: ${admJinDedupeMode?'ON':'OFF'}</button>`;
   h+=`</div>`;
   h+=`</div>`;
