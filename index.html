@@ -1105,6 +1105,8 @@ tbody tr:hover { background:var(--primary-light); }
             <select id="adm-chk-type" onchange="admChkRender()">
               <option value="">すべて</option>
               <option value="course_mismatch">コース不一致だけ</option>
+              <option value="dup_course">コース重複だけ</option>
+              <option value="swap_ok">所属内の入れ替え(OK)だけ</option>
               <option value="missing_work">未入力だけ</option>
               <option value="extra_work">シフト外だけ</option>
               <option value="diff">不一致だけ(未入力を除く)</option>
@@ -19146,6 +19148,20 @@ async function adminRunCheck(){
   // 4. Compare
   const issues=[];// {type, date, staff, category, shiftCourse, workCourse}
 
+  // 所属 = スタッフ名の「/」より前(例 TLC/ﾊﾟｰﾄﾅｰｽﾞ㈱5 → TLC)。「/」が無ければ名前そのもの(例 ELP)。
+  // 同じ所属の中でコースを融通し合う運用があるので、所属が持つその日のコースの範囲で
+  // 入れ替わっているだけなら不一致として扱わない。
+  const orgOf=n=>{const v=normName(n);const i=v.indexOf('/');return i>0?v.slice(0,i):v;};
+  // `${日付}|${区分}|${所属}` -> その所属がその日に持っているシフトのコース(正規化)
+  const orgShiftCourses={};
+  Object.entries(shiftMap).forEach(([key,course])=>{
+    const [date,staff,cat]=key.split('|');
+    const k=`${date}|${cat}|${orgOf(staff)}`;
+    (orgShiftCourses[k]=orgShiftCourses[k]||new Set()).add(normName(course));
+  });
+  // 所属内でコースを入れ替えただけのもの(差異ではないが、見えるように別枠で持つ)
+  const swaps=[];
+
   // Check shift → work (シフトにあるが稼働記録がない)
   Object.entries(shiftMap).forEach(([key,course])=>{
     const [date,staff,cat]=key.split('|');
@@ -19154,8 +19170,31 @@ async function adminRunCheck(){
     if(!workMap[normKey]){
       issues.push({type:'missing_work',date,staff,category:cat,shiftCourse:course,workCourse:'-'});
     }else if(normName(workMap[normKey])!==normName(course)){
-      issues.push({type:'course_mismatch',date,staff,category:cat,shiftCourse:course,workCourse:workMap[normKey]});
+      // 稼働記録のコースが、同じ所属がその日に持っているコースのどれかなら所属内の入れ替え。
+      const own=orgShiftCourses[`${date}|${cat}|${orgOf(staff)}`];
+      if(own&&own.has(normName(workMap[normKey]))){
+        swaps.push({type:'swap_ok',date,staff,category:cat,shiftCourse:course,workCourse:workMap[normKey]});
+      }else{
+        issues.push({type:'course_mismatch',date,staff,category:cat,shiftCourse:course,workCourse:workMap[normKey]});
+      }
     }
+  });
+
+  // 同じ所属の中で、同じ日・同じ区分・同じコースを2人以上が登録していたら重複(二重計上になる)。
+  // コースの入れ替えを許す以上、ここを見ないと同じコースを2人が付けても気付けない。
+  const byOrgCourse={};
+  Object.entries(workMap).forEach(([key,course])=>{
+    const [date,staff,cat]=key.split('|');
+    const c=normName(course);
+    if(!c||c==='-')return;
+    const k=`${date}|${cat}|${orgOf(staff)}|${c}`;
+    (byOrgCourse[k]=byOrgCourse[k]||[]).push(staff);
+  });
+  Object.entries(byOrgCourse).forEach(([k,names])=>{
+    if(names.length<2)return;
+    const [date,cat,,course]=k.split('|');
+    if(staffFilter&&!names.some(n=>normName(n)===normName(staffFilter)))return;
+    issues.push({type:'dup_course',date,staff:names.join(' / '),category:cat,shiftCourse:'-',workCourse:course});
   });
 
   // Check work → shift (稼働記録にあるがシフトにない)
@@ -19183,6 +19222,7 @@ async function adminRunCheck(){
   const missing=unique.filter(i=>i.type==='missing_work').length;
   const extra=unique.filter(i=>i.type==='extra_work').length;
   const mismatch=unique.filter(i=>i.type==='course_mismatch').length;
+  const dup=unique.filter(i=>i.type==='dup_course').length;
   const totalShift=Object.keys(shiftMap).length;
   const totalWork=Object.keys(workMap).length;
 
@@ -19192,27 +19232,35 @@ async function adminRunCheck(){
   summary+=`<div style="background:${missing?'#fef2f2':'#f0fdf4'};border:1px solid ${missing?'#fca5a5':'#86efac'};border-radius:8px;padding:12px 16px;flex:1;min-width:120px;text-align:center;"><div style="font-size:12px;color:${missing?'#dc2626':'#166534'};">未入力</div><div style="font-size:24px;font-weight:bold;color:${missing?'#dc2626':'#166534'};">${missing}</div></div>`;
   summary+=`<div style="background:${extra?'#fefce8':'#f0fdf4'};border:1px solid ${extra?'#fde047':'#86efac'};border-radius:8px;padding:12px 16px;flex:1;min-width:120px;text-align:center;"><div style="font-size:12px;color:${extra?'#a16207':'#166534'};">シフト外</div><div style="font-size:24px;font-weight:bold;color:${extra?'#a16207':'#166534'};">${extra}</div></div>`;
   summary+=`<div style="background:${mismatch?'#fdf4ff':'#f0fdf4'};border:1px solid ${mismatch?'#d8b4fe':'#86efac'};border-radius:8px;padding:12px 16px;flex:1;min-width:120px;text-align:center;"><div style="font-size:12px;color:${mismatch?'#7c3aed':'#166534'};">コース不一致</div><div style="font-size:24px;font-weight:bold;color:${mismatch?'#7c3aed':'#166534'};">${mismatch}</div></div>`;
+  summary+=`<div style="background:${dup?'#fff1f2':'#f0fdf4'};border:1px solid ${dup?'#fda4af':'#86efac'};border-radius:8px;padding:12px 16px;flex:1;min-width:120px;text-align:center;"><div style="font-size:12px;color:${dup?'#be123c':'#166534'};">コース重複</div><div style="font-size:24px;font-weight:bold;color:${dup?'#be123c':'#166534'};">${dup}</div></div>`;
+  summary+=`<div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:12px 16px;flex:1;min-width:120px;text-align:center;" title="同じ所属の中でコースを入れ替えただけ。差異として数えません"><div style="font-size:12px;color:#475569;">所属内入替(OK)</div><div style="font-size:24px;font-weight:bold;color:#475569;">${swaps.length}</div></div>`;
   summary+=`</div>`;
   document.getElementById('adm-chk-summary').innerHTML=summary;
 
   admChkIssues=unique;
+  admChkSwaps=swaps;
   admChkRender();
 }
 
 // 突合せチェックの一覧。状態の絞り込みと文字検索をかけて描く。
 // 再取得はしない(件数が多いので、絞り込みのたびにシートを読みに行かせない)。
 let admChkIssues=[];
+let admChkSwaps=[];
 function admChkRender(){
-  const unique=admChkIssues||[];
+  const typeSel=(document.getElementById('adm-chk-type')||{}).value||'';
+  // 「所属内の入れ替え」は差異ではないので、選んだときだけ別配列を出す
+  const unique=typeSel==='swap_ok'?(admChkSwaps||[]):(admChkIssues||[]);
   const cont=document.getElementById('adm-chk-result');
   const cnt=document.getElementById('adm-chk-count');
   if(!cont)return;
   if(!unique.length){
     if(cnt)cnt.textContent='';
-    cont.innerHTML='<p style="text-align:center;color:#22c55e;font-weight:bold;padding:40px;font-size:16px;">✅ すべて一致しています！</p>';
+    cont.innerHTML=typeSel==='swap_ok'
+      ?'<p style="text-align:center;color:var(--text-sub);padding:40px;">所属内でのコース入れ替えはありません</p>'
+      :'<p style="text-align:center;color:#22c55e;font-weight:bold;padding:40px;font-size:16px;">✅ すべて一致しています！</p>';
     return;
   }
-  const type=(document.getElementById('adm-chk-type')||{}).value||'';
+  const type=typeSel==='swap_ok'?'':typeSel;
   const q=((document.getElementById('adm-chk-q')||{}).value||'').trim().toLowerCase();
   // 検索は全角/半角と空白の違いを吸収する(「ﾉｱ/岡 浩二」と「ノア/岡浩二」で引けるように)
   const norm=v=>String(v==null?'':v).toLowerCase().replace(/\s|　/g,'')
@@ -19233,6 +19281,8 @@ function admChkRender(){
   rows.forEach(i=>{
     const badge=i.type==='missing_work'?'<span style="background:#fef2f2;color:#dc2626;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">未入力</span>'
       :i.type==='extra_work'?'<span style="background:#fefce8;color:#a16207;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">シフト外</span>'
+      :i.type==='dup_course'?'<span style="background:#fff1f2;color:#be123c;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">コース重複</span>'
+      :i.type==='swap_ok'?'<span style="background:#f1f5f9;color:#475569;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">所属内入替</span>'
       :'<span style="background:#fdf4ff;color:#7c3aed;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">コース不一致</span>';
     h+=`<tr><td>${badge}</td><td>${i.date}</td><td><b>${i.staff}</b></td><td>${i.category}</td><td>${i.shiftCourse}</td><td>${i.workCourse}</td></tr>`;
   });
