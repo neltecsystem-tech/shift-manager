@@ -12389,8 +12389,21 @@ function admJinOnCellInput(ev){
   if(c>=4&&c<=17)admJinHighlightDups();
 }
 
-// コース重複スキャン: cols 4-17 で同じ値が複数行に出ていたら検出
-// 戻り値: [{col, course, rows:[rowIdx,...]}]
+// 人の識別キー: 氏名(正規化) + 電話(下10桁)。
+// 🚨 行が分かれていても同じ人なら重複ではない。名簿には同じ人が拠点ごとに複数行ある
+//    (後藤幸広=城北/川越/立川の3行、中山徹=城北/立川の2行)。行数で数えると、その人が
+//    持っている全コースが「2〜3人の重複」として出てしまう(2026-10-02に13件すべてこれ)。
+// 🚨 逆に電話だけで同じ人とみなしてもいけない。TLC/ﾊﾟｰﾄﾅｰｽﾞ㈱ と ㈱2 は会社の代表番号が
+//    同じだが別のドライバー。氏名と電話の両方が一致したときだけ同じ人とする。
+// 電話は「8054523424」と「080-5452-3424」のような表記ゆれがあるので下10桁で見る。
+function admJinPersonKey(i){
+  const name=invNormName(String(admJinCellValue(i,2)||''));
+  const digits=String(admJinCellValue(i,3)||'').replace(/\D/g,'');
+  return name+'|'+digits.slice(-10);
+}
+
+// コース重複スキャン: cols 4-17 で、同じコースを「別人が」持っていたら検出
+// 戻り値: [{col, course, rows:[rowIdx,...], people:人数}]
 function admJinScanAllDups(){
   const dups=[];
   for(let c=4;c<=17;c++){
@@ -12402,7 +12415,8 @@ function admJinScanAllDups(){
       map.get(v).push(i);
     }
     map.forEach((rows,course)=>{
-      if(rows.length>1)dups.push({col:c,course,rows});
+      const people=new Set(rows.map(admJinPersonKey));
+      if(people.size>1)dups.push({col:c,course,rows,people:people.size});
     });
   }
   return dups;
@@ -12424,13 +12438,15 @@ function admJinHighlightDups(){
       counts.get(v).push(el);
     });
     counts.forEach((els,course)=>{
-      const isDup=els.length>1;
+      // 同じ人の複数行(拠点違い)は重複ではない。別人が2人以上のときだけ赤くする。
+      const people=new Set(els.map(el=>admJinPersonKey(Number(el.dataset.r))));
+      const isDup=people.size>1;
       els.forEach(el=>{
         const r=Number(el.dataset.r);
         const k=`${r},${c}`;
         if(isDup){
           el.style.background='#fee2e2';
-          el.title=`重複: ${course} (${els.length}人)`;
+          el.title=`重複: ${course} (${people.size}人)`;
         }else if(admJinState.dirty.has(k)){
           el.style.background='#fef3c7';
           el.title='';
@@ -12456,7 +12472,7 @@ function admJinUpdateDupBanner(){
   const lines=dups.slice(0,12).map(d=>{
     const isPm=d.col>=11;
     const di=isPm?d.col-11:d.col-4;
-    return `${isPm?'夕':'朝'}${dows[di]} ${d.course}(${d.rows.length}人)`;
+    return `${isPm?'夕':'朝'}${dows[di]} ${d.course}(${d.people||d.rows.length}人)`;
   });
   banner.style.display='block';
   banner.innerHTML=`⚠️ コース重複 ${dups.length}件: ${lines.join(' / ')}${dups.length>12?' …':''}`;
