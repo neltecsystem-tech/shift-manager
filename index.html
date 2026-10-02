@@ -18710,7 +18710,7 @@ function admShopListRender(){
         list.forEach(s=>{
           let act='<span style="color:#cbd5e1;font-size:11px;">—</span>';
           if(snapM){
-            if(String(s.kind).indexOf('荷主のみ')===0)act=`<button onclick="admSlSnapSync('${esc(s.code)}')" title="月初に居た店ならスナップ(=請求)に追加。現行マスタの値をコピー" style="background:#15803d;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;">📌 月初に反映</button>`;
+            if(String(s.kind).indexOf('荷主のみ')===0)act=`<button onclick="admSlSnapSync('${esc(s.code)}','${esc(dc)}')" title="月初に居た店ならスナップ(=請求)に追加。現行マスタの値をコピー" style="background:#15803d;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;">📌 月初に反映</button>`;
             else if(String(s.kind).indexOf('マスタのみ')===0)act=`<button onclick="admSlSnapPurgeCourse('${esc(s.code)}','${esc((s.name||'').replace(/'/g,''))}','${esc(dc)}')" title="この区分(${esc(dc)})だけ月初スナップから除外。他区分(朝刊など)は残す=部分中止の突合解消用" style="background:#c2410c;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;">🚫 ${esc(dc)}だけ除外</button> <button onclick="admSlSnapRemove('${esc(s.code)}','${esc((s.name||'').replace(/'/g,''))}')" title="店舗ごとスナップから除外(全区分)。月初に居なかった店用" style="background:#fff;color:#dc2626;border:1px solid #fca5a5;padding:3px 7px;border-radius:6px;cursor:pointer;font-size:10px;font-weight:600;">店舗ごと</button>`;
           }
           html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;font-weight:600;color:${s.color};">${esc(s.kind)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(s.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${act}</td></tr>`;
@@ -18792,9 +18792,41 @@ function admShopListRender(){
 function admSlSnapMonth(){return admSlSource.indexOf('snapshot:')===0?admSlSource.split(':')[1]:null;}
 
 // 月初の訂正: 荷主にあってマスタ未登録の店を、月初スナップ(=請求基準)に反映(現行マスタの値をコピー)。
-async function admSlSnapSync(code){
+// 区分 → マスタ側でその区分を持っているかを見る列(admSlMaster のキー)
+const SL_CAT_FIELD={'朝刊':'amCourse','平日':'pmCourse','競馬':'keibaCourse','朝出し':'asaCourse'};
+// その店がその区分を持っているか。朝出しだけはチェックボックス(TRUE)判定。
+function slHasCat(m,cat){
+  if(!m||!cat)return true;              // 区分が分からないときは止めない
+  const f=SL_CAT_FIELD[cat]; if(!f)return true;
+  const v=String(m[f]||'').trim();
+  return cat==='朝出し'?v.toUpperCase()==='TRUE':!!v;
+}
+
+async function admSlSnapSync(code,cat){
   const month=admSlSnapMonth();
   if(!month){alert('いまライブ突合中のため月初スナップがありません。対象月を月初スナップに切替えてください。');return;}
+  // 🚨 この差異は「その区分でマスタ未登録」。スナップへ反映しても、コピー元の現行マスタに
+  //    その区分のコースが無ければ区分の集計に入らず、何度押しても差異は消えない。
+  //    (例: 競馬の差異なのにマスタはT列=競馬コースが空。朝刊しか持っていない店)
+  //    押しても解決しないことを先に伝える。
+  const mRec=(admSlMaster||[]).find(x=>x.code===String(code));
+  if(cat&&mRec&&!slHasCat(mRec,cat)){
+    alert(`この差異は「${cat}」での未登録です。
+
+${mRec.name||''}（${code}）は店舗マスタに${cat}のコースが入っていないため、`
+      +`月初スナップに反映しても${cat}の集計には入らず、差異は消えません。
+
+`
+      +`対応はどちらかです。
+`
+      +`　① この店が本当に${cat}を配送している → 店舗マスタでこの店に${cat}のコースを登録する
+`
+      +`　② 配送していない → 荷主リスト側の誤りなので、この差異は対応不要
+
+`
+      +`どちらか分からない場合は、配送の実態を確認してから直してください。`);
+    return;
+  }
   if(!confirm(`店舗コード ${code} を ${month} の月初スナップに反映します（現行マスタの今の値をコピー）。\n\n月初(${month}-01)時点で在籍していた店の場合のみ実行してください。\n（月途中に開店した店は翌月から。スナップには入れない）\n\nよろしいですか？`))return;
   try{
     const resp=await smPost({action:'snapshot_sync_store',month,codes:[String(code)]});
