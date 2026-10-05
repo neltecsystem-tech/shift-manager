@@ -1215,8 +1215,13 @@ tbody tr:hover { background:var(--primary-light); }
           本人の画面には理由を出さず「担当者にお問い合わせください」とだけ表示します。
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
-          <div><label style="font-size:12px;color:var(--text-sub);font-weight:600;">氏名 または 電話番号</label>
-            <input id="psus-who" placeholder="例: 山田 太郎 / 09012345678" style="width:220px;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;display:block;margin-top:4px;"></div>
+          <!-- 🚨 氏名は手入力させない。1字でも表記が違うと誰にも当たらないキーが登録され、
+                   「登録できたのに止まっていない」状態になるため、必ず候補から選ばせる。 -->
+          <div style="position:relative;"><label style="font-size:12px;color:var(--text-sub);font-weight:600;">氏名 または 電話番号</label>
+            <input id="psus-who" autocomplete="off" oninput="psusSearch()" onfocus="psusSearch()" placeholder="名前の一部を入力 → 候補から選ぶ" style="width:260px;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;display:block;margin-top:4px;">
+            <style>.psus-sg-item:hover{background:#f1f5f9;}</style>
+            <div id="psus-sugg" style="display:none;position:absolute;z-index:40;top:100%;left:0;width:300px;max-height:260px;overflow:auto;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.12);"></div>
+            <div id="psus-picked" style="font-size:12px;margin-top:4px;color:#b45309;">候補から選んでください</div></div>
           <div><label style="font-size:12px;color:var(--text-sub);font-weight:600;">停止を始める月</label>
             <input id="psus-from" type="month" style="width:160px;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;display:block;margin-top:4px;"></div>
           <div style="flex:1;min-width:240px;"><label style="font-size:12px;color:var(--text-sub);font-weight:600;">理由（社内用・本人には出ません）</label>
@@ -8821,6 +8826,59 @@ async function psusApi(payload){
   return j;
 }
 function psusEsc(v){return String(v==null?'':v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+// ── 氏名の候補 ────────────────────────────────────────────────────
+// 🚨 手入力の氏名からキーを作ると、1字の違い(空白・旧字・㈱など)で誰にも当たらず、
+//    登録はできるのに止まらない。中央人材マスタの実在の人だけを選べるようにする。
+let psusPicked=null;        // {match_key, full_name} / 未選択は null
+let psusSearchTimer=null;
+function psusSetPicked(key,name){
+  psusPicked={match_key:key,full_name:name};
+  document.getElementById('psus-who').value=name;
+  document.getElementById('psus-sugg').style.display='none';
+  const p=document.getElementById('psus-picked');
+  p.style.color='#15803d';p.innerHTML='✔ '+psusEsc(name)+' を選択中';
+}
+function psusClearPicked(){
+  psusPicked=null;
+  const p=document.getElementById('psus-picked');
+  if(p){p.style.color='#b45309';p.textContent='候補から選んでください';}
+}
+function psusSearch(){
+  const q=document.getElementById('psus-who').value.trim();
+  // 選んだ後に文字を触ったら選択は無効にする(別人のまま登録されるのを防ぐ)
+  if(psusPicked&&q!==psusPicked.full_name)psusClearPicked();
+  clearTimeout(psusSearchTimer);
+  const box=document.getElementById('psus-sugg');
+  if(q.length<1){box.style.display='none';return;}
+  psusSearchTimer=setTimeout(async()=>{
+    try{
+      const {rows}=await psusApi({action:'search',q});
+      if(!rows.length){
+        box.innerHTML='<div style="padding:10px;font-size:13px;color:var(--text-sub);">一致する方がいません</div>';
+      }else{
+        box.innerHTML=rows.map(r=>{
+          const sub=[r.company_name,r.category].filter(Boolean).join(' / ');
+          return '<div onclick="psusSetPicked(this.dataset.k,this.dataset.n)" data-k="'+psusEsc(r.match_key)+'" data-n="'+psusEsc(r.full_name)+'"'
+            +' class="psus-sg-item" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;">'
+            +'<b>'+psusEsc(r.full_name)+'</b>'
+            +(sub?'<div style="font-size:11px;color:var(--text-sub);">'+psusEsc(sub)+'</div>':'')
+            +'</div>';
+        }).join('');
+      }
+      box.style.display='';
+    }catch(e){
+      box.innerHTML='<div style="padding:10px;font-size:13px;color:#dc2626;">候補を読めませんでした: '+psusEsc(e.message)+'</div>';
+      box.style.display='';
+    }
+  },250);
+}
+// 画面の他の場所を押したら候補を閉じる
+document.addEventListener('click',e=>{
+  const box=document.getElementById('psus-sugg');
+  if(!box||box.style.display==='none')return;
+  if(e.target.closest('#psus-sugg')||e.target.id==='psus-who')return;
+  box.style.display='none';
+});
 async function psusLoad(){
   const box=document.getElementById('psus-list'); if(!box)return;
   box.innerHTML='<p style="color:var(--text-sub);padding:12px;">読み込み中...</p>';
@@ -8851,6 +8909,13 @@ async function psusAdd(){
   const from=document.getElementById('psus-from').value;
   const reason=document.getElementById('psus-reason').value.trim();
   if(!who){alert('氏名または電話番号を入力してください');return;}
+  // 🚨 候補から選んでいない＝誰を止めるか確定していない。ここで必ず止める。
+  if(!psusPicked||psusPicked.full_name!==who){
+    alert(['候補の一覧から対象の方を選んでください。','',
+      '手入力のままだと、表記が1字違うだけで',
+      '「登録はできたのに止まっていない」状態になります。'].join('\n'));
+    psusSearch();return;
+  }
   if(!from){alert('停止を始める月を選んでください');return;}
   if(reason.length<2){alert('理由を入力してください（後から「なぜ止めたか」を追えるようにするためです）');return;}
   // 🚨 全現場が止まることを必ず確認させる。新聞だけのつもりで押されると事故になる。
@@ -8862,12 +8927,11 @@ async function psusAdd(){
     '・会計の金額は残ります（未払い）','',
     'よろしいですか？'].join('\n')))return;
   try{
-    // 数字だけなら電話番号、それ以外は氏名として中央マスタを引く
-    const isPhone=/^[0-9-]{10,}$/.test(who);
-    const r=await psusApi(Object.assign({action:'set',from_ym:from,reason:reason},
-      isPhone?{phone:who}:{subject_key:'n:'+who.replace(/[\s　]/g,'')}));
+    // 候補から選んだ中央マスタのキーをそのまま送る(名前から組み立て直さない)
+    const r=await psusApi({action:'set',from_ym:from,reason:reason,subject_key:psusPicked.match_key});
     alert((r.row.name_at_reg||who)+' さんを '+r.row.from_ym+' 分から停止しました。');
     document.getElementById('psus-who').value='';document.getElementById('psus-reason').value='';
+    psusClearPicked();
     psusLoad();
   }catch(e){alert('登録できませんでした: '+e.message);}
 }
