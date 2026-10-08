@@ -1278,7 +1278,7 @@ tbody tr:hover { background:var(--primary-light); }
       <!-- シフト編集 -->
       <div id="adm-shiftedit" class="adm-panel" style="display:none;">
         <div class="filters">
-          <div><label>シフト月</label><select id="adm-se-sheet" onchange="admSeLoad()"><option value="">選択してください</option></select></div>
+          <div><label>シフト月</label><div style="display:flex;gap:4px;align-items:center;"><select id="adm-se-sheet" onchange="admSeLoad()"><option value="">選択してください</option></select><button type="button" id="adm-se-sheet-reload" onclick="admSeReloadSheets()" title="月の候補を読み込み直す" style="padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">🔄</button></div></div>
           <div><label>営業所フィルタ</label><select id="adm-se-area" onchange="admSeRender()"><option value="">すべて</option><option value="立川">立川</option><option value="城北">城北</option><option value="川越">川越</option><option value="川崎高津">川崎高津</option></select></div>
           <div><label>コース</label><select id="adm-se-course" onchange="admSeRender()" title="コース名を直接選択 (逆引き編集用)"><option value="">すべて</option></select></div>
           <div><label>スタッフ検索</label><input type="text" id="adm-se-search" placeholder="名前で絞り込み" oninput="dbInput('admSeRender',200)"></div>
@@ -11143,6 +11143,12 @@ async function admSeInit(){
       const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'list_sheets'})});
       const j=await r.json();
       const sheets=(j.shift_sheets||[]).filter(s=>/^\d{1,2}月シフト\d{4}$/.test(s)||/^\d{1,2}月シフト$/.test(s));
+      // 取れなかった時に黙って空のままにしない(🔄で読み込み直せる)
+      if(!sheets.length){
+        document.getElementById('adm-se-msg').innerHTML='<span style="color:var(--danger);">月の候補を取得できませんでした'+(j&&j.error?'（'+String(j.error).replace(/</g,'&lt;')+'）':'')+'。少し待って「🔄」を押してください。</span>';
+        return;
+      }
+      document.getElementById('adm-se-msg').innerHTML='';
       // 新しい順
       sheets.sort((a,b)=>{
         const pa=parseMonthLabel(a),pb=parseMonthLabel(b);
@@ -11160,6 +11166,18 @@ async function admSeInit(){
       document.getElementById('adm-se-msg').innerHTML='<span style="color:var(--danger);">シート一覧の取得失敗: '+e.message+'</span>';
     }
   }
+}
+
+// 月の候補を読み込み直す(候補が出なかった時用)。選んでいた月はそのまま残す。
+async function admSeReloadSheets(){
+  const sel=document.getElementById('adm-se-sheet');
+  const btn=document.getElementById('adm-se-sheet-reload');
+  const cur=sel.value;
+  sel.innerHTML='<option value="">選択してください</option>';
+  if(btn){btn.disabled=true;btn.textContent='⏳';}
+  try{ await admSeInit(); }
+  finally{ if(btn){btn.disabled=false;btn.textContent='🔄';} }
+  if(cur&&[...sel.options].some(o=>o.value===cur)&&sel.value!==cur){ sel.value=cur; }
 }
 
 async function admSeLoad(){
