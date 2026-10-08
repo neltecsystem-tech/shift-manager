@@ -11840,7 +11840,11 @@ function admSeRenderPretty(){
   //   通常のコース名は Section 1 から作った表示用の写しで、支払は Section 1 で計算する。
   //   ここを手で直すと Section 1 とずれたまま誰も気づかない(10/11 夕刊で実際に起きた)ため、編集させない。
   //   引継の登録・解除は「🤝引継」タブから行う(Section 2 の該当セルに書く正規の経路)。
-  const isHiki=v=>/引継/.test(String(v||''));
+  //   出すのは「Section 1 のコース名ではない情報」(引継・フォロー・希望休・研修など)。
+  //   通常のコース名・空欄・"0"・数字だけの値は出さない。
+  const s1Courses=new Set();
+  for(let i=6;i<120&&i<rows.length;i++){ const c=String((rows[i]||[])[0]||'').trim(); if(c)s1Courses.add(c); }
+  const isHiki=v=>{ const t=String(v||'').trim(); return !!t&&t!=='0'&&!/^\d+$/.test(t)&&!s1Courses.has(t); };
   const filteredBlocks=filteredBlocks0.map(b=>{
     const staffRows=b.staffRows.filter(({rowIdx})=>b.dateInfos.some(d=>isHiki(admSeCellValue(rowIdx,d.col))));
     const dateInfos=b.dateInfos.filter(d=>staffRows.some(({rowIdx})=>isHiki(admSeCellValue(rowIdx,d.col))));
@@ -11851,8 +11855,8 @@ function admSeRenderPretty(){
     h+=`<details open style="margin-bottom:14px;border:1px solid var(--border);border-radius:6px;background:#fff;">`;
     h+=`<summary style="cursor:pointer;padding:8px 12px;background:#f1f5f9;font-weight:600;border-radius:6px 6px 0 0;">🏢 Section 2: 営業所別 (特殊シフト/個人別) — ${filteredBlocks.length}ブロック</summary>`;
     h+=`<div style="padding:10px;">`;
-    h+=`<div style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">🔒 引継ぎが入っている人・日だけを表示しています（ここでは編集できません）。コースの担当は <b>Section 1</b> で、引継の登録は <b>「🤝引継」</b>から行ってください。</div>`;
-    if(!hikiCount)h+=`<p style="font-size:12px;color:var(--text-sub);margin:4px 0 10px;">この条件で引継ぎの入った枠はありません。</p>`;
+    h+=`<div style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">🔒 引継・フォロー・希望休など、<b>Section 1 にコースとして無い情報</b>が入っている人・日だけを表示しています（ここでは編集できません）。コースの担当は <b>Section 1</b> で、引継の登録は <b>「🤝引継」</b>から行ってください。</div>`;
+    if(!hikiCount)h+=`<p style="font-size:12px;color:var(--text-sub);margin:4px 0 10px;">表示する情報はありません。</p>`;
     filteredBlocks.forEach(b=>{
       if(!b.staffRows.length)return;
       const edColor=b.editionLabel==='朝刊'?'#0369a1':b.editionLabel==='競馬'?'#dc2626':'#9333ea';
@@ -11873,7 +11877,8 @@ function admSeRenderPretty(){
           const v=admSeCellValue(rowIdx,d.col);
           // 読み取り専用。引継の値だけ見せ、通常のコース名は出さない
           const shown=isHiki(v)?String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;'):'';
-          h+=`<td style="border:1px solid #e2e8f0;padding:2px 4px;min-width:80px;font-size:11px;${shown?'color:#b45309;font-weight:600;background:#fff7ed;':'background:#fafafa;'}">${shown}</td>`;
+          const hk=/引継/.test(String(v||''));
+          h+=`<td style="border:1px solid #e2e8f0;padding:2px 4px;min-width:80px;font-size:11px;${shown?(hk?'color:#b45309;font-weight:600;background:#fff7ed;':'color:#1d4ed8;font-weight:600;background:#eff6ff;'):'background:#fafafa;'}">${shown}</td>`;
         });
         h+='</tr>';
       });
