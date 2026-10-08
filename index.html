@@ -11463,8 +11463,9 @@ function admSeRefreshOverlays(){
       banner.style.display='none';
     }
   }
-  // Section 1 と Section 2 の食い違い(2026-10-08)。Section 2 を手で直して Section 1 とずれた所を出す。
-  admSeShowS1S2Mismatch(cont,banner);
+  // ※ Section 1 ⇔ Section 2 の食い違い表示(admSeShowS1S2Mismatch)は使わない。
+  //   Section 2 を編集不可にしたので手入力のずれは起きず、Section 1 を直すたびに表示用の写しと
+  //   ずれて警告が出続けるだけになるため。関数は調査用に残す。
 }
 
 // ── Section 1 ⇔ Section 2 の食い違いチェック ──
@@ -11675,6 +11676,11 @@ function admSeRenderRaw(){
       const k=`${ri},${c}`;
       const dirty=admSeState.dirty.has(k);
       const cur=dirty?admSeState.dirty.get(k):v;
+      // 🔒 行121以降(Section 2)は手入力させない。引継は「🤝引継」から(2026-10-08)
+      if(ri>=120){
+        h+=`<td style="border:1px solid #e2e8f0;padding:2px 4px;min-width:60px;font-size:11px;background:#f1f5f9;color:#94a3b8;" title="Section 2 は編集できません（引継は「🤝引継」から）">${String(cur).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td>`;
+        continue;
+      }
       h+=admSeCellHtml(ri,c,cur,dirty,null,60);
     }
     h+='</tr>';
@@ -11830,21 +11836,23 @@ function admSeRenderPretty(){
     }
   }
   const filteredBlocks0=areaF?subBlocks.filter(b=>b.area===areaF):subBlocks;
-  // 「引継ぎのみ」: 引継が入っている人・日だけに絞る(既定ON・選択は端末に記憶)
-  const hikiOnly=admSeS2HikiOnly();
+  // 🔒 Section 2 は「引継ぎの確認用」(2026-10-08)。引継が入っている人・日だけを出し、手入力はできない。
+  //   通常のコース名は Section 1 から作った表示用の写しで、支払は Section 1 で計算する。
+  //   ここを手で直すと Section 1 とずれたまま誰も気づかない(10/11 夕刊で実際に起きた)ため、編集させない。
+  //   引継の登録・解除は「🤝引継」タブから行う(Section 2 の該当セルに書く正規の経路)。
   const isHiki=v=>/引継/.test(String(v||''));
-  const filteredBlocks=!hikiOnly?filteredBlocks0:filteredBlocks0.map(b=>{
+  const filteredBlocks=filteredBlocks0.map(b=>{
     const staffRows=b.staffRows.filter(({rowIdx})=>b.dateInfos.some(d=>isHiki(admSeCellValue(rowIdx,d.col))));
     const dateInfos=b.dateInfos.filter(d=>staffRows.some(({rowIdx})=>isHiki(admSeCellValue(rowIdx,d.col))));
     return {...b,staffRows,dateInfos};
   });
   if(filteredBlocks0.length){
-    const hikiCount=hikiOnly?filteredBlocks.reduce((a,b)=>a+b.staffRows.length,0):0;
+    const hikiCount=filteredBlocks.reduce((a,b)=>a+b.staffRows.length,0);
     h+=`<details open style="margin-bottom:14px;border:1px solid var(--border);border-radius:6px;background:#fff;">`;
     h+=`<summary style="cursor:pointer;padding:8px 12px;background:#f1f5f9;font-weight:600;border-radius:6px 6px 0 0;">🏢 Section 2: 営業所別 (特殊シフト/個人別) — ${filteredBlocks.length}ブロック</summary>`;
     h+=`<div style="padding:10px;">`;
-    h+=`<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin-bottom:8px;cursor:pointer;"><input type="checkbox" ${hikiOnly?'checked':''} onchange="admSeSetS2HikiOnly(this.checked)"> 引継ぎが入っている人・日だけ表示</label>`;
-    if(hikiOnly&&!hikiCount)h+=`<p style="font-size:12px;color:var(--text-sub);margin:4px 0 10px;">この条件で引継ぎの入った枠はありません。</p>`;
+    h+=`<div style="font-size:12px;color:var(--text-sub);margin-bottom:8px;">🔒 引継ぎが入っている人・日だけを表示しています（ここでは編集できません）。コースの担当は <b>Section 1</b> で、引継の登録は <b>「🤝引継」</b>から行ってください。</div>`;
+    if(!hikiCount)h+=`<p style="font-size:12px;color:var(--text-sub);margin:4px 0 10px;">この条件で引継ぎの入った枠はありません。</p>`;
     filteredBlocks.forEach(b=>{
       if(!b.staffRows.length)return;
       const edColor=b.editionLabel==='朝刊'?'#0369a1':b.editionLabel==='競馬'?'#dc2626':'#9333ea';
@@ -11863,9 +11871,9 @@ function admSeRenderPretty(){
         h+=`<tr><td style="border:1px solid #cbd5e1;padding:4px 8px;font-weight:600;background:#f8fafc;position:sticky;left:0;">${name}</td>`;
         b.dateInfos.forEach(d=>{
           const v=admSeCellValue(rowIdx,d.col);
-          const dirty=admSeState.dirty.has(`${rowIdx},${d.col}`);
-          // 引継ぎのみ表示のときは、引継のセルを色付け・それ以外は薄く
-          h+=admSeCellHtml(rowIdx,d.col,v,dirty,hikiOnly?(isHiki(v)?'#b45309':'#cbd5e1'):null,80);
+          // 読み取り専用。引継の値だけ見せ、通常のコース名は出さない
+          const shown=isHiki(v)?String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;'):'';
+          h+=`<td style="border:1px solid #e2e8f0;padding:2px 4px;min-width:80px;font-size:11px;${shown?'color:#b45309;font-weight:600;background:#fff7ed;':'background:#fafafa;'}">${shown}</td>`;
         });
         h+='</tr>';
       });
@@ -11877,9 +11885,6 @@ function admSeRenderPretty(){
   return h;
 }
 
-// Section 2 の「引継ぎのみ表示」(既定ON。端末ごとに記憶)
-function admSeS2HikiOnly(){ try{ return localStorage.getItem('admSeS2HikiOnly')!=='0'; }catch(_){ return true; } }
-function admSeSetS2HikiOnly(on){ try{ localStorage.setItem('admSeS2HikiOnly',on?'1':'0'); }catch(_){} admSeRender(); }
 
 function admSeColLabel(c){
   let s='';let n=c;
