@@ -13036,9 +13036,31 @@ async function admSeSave(){
     msg.textContent=`✓ 保存完了 (${j.updated}セル更新)`;msg.style.color='#16a34a';
     setTimeout(()=>{msg.textContent='';},3000);
     admSeRender();
-    // 既存キャッシュも更新するため fresh fetch
-    const parsed=parseMonthLabel(admSeState.sheetName);
-    if(parsed)forceFreshShift(parsed.year,parsed.month).catch(()=>{});
+    // 🔄 ダッシュボード・シフト画面へ即時反映(2026-10-08)。
+    //   以前は保存後にGoogleを読み直していたが、読み取り上限で失敗すると黙って古いままだった。
+    //   保存した表(admSeState.rows)をそのまま画面のデータに入れる。サーバーキャッシュは
+    //   fetch-shift(update_cells)が同じ変更を当てるので、他の端末・再読み込み後も新しい。
+    try{
+      const sn=admSeState.sheetName;
+      const ym=sn.match(/(\d{1,2})月シフト(\d{4})/);
+      const key='live_'+sn.replace(/\s+/g,'_');
+      DEFS[key]={label:sn,type:'shift',year:ym?parseInt(ym[2]):new Date().getFullYear()};
+      DB.raw[key]=admSeState.rows.map(row=>(row||[]).slice());
+      parseShift(key);
+      try{
+        const liveKeys=Object.keys(DEFS).filter(k=>k.startsWith('live_'));
+        const saveData={};
+        liveKeys.forEach(k=>{saveData[k]={def:DEFS[k],rows:DB.raw[k]};});
+        localStorage.setItem('liveShifts',JSON.stringify(saveData));
+      }catch(_){}
+      // 直後のサーバーキャッシュ読込で「新しくなった」トーストが重複しないように
+      if(j.cache_updated)localStorage.setItem('serverCacheUpdatedAt',String(Date.now()));
+      showShiftRefreshToast('🔄 ダッシュボード・シフトに反映しました');
+    }catch(_){
+      // 念のためのフォールバック: 従来どおり読み直す
+      const parsed=parseMonthLabel(admSeState.sheetName);
+      if(parsed)forceFreshShift(parsed.year,parsed.month).catch(()=>{});
+    }
   }catch(e){
     msg.innerHTML='<span style="color:var(--danger);">保存失敗: '+e.message+'</span>';
   }

@@ -294,9 +294,33 @@ Deno.serve(async (req)=>{
         });
       }
       const j = await resp.json();
+      // 🔄 サーバーキャッシュ(shift_sheet_cache)にも同じ変更を当てる(2026-10-08)。
+      //   キャッシュは1日数回しか作り直されないため、シフト編集で保存しても
+      //   ダッシュボード・シフト画面(他の端末や再読み込み後)が古いままになっていた。
+      //   Googleを読み直さず、保存した値をそのまま当てる(読み取り上限に当たらない)。
+      let cacheUpdated = false;
+      if (spreadsheetId === SHIFT_SPREADSHEET) {
+        try {
+          const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+          const { data: c } = await sb.from('shift_sheet_cache').select('rows').eq('sheet_name', name).maybeSingle();
+          if (c && Array.isArray(c.rows)) {
+            const rows = (c.rows as unknown[][]).map((r) => Array.isArray(r) ? r.slice() : []);
+            for (const u of updates) {
+              const r = Number(u.row), col = Number(u.col);
+              if (!(r >= 0) || !(col >= 0)) continue;
+              while (rows.length <= r) rows.push([]);
+              while (rows[r].length <= col) rows[r].push('');
+              rows[r][col] = u.value == null ? '' : String(u.value);
+            }
+            const { error: ue } = await sb.from('shift_sheet_cache').update({ rows, updated_at: new Date().toISOString() }).eq('sheet_name', name);
+            cacheUpdated = !ue;
+          }
+        } catch (_) { /* キャッシュの更新失敗で保存自体を失敗にしない */ }
+      }
       return new Response(JSON.stringify({
         success: true,
-        updated: j.totalUpdatedCells || 0
+        updated: j.totalUpdatedCells || 0,
+        cache_updated: cacheUpdated
       }), {
         headers: {
           ...corsHeaders,
