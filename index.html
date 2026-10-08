@@ -1465,8 +1465,20 @@ tbody tr:hover { background:var(--primary-light); }
       </div>
 
       <div id="adm-measure" class="adm-panel" style="display:none;">
+        <div style="display:flex;gap:6px;margin-bottom:10px;">
+          <button id="adm-msr-mode-list" onclick="admMsrSetMode('list')" style="border:1px solid var(--primary);background:var(--primary);color:#fff;padding:6px 14px;border-radius:999px;cursor:pointer;font-size:13px;font-weight:600;">📋 記録一覧</button>
+          <button id="adm-msr-mode-stats" onclick="admMsrSetMode('stats')" style="border:1px solid var(--border);background:#fff;color:var(--text);padding:6px 14px;border-radius:999px;cursor:pointer;font-size:13px;font-weight:600;">📊 集計</button>
+        </div>
         <div class="filters">
-          <div><label>日付</label>
+          <div id="adm-msr-range-wrap" style="display:none;"><label>期間</label>
+            <div style="display:flex;gap:4px;align-items:center;">
+              <input type="date" id="adm-msr-from" onchange="admMsrRender()">
+              <span>〜</span>
+              <input type="date" id="adm-msr-to" onchange="admMsrRender()">
+              <button onclick="document.getElementById('adm-msr-from').value='';document.getElementById('adm-msr-to').value='';admMsrRender();" style="background:#6366f1;color:#fff;border:none;padding:0 12px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;height:34px;">🗓 全期間</button>
+            </div>
+          </div>
+          <div id="adm-msr-date-wrap"><label>日付</label>
             <div style="display:flex;gap:4px;">
               <input type="date" id="adm-msr-date" onchange="admMsrRender()">
               <button onclick="admMsrAllPeriod()" id="adm-msr-allbtn" style="background:#6366f1;color:#fff;border:none;padding:0 12px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;">🗓 全期間</button>
@@ -1474,6 +1486,7 @@ tbody tr:hover { background:var(--primary-light); }
           </div>
           <div><label>コース</label><select id="adm-msr-course" onchange="admMsrRender()"><option value="">すべて</option></select></div>
           <div><label>担当者</label><select id="adm-msr-staff" onchange="admMsrRender()"><option value="">すべて</option></select></div>
+          <div><label>区分</label><select id="adm-msr-type" onchange="admMsrRender()"><option value="">すべて</option><option>朝刊</option><option>夕刊</option><option>競馬</option></select></div>
           <div style="margin-left:auto;display:flex;align-items:flex-end;"><button onclick="admMsrExport()" style="background:#16a34a;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;">⬇ CSV出力</button></div>
         </div>
         <div id="adm-msr-summary" style="margin-bottom:8px;"></div>
@@ -2020,6 +2033,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-10-08', tag:'新機能', title:'測定（店着）の集計を追加しました',
+   desc:'管理 → 測定データに「📊 集計」を追加しました。期間・コース・担当者・区分で絞り込んで、コース別に測定回数、最初と最後の店着の平均、所要時間の平均・最短・最長を出します。店舗別（回る順）には、データ数・最早(MIN)・最遅(MAX)・平均・ばらつき（最遅−最早）・未到着の回数を出します。ばらつきが30分以上の店は赤で表示します。朝刊など0時をまたぐ時刻も正しく平均します。「⬇ CSV出力」で集計表をダウンロードできます。'},
   {date:'2026-09-15', tag:'修正', title:'城北の正式店舗名/Place IDが別の店になっていた問題を修復しました（460行）',
    desc:'城北の550店のうち465店で、「正式店舗名」と「Place ID」が<b>別の店</b>のものになっていました（例: 新宿区の「FM西早稲田」に渋谷区の「ローソン神宮前三丁目店」のIDと名前。1.1〜6.1km離れた店です）。住所・緯度経度・社内名は正しく、ズレていたのはこの2列だけです。座標のそばにある同じチェーン・同じ地名の店を引き直し、<b>440店を正しい店に入れ替え（ずれ0〜31m）、確定できなかった20店は空にしました</b>（空の行は住所でナビされます）。<br><b>原因</b>: 正式店舗名とPlace IDの書き戻しが「シートの行番号」だけを頼りにしていたため、読み込んでから書き込むまでの間にシート側で行の挿入・削除・並べ替えが起きると、そのまま別の店の行に書き込まれていました。<b>対策として、書き込む直前にその行の店舗コードを照合し、一致しない行には書かないようにしました</b>（食い違った行は書かずに画面で知らせます）。これで同じズレは起きません。'},
   {date:'2026-09-15', tag:'修正', title:'測定の店舗と並び順をダイヤグラムと一致させました',
@@ -18019,6 +18034,7 @@ function admMsrAllPeriod(){
 
 // 現在の絞り込み結果を CSV ダウンロード (店舗ごと1行)
 function admMsrExport(){
+  if(admMsrMode==='stats'){admMsrExportStats();return;}
   if(!admMsrGroups.length){alert('出力するデータがありません');return;}
   const rows=[['日付','コース','区分','担当者','開始','終了','#','店舗名','到着時刻','状態']];
   admMsrGroups.forEach(g=>{
@@ -18061,11 +18077,42 @@ async function admMsrLoad(){
   admMsrRender();
 }
 
+// 表示: 'list'=記録一覧 / 'stats'=集計
+let admMsrMode='list';
+function admMsrSetMode(m){
+  admMsrMode=m;
+  const on='border:1px solid var(--primary);background:var(--primary);color:#fff;',off='border:1px solid var(--border);background:#fff;color:var(--text);';
+  const base='padding:6px 14px;border-radius:999px;cursor:pointer;font-size:13px;font-weight:600;';
+  document.getElementById('adm-msr-mode-list').style.cssText=(m==='list'?on:off)+base;
+  document.getElementById('adm-msr-mode-stats').style.cssText=(m==='stats'?on:off)+base;
+  // 集計は1日だと意味が無いので、日付1つの代わりに期間で絞る
+  document.getElementById('adm-msr-date-wrap').style.display=m==='list'?'':'none';
+  document.getElementById('adm-msr-range-wrap').style.display=m==='stats'?'':'none';
+  admMsrRender();
+}
+
+// 日付は「2026/9/9」のようにゼロ埋めされていないので、数値に直して比べる
+const msrDateKey=d=>{const m=String(d||'').match(/(\d+)\D+(\d+)\D+(\d+)/);return m?`${m[1]}${m[2].padStart(2,'0')}${m[3].padStart(2,'0')}`:'0';};
+
 function admMsrRender(){
-  const dateVal=document.getElementById('adm-msr-date').value;
+  if(admMsrMode==='stats'){admMsrRenderStats();return;}
+  const gList=admMsrBuildGroups({date:document.getElementById('adm-msr-date').value});
+  admMsrRenderList(gList);
+}
+
+/**
+ * 絞り込んで「1測定=1まとまり」にする。一覧と集計の両方がこれを使う。
+ * opt.date … 1日だけ(一覧) / opt.from・opt.to … 期間(集計、YYYY-MM-DD)
+ */
+function admMsrBuildGroups(opt){
+  const dateVal=opt.date||'';
   const courseVal=document.getElementById('adm-msr-course').value;
   const staffVal=document.getElementById('adm-msr-staff').value;
+  const typeVal=document.getElementById('adm-msr-type').value;
   let filtered=admMsrData;
+  if(opt.from)filtered=filtered.filter(r=>msrDateKey(r.date)>=opt.from.replace(/-/g,''));
+  if(opt.to)filtered=filtered.filter(r=>msrDateKey(r.date)<=opt.to.replace(/-/g,''));
+  if(typeVal)filtered=filtered.filter(r=>r.type===typeVal);
   if(dateVal){const dFmt=dateVal.replace(/-/g,'/').replace(/^0/,'').replace(/\/0/g,'/');filtered=filtered.filter(r=>{const rd=(r.date||'').replace(/-/g,'/').replace(/^0/,'').replace(/\/0/g,'/');return rd===dFmt||r.date===dateVal;});}
   if(courseVal)filtered=filtered.filter(r=>r.course===courseVal);
   if(staffVal)filtered=filtered.filter(r=>r.staff===staffVal);
@@ -18110,10 +18157,14 @@ function admMsrRender(){
     if(!keep.end_time&&drop.end_time)keep.end_time=drop.end_time;
     merged[mk]=keep;
   });
-  // 日付は「2026/9/9」のようにゼロ埋めされていないので、文字列のままだと 9/9 が 9/15 より
-  // 新しい扱いになる。数値に直してから新しい順に並べる。
-  const msrDateKey=d=>{const m=String(d||'').match(/(\d+)\D+(\d+)\D+(\d+)/);return m?`${m[1]}${m[2].padStart(2,'0')}${m[3].padStart(2,'0')}`:'0';};
-  const gList=Object.values(merged).sort((a,b)=>(msrDateKey(b.date)+(b.start_time||'')).localeCompare(msrDateKey(a.date)+(a.start_time||'')));
+  // 日付は数値に直してから新しい順に並べる(文字列のままだと 9/9 が 9/15 より新しい扱いになる)
+  return Object.values(merged).sort((a,b)=>(msrDateKey(b.date)+(b.start_time||'')).localeCompare(msrDateKey(a.date)+(a.start_time||'')));
+}
+
+function admMsrRenderList(gList){
+  const dateVal=document.getElementById('adm-msr-date').value;
+  const courseVal=document.getElementById('adm-msr-course').value;
+  const staffVal=document.getElementById('adm-msr-staff').value;
   admMsrGroups=gList;// CSV出力用に保持
 
   // サマリー
@@ -18140,6 +18191,131 @@ function admMsrRender(){
     h+=`</tbody></table></div>`;
   });
   document.getElementById('adm-msr-table').innerHTML=h;
+}
+
+// ===== 測定の集計 =====
+// 時刻 "5:32" "05:32" "5:32:10" → 分。読めなければ null
+function msrToMin(t){const m=String(t||'').match(/(\d{1,2}):(\d{2})/);return m?(+m[1])*60+(+m[2]):null;}
+function msrFmtMin(v){if(v==null||isNaN(v))return '-';v=Math.round(v);v=((v%1440)+1440)%1440;return `${Math.floor(v/60)}:${String(v%60).padStart(2,'0')}`;}
+function msrFmtDur(v){if(v==null||isNaN(v))return '-';v=Math.round(v);return v>=60?`${Math.floor(v/60)}時間${v%60}分`:`${v}分`;}
+/**
+ * 0時をまたぐ時刻をそろえる。朝刊は 23:50 と 0:10 が混ざるので、そのまま平均すると
+ * 12時ごろになってしまう。値の幅が12時間を超えるときだけ、12時より前の値に24時間を足す。
+ */
+function msrUnwrap(mins){
+  const v=mins.filter(x=>x!=null);
+  if(!v.length)return v;
+  if(Math.max(...v)-Math.min(...v)<=720)return v;
+  return v.map(x=>x<720?x+1440:x);
+}
+function msrStat(mins){
+  const v=msrUnwrap(mins);
+  if(!v.length)return {n:0,min:null,max:null,avg:null,range:null};
+  const min=Math.min(...v),max=Math.max(...v),avg=v.reduce((a,b)=>a+b,0)/v.length;
+  return {n:v.length,min,max,avg,range:max-min};
+}
+/**
+ * 1回の測定の「最初の店着」「最後の店着」「所要(最初→最後)」を到着時刻から出す。
+ * 🚨 記録の開始・終了(start_time/end_time)は使わない。到着時刻を文字列で並べた最初と最後なので、
+ *    0時をまたぐ回では 0:10 が 23:50 より先に来て、開始と終了が入れ替わって記録されている。
+ * 途中送信の回は最後まで回っていないので所要は出さない。
+ */
+function msrSpan(g){
+  const v=msrUnwrap(g.shops.map(s=>msrToMin(s.time)));
+  if(!v.length)return null;
+  const first=Math.min(...v),last=Math.max(...v);
+  return {first,last,dur:g.isProgress?null:last-first};
+}
+
+let admMsrStats=[];// CSV出力用
+function admMsrRenderStats(){
+  const from=document.getElementById('adm-msr-from').value,to=document.getElementById('adm-msr-to').value;
+  const gList=admMsrBuildGroups({from,to});
+  // コース(区分込み)ごとにまとめる
+  const byCourse=new Map();
+  gList.forEach(g=>{
+    const k=`${g.course}|${g.type||''}`;
+    if(!byCourse.has(k))byCourse.set(k,{course:g.course,type:g.type||'',groups:[]});
+    byCourse.get(k).groups.push(g);
+  });
+  const courses=[...byCourse.values()].sort((a,b)=>String(a.course).localeCompare(String(b.course),undefined,{numeric:true})||String(a.type).localeCompare(String(b.type)));
+  admMsrStats=courses.map(c=>{
+    const spans=c.groups.map(msrSpan).filter(Boolean);
+    const starts=spans.map(x=>x.first%1440);
+    const ends=spans.filter(x=>x.dur!=null).map(x=>x.last%1440);
+    const durs=spans.map(x=>x.dur).filter(x=>x!=null);
+    // 店舗: 測定の並び(=回る順)を、いちばん新しい測定から取る
+    const order=[];const seen=new Set();
+    c.groups.forEach(g=>g.shops.forEach(s=>{if(s.name&&!seen.has(s.name)){seen.add(s.name);order.push(s.name);}}));
+    const shops=order.map(name=>{
+      const times=[];let miss=0;
+      c.groups.forEach(g=>{const s=g.shops.find(x=>x.name===name);if(!s)return;const m=msrToMin(s.time);if(m==null)miss++;else times.push(m);});
+      return {name,...msrStat(times),miss};
+    });
+    const dates=c.groups.map(g=>msrDateKey(g.date)).sort();
+    return {course:c.course,type:c.type,count:c.groups.length,final:c.groups.filter(g=>!g.isProgress).length,
+      firstDate:dates[0],lastDate:dates[dates.length-1],
+      start:msrStat(starts),end:msrStat(ends),dur:durs.length?{n:durs.length,min:Math.min(...durs),max:Math.max(...durs),avg:durs.reduce((a,b)=>a+b,0)/durs.length}:null,
+      shops};
+  });
+
+  const scope=[];scope.push(from||to?`${from||'最初'} 〜 ${to||'最新'}`:'🗓 全期間');
+  const staffVal=document.getElementById('adm-msr-staff').value,courseVal=document.getElementById('adm-msr-course').value,typeVal=document.getElementById('adm-msr-type').value;
+  if(staffVal)scope.push('👤 '+staffVal);if(courseVal)scope.push(courseVal);if(typeVal)scope.push(typeVal);
+  const nTimes=admMsrStats.reduce((a,c)=>a+c.shops.reduce((x,s)=>x+s.n,0),0);
+  document.getElementById('adm-msr-summary').innerHTML=`<span style="font-size:13px;color:var(--text-sub);"><b style="color:var(--text);">${scope.join(' ／ ')}</b> ｜ ${admMsrStats.length}コース ／ 測定${gList.length}回 ／ 到着時刻 ${nTimes}件</span>`
+    +`<div style="font-size:12px;color:var(--text-sub);margin-top:4px;">平均・最早・最遅は、到着時刻が入っている回だけで計算しています。朝刊など0時をまたぐ時刻は日付をまたいだものとして計算しています。<b>所要</b>＝その回の最初の店着から最後の店着まで（途中送信の回は除く）。<b>ばらつき</b>＝最遅−最早。</div>`;
+  if(!admMsrStats.length){document.getElementById('adm-msr-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">測定データがありません</p>';return;}
+
+  const fd=k=>k&&k.length===8?`${+k.slice(4,6)}/${+k.slice(6,8)}`:'';
+  const th='style="white-space:nowrap;"';
+  let h='';
+  // コースの一覧(概要)
+  h+=`<div style="background:#fff;border:1px solid var(--border);border-radius:10px;margin-bottom:14px;overflow:auto;">`;
+  h+=`<div style="padding:10px 14px;background:#f8fafc;font-weight:700;">コース別</div>`;
+  h+=`<table style="font-size:13px;"><thead><tr><th ${th}>コース</th><th ${th}>区分</th><th ${th}>測定回数</th><th ${th}>期間</th><th ${th}>最初の店着(平均)</th><th ${th}>最後の店着(平均)</th><th ${th}>所要 平均</th><th ${th}>所要 最短</th><th ${th}>所要 最長</th><th ${th}>店舗数</th></tr></thead><tbody>`;
+  admMsrStats.forEach((c,i)=>{
+    h+=`<tr style="cursor:pointer;" onclick="document.getElementById('msr-stat-${i}').scrollIntoView({behavior:'smooth',block:'start'})">`
+      +`<td><b>${c.course}</b></td><td>${c.type}</td><td>${c.count}回${c.final<c.count?`<span style="color:#a16207;font-size:11px;">（途中${c.count-c.final}）</span>`:''}</td>`
+      +`<td style="white-space:nowrap;">${fd(c.firstDate)}〜${fd(c.lastDate)}</td>`
+      +`<td>${msrFmtMin(c.start.avg)}</td><td>${msrFmtMin(c.end.avg)}</td>`
+      +`<td>${c.dur?msrFmtDur(c.dur.avg):'-'}</td><td>${c.dur?msrFmtDur(c.dur.min):'-'}</td><td>${c.dur?msrFmtDur(c.dur.max):'-'}</td>`
+      +`<td>${c.shops.length}</td></tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  // コースごとの店舗別
+  admMsrStats.forEach((c,i)=>{
+    const maxRange=Math.max(0,...c.shops.map(s=>s.range||0));
+    h+=`<div id="msr-stat-${i}" style="background:#fff;border:1px solid var(--border);border-radius:10px;margin-bottom:12px;overflow:auto;">`;
+    h+=`<div style="padding:12px 16px;background:#f8fafc;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">`
+      +`<div><b>${c.course}</b> ／ ${c.type} ／ 測定${c.count}回</div>`
+      +`<div style="font-size:13px;color:var(--text-sub);">最初の店着 平均${msrFmtMin(c.start.avg)}（${msrFmtMin(c.start.min)}〜${msrFmtMin(c.start.max)}） ／ 所要 平均${c.dur?msrFmtDur(c.dur.avg):'-'}（${c.dur?msrFmtDur(c.dur.min):'-'}〜${c.dur?msrFmtDur(c.dur.max):'-'}）</div></div>`;
+    h+=`<table style="font-size:13px;"><thead><tr><th>#</th><th>店舗名</th><th ${th}>データ数</th><th ${th}>最早 (MIN)</th><th ${th}>最遅 (MAX)</th><th ${th}>平均</th><th ${th}>ばらつき</th><th ${th}>未到着</th></tr></thead><tbody>`;
+    c.shops.forEach((s,j)=>{
+      // ばらつきが大きい店(30分以上)を目立たせる
+      const wide=s.range!=null&&s.range>=30;
+      h+=`<tr><td>${j+1}</td><td>${s.name}</td><td>${s.n}</td>`
+        +`<td>${msrFmtMin(s.min)}</td><td>${msrFmtMin(s.max)}</td><td style="font-weight:bold;">${msrFmtMin(s.avg)}</td>`
+        +`<td style="${wide?'color:#dc2626;font-weight:bold;':''}">${s.range==null?'-':msrFmtDur(s.range)}`
+        +(s.range!=null&&maxRange>0?`<div style="height:4px;background:#e5e7eb;border-radius:2px;margin-top:2px;min-width:60px;"><div style="height:4px;width:${Math.round(s.range/maxRange*100)}%;background:${wide?'#dc2626':'#60a5fa'};border-radius:2px;"></div></div>`:'')
+        +`</td><td style="${s.miss?'color:#dc2626;':''}">${s.miss||''}</td></tr>`;
+    });
+    h+=`</tbody></table></div>`;
+  });
+  document.getElementById('adm-msr-table').innerHTML=h;
+}
+
+function admMsrExportStats(){
+  if(!admMsrStats.length){alert('出力するデータがありません');return;}
+  const rows=[['コース','区分','測定回数','店舗#','店舗名','データ数','最早(MIN)','最遅(MAX)','平均','ばらつき(分)','未到着']];
+  admMsrStats.forEach(c=>c.shops.forEach((s,j)=>rows.push([c.course,c.type,c.count,j+1,s.name,s.n,msrFmtMin(s.min),msrFmtMin(s.max),msrFmtMin(s.avg),s.range==null?'':Math.round(s.range),s.miss])));
+  const csv='\ufeff'+rows.map(r=>r.map(c=>{const v=String(c==null?'':c);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}).join(',')).join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  const from=document.getElementById('adm-msr-from').value,to=document.getElementById('adm-msr-to').value;
+  a.href=url;a.download=`測定集計_${from||'最初'}_${to||'最新'}.csv`;
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
 }
 
 // --- データ管理 ---
