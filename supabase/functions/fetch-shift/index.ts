@@ -176,7 +176,16 @@ Deno.serve(async (req)=>{
           Authorization: `Bearer ${token}`
         }
       });
-      const mj = await meta.json();
+      const mj = await meta.json().catch(()=>({}));
+      // Google側のエラー(読み取り上限など)を「シート0件」として返さない。
+      // 0件の成功に見えると画面はリトライもせず、空の選択欄だけが出て原因が分からない(2026-10-08)。
+      if (!meta.ok || mj.error) {
+        const st = meta.status === 429 || mj?.error?.code === 429 ? 429 : 502;
+        return new Response(JSON.stringify({
+          error: st === 429 ? 'Googleスプレッドシートの読み取り上限に達しています(Quota exceeded)' : `シート一覧を取得できません(Google ${meta.status}: ${mj?.error?.message ?? ''})`,
+          shift_sheets: [], other_sheets: [], all_sheets: []
+        }), { status: st, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
       const sheets = (mj.sheets || []).map((s)=>s.properties.title);
       const shiftSheets = sheets.filter((t)=>/シフト|月.*\d{4}|\d{4}.*月/.test(t));
       const otherSheets = sheets.filter((t)=>/人員名簿|曜日別|シート26|最新/.test(t));
