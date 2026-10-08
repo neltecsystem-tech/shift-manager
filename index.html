@@ -11463,6 +11463,78 @@ function admSeRefreshOverlays(){
       banner.style.display='none';
     }
   }
+  // Section 1 と Section 2 の食い違い(2026-10-08)。Section 2 を手で直して Section 1 とずれた所を出す。
+  admSeShowS1S2Mismatch(cont,banner);
+}
+
+// ── Section 1 ⇔ Section 2 の食い違いチェック ──
+// 支払は Section 1(コース×日付)から計算し、Section 2(人×日付)の通常コース名は表示用。
+// そのため Section 2 だけ手で直すと、見た目と支払がずれたまま誰も気づかない。
+// 比べるのは「Section 2 にコース名が入っている枠」と「その人がSection 1で入っている枠」。
+// 引継・希望休などの特殊な値(ADM_SE_SPECIAL_CELL)と空欄・"0" は比べない(Section 2 だけに書く運用のため)。
+function admSeFindS1S2Mismatch(){
+  const rows=admSeState.rows;
+  if(!rows||rows.length<121)return [];
+  const isDateStr=v=>/^\d{1,2}\/\d{1,2}$/.test(String(v||'').trim());
+  // Section 1: 日付ラベル|朝夕|氏名 → コースの集合
+  const dateRow=rows[0]||[];
+  const amCols=[];
+  for(let c=1;c<dateRow.length;c++){ const v=String(dateRow[c]||'').trim(); if(isDateStr(v))amCols.push({col:c,label:v}); }
+  const s1=new Map();
+  const courses=new Set();
+  for(let i=6;i<120&&i<rows.length;i++){
+    const course=String((rows[i]||[])[0]||'').trim();
+    if(!course||!areaOfCourse(course))continue;
+    courses.add(course);
+    amCols.forEach(({col,label})=>{
+      [['AM',col],['PM',col+1]].forEach(([ed,cc])=>{
+        const nm=invNormName(admSeCellValue(i,cc));
+        if(!nm)return;
+        const k=`${label}|${ed}|${nm}`;
+        (s1.get(k)||s1.set(k,new Set()).get(k)).add(course);
+      });
+    });
+  }
+  const out=[];
+  admSeParseSection2().forEach(b=>{
+    b.staffRows.forEach(s=>{
+      const nm=invNormName(s.name);
+      b.dateCols.forEach(d=>{
+        const v=String(admSeCellValue(s.rowIdx,d.col)||'').trim();
+        const ed=b.editionPerCol[d.col]||'AM';
+        const inS1=[...(s1.get(`${d.dateLabel}|${ed}|${nm}`)||[])].filter(c=>areaOfCourse(c)===b.area);
+        if(v&&ADM_SE_SPECIAL_CELL.test(v))return;           // 引継など Section 2 だけの値
+        if(!v||v==='0'){
+          // Section 2 が空なのに Section 1 ではこの営業所のコースに入っている
+          if(inS1.length)out.push({row:s.rowIdx,col:d.col,name:s.name,date:d.dateLabel,ed,s2:v||'(空)',s1:inS1.join('・')});
+          return;
+        }
+        if(!courses.has(v))return;                           // コース名でない値は比べない
+        if(!inS1.includes(v))out.push({row:s.rowIdx,col:d.col,name:s.name,date:d.dateLabel,ed,s2:v,s1:inS1.join('・')||'(入っていない)'});
+      });
+    });
+  });
+  return out;
+}
+function admSeShowS1S2Mismatch(cont,banner){
+  let box=document.getElementById('adm-se-s1s2');
+  const list=admSeFindS1S2Mismatch();
+  if(!list.length){ if(box)box.remove(); return; }
+  if(!box&&banner){ box=document.createElement('div'); box.id='adm-se-s1s2'; banner.insertAdjacentElement('afterend',box); }
+  if(!box)return;
+  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const lines=list.slice(0,15).map(m=>`<div>・${esc(m.date)} ${m.ed==='PM'?'夕刊':'朝刊'} <b>${esc(m.name)}</b>：Section 2＝${esc(m.s2)} ／ Section 1＝${esc(m.s1)}</div>`).join('');
+  box.style.cssText='margin:6px 0 10px;padding:8px 12px;border:1px solid #fecaca;background:#fef2f2;border-radius:6px;font-size:12px;color:#991b1b;line-height:1.7;';
+  box.innerHTML=`<div style="font-weight:700;">⚠️ Section 1 と Section 2 が食い違っています（${list.length}箇所）</div>`
+    +`<div style="color:#7f1d1d;margin-bottom:4px;">支払は Section 1 から計算します。Section 2 だけ直した場合は Section 1 も直すか、「🧩 Section2生成」で作り直してください（引継などは残ります）。</div>`
+    +lines+(list.length>15?`<div>…ほか${list.length-15}箇所</div>`:'');
+  // Section 2 の該当セルを赤く
+  if(cont){
+    const keys=new Set(list.map(m=>`${m.row},${m.col}`));
+    cont.querySelectorAll('td[contenteditable][data-r][data-c]').forEach(td=>{
+      if(keys.has(`${td.dataset.r},${td.dataset.c}`)){ td.style.background='#fecaca'; td.title='⚠️ Section 1 と食い違い'; }
+    });
+  }
 }
 
 // 入力デバウンス用タイマー
