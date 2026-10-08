@@ -1175,12 +1175,13 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="adm-specialrate" class="adm-panel" style="display:none;">
         <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:#92400e;line-height:1.6;">
           特定の日付・ドライバーに <b>特別日当</b> を設定します。請求書・支払い明細の計算時に自動反映されます。<br>
-          <b>種別「日当」</b>＝その日の計算額を入力金額で<b>置き換え</b>／<b>「日当+」</b>＝計算額に入力金額を<b>上乗せ加算</b>。日付＋氏名が一致するシフトに適用されます。
+          <b>種別「日当」</b>＝その日の計算額を入力金額で<b>置き換え</b>／<b>「日当+」</b>＝計算額に入力金額を<b>上乗せ加算</b>。日付＋氏名が一致するシフトに適用されます。<br>
+          <b style="color:#b91c1c;">「違約金」</b>＝このツールの請求書・支払明細には<b>入りません</b>。会計の控除（車両リース・貸付金マスタ）に反映され、支払額から引かれます。金額は正の数で入れてください。
         </div>
         <div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;padding:12px 14px;background:#f8fafc;border:1px solid var(--border);border-radius:8px;margin-bottom:14px;">
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">日付</label><input type="date" id="adm-sp-date" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;"></div>
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">氏名</label><input type="text" id="adm-sp-name" list="adm-sp-name-dl" autocomplete="off" placeholder="ドライバー名" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:160px;"><datalist id="adm-sp-name-dl"></datalist></div>
-          <div><label style="font-size:11px;color:var(--text-sub);display:block;">種別</label><select id="adm-sp-type" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;"><option value="日当">日当（金額置換）</option><option value="日当+">日当+（金額加算）</option></select></div>
+          <div><label style="font-size:11px;color:var(--text-sub);display:block;">種別</label><select id="adm-sp-type" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;"><option value="日当">日当（金額置換）</option><option value="日当+">日当+（金額加算）</option><option value="違約金">違約金（会計で控除）</option></select></div>
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">区分 <span style="color:var(--danger);">*</span></label><select id="adm-sp-cat" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;"><option value="朝刊">朝刊</option><option value="夕刊">夕刊</option><option value="朝刊・夕刊">両方（朝刊+夕刊）</option></select></div>
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">金額(¥)</label><input type="number" id="adm-sp-amount" placeholder="0" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:110px;"></div>
           <div><label style="font-size:11px;color:var(--text-sub);display:block;">理由</label><input type="text" id="adm-sp-reason" placeholder="例:特別対応" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:160px;"></div>
@@ -7493,7 +7494,9 @@ function invUpdateCourseSuggest(){
 function invFindSpecial(date,staff){
   const normDate=(date||'').replace(/-/g,'/');
   const normName=invNormName(staff);
+  // 違約金は請求書・支払明細の計算に入れない(控除は会計で行う)
   return invSpecial.filter(s=>{
+    if(String(s.type||'').includes('違約'))return false;
     const sDate=(s.date||'').replace(/-/g,'/');
     return sDate===normDate&&invNormName(s.name)===normName;
   });
@@ -9071,7 +9074,9 @@ function admSpRender(){
   h+='</tr></thead><tbody>';
   list.forEach(s=>{
     const amt=Number(String(s.amount||'').replace(/,/g,''))||0;
-    const typeBadge=s.type==='日当+'?'<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:11px;">日当+</span>':'<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:10px;font-size:11px;">日当</span>';
+    const isPen=String(s.type||'').includes('違約');
+    const typeBadge=isPen?'<span style="background:#fee2e2;color:#b91c1c;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;" title="会計の控除に反映。このツールの計算には入らない">違約金</span>'
+      :s.type==='日当+'?'<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:11px;">日当+</span>':'<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:10px;font-size:11px;">日当</span>';
     h+=`<tr style="border-bottom:1px solid #f1f5f9;">`;
     h+=`<td style="padding:8px 10px;white-space:nowrap;">${admSpEsc(s._d||s.date||'')}</td>`;
     h+=`<td style="padding:8px 10px;white-space:nowrap;">${admSpEsc(s.name||'')}</td>`;
@@ -9080,7 +9085,7 @@ function admSpRender(){
       :'<span style="background:#fee2e2;color:#b91c1c;padding:2px 8px;border-radius:10px;font-size:11px;" title="区分が空の行は金額計算に反映されません">未設定</span>';
     h+=`<td style="padding:8px 10px;white-space:nowrap;">${catCell}</td>`;
     h+=`<td style="padding:8px 10px;">${typeBadge}</td>`;
-    h+=`<td style="padding:8px 10px;text-align:right;white-space:nowrap;">¥${amt.toLocaleString()}</td>`;
+    h+=`<td style="padding:8px 10px;text-align:right;white-space:nowrap;${isPen?'color:#b91c1c;font-weight:700;':''}">${isPen?'−':''}¥${amt.toLocaleString()}</td>`;
     h+=`<td style="padding:8px 10px;color:var(--text-sub);">${admSpEsc(s.reason||'')}</td>`;
     h+=`<td style="padding:8px 10px;color:var(--text-sub);font-size:11px;white-space:nowrap;">${admSpEsc(s.applicant||'')}</td>`;
     h+=`<td style="padding:8px 10px;white-space:nowrap;">`;
@@ -9104,7 +9109,7 @@ function admSpEdit(rowNum){
   // <input type="date"> は "2026/06/12" 形式を受け付けないので正規化して入れる
   document.getElementById('adm-sp-date').value=admSpNormDate(s.date)||s.date||'';
   document.getElementById('adm-sp-name').value=s.name||'';
-  document.getElementById('adm-sp-type').value=s.type==='日当+'?'日当+':'日当';
+  document.getElementById('adm-sp-type').value=String(s.type||'').includes('違約')?'違約金':s.type==='日当+'?'日当+':'日当';
   const cat=String(s.category||'').trim();
   document.getElementById('adm-sp-cat').value=(cat.includes('朝刊')&&cat.includes('夕刊'))?'朝刊・夕刊':(cat.includes('夕刊')?'夕刊':'朝刊');
   document.getElementById('adm-sp-amount').value=String(s.amount||'').replace(/,/g,'');
@@ -9156,6 +9161,7 @@ async function admSpSave(){
   if(!date){alert('日付を入力してください');return;}
   if(!name){alert('氏名を入力してください');return;}
   if(!amount||isNaN(Number(amount))){alert('金額を数字で入力してください');return;}
+  if(type==='違約金'&&Number(amount)<=0){alert('違約金は正の金額で入力してください（会計で控除します）');return;}
   // 氏名は自由入力(datalistは候補にすぎない)。単価マスタと1文字でも違うと照合が外れ、
   // 金額がエラーも出さずに落ちる。実例: 2026-08-13に単価マスタを「TLC.」→「TLC/」へ改名した後、
   // ここが旧表記のまま入り続け、日曜特別日当 7,000円×5週=35,000円が8月分に乗らなかった(9/1発覚)。
