@@ -11315,6 +11315,15 @@ function admSeCellHtml(r,c,val,dirty,color,minWidth,blackout){
 // スタッフ名 datalist セル (Section 1 のドライバー割当用)
 function admSeStaffCellHtml(r,c,val,dirty,minWidth,blackout,isDup){
   const safe=String(val).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+  // 名前が入っている枠は黒で隠さない(黒地に黒文字で見えなくなっていた)。
+  // 本来配送の無い枠に名前があるので、灰色の斜線＋注意書きで目立たせる。
+  // 例: 日曜の夕刊は「🏇 日曜の競馬配送日」に登録した日だけ稼働。未登録の日に名前があるとここに来る。
+  if(blackout&&String(val||'').trim()){
+    const mw0=minWidth?`min-width:${minWidth}px;`:'min-width:100px;';
+    return `<td style="border:2px solid #f59e0b;padding:0;${mw0}font-size:13px;background:repeating-linear-gradient(45deg,#e5e7eb,#e5e7eb 6px,#f3f4f6 6px,#f3f4f6 12px);" title="⚠️ 通常は配送の無い枠ですが名前が入っています（日曜の夕刊なら「🏇 日曜の競馬配送日」に登録すると通常表示になります）">`+
+      `<input type="text" list="adm-se-staff-list" data-r="${r}" data-c="${c}" value="${safe}" `+
+      `style="border:none;padding:4px 6px;font-size:13px;width:100%;background:transparent;outline:none;color:#92400e;font-weight:600;"/></td>`;
+  }
   let bg='';
   if(blackout)bg='background:#000;';
   else if(isDup)bg='background:#fee2e2;';
