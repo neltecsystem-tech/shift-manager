@@ -77,7 +77,7 @@ async function getSpecialRowsCached(): Promise<any[][]> {
   if (cached && cached.updated_at && Array.isArray(cached.data)
     && (Date.now() - new Date(cached.updated_at).getTime() < SPECIAL_CACHE_TTL_MS)) return cached.data as any[][];
   try {
-    const rows = await fetchSheetValuesWithRetry(`${SPECIAL_SHEET_NAME}!A2:J5000`, getAccessToken, 3, SPECIAL_SHEET_ID);
+    const rows = await fetchSheetValuesWithRetry(`${SPECIAL_SHEET_NAME}!A2:K5000`, getAccessToken, 3, SPECIAL_SHEET_ID); // K=変更日
     if (SB_URL && SRK) {
       try {
         await fetch(`${SB_URL}/rest/v1/sm_kv_cache`, {
@@ -1055,17 +1055,37 @@ Deno.serve(async(req:Request)=>{
       }catch(e){
         return jsonResp({error:`特別日当シートの読み取りに失敗しました: ${String((e as any)?.message||e).slice(0,300)}`, sheet:SPECIAL_SHEET_NAME}, 502);
       }
-      const records=raw.map((r:string[],i:number)=>({row_number:i+2,timestamp:r[0]||'',date:r[1]||'',name:r[2]||'',amount:r[3]||'',reason:r[4]||'',applicant:r[5]||'',category:r[6]||'',type:r[7]||'',office:r[8]||''})).filter((r:any)=>r.date&&r.name);
+      const records=raw.map((r:string[],i:number)=>({row_number:i+2,timestamp:r[0]||'',date:r[1]||'',name:r[2]||'',amount:r[3]||'',reason:r[4]||'',applicant:r[5]||'',category:r[6]||'',type:r[7]||'',office:r[8]||'',modified_at:r[10]||''})).filter((r:any)=>r.date&&r.name);
       return jsonResp({records});
     }
     if(action==='save_special_rate'){
       // 特別単価(日当/日当+)を管理画面から手入力。Googleフォーム回答シートへ直接 append/PUT。
+      // 🚨 A列(入力日)はサーバーが決め、編集では絶対に書き換えない。
+      //    以前は編集のたびに A列を「今」で上書きしていたため、支払確定より前に入れた日当が
+      //    確定後に入れたように見え、確定後の入力かどうかを後から判断できなかった(2026-10 大塚孝秀)。
+      //    編集した日時は K列(変更日)に残す。I列(営業所)も画面から送られないので元の値を保つ。
       if(!admin) return forbid();
       if(!record?.date||!record?.name) return jsonResp({error:'date and name required'},400);
-      const ts=String(record.timestamp||new Date().toISOString());
-      const row=[ts, record.date||'', record.name||'', record.amount||'', record.reason||'', record.applicant||'管理画面', record.category||'', record.type||'日当', record.office||''];
-      if(row_number){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A${row_number}:I${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
-      else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A1:I1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
+      const nowJst=new Date(Date.now()+9*3600*1000).toISOString().slice(0,19).replace('T',' ').replace(/-/g,'/');
+      const spUrl=(a1:string)=>`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(`${SPECIAL_SHEET_NAME}!${a1}`)}`;
+      const putCells=async(a1:string,values:any[][])=>{
+        const r=await fetch(`${spUrl(a1)}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values})});
+        if(!r.ok) throw new Error(`特別日当シートへの書き込みに失敗しました(${r.status}): ${(await r.text()).slice(0,200)}`);
+      };
+      if(row_number){
+        const cur=await fetch(spUrl(`A${row_number}:I${row_number}`),{headers:{'Authorization':`Bearer ${sheetsToken}`}});
+        if(!cur.ok) return jsonResp({error:`特別日当シートの読み取りに失敗しました(${cur.status})`},502);
+        const old:string[]=((await cur.json()).values||[])[0]||[];
+        if(!old[1]&&!old[2]) return jsonResp({error:'編集する行が見つかりません(削除された可能性があります)。一覧を読み直してください。'},409);
+        const row=[record.date||'', record.name||'', record.amount||'', record.reason||'', record.applicant||old[5]||'管理画面', record.category||'', record.type||'日当', record.office ?? old[8] ?? ''];
+        await putCells(`B${row_number}:I${row_number}`,[row]);   // A列(入力日)には触らない
+        await putCells(`K${row_number}`,[[nowJst]]);             // 変更日
+        await putCells('K1',[['変更日']]);
+      }else{
+        const row=[nowJst, record.date||'', record.name||'', record.amount||'', record.reason||'', record.applicant||'管理画面', record.category||'', record.type||'日当', record.office||''];
+        const r=await fetch(`${spUrl('A1:I1')}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});
+        if(!r.ok) return jsonResp({error:`特別日当シートへの追加に失敗しました(${r.status})`},502);
+      }
       await invalidateSpecialCache(); // 保存したら次の取得は必ずシートから
       return jsonResp({success:true});
     }

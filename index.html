@@ -9003,6 +9003,19 @@ function admSnapInit(){smLoadSnapshotInfo();smLoadSnapshotHistory();smSnapDetail
 
 // ===== 🎁 特別日当 (特別単価: 日当/日当+) 管理 =====
 function admSpEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+// 入力日/変更日を「2026/10/10 15:24」に揃える。
+// シートには フォーム由来の "2026/03/03 13:15:17"(日本時間) と、旧管理画面由来の ISO "2026-10-10T06:24:33Z"(UTC) が混在する。
+function admSpFmtTs(v){
+  const s=String(v||'').trim(); if(!s) return '';
+  if(/^\d{4}-\d{2}-\d{2}T/.test(s)){
+    const d=new Date(s); if(isNaN(d)) return s;
+    const j=new Date(d.getTime()+9*3600*1000).toISOString();
+    return j.slice(0,10).replace(/-/g,'/')+' '+j.slice(11,16);
+  }
+  const m=s.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?/);
+  if(!m) return s;
+  return `${m[1]}/${m[2].padStart(2,'0')}/${m[3].padStart(2,'0')}`+(m[4]?` ${m[4].padStart(2,'0')}:${m[5]}`:'');
+}
 // 日付の表記ゆれ吸収: Googleフォーム経由は "2026/06/12"、管理画面追加は "2026-06-12"。
 // 月フィルタ/並べ替えのため YYYY-MM-DD に正規化する (不正値は空文字)。
 function admSpNormDate(v){
@@ -9070,7 +9083,7 @@ function admSpRender(){
     return;
   }
   let h='<table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f1f5f9;position:sticky;top:0;">';
-  ['日付','氏名','区分','種別','金額','理由','申請者',''].forEach(t=>h+=`<th style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap;">${t}</th>`);
+  ['日付','氏名','区分','種別','金額','理由','申請者','入力日','変更日',''].forEach(t=>h+=`<th style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap;">${t}</th>`);
   h+='</tr></thead><tbody>';
   list.forEach(s=>{
     const amt=Number(String(s.amount||'').replace(/,/g,''))||0;
@@ -9088,6 +9101,8 @@ function admSpRender(){
     h+=`<td style="padding:8px 10px;text-align:right;white-space:nowrap;${isPen?'color:#b91c1c;font-weight:700;':''}">${isPen?'−':''}¥${amt.toLocaleString()}</td>`;
     h+=`<td style="padding:8px 10px;color:var(--text-sub);">${admSpEsc(s.reason||'')}</td>`;
     h+=`<td style="padding:8px 10px;color:var(--text-sub);font-size:11px;white-space:nowrap;">${admSpEsc(s.applicant||'')}</td>`;
+    h+=`<td style="padding:8px 10px;color:var(--text-sub);font-size:11px;white-space:nowrap;" title="登録した日時(変更できません)">${admSpEsc(admSpFmtTs(s.timestamp))}</td>`;
+    h+=`<td style="padding:8px 10px;font-size:11px;white-space:nowrap;${s.modified_at?'color:#b45309;font-weight:600;':'color:var(--text-sub);'}" title="最後に編集した日時">${admSpEsc(admSpFmtTs(s.modified_at))||'—'}</td>`;
     h+=`<td style="padding:8px 10px;white-space:nowrap;">`;
     if(s.row_number){
       h+=`<button onclick="admSpEdit(${s.row_number})" style="background:#e2e8f0;color:#334155;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;margin-right:4px;">編集</button>`;
@@ -9116,6 +9131,9 @@ function admSpEdit(rowNum){
   document.getElementById('adm-sp-reason').value=s.reason||'';
   document.getElementById('adm-sp-editrow').value=String(rowNum);
   const btn=document.getElementById('adm-sp-save-btn');if(btn)btn.textContent='💾 更新';
+  // 入力日は変えられない。編集すると変更日が記録されることを先に伝える
+  const msg=document.getElementById('adm-sp-msg');
+  if(msg){msg.style.color='var(--text-sub)';msg.textContent=`編集中: 入力日 ${admSpFmtTs(s.timestamp)||'—'}(変更できません)。保存すると変更日が記録されます。`;}
   window.scrollTo({top:0,behavior:'smooth'});
 }
 // 入力された氏名を単価マスタの表記に寄せる。
