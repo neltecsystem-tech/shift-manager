@@ -1150,7 +1150,7 @@ tbody tr:hover { background:var(--primary-light); }
           <button onclick="admShopListSwitchTab('closeopen')" id="adm-sl-tab-closeopen" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:var(--primary);color:#fff;">🔥 閉店・新店シート</button>
           <button onclick="admShopListSwitchTab('newshop')" id="adm-sl-tab-newshop" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">➕ 新店候補</button>
           <button onclick="admShopListSwitchTab('closeshop')" id="adm-sl-tab-closeshop" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">➖ 閉店候補</button>
-          <button onclick="admShopListSwitchTab('diff')" id="adm-sl-tab-diff" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">⚠ 差異あり</button>
+          <button onclick="admShopListSwitchTab('diff')" id="adm-sl-tab-diff" class="adm-sl-tab" style="display:none;padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">⚠ 差異あり</button>
           <button onclick="admShopListSwitchTab('catsummary')" id="adm-sl-tab-catsummary" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">📊 区分集計</button>
           <button onclick="admShopListSwitchTab('coursesummary')" id="adm-sl-tab-coursesummary" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">🚚 コース別</button>
           <button onclick="admShopListSwitchTab('match')" id="adm-sl-tab-match" class="adm-sl-tab" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:#f1f5f9;color:var(--text-sub);">✅ 一致</button>
@@ -2035,6 +2035,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-10-14', tag:'改善', title:'荷主リスト突合の「差異あり」タブを整理しました',
+   desc:'「差異あり」は、店舗マスタの「営業所」欄と荷主リストの営業所の表記が違う店だけを出していて、請求には影響しないものでした（請求に効く食い違いは「区分集計」ですべて見ています）。タブと上の件数の枠を外し、該当があるときだけ区分集計の上に「営業所欄が荷主と違う店がN件あります（請求には影響しません）」と1行出して、そこから一覧を開けるようにしました。'},
   {date:'2026-10-14', tag:'修正', title:'荷主リスト突合で、夕刊のシートが読まれず0件になっていたのを直しました',
    desc:'2026年10月の荷主リストから、夕刊のシート名が「城北平日」ではなく「城北夕刊」「高津夕刊」になり、突合がこのシートを丸ごと読み飛ばして「平日」の荷主側が0件になっていました。シート名が「夕刊」でも平日（夕刊配送）として読むように直しました。'},
   {date:'2026-10-14', tag:'改善', title:'閉店情報を入れたとき、翌月の月初スナップから外せるようにしました',
@@ -19112,7 +19114,7 @@ function admShopListAnalyze(){
     },
   };
   const s=admSlResult.stats;
-  document.getElementById('adm-sl-summary').innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;"><div style="background:#f1f5f9;padding:10px;border-radius:8px;font-size:12px;"><div style="color:var(--text-sub)">荷主リスト 処理日</div><div style="font-weight:600;font-size:14px;">${s.parsedDate||'-'}</div></div><div style="background:#f1f5f9;padding:10px;border-radius:8px;font-size:12px;"><div style="color:var(--text-sub)">荷主リスト 元シート</div><div style="font-weight:600;font-size:14px;">${s.motoTotal.toLocaleString()}店<span style="font-size:11px;color:var(--text-sub);"> / NELTEC配送 ${s.motoNeltec.toLocaleString()}店</span></div></div><div style="background:#f1f5f9;padding:10px;border-radius:8px;font-size:12px;"><div style="color:var(--text-sub)">店舗マスタ</div><div style="font-weight:600;font-size:14px;">${s.masterTotal.toLocaleString()}店<span style="font-size:11px;color:var(--text-sub);"> / 稼働中 ${s.masterActive.toLocaleString()}店</span></div></div><div style="background:#fee2e2;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#dc2626">閉店・新店</div><div style="font-weight:600;font-size:14px;">${admSlResult.closeopen.length}件</div></div><div style="background:#dcfce7;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#15803d">新店候補</div><div style="font-weight:600;font-size:14px;">${admSlResult.newshop.length}件</div></div><div style="background:#fef3c7;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#92400e">閉店候補</div><div style="font-weight:600;font-size:14px;">${admSlResult.closeshop.length}件</div></div><div style="background:#fef3c7;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#92400e">差異あり</div><div style="font-weight:600;font-size:14px;">${admSlResult.diff.length}件</div></div><div style="background:#e0f2fe;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#075985">一致</div><div style="font-weight:600;font-size:14px;">${admSlResult.match.length}件</div></div></div>`;
+  document.getElementById('adm-sl-summary').innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;"><div style="background:#f1f5f9;padding:10px;border-radius:8px;font-size:12px;"><div style="color:var(--text-sub)">荷主リスト 処理日</div><div style="font-weight:600;font-size:14px;">${s.parsedDate||'-'}</div></div><div style="background:#f1f5f9;padding:10px;border-radius:8px;font-size:12px;"><div style="color:var(--text-sub)">荷主リスト 元シート</div><div style="font-weight:600;font-size:14px;">${s.motoTotal.toLocaleString()}店<span style="font-size:11px;color:var(--text-sub);"> / NELTEC配送 ${s.motoNeltec.toLocaleString()}店</span></div></div><div style="background:#f1f5f9;padding:10px;border-radius:8px;font-size:12px;"><div style="color:var(--text-sub)">店舗マスタ</div><div style="font-weight:600;font-size:14px;">${s.masterTotal.toLocaleString()}店<span style="font-size:11px;color:var(--text-sub);"> / 稼働中 ${s.masterActive.toLocaleString()}店</span></div></div><div style="background:#fee2e2;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#dc2626">閉店・新店</div><div style="font-weight:600;font-size:14px;">${admSlResult.closeopen.length}件</div></div><div style="background:#dcfce7;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#15803d">新店候補</div><div style="font-weight:600;font-size:14px;">${admSlResult.newshop.length}件</div></div><div style="background:#fef3c7;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#92400e">閉店候補</div><div style="font-weight:600;font-size:14px;">${admSlResult.closeshop.length}件</div></div><div style="background:#e0f2fe;padding:10px;border-radius:8px;font-size:12px;"><div style="color:#075985">一致</div><div style="font-weight:600;font-size:14px;">${admSlResult.match.length}件</div></div></div>`;
   // シート申告件数とのズレを警告(読み落としの早期発見)
   const scw=(admSlData.shipCountWarn||[]);
   if(scw.length){
@@ -19190,10 +19192,12 @@ function admShopListRender(){
       html+='</tbody></table>';
     }
   }else if(tab==='diff'){
+    // 2026-10-14: 「差異あり」タブは廃止。区分集計の注意から開く「営業所欄の表記違い」の一覧としてだけ残す。
     const rows=admSlResult.diff;
-    if(rows.length===0)html='<p style="text-align:center;padding:30px;color:var(--text-sub);">差異なし 🎉</p>';
+    html='<div style="margin-bottom:10px;"><button onclick="admShopListSwitchTab(&quot;catsummary&quot;)" style="background:#64748b;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">← 区分集計に戻る</button> <b style="margin-left:8px;">営業所欄が荷主リストと違う店</b> <span style="font-size:12px;color:var(--text-sub);">（請求には影響しません。店舗マスタの「営業所」欄の表記だけが違う店です。営業所で絞り込む画面で見つからなくなるので、必要なら店舗マスタで直してください）</span></div>';
+    if(rows.length===0)html+='<p style="text-align:center;padding:30px;color:var(--text-sub);">該当なし</p>';
     else{
-      html='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタ店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタ営業所</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主営業所(朝/夕/競)</th><th style="padding:8px;border:1px solid #e2e8f0;">差異</th></tr></thead><tbody>';
+      html+='<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;"><th style="padding:8px;border:1px solid #e2e8f0;">店舗コード</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタ店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主店舗名</th><th style="padding:8px;border:1px solid #e2e8f0;">マスタ営業所</th><th style="padding:8px;border:1px solid #e2e8f0;">荷主営業所(朝/夕/競)</th><th style="padding:8px;border:1px solid #e2e8f0;">差異</th></tr></thead><tbody>';
       rows.forEach(({master,moto,issues})=>{
         const motoArea=[moto.amArea,moto.pmArea,moto.keibaArea].map(a=>a||'-').join('/');
         html+=`<tr><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.code)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(moto.name)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(master.area)}</td><td style="padding:6px;border:1px solid #e2e8f0;">${esc(motoArea)}</td><td style="padding:6px;border:1px solid #e2e8f0;font-size:11px;color:#92400e;">${issues.map(esc).join('<br>')}</td></tr>`;
@@ -19364,6 +19368,9 @@ function admShopListRender(){
       });
       html+='</tbody></table>';
     }
+  }
+  if(tab==='catsummary'&&!admSlCatDrill&&(admSlResult.diff||[]).length){
+    html=`<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13px;color:#92400e;">ℹ 店舗マスタの「営業所」欄が荷主リストと違う店が <b>${admSlResult.diff.length}件</b> あります（請求には影響しません）。 <a href="#" onclick="admShopListSwitchTab('diff');return false;" style="color:#b45309;font-weight:700;">一覧を見る</a></div>`+html;
   }
   cont.innerHTML=html;
 }
