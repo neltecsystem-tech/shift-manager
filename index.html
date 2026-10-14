@@ -2035,6 +2035,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-10-14', tag:'修正', title:'荷主リスト突合「コード相違をマスタに反映」で、全件スキップになるのを直しました',
+   desc:'店舗マスタ側を先に新しい店舗コードに直してあると、「新コードが既にマスタにある＝重複」と判定して全件スキップし、月初スナップの古いコードが残ったままになっていました（2026年10月 立川朝刊の3店：7元八王子2丁目・7国立富士見台1丁目・7府中是政6丁目）。マスタが更新済みのときは、月初スナップのコードだけを直すようにしました。'},
   {date:'2026-10-14', tag:'改善', title:'荷主リスト突合の「差異あり」タブを整理しました',
    desc:'「差異あり」は、店舗マスタの「営業所」欄と荷主リストの営業所の表記が違う店だけを出していて、請求には影響しないものでした（請求に効く食い違いは「区分集計」ですべて見ています）。タブと上の件数の枠を外し、該当があるときだけ区分集計の上に「営業所欄が荷主と違う店がN件あります（請求には影響しません）」と1行出して、そこから一覧を開けるようにしました。'},
   {date:'2026-10-14', tag:'修正', title:'荷主リスト突合で、夕刊のシートが読まれず0件になっていたのを直しました',
@@ -19558,33 +19560,49 @@ async function admSlApplyCodeChange(){
   const liveRowByCode=new Map();
   (liveJson.records||[]).forEach(r=>{const c=String(r.col_2||'').trim();if(c)liveRowByCode.set(c,r.row_number);});
   const liveCodes=new Set(liveRowByCode.keys());
-  const doable=[],skipDup=[],skipNoRow=[];
+  const doable=[],skipDup=[],skipNoRow=[],snapOnly=[];
+  // 🚨 2026-10-14: マスタ側を先に新コードへ直してあると(旧コードが無く新コードがある)、
+  //    「新コードが既に存在=重複」と判定して全件スキップし、月初スナップの旧コードが残り続けていた。
+  //    この場合はマスタは更新済みなので、月初スナップのコードだけを直す。
+  const snapMonth0=admSlSnapMonth();
   pairs.forEach(p=>{
-    if(liveCodes.has(p.ship.code))skipDup.push(p);            // 新コードが既にライブマスタに存在
-    else if(!liveRowByCode.has(p.master.code))skipNoRow.push(p); // 旧コードがライブに無い(変更済/閉店等)
+    const hasNew=liveCodes.has(p.ship.code), hasOld=liveRowByCode.has(p.master.code);
+    if(hasNew&&!hasOld){ if(snapMonth0)snapOnly.push(p); else skipDup.push(p); } // マスタは更新済み → スナップだけ
+    else if(hasNew)skipDup.push(p);            // 新旧どちらもライブにある(本当の重複) → 手で確認
+    else if(!hasOld)skipNoRow.push(p);         // 旧コードがライブに無い(閉店等)
     else doable.push({...p,liveRow:liveRowByCode.get(p.master.code)});
   });
   const [da,dc]=key.split('\t');
-  if(!doable.length){alert(`反映できる行がありません。\n重複でスキップ ${skipDup.length}件 / 行不明 ${skipNoRow.length}件`);return;}
-  let msg=`【${da}${dc}】コード相違 ${pairs.length}件のうち ${doable.length}件のマスタ店舗コードを荷主の新コードに更新します。\n\n`;
-  doable.slice(0,20).forEach(p=>{msg+=`・${p.ship.name||p.master.name}: ${p.master.code} → ${p.ship.code}\n`;});
-  if(doable.length>20)msg+=`…他 ${doable.length-20}件\n`;
-  if(skipDup.length)msg+=`\n⚠ 新コードが既にマスタに存在→スキップ: ${skipDup.length}件`;
+  if(!doable.length&&!snapOnly.length){alert(`反映できる行がありません。\n重複でスキップ ${skipDup.length}件 / 行不明 ${skipNoRow.length}件`);return;}
+  let msg=`【${da}${dc}】コード相違 ${pairs.length}件\n\n`;
+  if(doable.length){
+    msg+=`■ マスタ（と月初スナップ）の店舗コードを新コードに更新: ${doable.length}件\n`;
+    doable.slice(0,20).forEach(p=>{msg+=`・${p.ship.name||p.master.name}: ${p.master.code} → ${p.ship.code}\n`;});
+    if(doable.length>20)msg+=`…他 ${doable.length-20}件\n`;
+  }
+  if(snapOnly.length){
+    msg+=`\n■ マスタは新コードに更新済み → ${snapMonth0} の月初スナップのコードだけ直す: ${snapOnly.length}件\n`;
+    snapOnly.slice(0,20).forEach(p=>{msg+=`・${p.ship.name||p.master.name}: ${p.master.code} → ${p.ship.code}\n`;});
+  }
+  if(skipDup.length)msg+=`\n⚠ 新コード・旧コードともマスタにある→スキップ(手で確認): ${skipDup.length}件`;
   if(skipNoRow.length)msg+=`\n⚠ マスタ行が特定できず→スキップ: ${skipNoRow.length}件`;
   msg+='\n\nよろしいですか?';
   if(!confirm(msg))return;
   try{
-    const updates=doable.map(p=>({row_number:p.liveRow,col_index:2,value:p.ship.code}));
-    const resp=await smPost({action:'batch_update_cells',updates});
-    const json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
-    if(!resp.ok||json.error)throw new Error(json.error||`HTTP ${resp.status}`);
-    invalidateShopMasterCache();
+    let json={updated:0};
+    if(doable.length){
+      const updates=doable.map(p=>({row_number:p.liveRow,col_index:2,value:p.ship.code}));
+      const resp=await smPost({action:'batch_update_cells',updates});
+      json=await resp.json().catch(()=>({error:'レスポンス解析失敗'}));
+      if(!resp.ok||json.error)throw new Error(json.error||`HTTP ${resp.status}`);
+      invalidateShopMasterCache();
+    }
     // 月初の訂正: 突合がスナップ相手なら、その月のスナップのコードも同時更新(両方書き)
     let snapMsg='';
     const snapMonth=admSlSnapMonth();
     if(snapMonth){
       try{
-        const su=doable.map(p=>({code:p.master.code,col_index:2,value:p.ship.code}));
+        const su=[...doable,...snapOnly].map(p=>({code:p.master.code,col_index:2,value:p.ship.code}));
         const sresp=await smPost({action:'snapshot_update_cells',month:snapMonth,updates:su});
         invalidateSnapCache(snapMonth);
         const sj=await sresp.json().catch(()=>({}));
@@ -19592,7 +19610,7 @@ async function admSlApplyCodeChange(){
         else snapMsg=`\n⚠ 月初スナップ更新エラー: ${(sj&&sj.error)||''}`;
       }catch(e){snapMsg='\n⚠ 月初スナップ更新失敗: '+e.message;}
     }
-    alert(`✓ ${json.updated||doable.length}件 のマスタ店舗コードを更新しました。${skipDup.length?`\n(重複スキップ ${skipDup.length}件は手動確認)`:''}${snapMsg}\n\nマスタを再取得して再照合します。`);
+    alert(`✓ マスタの店舗コード更新 ${doable.length?(json.updated||doable.length):0}件${snapOnly.length?` ／ マスタ更新済みで月初スナップだけ直した ${snapOnly.length}件`:''}。${skipDup.length?`\n(重複スキップ ${skipDup.length}件は手動確認)`:''}${snapMsg}\n\nマスタを再取得して再照合します。`);
     await new Promise(r=>setTimeout(r,800));
     admSlMaster=null;
     await admShopListEnsureMaster();
