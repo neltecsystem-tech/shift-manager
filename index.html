@@ -365,6 +365,7 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="smc-selected" style="display:none;background:#f1f5f9;border-radius:10px;padding:12px;margin-bottom:12px;">
           <input type="hidden" id="smc-row">
+          <input type="hidden" id="smc-code"><input type="hidden" id="smc-name">
           <div id="smc-info"></div>
         </div>
         <div style="margin-bottom:12px;">
@@ -2034,6 +2035,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-10-14', tag:'改善', title:'閉店情報を入れたとき、翌月の月初スナップから外せるようにしました',
+   desc:'店舗マスタの「閉店情報」を保存したとき、最終納品日の<b>翌月</b>の月初スナップがすでに作られていれば、「この店を翌月の月初スナップから削除しますか？」と聞くようにしました。「OK」を押すとその場で外れ、翌月の請求対象から外れます。これまでは月初スナップができた後に閉店情報を入れると、翌月のスナップに店が残ったままになり、管理 → 荷主リスト突合から手で外す必要がありました。<br>※閉店した月そのもの（例: 9/18閉店なら9月）は、月初に店があったのでそのまま請求対象です。外すのは翌月だけです。'},
   {date:'2026-10-08', tag:'新機能', title:'測定（店着）の集計を追加しました',
    desc:'管理 → 測定データに「📊 集計」を追加しました。期間・コース・担当者・区分で絞り込んで、コース別に測定回数、最初と最後の店着の平均、所要時間の平均・最短・最長を出します。店舗別（回る順）には、データ数・最早(MIN)・最遅(MAX)・平均・ばらつき（最遅−最早）・未到着の回数を出します。ばらつきが30分以上の店は赤で表示します。朝刊など0時をまたぐ時刻も正しく平均します。「⬇ CSV出力」で集計表をダウンロードできます。'},
   {date:'2026-09-15', tag:'修正', title:'城北の正式店舗名/Place IDが別の店になっていた問題を修復しました（460行）',
@@ -8499,6 +8502,8 @@ async function smCloseSearch(){
 
 function smCloseSelect(rowNum,area,code,name){
   document.getElementById('smc-row').value=rowNum;
+  document.getElementById('smc-code').value=code;
+  document.getElementById('smc-name').value=name;
   document.getElementById('smc-info').innerHTML=`<div style="font-size:15px;font-weight:bold;color:#1e293b;">${name}</div><div style="font-size:12px;color:var(--text-sub);">${area} / ${code} / 行${rowNum}</div>`;
   document.getElementById('smc-selected').style.display='block';
   document.getElementById('smc-results').style.display='none';
@@ -8551,10 +8556,62 @@ async function smCloseSave(){
   try{
     await smPost({action:'update',row_number:parseInt(rowNum),record});
     document.getElementById('sm-close-modal').style.display='none';
-    alert('閉店情報を保存しました。最終納品日の翌日にコース名が自動クリアされます(請求は月初スナップ基準)。');
+    let msg='閉店情報を保存しました。最終納品日の翌日にコース名が自動クリアされます(請求は月初スナップ基準)。';
+    // 閉店の翌月の月初スナップが既に作られていたら、その店を外すか聞く(2026-10-14)。
+    // 最終納品日の翌月1日には店が無いので、翌月スナップに残ると翌月も請求されてしまう。
+    // 🚨 外すのは「翌月」だけ。閉店した月は月初に居たので当月は請求対象のまま。
+    const code=(document.getElementById('smc-code').value||'').trim();
+    const name=document.getElementById('smc-name').value||code;
+    if(code)msg+=await smCloseOfferSnapRemove(code,name,lastDeliver);
+    alert(msg);
     await smLoad(true);
   }catch(e){alert('エラー: '+e.message);}
   btn.textContent='閉店情報を保存';btn.disabled=false;
+}
+
+// 閉店(最終納品日)の翌月の月初スナップが作成済みなら、その店を外すか確認して外す。結果の一文を返す。
+async function smCloseOfferSnapRemove(code,name,lastDeliver){
+  const [y,m]=lastDeliver.split('-').map(Number);
+  const next=m===12?`${y+1}-01`:`${y}-${String(m+1).padStart(2,'0')}`;
+  let months=[];
+  try{
+    const r=await smPost({action:'snapshot_list'});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    months=j.months||[];
+  }catch(e){
+    return `
+
+⚠ ${next} の月初スナップがあるか確認できませんでした（${e.message}）。管理 → 月初スナップで、この店が残っていないか確かめてください。`;
+  }
+  if(!months.includes(next))return '';
+  const ld=lastDeliver.replace(/-/g,'/');
+  if(!confirm(`${next} の月初スナップは既に作成されています。
+
+「${name}」(コード ${code}) は最終納品日 ${ld} で閉店するため、${next}-01 の時点では店がありません。
+この店を ${next} の月初スナップから削除しますか？（${next} の請求対象から外れます）
+
+※閉店した月（${lastDeliver.slice(0,7)}）は月初に店があったので、そのまま請求対象です。`)){
+    return `
+
+${next} の月初スナップは変更していません（この店は ${next} の請求対象に残っています）。`;
+  }
+  try{
+    const r=await smPost({action:'snapshot_remove_store',month:next,codes:[String(code)]});
+    const j=await r.json();
+    if(j.error)throw new Error(j.error);
+    invalidateSnapCache(next);
+    if((j.notFound||[]).length)return `
+
+この店は ${next} の月初スナップに入っていませんでした（削除は不要でした）。`;
+    return `
+
+✓ ${next} の月初スナップから削除しました。${next} の請求対象から外れます。`;
+  }catch(e){
+    return `
+
+⚠ ${next} の月初スナップから削除できませんでした（${e.message}）。管理 → 荷主リスト突合の「月初スナップから除外」で外してください。`;
+  }
 }
 
 // ── 区分中止予約(夕刊だけ/競馬だけ 等の部分中止) ──
