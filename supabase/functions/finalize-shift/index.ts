@@ -154,7 +154,9 @@ Deno.serve(async (req) => {
         if (user) { const { data: prof } = await sb.from('profiles').select('role').eq('id', user.id).maybeSingle(); if (prof?.role === 'admin' || prof?.role === 'super_admin') authorized = true; }
       } catch (_) { /* noop */ }
     }
-    if (!dryRun && !authorized) return json({ error: '書込(確定)は権限がありません。cron/管理のみ。', code: 'FORBIDDEN' }, 403);
+    // 🔒 2026-10-15: 試運転(dry_run)も認証必須にした。それまでは誰でも、全スタッフの氏名・会社名・月の支払額を取れた。
+    //    呼ぶのは毎月の cron(service role)と、明細ビューアの「変更を反映」(NexPort 管理者)だけ。
+    if (!authorized) return json({ error: '権限がありません。cron/管理のみ。', code: 'FORBIDDEN' }, 403);
 
     // ── データ取得 ──
     const token = await adminToken();
