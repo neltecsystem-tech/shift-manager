@@ -7,7 +7,8 @@
 
 const SPREADSHEET_ID = '1CXLtT3R1wDDKiqDJ59FC_yBn1TXMTmlY2FBziSTTLu8';
 const SHEET_NAME = 'フォームの回答 1'; // Googleフォーム既定タブ(回答と1の間に半角スペース)
-const GATE = 'veh-return-2026-07-28-r4m8';
+// 🔒 2026-10-15: 合言葉はコードに書かない(公開リポジトリに載っていた)。秘密情報 VEHICLE_RETURN_SECRET から読む
+const GATE = Deno.env.get('VEHICLE_RETURN_SECRET') || '';
 // 列マップ(0基点): B=氏名=1, G=ナンバー=6, U=前回使用者=20, V=返却日=21。データはA2から(row0=ヘッダ)。
 const COL_NAME = 1, COL_NUMBER = 6, COL_PREV = 20, COL_RET = 21;
 
@@ -37,7 +38,7 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   try {
     const body = await req.json().catch(() => ({} as any));
-    if (body.secret !== GATE) return json({ error: 'forbidden' }, 403);
+    if (!GATE || body.secret !== GATE) return json({ error: 'forbidden' }, 403);
     const dryRun = !!body.dry_run;
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
     const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
