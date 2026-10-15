@@ -9398,7 +9398,9 @@ let admDgStoreNotes=new Map(); // store_name -> notes text
 let admDgLastDepot='';
 
 async function admDgEf(body){
-  const res=await fetch(ADM_DG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  // 2026-10-15: diagram-process は共有リンクの表示以外ログイン必須。ログインのトークンを付けて呼ぶ
+  const payload=(typeof invAuthToken!=='undefined'&&invAuthToken&&!('auth_token' in body))?{...body,auth_token:invAuthToken}:body;
+  const res=await fetch(ADM_DG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   if(!res.ok){const t=await res.text();throw new Error('EF '+res.status+' '+t);}
   return res.json();
 }
@@ -9669,9 +9671,11 @@ async function pubDgShow(slug){
   host.style.display='';
   host.innerHTML='<div style="text-align:center;padding:40px;color:var(--text-sub);">読み込み中...</div>';
   try{
-    await diagLoadStoreNotes();
     const res=await admDgEf({action:'get_published_diagram',slug});
     if(res.error){host.innerHTML='<div style="color:#dc2626;text-align:center;padding:40px;">'+admDgEsc(res.error)+'</div>';return;}
+    // 共有リンクはログインなしで開くため、この図に出てくる店舗のメモだけがサーバーから一緒に届く
+    if(Array.isArray(res.store_notes)){diagStoreNotes.clear();res.store_notes.forEach(n=>diagStoreNotes.set(n.store_name,n.notes||''));}
+    else await diagLoadStoreNotes();
     const dg=res.diagram;
     const data=dg.data;
     let html='<div style="background:#fff;border-radius:8px;padding:14px;margin-bottom:14px;border:1px solid #e2e8f0;">';
