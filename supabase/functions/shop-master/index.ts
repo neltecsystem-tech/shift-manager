@@ -117,6 +117,8 @@ const ADMIN_WRITE_ACTIONS = new Set([
 // driver: 測定中にドライバーが書く GPS/判定 → ログイン済みなら誰でも可(role不問)。
 const AUTHED_WRITE_ACTIONS = new Set(['batch_update_latlng','batch_update_verify','claim_place_id']);
 // snapshot_create は月初 pg_cron からも叩かれるため意図的にゲート外(作成のみ・破壊性低)。
+// snapshot_health も毎日の pg_cron(sm-snapshot-health)が鍵なしで呼ぶ。この2つ以外はログイン必須(2026-10-15〜)
+const CRON_OPEN_ACTIONS = new Set(['snapshot_create', 'snapshot_health']);
 // admin_password による代替認証も許可(cron/自動化フォールバック)。
 const SM_ADMIN_PASSWORD = Deno.env.get('SHIFT_ADMIN_PASSWORD') || '';
 
@@ -444,6 +446,15 @@ Deno.serve(async (req: Request) => {
         if (!ok) return jsonErr('店舗マスタを編集する権限がありません', 'FORBIDDEN', 403);
       }
       // AUTHED_WRITE_ACTIONS はログイン済みなら role 不問(測定中のドライバー含む)
+    } else if (!CRON_OPEN_ACTIONS.has(action)) {
+      // 🔒 2026-10-15: 読み取りもログイン必須に。それまでは誰でも店舗マスタ全件(約2,700店の住所・コース・店着時刻)や
+      //    変更履歴を取れた。月初の pg_cron が鍵なしで呼ぶ2つ(CRON_OPEN_ACTIONS)だけは従来どおり。
+      const adminPwOk = !!SM_ADMIN_PASSWORD && reqBody.admin_password === SM_ADMIN_PASSWORD;
+      const claims = adminPwOk ? { role: 'admin' } : await verifyToken(reqBody.auth_token);
+      if (!claims) {
+        return new Response(JSON.stringify({ error: 'ログインが必要です（再ログインしてください）', code: 'AUTH_REQUIRED' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
     }
 
     const token = await getAccessToken();

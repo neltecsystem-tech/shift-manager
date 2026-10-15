@@ -6918,6 +6918,22 @@ let invAuthed=false;
 let invIsAdmin=false;
 let invStaffName='';
 let invAuthToken='';// サーバ発行セッショントークン (HMAC署名)。空なら未認証
+// 🔒 2026-10-15: 店舗マスタ(shop-master)・シフト表(fetch-shift)・不具合(defect-sheet)の EF は読み取りもログイン必須になった。
+//    呼び出しが16か所に散っているので、1か所で漏れなくトークンを付ける(付いていない JSON の POST にだけ足す)。
+(function(){
+  const NEED=/\/functions\/v1\/(shop-master|fetch-shift|defect-sheet)(\?|$)/;
+  const orig=window.fetch.bind(window);
+  window.fetch=function(input,init){
+    try{
+      const url=typeof input==='string'?input:(input&&input.url)||'';
+      if(NEED.test(url)&&init&&typeof init.body==='string'&&invAuthToken){
+        const b=JSON.parse(init.body);
+        if(b&&typeof b==='object'&&!('auth_token' in b)) init={...init,body:JSON.stringify({...b,auth_token:invAuthToken})};
+      }
+    }catch(_e){}
+    return orig(input,init);
+  };
+})();
 let invCompanyShowsMoney=false;// 自社オーナーが「配下に金額表示」ONか (login応答の company_shows_money)
 let invStaffPerms='';// ログイン中スタッフの permissions 文字列 (権限ゲート用)
 let invRates=[];
@@ -21964,35 +21980,16 @@ function sysLogout(){
 
 // init()はログイン後に呼ばれる
 
-// ─── 公開モード (?public=1) ─── ログインなしで「ダッシュボード」「月別シフト」のみ閲覧可
-(function(){
-  const p=new URLSearchParams(location.search);
-  if(p.get('public')!=='1')return;
-  window.addEventListener('DOMContentLoaded',()=>{
-    // ログイン overlay 非表示
-    const lg=document.getElementById('sys-login');if(lg)lg.style.display='none';
-    // 公開モード フラグ + 閲覧用の擬似ログイン状態
-    window.sysPublicMode=true;
-    sysLoggedIn=true;sysUserName='閲覧者';sysIsAdmin=false;
-    sysUserPerms=['shiftedit'];// 月別シフト 表示権限のみ与える (編集系は別 authed フラグ無しで弾かれる)
-    // メニューは「ダッシュボード」「月別シフト」「ダイヤグラム」だけ残す
-    try{sbRender();}catch(_e){}
-    document.querySelectorAll('#sb-nav button[data-view]').forEach(btn=>{
-      const v=btn.getAttribute('data-view');
-      btn.style.display=(v==='dashboard'||v==='shift'||v==='diagram')?'':'none';
-    });
-    // 上部バーのアカウント操作(氏名/PW変更/管理/ログアウト/マニュアル)はまとめて非表示
-    const right=document.querySelector('.nav .nav-right'); if(right)right.style.display='none';
-    init();
-  });
-})();
+// ─── 公開モード (?public=1) は 2026-10-15 に廃止 ───
+// ログインなしでダッシュボードと月別シフト(全員の氏名と勤務日)を見られ、公開リポジトリから誰でも気づける状態だったため。
+// ?public=1 を付けても通常どおりログイン画面が出る。シフト表の EF(fetch-shift)も読み取りをログイン必須にした。
 
 // ─── 公開ダイヤグラム (?dg=xxxx) ─── ログインなしで、その業務図だけを表示する
 // 2026-10-15: init() はログイン後にしか呼ばれないため、共有リンクを未ログインで開くと
 // ログイン画面のままで図が出なかった(ログイン画面の導入 4/16 以降ずっと)。公開モードと同じく、ここで起動する。
 (function(){
   const p=new URLSearchParams(location.search);
-  if(!p.get('dg')||p.get('public')==='1')return;
+  if(!p.get('dg'))return;
   if(sysSessionLoad())return; // ログイン済みのタブは通常どおり(リロード復帰で init され、init が公開ビューを出す)
   window.addEventListener('DOMContentLoaded',()=>{
     const lg=document.getElementById('sys-login');if(lg)lg.style.display='none';
@@ -22004,7 +22001,6 @@ function sysLogout(){
 // ─── リロード復帰 ─── sessionStorage に生きたトークンがあればログイン画面を出さずに戻す
 (function(){
   const p=new URLSearchParams(location.search);
-  if(p.get('public')==='1')return; // 公開モードは上で処理
   const s=sysSessionLoad();
   if(!s)return;
   invAuthToken=s.token;

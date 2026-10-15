@@ -121,6 +121,23 @@ Deno.serve(async (req)=>{
   });
   try {
     const body = await req.json().catch(()=>({}));
+    // 🔒 2026-10-15: 読み取り(list_sheets / fetch_sheet / fetch_cached_shifts)もログイン必須にした。
+    //    それまでは誰でも全員の氏名と勤務日(全月のシフト表)を取れた。公開モード(?public=1)も同日に廃止。
+    if (!WRITE_ACTIONS.has(body.action)) {
+      const readClaims = await verifyToken(body.auth_token);
+      if (!readClaims) {
+        return new Response(JSON.stringify({
+          error: 'ログインが必要です（再ログインしてください）',
+          code: 'AUTH_REQUIRED'
+        }), {
+          status: 401,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+    }
     if (WRITE_ACTIONS.has(body.action)) {
       const adminPwOk = !!FS_ADMIN_PASSWORD && body.admin_password === FS_ADMIN_PASSWORD;
       const claims = adminPwOk ? {

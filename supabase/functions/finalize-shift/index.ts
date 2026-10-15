@@ -160,7 +160,7 @@ Deno.serve(async (req) => {
     const token = await adminToken();
     const [ratesRes, specialRes, kwRes, shopRes] = await Promise.all([
       invApi('get_rates', token), invApi('get_special_rates', token), invApi('get_kawagoe_course_prices', token),
-      fetch(`${BASE}/functions/v1/shop-master`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'list' }) }).then((r) => r.json()).catch(() => ({})),
+      fetch(`${BASE}/functions/v1/shop-master`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'list', auth_token: token }) }).then((r) => r.json()).catch(() => ({})),
     ]);
     const invRates: any[] = ratesRes?.rates || [];
     if (!invRates.length) return json({ error: '単価マスタ取得失敗(get_rates)', detail: ratesRes?.error || '' }, 500);
