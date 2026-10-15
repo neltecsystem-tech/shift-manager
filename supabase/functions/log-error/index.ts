@@ -37,6 +37,14 @@ Deno.serve(async (req) => {
       healed: b.healed === true,
     };
     const sb = createClient(SUPABASE_URL, SERVICE_ROLE);
+    // 🔒 2026-10-15: 認証なしで受ける仕様なので、量で守る。全体で1分60件・1日2000件を超えたら捨てる
+    //    (普段は1日十数件・1分最大9件)。洪水で表を膨らませたり、本物のエラーを埋もれさせたりさせない。
+    const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+    const [{ count: perMin }, { count: perDay }] = await Promise.all([
+      sb.from('sm_error_logs').select('id', { count: 'exact', head: true }).gte('created_at', ago(60_000)),
+      sb.from('sm_error_logs').select('id', { count: 'exact', head: true }).gte('created_at', ago(86_400_000)),
+    ]);
+    if ((perMin ?? 0) >= 60 || (perDay ?? 0) >= 2000) return json({ ok: false, skipped: true, reason: 'rate' });
     const { error } = await sb.from('sm_error_logs').insert(row);
     if (error) return json({ ok: false, error: error.message }, 500);
     return json({ ok: true });

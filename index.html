@@ -6923,7 +6923,7 @@ let invAuthToken='';// サーバ発行セッショントークン (HMAC署名)�
 //    呼び出しが16か所に散っているので、1か所で漏れなくトークンを付ける(付いていない JSON の POST にだけ足す)。
 (function(){
   // key-tag / shift-docs / pay-suspension / invoice-sheet の管理操作も、管理者パスワードの代わりにこのトークンで通る
-  const NEED=/\/functions\/v1\/(shop-master|fetch-shift|defect-sheet|key-tag|shift-docs|pay-suspension|invoice-sheet|save-invoice-pdf|shift-alert|cron-refresh-shifts)(\?|$)/;
+  const NEED=/\/functions\/v1\/(shop-master|fetch-shift|defect-sheet|key-tag|shift-docs|pay-suspension|invoice-sheet|save-invoice-pdf|shift-alert|cron-refresh-shifts|diagnose-errors)(\?|$)/;
   const orig=window.fetch.bind(window);
   window.fetch=function(input,init){
     try{

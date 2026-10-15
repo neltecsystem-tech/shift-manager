@@ -21,6 +21,35 @@ const MODEL = 'claude-sonnet-4-6';
 // 自己修復を試みても、この回数(=規定回数)以上 再発したエラーは「重度障害」に格上げして人間対応へ
 const ESCALATE_THRESHOLD = Number(Deno.env.get('SM_ESCALATE_THRESHOLD') || '3');
 
+// ---- 新聞ツールのログイントークン検証 (2026-10-15) ----
+// invoice-sheet が発行するトークン(HMAC・SHIFT_SESSION_SECRET)と同じ方式で確かめる(diagram-process と同じ実装)。
+const SESSION_SECRET = Deno.env.get('SHIFT_SESSION_SECRET') || '';
+function b64urlDecode(s: string): string {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+async function hmacSign(payload: string): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(SESSION_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  return btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function verifyToken(token: unknown): Promise<any | null> {
+  if (!SESSION_SECRET || !token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  try {
+    const expected = await hmacSign(parts[0]);
+    if (parts[1].length !== expected.length) return null;
+    let diff = 0; for (let i = 0; i < expected.length; i++) diff |= parts[1].charCodeAt(i) ^ expected.charCodeAt(i);
+    if (diff !== 0) return null;
+    const claims = JSON.parse(b64urlDecode(parts[0]));
+    if (claims.exp && claims.exp < Date.now()) return null;
+    return claims;
+  } catch { return null; }
+}
+
 interface Grp { message: string; count: number; kinds: string[]; views: string[]; builds: string[]; healed: number; sample_stack: string | null; last: string; }
 
 function groupErrors(rows: any[]): Grp[] {
@@ -79,6 +108,14 @@ Deno.serve(async (req) => {
     const app = String(body.app || 'shift-manager');
     const sb = createClient(SUPABASE_URL, SERVICE_ROLE);
 
+    // 🔒 2026-10-15: それまで認証が無く、誰でもエラーの内容(スタック)を読め、診断(AIの課金)を2分ごとに走らせられた。
+    //    通すのは cron(secret) / サーバー(service role) / 新聞ツールにログイン中の人。
+    const forced = !!DIAG_SECRET && body.secret === DIAG_SECRET;
+    const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+    if (!forced && !(bearer && bearer === SERVICE_ROLE) && !(await verifyToken(body.auth_token))) {
+      return json({ ok: false, error: 'ログインが必要です' }, 401);
+    }
+
     // 直近7日のエラー集約 + 最新診断
     const since = new Date(Date.now() - 7 * 864e5).toISOString();
     const { data: logs } = await sb.from('sm_error_logs').select('created_at, kind, view, build, message, stack, healed').eq('app', app).gte('created_at', since).order('created_at', { ascending: false }).limit(500);
@@ -95,7 +132,6 @@ Deno.serve(async (req) => {
 
     if (action === 'run') {
       // スロットル: 最新診断が2分以内なら再実行しない(cronはsecretで強制)
-      const forced = DIAG_SECRET && body.secret === DIAG_SECRET;
       if (!forced && lastDiag && (Date.now() - new Date(lastDiag.created_at).getTime() < 120000)) {
         return json({ ok: true, throttled: true, latest: lastDiag });
       }
