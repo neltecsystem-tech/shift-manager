@@ -56,6 +56,24 @@ function safeName(name: string): string {
 // 画面は管理者パスワードの初期値('neltec2026'・公開リポジトリに記載)を送っていた。初期値を廃止し、
 // 代わりにログイン中のトークン(invoice-sheet が発行・SHIFT_SESSION_SECRET の HMAC・role=admin)でも通す。
 const SHIFT_SESSION_SECRET = Deno.env.get('SHIFT_SESSION_SECRET') || '';
+// ログイン中の新聞ツールのトークンなら claims を返す(役割は問わない)
+async function shiftClaims(token: unknown): Promise<any | null> {
+  if (!SHIFT_SESSION_SECRET || !token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  try {
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(SHIFT_SESSION_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(parts[0]));
+    const expected = btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    if (parts[1].length !== expected.length) return null;
+    let diff = 0; for (let i = 0; i < expected.length; i++) diff |= parts[1].charCodeAt(i) ^ expected.charCodeAt(i);
+    if (diff !== 0) return null;
+    const bin = atob(parts[0].replace(/-/g, '+').replace(/_/g, '/'));
+    const claims = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
+    if (claims.exp && claims.exp < Date.now()) return null;
+    return claims;
+  } catch { return null; }
+}
 async function isShiftAdminToken(token: unknown): Promise<boolean> {
   if (!SHIFT_SESSION_SECRET || !token || typeof token !== 'string') return false;
   const parts = token.split('.');
@@ -83,6 +101,8 @@ Deno.serve(async (req) => {
     const b = await req.json().catch(() => ({} as Record<string, any>));
     const action = String(b.action ?? '');
     const isAdmin = (!!ADMIN_PASSWORD && !!b.admin_password && b.admin_password === ADMIN_PASSWORD) || await isShiftAdminToken(b.auth_token);
+    // 🔒 2026-10-15: 一覧・ダウンロードURL・アップロードも新聞ツールのログイン必須に(それまで誰でも資料の一覧と中身を取れ、ファイルも置けた)
+    if (!isAdmin && !(await shiftClaims(b.auth_token))) return json({ error: 'ログインが必要です（再ログインしてください）', code: 'AUTH_REQUIRED' }, 401);
 
     // ── 一覧 ──
     if (action === 'list') {

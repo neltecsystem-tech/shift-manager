@@ -4,6 +4,7 @@
 // 動作: 既存の event_type='シフト' 同期由来予定を削除 → 新規 insert (idempotent)
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -372,6 +373,26 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const body = await req.json().catch(() => ({}));
+    // 🔒 2026-10-15: 呼んだ人を確かめる。それまで誰でも、試運転で社員の氏名・user_id・勤務予定を取れ、
+    //    予定表のシフト由来の行を消して入れ直させることもできた。
+    //    通すのは 毎日の cron(x-cron-secret) / サーバー(service role) / 有効なアカウントでログイン中の人(「今すぐ同期」ボタン)。
+    //    試運転と日付・月の指定はサーバーと管理者だけ。
+    const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+    const cronOk = !!Deno.env.get('CRON_SECRET') && req.headers.get('x-cron-secret') === Deno.env.get('CRON_SECRET');
+    let privileged = cronOk || (!!bearer && bearer === SRK);
+    let allowed = privileged;
+    if (!allowed && bearer) {
+      const adm = createClient(Deno.env.get('SUPABASE_URL')!, SRK);
+      const { data: ud } = await adm.auth.getUser(bearer).catch(() => ({ data: { user: null } } as any));
+      if (ud?.user) {
+        const { data: pf } = await adm.from('profiles').select('role, account_status').eq('id', ud.user.id).maybeSingle();
+        allowed = pf?.account_status === 'active';
+        privileged = allowed && ['admin', 'super_admin'].includes(String(pf?.role ?? ''));
+      }
+    }
+    if (!allowed) return new Response(JSON.stringify({ error: 'ログインが必要です' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    if (!privileged && (body.dry_run || body.now || body.months)) return new Response(JSON.stringify({ error: '権限がありません' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     const dryRun = !!body.dry_run;
     const now = body.now ? new Date(body.now) : new Date();
     const months = body.months || targetMonthLabels(now);
