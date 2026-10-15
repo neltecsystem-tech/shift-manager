@@ -492,6 +492,19 @@ Deno.serve(async(req:Request)=>{
 
     // ---- 認証不要のアクション: login / admin_login ----
     if(action==='login'){
+      // 🔒 2026-10-15: 失敗回数の制限。それまで何度でもパスワードを試せた。
+      //    同じIDで15分に10回失敗 → 15分止める / 全体で1分に60回失敗 → 1分止める(IDを変えながらの総当たり)。
+      const lid = String(login_id ?? '').trim().slice(0, 100);
+      const failDb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+      const agoIso = (ms: number) => new Date(Date.now() - ms).toISOString();
+      const [{ count: idFails }, { count: allFails }] = await Promise.all([
+        failDb.from('shift_login_failures').select('id', { count: 'exact', head: true }).eq('login_id', lid).gte('at', agoIso(15 * 60_000)),
+        failDb.from('shift_login_failures').select('id', { count: 'exact', head: true }).gte('at', agoIso(60_000)),
+      ]);
+      if ((idFails ?? 0) >= 10 || (allFails ?? 0) >= 60) {
+        return jsonResp({success:false, error:'ログインの失敗が続いたため、しばらく受け付けを止めています。15分ほど待ってからお試しください。', code:'TOO_MANY_ATTEMPTS'}, 429);
+      }
+      const recordFail = async () => { try { await failDb.from('shift_login_failures').insert({ login_id: lid }); } catch (_) { /* noop */ } };
       // 単価マスタ(照合の正)は一時失敗に強い軽リトライで取得。
       // ここが取れないと誰もマッチせず「ID/PW間違い」と誤表示されるため、
       // 取得失敗と「認証情報が違う」を厳密に区別する。
@@ -516,7 +529,8 @@ Deno.serve(async(req:Request)=>{
       if(row && !authOk){
         authOk = await verifyNexportPassword(login_id, login_pw); // ②NexPort認証(SSO)
       }
-      if(!row || !authOk) return jsonResp({success:false,error:'IDまたはパスワードが正しくありません'});
+      if(!row || !authOk){ await recordFail(); return jsonResp({success:false,error:'IDまたはパスワードが正しくありません'}); }
+      try { await failDb.from('shift_login_failures').delete().eq('login_id', lid); } catch (_) { /* noop */ }
       const match=row;
       // ⑤監査: 新聞ログイン権限(shift)を記録するだけ(ブロックしない)。
       try{ await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/check-login-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system:'shift',login_id,source:'shift-login',log:true})}); }catch(_){ /* noop */ }
