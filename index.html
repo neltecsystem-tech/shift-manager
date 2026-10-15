@@ -9699,7 +9699,11 @@ async function pubDgShow(slug){
         const noteKey=s.master_name||s.name||'';
         const noteVal=diagStoreNotes.get(noteKey)||(s.store_note||'');
         const linkBadges=diagLinkBadgesHtml(noteVal);
-        const noteCell=s.isStart?'':('<div style="position:relative;"><textarea data-store="'+admDgEsc(noteKey)+'" rows="1" onblur="diagSaveStoreNote(this, this.dataset.store)" placeholder="特記/URL可" style="width:100%;font-size:10px;padding:2px 4px;border:1px solid #fbbf24;border-radius:3px;background:'+(noteVal?'#fffef5':'#fff')+';resize:vertical;font-family:inherit;color:#422006;min-height:22px;">'+admDgEsc(noteVal)+'</textarea><span class="diag-note-status" style="position:absolute;right:2px;top:-12px;font-size:9px;"></span>'+linkBadges+'</div>');
+        // 共有リンクをログインなしで見ている人には、読むだけの表示にする(保存はサーバーで拒否されるため、入力欄を出さない)
+        const canEditNote=typeof invAuthToken!=='undefined'&&!!invAuthToken;
+        const noteCell=s.isStart?'':(!canEditNote
+          ?('<div style="font-size:10px;color:#422006;white-space:pre-wrap;word-break:break-all;line-height:1.4;">'+(noteVal?admDgEsc(noteVal):'<span style="color:#cbd5e1;">—</span>')+linkBadges+'</div>')
+          :('<div style="position:relative;"><textarea data-store="'+admDgEsc(noteKey)+'" rows="1" onblur="diagSaveStoreNote(this, this.dataset.store)" placeholder="特記/URL可" style="width:100%;font-size:10px;padding:2px 4px;border:1px solid #fbbf24;border-radius:3px;background:'+(noteVal?'#fffef5':'#fff')+';resize:vertical;font-family:inherit;color:#422006;min-height:22px;">'+admDgEsc(noteVal)+'</textarea><span class="diag-note-status" style="position:absolute;right:2px;top:-12px;font-size:9px;"></span>'+linkBadges+'</div>'));
         html+='<tr style="'+cls+'"><td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+idx+'</td>';
         html+='<td style="text-align:center;border:1px solid #ddd;padding:3px 6px;">'+admDgEsc(idStr)+'</td>';
         html+='<td style="border:1px solid #ddd;padding:3px 6px;">'+admDgEsc(s.name)+'</td>';
