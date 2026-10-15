@@ -160,7 +160,9 @@ const SESSION_SECRET = Deno.env.get('SHIFT_SESSION_SECRET') || '';
 // パスワードと突き合わせるだけなので、性質がまったく違う。
 // 同じ変数を共用していたため、2026-08-13 に遮断対応で SHIFT_ADMIN_PASSWORD を
 // 設定した瞬間、請求書と鍵マップの管理操作が全部 401 になった。
-const ADMIN_PASSWORD = Deno.env.get('SHIFT_UI_PASSWORD') || 'neltec2026';
+// 🔒 2026-10-15: 初期値('neltec2026')を削除。公開リポジトリに書かれた初期値で誰でも管理者ログインできていた
+//    (SHIFT_UI_PASSWORD が未登録だったため)。未登録なら管理者パスワードでは一切入れない(fail closed)。
+const ADMIN_PASSWORD = Deno.env.get('SHIFT_UI_PASSWORD') || '';
 const SYNC_SECRET = Deno.env.get('SYNC_SECRET') || ''; // 会計同期cron用の秘密ヘッダ
 const TOKEN_EXPIRY_MS = 12 * 60 * 60 * 1000; // 12時間
 
@@ -485,6 +487,8 @@ Deno.serve(async(req:Request)=>{
   try{
     const body = await req.json();
     const { action, record, row_number, row_numbers, updates, login_id, login_pw, measure_data, bill_prices, bill_conditions, confirmed_sale, year_month, area, course, admin_password, auth_token, expect_name } = body;
+    // 管理者パスワード(SHIFT_UI_PASSWORD)か、管理者でログイン中のトークン(role=admin)のどちらかで通す(2026-10-15)
+    const adminPwOrToken = async () => (!!ADMIN_PASSWORD && admin_password === ADMIN_PASSWORD) || isAdmin(await verifyToken(auth_token));
 
     // ---- 認証不要のアクション: login / admin_login ----
     if(action==='login'){
@@ -560,7 +564,7 @@ Deno.serve(async(req:Request)=>{
       return jsonResp({success:true, staff_name:name, rates:ratesScoped, work:myWork, permissions, auth_token:sessionToken, is_owner, company, has_admin, company_shows_money});
     }
     if(action==='admin_login'){
-      if(!admin_password || admin_password !== ADMIN_PASSWORD) return jsonResp({success:false,error:'管理者パスワードが正しくありません'},401);
+      if(!ADMIN_PASSWORD || !admin_password || admin_password !== ADMIN_PASSWORD) return jsonResp({success:false,error:'管理者パスワードが正しくありません'},401);
       const sessionToken = await createToken({ role: 'admin', name: 'admin' });
       return jsonResp({success:true, auth_token: sessionToken});
     }
@@ -572,7 +576,7 @@ Deno.serve(async(req:Request)=>{
     if(action==='sync_rate_master'){
       const cronSecret = req.headers.get('x-sync-secret') || '';
       const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
-      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      if(!okCron && !(await adminPwOrToken())) return jsonResp({error:'forbidden'},403);
       const SB_URL = Deno.env.get('SUPABASE_URL') || '';
       const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
       if(!SB_URL || !SRK) return jsonResp({error:'supabase env missing'},500);
@@ -600,7 +604,7 @@ Deno.serve(async(req:Request)=>{
     if(action==='name_consistency'){
       const cronSecret = req.headers.get('x-sync-secret') || '';
       const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
-      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      if(!okCron && !(await adminPwOrToken())) return jsonResp({error:'forbidden'},403);
       const VAR: Record<string,string> = {'齋':'斉','斎':'斉','齊':'斉','髙':'高','﨑':'崎','嵜':'崎','濵':'浜','濱':'浜','邊':'辺','邉':'辺','澤':'沢','瀨':'瀬','眞':'真','德':'徳','冨':'富','栁':'柳','郞':'郎','薗':'園','曻':'昇'};
       const fold=(n:string)=>String(n||'').replace(/[\s　 ]+/g,'').replace(/[齋斎齊髙﨑嵜濵濱邊邉澤瀨眞德冨栁郞薗曻]/g,c=>VAR[c]||c).trim();
       const loose=(n:string)=>fold(n).replace(/[.．/／・]+/g,'');   // 区切りも無視した緩いキー
@@ -663,7 +667,7 @@ Deno.serve(async(req:Request)=>{
     if(action==='check_rate_parity'){
       const cronSecret = req.headers.get('x-sync-secret') || '';
       const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
-      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      if(!okCron && !(await adminPwOrToken())) return jsonResp({error:'forbidden'},403);
       const SB_URL = Deno.env.get('SUPABASE_URL') || '';
       const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
       if(!SB_URL || !SRK) return jsonResp({error:'supabase env missing'},500);
@@ -689,7 +693,7 @@ Deno.serve(async(req:Request)=>{
 
     // ── Phase1: シャドー監視の状態(連続クリーン日数・直近差分)を返す(管理画面表示用・読取のみ) ──
     if(action==='rate_parity_status'){
-      if(admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      if(!(await adminPwOrToken())) return jsonResp({error:'forbidden'},403);
       const SB_URL = Deno.env.get('SUPABASE_URL') || '';
       const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
       if(!SB_URL || !SRK) return jsonResp({error:'supabase env missing'},500);
@@ -707,7 +711,7 @@ Deno.serve(async(req:Request)=>{
     if(action==='sync_invoice_numbers'){
       const cronSecret = req.headers.get('x-sync-secret') || '';
       const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
-      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      if(!okCron && !(await adminPwOrToken())) return jsonResp({error:'forbidden'},403);
       const SB_URL = Deno.env.get('SUPABASE_URL') || '';
       const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
       if(!SB_URL || !SRK) return jsonResp({error:'supabase env missing'},500);
@@ -737,7 +741,7 @@ Deno.serve(async(req:Request)=>{
     if(action==='reflect_invoice_numbers'){
       const cronSecret = req.headers.get('x-sync-secret') || '';
       const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
-      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      if(!okCron && !(await adminPwOrToken())) return jsonResp({error:'forbidden'},403);
       const dryRun = !!body.dry_run;
       const SB_URL = Deno.env.get('SUPABASE_URL') || '';
       const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
@@ -805,7 +809,7 @@ Deno.serve(async(req:Request)=>{
     if(action==='recompute_amounts'){
       const cronSecret = req.headers.get('x-sync-secret') || '';
       const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
-      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      if(!okCron && !(await adminPwOrToken())) return jsonResp({error:'forbidden'},403);
       const dryRun = !!body.dry_run;
       const onlyZero = body.only_zero !== false; // 既定true: 金額0の未計算行のみ補完(既存の非0金額は触らない=履歴保護)
       const token = await getAccessToken();
@@ -903,7 +907,7 @@ Deno.serve(async(req:Request)=>{
     if(action==='confirmed_sales_by_area'){
       const cronSecret = req.headers.get('x-sync-secret') || '';
       const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
-      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      if(!okCron && !(await adminPwOrToken())) return jsonResp({error:'forbidden'},403);
       const ym = normalizeYM(year_month);
       if(!ym) return jsonResp({error:'year_month required'},400);
       const token = await getAccessToken();
@@ -974,7 +978,7 @@ Deno.serve(async(req:Request)=>{
     if(action==='rename_rate'){
       const cronSecret = req.headers.get('x-sync-secret') || '';
       const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
-      if(!okCron && admin_password !== ADMIN_PASSWORD) return jsonResp({error:'forbidden'},403);
+      if(!okCron && !(await adminPwOrToken())) return jsonResp({error:'forbidden'},403);
       const newName = String(record?.name ?? '').trim();
       const expName = String(expect_name ?? '').trim();
       if(!row_number) return jsonResp({error:'row_number required'}, 400);

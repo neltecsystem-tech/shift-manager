@@ -3790,7 +3790,7 @@ async function defectLoadShops(force){
 // 不具合登録で使う店舗リスト: ライブ優先、未取得なら埋め込みにフォールバック
 function defectShopList(){return (defectShops&&defectShops.length)?defectShops:DB.tenpo;}
 
-const DEFECT_PASSWORD='neltec2026';
+const DEFECT_PASSWORD=''; // 未使用(照合はサーバー側)。初期値は 2026-10-15 に削除
 let defectAuthed=false;
 
 // 権限付きログインモーダル
@@ -4257,7 +4257,7 @@ async function defectSave(){
 
 // ── 店舗マスタ ──
 const SM_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/shop-master';
-const SM_PASSWORD='neltec2026';
+const SM_PASSWORD=''; // 未使用(照合はサーバー側)。初期値は 2026-10-15 に削除
 // 店舗マスタ書き込み系はログイン済みトークン(invAuthToken)を添付する。
 // サーバ(shop-master)側で書き込みアクションはトークン必須にして無認証改変を防ぐため、
 // 全ての write 呼び出しはこの smPost 経由にすること(読み取りは素の fetch でも可)。
@@ -6913,7 +6913,8 @@ async function smApplyNewPmCourses(){
 
 // ── 請求書 ──
 const INV_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/invoice-sheet';
-const INV_PW='neltec2026';
+// 🔒 2026-10-15: 管理者パスワードの初期値をここ(公開リポジトリ)に書かない。管理操作はログインのトークンで通る
+const INV_PW='';
 let invAuthed=false;
 let invIsAdmin=false;
 let invStaffName='';
@@ -6921,7 +6922,8 @@ let invAuthToken='';// サーバ発行セッショントークン (HMAC署名)�
 // 🔒 2026-10-15: 店舗マスタ(shop-master)・シフト表(fetch-shift)・不具合(defect-sheet)の EF は読み取りもログイン必須になった。
 //    呼び出しが16か所に散っているので、1か所で漏れなくトークンを付ける(付いていない JSON の POST にだけ足す)。
 (function(){
-  const NEED=/\/functions\/v1\/(shop-master|fetch-shift|defect-sheet)(\?|$)/;
+  // key-tag / shift-docs / pay-suspension / invoice-sheet の管理操作も、管理者パスワードの代わりにこのトークンで通る
+  const NEED=/\/functions\/v1\/(shop-master|fetch-shift|defect-sheet|key-tag|shift-docs|pay-suspension|invoice-sheet)(\?|$)/;
   const orig=window.fetch.bind(window);
   window.fetch=function(input,init){
     try{
