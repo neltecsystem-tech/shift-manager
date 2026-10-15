@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
 };
 
 // 店舗マスタは専用スプレッドシートへ独立 (2026-06-30)
@@ -74,6 +74,14 @@ function timeToMin(s: string): number {
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  // 🔒 2026-10-15: それまで認証が無く、誰でも店舗マスタの書き換え(休店・取扱中止のコースを消す)を走らせられた。
+  //    通すのは 毎日の cron(x-cron-secret) とサーバー(service role)だけ。
+  const CRON_SECRET = Deno.env.get('CRON_SECRET') || '';
+  const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!((!!CRON_SECRET && req.headers.get('x-cron-secret') === CRON_SECRET) || (!!SRK && bearer === SRK))) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
 
   try {
     const token = await getAccessToken();

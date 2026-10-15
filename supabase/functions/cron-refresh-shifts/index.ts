@@ -4,7 +4,7 @@ const SHIFT_SPREADSHEET = '1yVKQLSmdc9RZ2U5m4CIPqAl4JqP9siiSeSRP0z3SEEM';
 const SA = JSON.parse(Deno.env.get('GOOGLE_SERVICE_ACCOUNT_KEY'));
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret'
 };
 function b64url(d) {
   return btoa(d).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -77,6 +77,35 @@ function targetSheetNames() {
   if (day <= 7) sheets.unshift(`${prevMonth}月シフト${prevYear}`);
   return sheets;
 }
+// ---- 新聞ツールのログイントークン検証 (2026-10-15) ----
+// invoice-sheet が発行するトークン(HMAC・SHIFT_SESSION_SECRET)と同じ方式で確かめる(diagram-process と同じ実装)。
+const SESSION_SECRET = Deno.env.get('SHIFT_SESSION_SECRET') || '';
+function b64urlDecode(s: string): string {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+async function hmacSign(payload: string): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(SESSION_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  return btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function verifyToken(token: unknown): Promise<any | null> {
+  if (!SESSION_SECRET || !token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  try {
+    const expected = await hmacSign(parts[0]);
+    if (parts[1].length !== expected.length) return null;
+    let diff = 0; for (let i = 0; i < expected.length; i++) diff |= parts[1].charCodeAt(i) ^ expected.charCodeAt(i);
+    if (diff !== 0) return null;
+    const claims = JSON.parse(b64urlDecode(parts[0]));
+    if (claims.exp && claims.exp < Date.now()) return null;
+    return claims;
+  } catch { return null; }
+}
+
 Deno.serve(async (req)=>{
   if (req.method === 'OPTIONS') return new Response('ok', {
     headers: corsHeaders
@@ -88,7 +117,17 @@ Deno.serve(async (req)=>{
   try {
     body = await req.json();
   } catch (_) {}
-  const sheets = Array.isArray(body.sheets) && body.sheets.length ? body.sheets : targetSheetNames();
+  // 🔒 2026-10-15: それまで認証が無く、誰でもシフト表の取り直し(キャッシュの上書き)を走らせられ、
+  //    シート名を自由に渡せた。通すのは cron(x-cron-secret) / サーバー(service role) / 新聞ツールにログイン中の人。
+  //    シート名は「N月シフトYYYY」の形だけ受け付ける。
+  const CRON_SECRET = Deno.env.get('CRON_SECRET') || '';
+  const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+  const allowed = (!!CRON_SECRET && req.headers.get('x-cron-secret') === CRON_SECRET)
+    || (!!serviceKey && bearer === serviceKey)
+    || !!(await verifyToken(body.auth_token));
+  if (!allowed) return new Response(JSON.stringify({ error: 'ログインが必要です' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  const requested = Array.isArray(body.sheets) ? body.sheets.filter((n)=>typeof n === 'string' && /^\d{1,2}月シフト\d{4}$/.test(n)).slice(0, 6) : [];
+  const sheets = requested.length ? requested : targetSheetNames();
   const results = [];
   let token;
   try {

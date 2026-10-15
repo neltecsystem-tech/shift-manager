@@ -18,6 +18,35 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const clip = (v: unknown, n: number) => (v == null ? '' : String(v).slice(0, n));
 
+// ---- 新聞ツールのログイントークン検証 (2026-10-15) ----
+// invoice-sheet が発行するトークン(HMAC・SHIFT_SESSION_SECRET)と同じ方式で確かめる(diagram-process と同じ実装)。
+const SESSION_SECRET = Deno.env.get('SHIFT_SESSION_SECRET') || '';
+function b64urlDecode(s: string): string {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+async function hmacSign(payload: string): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(SESSION_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  return btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function verifyToken(token: unknown): Promise<any | null> {
+  if (!SESSION_SECRET || !token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  try {
+    const expected = await hmacSign(parts[0]);
+    if (parts[1].length !== expected.length) return null;
+    let diff = 0; for (let i = 0; i < expected.length; i++) diff |= parts[1].charCodeAt(i) ^ expected.charCodeAt(i);
+    if (diff !== 0) return null;
+    const claims = JSON.parse(b64urlDecode(parts[0]));
+    if (claims.exp && claims.exp < Date.now()) return null;
+    return claims;
+  } catch { return null; }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
@@ -26,6 +55,25 @@ Deno.serve(async (req) => {
     const action = clip(b.action || 'sync', 20);
     const app = clip(b.app || 'shift-manager', 40) || 'shift-manager';
     const sb = createClient(SUPABASE_URL, SERVICE_ROLE);
+
+    // 🔒 2026-10-15: それまで認証が無く、誰でもアラートを読めて、偽の未対処/解消を書き込めた。
+    //    list/dismiss/undismiss = NexPort にログイン中の有効なアカウント(ビジネス画面)。
+    //    sync = 新聞ツールにログイン中の人(auth_token) か サーバー(service role。key-tag など)。
+    const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+    const isServer = !!SERVICE_ROLE && bearer === SERVICE_ROLE;
+    if (action === 'list' || action === 'dismiss' || action === 'undismiss') {
+      let ok = isServer;
+      if (!ok && bearer) {
+        const { data: ud } = await sb.auth.getUser(bearer).catch(() => ({ data: { user: null } } as any));
+        if (ud?.user) {
+          const { data: pf } = await sb.from('profiles').select('account_status').eq('id', ud.user.id).maybeSingle();
+          ok = pf?.account_status === 'active';
+        }
+      }
+      if (!ok) return json({ ok: false, error: 'ログインが必要です' }, 401);
+    } else if (!isServer && !(await verifyToken(b.auth_token))) {
+      return json({ ok: false, error: 'ログインが必要です' }, 401);
+    }
 
     if (action === 'list') {
       const { data } = await sb.from('sm_active_alerts').select('key, kind, title, body, cnt, names, dismissed_cnt, updated_at').eq('app', app).eq('status', 'open').order('updated_at', { ascending: false });
