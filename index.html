@@ -21983,6 +21983,20 @@ function sysLogout(){
   });
 })();
 
+// ─── 公開ダイヤグラム (?dg=xxxx) ─── ログインなしで、その業務図だけを表示する
+// 2026-10-15: init() はログイン後にしか呼ばれないため、共有リンクを未ログインで開くと
+// ログイン画面のままで図が出なかった(ログイン画面の導入 4/16 以降ずっと)。公開モードと同じく、ここで起動する。
+(function(){
+  const p=new URLSearchParams(location.search);
+  if(!p.get('dg')||p.get('public')==='1')return;
+  if(sysSessionLoad())return; // ログイン済みのタブは通常どおり(リロード復帰で init され、init が公開ビューを出す)
+  window.addEventListener('DOMContentLoaded',()=>{
+    const lg=document.getElementById('sys-login');if(lg)lg.style.display='none';
+    window.sysPublicMode=true;
+    init(); // init の中で ?dg= を見て pubDgShow() に進む
+  });
+})();
+
 // ─── リロード復帰 ─── sessionStorage に生きたトークンがあればログイン画面を出さずに戻す
 (function(){
   const p=new URLSearchParams(location.search);
