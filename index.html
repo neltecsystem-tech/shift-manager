@@ -20969,28 +20969,26 @@ function diagParseTime(t){
 function diagFmtMin(mm){mm=((mm%1440)+1440)%1440;const hh=Math.floor(mm/60),mn=Math.round(mm%60);return `${String(hh).padStart(2,'0')}:${String(mn).padStart(2,'0')}`;}
 
 // ===== course_mymaps (Supabase) =====
-const SUPA_REST = 'https://nccognptoprhwsbjnwcu.supabase.co/rest/v1';
-const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jY29nbnB0b3ByaHdzYmpud2N1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNDU0NDEsImV4cCI6MjA4OTkyMTQ0MX0.M3h31uPyKYWlNevVW3OvZOonoTidC1KLZ04sB5nRKzU';
-const supaHeaders = ()=>({'apikey':SUPA_ANON,'Authorization':'Bearer '+SUPA_ANON,'Content-Type':'application/json'});
+// 2026-10-15: anon キーでの直接読み書きをやめ、ログインのトークン付きで invoice-sheet EF 経由にした
+// (それまでログインなしで誰でもURLを書き換えられた)。読むのはログイン者全員、保存・削除は管理者のみ。
 let mymapsCache = null; // { 'cn|type': url }
 async function loadMymapsCache(force){
   if(mymapsCache&&!force)return mymapsCache;
-  const r = await fetch(`${SUPA_REST}/course_mymaps?select=course_name,type,mymap_url`,{headers:supaHeaders()});
-  const arr = await r.json();
+  const res = await invApi({action:'mymaps_list'});
+  if(!res?.success) throw new Error('マイマップの読込失敗: '+(res?.error||''));
   const m = {};
-  for(const x of (arr||[])) m[`${x.course_name}|${x.type}`] = x.mymap_url;
+  for(const x of (res.rows||[])) m[`${x.course_name}|${x.type}`] = x.mymap_url;
   mymapsCache = m;
   return m;
 }
 async function saveMymap(course_name, type, url){
-  const body = {course_name, type, mymap_url:url, updated_at: new Date().toISOString()};
-  const r = await fetch(`${SUPA_REST}/course_mymaps`,{method:'POST',headers:{...supaHeaders(),'Prefer':'resolution=merge-duplicates,return=representation'},body:JSON.stringify(body)});
-  if(!r.ok)throw new Error('保存失敗: '+await r.text());
+  const res = await invApi({action:'mymaps_save', course_name, type, mymap_url:url});
+  if(!res?.success)throw new Error('保存失敗: '+(res?.error||''));
   mymapsCache = null;
 }
 async function deleteMymap(course_name, type){
-  const r = await fetch(`${SUPA_REST}/course_mymaps?course_name=eq.${encodeURIComponent(course_name)}&type=eq.${encodeURIComponent(type)}`,{method:'DELETE',headers:supaHeaders()});
-  if(!r.ok)throw new Error('削除失敗: '+await r.text());
+  const res = await invApi({action:'mymaps_delete', course_name, type});
+  if(!res?.success)throw new Error('削除失敗: '+(res?.error||''));
   mymapsCache = null;
 }
 

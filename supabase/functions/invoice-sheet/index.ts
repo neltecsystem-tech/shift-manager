@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1005,6 +1006,31 @@ Deno.serve(async(req:Request)=>{
     const corpSubManager = corpSub && claims.company_shows_money === true;
     const callerName = claims.name || '';
     const callerCompany = claims.company || '';
+
+    // ---- コースのマイマップURL (2026-10-15) ----
+    // それまで画面が anon キーで course_mymaps を直接読み書きしており、ログインなしで誰でも書き換えられた。
+    // 読むのはログインした人全員、保存・削除は管理者だけ(管理画面からしか使わない)。表は authenticated のみに絞った。
+    if (action === 'mymaps_list' || action === 'mymaps_save' || action === 'mymaps_delete') {
+      const sbm = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+      if (action === 'mymaps_list') {
+        const { data, error } = await sbm.from('course_mymaps').select('course_name,type,mymap_url');
+        if (error) return jsonResp({ error: error.message }, 500);
+        return jsonResp({ success: true, rows: data ?? [] });
+      }
+      if (!admin) return jsonResp({ error: '管理者のみ変更できます' }, 403);
+      const cn = String(body.course_name || '').trim(), tp = String(body.type || '').trim();
+      if (!cn || !tp) return jsonResp({ error: 'course_name / type が必要です' }, 400);
+      if (action === 'mymaps_save') {
+        const url = String(body.mymap_url || '').trim();
+        if (!/^https:\/\//.test(url)) return jsonResp({ error: 'URLは https:// で始めてください' }, 400);
+        const { error } = await sbm.from('course_mymaps').upsert({ course_name: cn, type: tp, mymap_url: url, updated_at: new Date().toISOString() }, { onConflict: 'course_name,type' });
+        if (error) return jsonResp({ error: error.message }, 500);
+        return jsonResp({ success: true });
+      }
+      const { error } = await sbm.from('course_mymaps').delete().eq('course_name', cn).eq('type', tp);
+      if (error) return jsonResp({ error: error.message }, 500);
+      return jsonResp({ success: true });
+    }
 
     const sheetsToken = await getAccessToken();
     await ensureSheets(sheetsToken);
