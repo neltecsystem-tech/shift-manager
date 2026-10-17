@@ -59,6 +59,23 @@ function colToA1(col) {
   }
   return s;
 }
+// ---- 人員名簿 D列(電話)は文字列で書く ----
+// valueInputOption=USER_ENTERED だと「09046064175」が数値と解釈され先頭の0が消える。
+// 0が消えた番号が支払明細の確定に入り、明細ビューアにも支払通知にも出なかった(2026-09分 7名)。
+// 0落ち(9〜10桁)と +81 形式は国内表記に戻し、先頭に ' を付けて文字列として保存する。
+function fixJpPhone(v) {
+  const raw = String(v == null ? '' : v).replace(/[０-９]/g, (c)=>String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+  let d = raw.replace(/[^0-9]/g, '');
+  if (!d) return raw.trim();
+  if (d.startsWith('81') && (d.length === 11 || d.length === 12)) d = '0' + d.slice(2);
+  else if (!d.startsWith('0') && (d.length === 9 || d.length === 10)) d = '0' + d;
+  return d;
+}
+function rosterCell(sheetName, col, v) {
+  if (sheetName !== '人員名簿' || col !== 3) return v == null ? '' : String(v);
+  const ph = fixJpPhone(v);
+  return ph ? `'${ph}` : '';
+}
 // ---- 呼び出し元認証 (shop-master / invoice-sheet と同じ HMAC セッショントークン) ----
 // 本EFは verify_jwt=false の公開EF。読み取りは素通しのままで良いが、書き込み系は
 // 無認証の第三者がシフト表・人員名簿・単価マスタを書き換え/行削除できてしまうため塞ぐ。
@@ -282,7 +299,7 @@ Deno.serve(async (req)=>{
           range: `${name}!${a1}`,
           values: [
             [
-              u.value == null ? '' : String(u.value)
+              rosterCell(name, u.col, u.value)
             ]
           ]
         };
@@ -727,6 +744,7 @@ Deno.serve(async (req)=>{
         if ((existing[i] || []).some((c)=>String(c == null ? '' : c).trim() !== '')) lastRow = i + 1;
       }
       const targetRow = lastRow + 1;
+      if (name === '人員名簿' && values.length > 3) values[3] = rosterCell(name, 3, values[3]);
       const endCol = colToA1(Math.max(0, values.length - 1));
       const putRange = `${name}!A${targetRow}:${endCol}${targetRow}`;
       const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(putRange)}?valueInputOption=USER_ENTERED`, {

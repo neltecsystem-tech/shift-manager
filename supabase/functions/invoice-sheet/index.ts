@@ -21,6 +21,16 @@ const SPECIAL_SHEET_NAME = 'フォームの回答 1';
 // シートを唯一の情報源にすると、登録タイミング次第で「電話未登録」となり確定保存や
 // ビューア照合が落ちる。読み取り時に補完して、参照側の実装を1本化する。
 const rosterNameKey = (s: unknown) => String(s ?? '').replace(/[\s　 ]+/g, '').trim();
+// 名簿 D列の電話を国内表記に直す。数値セルで先頭の0が落ちた番号(9046064175)や +81 形式が
+// そのまま支払明細の確定に入り、明細ビューア・支払通知の本人照合が外れた(2026-09分 7名)。
+const fixJpPhone = (v: unknown): string => {
+  const raw = String(v ?? '').replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+  let d = raw.replace(/[^0-9]/g, '');
+  if (!d) return raw.trim();
+  if (d.startsWith('81') && (d.length === 11 || d.length === 12)) d = '0' + d.slice(2);
+  else if (!d.startsWith('0') && (d.length === 9 || d.length === 10)) d = '0' + d;
+  return d;
+};
 // 戻り値: {filled, ambiguous, map}
 //   map = 氏名キー -> 電話 (同姓同名で割れていないものだけ)。
 //   名簿シートに行が無い人は補完しようがないため、参照側が直接引けるよう map も返す。
@@ -1081,6 +1091,8 @@ Deno.serve(async(req:Request)=>{
       if(!admin) return forbid();
       const resp=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${ROSTER_SHEET_ID}/values/${encodeURIComponent(ROSTER_SHEET_NAME)}!A1:Z500`,{headers:{'Authorization':`Bearer ${sheetsToken}`}});
       const rows=await sheetVals(resp);
+      // D列(電話)の0落ちを直してから返す(シートは書き換えない)。1行目は見出し。
+      for(let i=1;i<rows.length;i++){const r=rows[i];if(r&&String(r[3]??'').trim())r[3]=fixJpPhone(r[3]);}
       // D列(電話)が空の行は中央人材マスタ(staff_master)から氏名で補完する。
       // 人員名簿シートだけを電話の情報源にしていたため、NexPort・staff_master に電話があっても
       // 「電話番号未登録」となり、支払明細の確定保存やビューア照合が通らなかった(上田雪枝で発生)。

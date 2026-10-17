@@ -85,13 +85,18 @@ async function verifyShiftToken(token: string | undefined | null): Promise<any |
   } catch { return null; }
 }
 
+// 先頭の0が落ちた番号(9046064175)・+81 形式は国内表記に戻す。明細ビューアは電話の
+// 完全一致で本人を引くため、崩れた番号で保存されると本人にも支払通知にも出ない(2026-09分 7名)。
 function normalizePhone(s: string): string {
   if (!s) return '';
-  return s
+  let d = String(s)
     .replace(/[０-９]/g, (ch) =>
       String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30),
     )
     .replace(/[^\d]/g, '');
+  if (d.startsWith('81') && (d.length === 11 || d.length === 12)) d = '0' + d.slice(2);
+  else if (d && !d.startsWith('0') && (d.length === 9 || d.length === 10)) d = '0' + d;
+  return d;
 }
 
 function json(body: unknown, status = 200) {
