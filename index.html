@@ -3688,12 +3688,15 @@ function getDriverMaps(dateStr){
 let masterPhones={};
 function phoneNameKey(s){return String(s==null?'':s).replace(/[\s　 ]+/g,'').trim();}
 function getPhone(name){
+  // 中央人材マスタを先に見る(正はこちら)。名簿シートD列は数値セルで先頭の0が落ちたり
+  // (9046064175)、余分な180が付いたりしており、それを優先していたため9月の手動確定で
+  // 7名の電話が崩れ、明細ビューアにも支払通知にも出なかった(太田伸一ほか・2026-10)。
+  const mp=masterPhones[phoneNameKey(name)];
+  if(mp)return mp;
+  // 中央人材マスタに無い / 同姓同名で割れている人だけ名簿シートを使う。
+  // 名簿に行が無い人を拾えず明細ビューアが電話で本人を引けなかった件(上田雪枝)もここで救う。
   const s=DB.staff.find(s=>s.name===name);
-  if(s&&s.phone)return s.phone;
-  // 人員名簿シートに行が無い / D列が空の人は中央人材マスタから引く。
-  // 名簿を唯一の情報源にしていたため、NexPort に電話があっても空扱いになり、
-  // 明細ビューアが電話で本人を引けなかった(上田雪枝で発生)。
-  return masterPhones[phoneNameKey(name)]||'';
+  return (s&&s.phone)||'';
 }
 function renderTenpo(){
   const nm=document.getElementById('tp-name').value.trim().normalize('NFKC').toLowerCase();
