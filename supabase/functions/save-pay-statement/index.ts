@@ -202,6 +202,35 @@ Deno.serve(async (req: Request) => {
     const finalizedBy = body.finalized_by ?? 'admin';
     const now = new Date().toISOString();
 
+    // 会社名は自動確定(finalize-shift の toOfficialCo)と同じ規則で正式名にそろえる。
+    // 画面の手動確定は単価マスタの会社欄(略称・半角カナ・営業所名)をそのまま送ってくるため、
+    // 自動確定の月と表記が割れ、明細ビューアの取引先一覧で同じ会社が2つに分かれた
+    // (2026-09分: 有限会社リトルキャット / 株式会社ノアライトネクスト / TLC / ラストワンマイル)。
+    //  ① 別名(company_aliases) → 正式名  ② 荷主/営業所は会社名にしない  ③ 会計マスタ(acc_invoice_partners)の表記へ
+    const coKeyAcc = (v: unknown) => String(v ?? '').normalize('NFKC')
+      .replace(/[\s・.,'’`-]+/g, '')
+      .replace(/株式会社|\(株\)/g, '㈱').replace(/合同会社/g, '(合)').replace(/有限会社|\(有\)/g, '㈲')
+      .toLowerCase();
+    const BASE_NON_COMPANY = ['アスクル', 'ヤマト', 'ヤマト運輸', 'SBS', 'SBSネクサード株式会社', '東京スポーツ', '東スポ', '新聞', 'デリバリー', '配送',
+      '城北', '川越', '立川', '川崎高津'];
+    const canonCo = new Map<string, string>(), aliasCo = new Map<string, string>(), nonCo = new Set<string>();
+    {
+      const [ipRes, alRes, ncRes] = await Promise.all([
+        admin.from('acc_invoice_partners').select('name'),
+        admin.from('company_aliases').select('alias, canonical'),
+        admin.from('non_company_names').select('name'),
+      ]);
+      for (const r of ((ipRes.data ?? []) as any[])) { const n = String(r.name ?? '').trim(); if (n) canonCo.set(coKeyAcc(n), n); }
+      for (const r of ((alRes.data ?? []) as any[])) { const a = String(r.alias ?? '').trim(), c = String(r.canonical ?? '').trim(); if (a && c) aliasCo.set(coKeyAcc(a), c); }
+      for (const n of [...BASE_NON_COMPANY, ...((ncRes.data ?? []) as any[]).map((r) => String(r.name ?? ''))]) { const k = coKeyAcc(n); if (k) nonCo.add(k); }
+    }
+    const toOfficialCo = (v: unknown): string | null => {
+      const raw = String(v ?? '').trim(); if (!raw) return null;
+      const cn = aliasCo.get(coKeyAcc(raw)) ?? raw;
+      if (nonCo.has(coKeyAcc(cn))) return null;
+      return canonCo.get(coKeyAcc(cn)) ?? cn;
+    };
+
     const upserted: { staff_name: string; year: number; month: number; modified: boolean }[] = [];
     for (const s of all) {
       const phone = normalizePhone(s.phone);
@@ -226,7 +255,7 @@ Deno.serve(async (req: Request) => {
         calc_type: s.calc_type ?? null,
         calc_type_pm: s.calc_type_pm ?? null,
         biz_type: s.biz_type ?? null,
-        company_name: s.company_name ?? null,
+        company_name: toOfficialCo(s.company_name),
         primary_area: s.primary_area ?? null,
       };
 
