@@ -1004,6 +1004,9 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <!-- 営業所ボタン (押した営業所だけ抽出表示。読み込み軽量化) -->
         <div id="adm-staff-area-btns" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;"></div>
+        <!-- 電話番号の相違(単価マスタのログインID・人員名簿D列・中央人材マスタ・NexPort) -->
+        <div style="margin-bottom:10px;"><button type="button" onclick="admPhoneCheck()" style="background:#fff;color:#b91c1c;border:1px solid #fca5a5;padding:6px 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;">📵 電話番号の相違を確認</button></div>
+        <div id="adm-phone-diff" style="display:none;margin-bottom:12px;"></div>
         <!-- 計算方式ガイド（初期非表示） -->
         <div id="adm-staff-guide" style="display:none;margin-bottom:16px;border:1px solid var(--border);border-radius:10px;overflow:hidden;">
           <div style="background:#f8fafc;padding:12px 16px;border-bottom:1px solid var(--border);"><h4 style="margin:0;color:var(--primary);">📋 計算方式ガイド</h4></div>
@@ -10259,6 +10262,63 @@ function admStaffPhoneDisp(name){
   const f=d.length===11?`${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7)}`:d;
   // 0で始まらない番号は崩れている(数値セルで0落ち等)ので目立たせる
   return d.startsWith('0')?escHtml(f):`<span style="color:#dc2626;" title="番号が崩れています">${escHtml(f)} ⚠</span>`;
+}
+
+// ── 電話番号の相違 ──
+// 単価マスタのログインID・人員名簿D列・中央人材マスタ・NexPort の電話を突き合わせ、違う人だけ出す。
+// 先頭0落ち・ハイフン等の表記違いは相違にしない。直せるのは新聞側(名簿D列/ログインID)だけで、
+// 直す番号は候補(どこかに登録済みの番号)から選ぶ。どれが正しいかは機械では決めない。
+let _admPhoneDiff=[];
+async function admPhoneCheck(){
+  const el=document.getElementById('adm-phone-diff');if(!el)return;
+  el.style.display='';
+  el.innerHTML='<div class="card" style="color:var(--text-sub);">📵 電話番号を突き合わせ中...</div>';
+  let j;try{j=await invApi({action:'phone_consistency'});}catch(e){j={error:e.message};}
+  if(!j||j.error){el.innerHTML=`<div class="card" style="color:var(--danger);">取得できませんでした: ${escHtml((j&&j.error)||'不明')}</div>`;return;}
+  _admPhoneDiff=j.items||[];
+  admPhoneRender();
+}
+function admPhoneFmt(d){d=String(d||'');return d.length===11?`${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7)}`:(d||'');}
+function admPhoneRender(){
+  const el=document.getElementById('adm-phone-diff');if(!el)return;
+  const items=_admPhoneDiff;
+  const close='<button type="button" onclick="document.getElementById(\'adm-phone-diff\').style.display=\'none\'" style="float:right;background:none;border:none;cursor:pointer;color:var(--text-sub);font-size:16px;">✕</button>';
+  if(!items.length){el.innerHTML=`<div class="card" style="background:#f0fdf4;border:1px solid #86efac;">${close}✅ 電話番号の相違はありません</div>`;return;}
+  const cell=(v,mark)=>v?`<span style="${mark?'color:#b91c1c;font-weight:600;':''}">${escHtml(admPhoneFmt(v))}</span>`:'<span style="color:#94a3b8;">-</span>';
+  let h=`<div class="card" style="border:1px solid #fca5a5;">${close}<div style="font-weight:700;color:#b91c1c;margin-bottom:4px;">📵 電話番号の相違 ${items.length}名</div>
+  <div style="font-size:12px;color:var(--text-sub);margin-bottom:8px;line-height:1.7;">赤字＝中央人材マスタと違う番号。新聞側(人員名簿D列・ログインID)は、候補の番号から選んで直せます。<br>⚠ ログインIDを直すと<b>本人の新聞ツールのログインIDが変わります</b>。中央人材マスタ・NexPortの番号は会計の人材マスタ／NexPortで直してください。</div>
+  <div style="overflow-x:auto;"><table><thead><tr><th>スタッフ名</th><th>ログインID(単価マスタ)</th><th>人員名簿D列</th><th>中央人材マスタ</th><th>NexPort</th><th>新聞側を直す</th></tr></thead><tbody>`;
+  items.forEach((it,i)=>{
+    const ref=it.master||it.nexport||'';
+    const ros=(it.roster_rows||[]).map(x=>x.phone?cell(x.phone,ref&&x.phone!==ref):(x.raw?`<span style="color:#b91c1c;">${escHtml(x.raw)}</span>`:'<span style="color:#94a3b8;">空欄</span>')).join('<br>')||'<span style="color:#94a3b8;">行なし</span>';
+    const lid=it.login_is_email?`<span style="font-size:11px;color:var(--text-sub);">${escHtml(it.login_id)}(メール)</span>`:cell(it.login,ref&&it.login!==ref);
+    const opts=(it.candidates||[]).map(c=>`<option value="${c}"${c===ref?' selected':''}>${admPhoneFmt(c)}${c===it.master?'(人材マスタ)':c===it.nexport?'(NexPort)':''}</option>`).join('');
+    const canRos=(it.roster_rows||[]).length>0, canLogin=!it.login_is_email;
+    h+=`<tr><td><b>${escHtml(it.name)}</b></td><td>${lid}</td><td>${ros}</td><td>${cell(it.master,false)}</td><td>${cell(it.nexport,it.master&&it.nexport&&it.nexport!==it.master)}</td>
+      <td style="white-space:nowrap;"><select id="adm-ph-sel-${i}" style="padding:4px;border:1px solid var(--border);border-radius:6px;font-size:12px;">${opts}</select>
+      ${canRos?`<button type="button" onclick="admPhoneFix(${i},'roster')" style="background:var(--primary);color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">名簿に反映</button>`:''}
+      ${canLogin?`<button type="button" onclick="admPhoneFix(${i},'login')" style="background:#fff;color:#b91c1c;border:1px solid #fca5a5;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">ログインIDに反映</button>`:''}
+      <div id="adm-ph-msg-${i}" style="font-size:11px;"></div></td></tr>`;
+  });
+  h+='</tbody></table></div></div>';
+  el.innerHTML=h;
+}
+async function admPhoneFix(i,target){
+  const it=_admPhoneDiff[i];if(!it)return;
+  const sel=document.getElementById('adm-ph-sel-'+i);const phone=sel?sel.value:'';
+  if(!phone)return;
+  const msg=document.getElementById('adm-ph-msg-'+i);
+  const what=target==='login'?'単価マスタのログインID':'人員名簿D列';
+  let q=`「${it.name}」の${what}を ${admPhoneFmt(phone)} に直します。よろしいですか？`;
+  if(target==='login')q+=`\n\n⚠ 本人の新聞ツールのログインIDが「${it.login_id}」→「${phone}」に変わります。本人に伝えてください。`;
+  if(!confirm(q))return;
+  if(msg){msg.textContent='保存中...';msg.style.color='#3b82f6';}
+  let j;try{j=await invApi({action:'fix_staff_phone',name:it.name,target,phone});}catch(e){j={error:e.message};}
+  if(!j||j.error||!j.success){if(msg){msg.textContent='失敗: '+((j&&j.error)||'不明');msg.style.color='var(--danger)';}return;}
+  if(msg){msg.textContent='✓ 反映しました';msg.style.color='#16a34a';}
+  // 名簿/単価マスタの画面データも最新にしてから再突合(反映済みの人は一覧から消える)
+  try{if(target==='login'){const rr=await invApi({action:'get_rates'});if(rr&&rr.rates)invRates=rr.rates;}else if(typeof loadLiveStaff==='function')await loadLiveStaff();}catch(_){}
+  setTimeout(()=>{admPhoneCheck();adminRenderStaff();},600);
 }
 
 async function admStaffAdd(){

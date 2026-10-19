@@ -686,6 +686,80 @@ Deno.serve(async(req:Request)=>{
       return jsonResp({ok:true,checked:{master:master.length},issues,count:issues.length});
     }
 
+    // ── 電話番号の相違検知(2026-10-19) ──
+    // 新聞の電話は 単価マスタ J列(ログインID)・人員名簿 D列 の2か所にあり、中央人材マスタ・NexPort とも
+    // 独立に入力される。どれかが別の番号だと、明細ビューアや支払通知の本人照合が外れたり、
+    // 別人の番号で明細が引ける事故になる(2026-09分で7名がビューアに出なかった)。
+    // 先頭0落ち・+81・ハイフンは fixJpPhone で揃えてから比べる(=表記違いは相違にしない)。
+    // ログインIDがメール形式の人(NexPort SSO)はログインIDを電話として扱わない。
+    if(action==='phone_consistency' || action==='fix_staff_phone'){
+      const cronSecret = req.headers.get('x-sync-secret') || '';
+      const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
+      if(action==='fix_staff_phone' ? !(await adminPwOrToken()) : (!okCron && !(await adminPwOrToken()))) return jsonResp({error:'forbidden'},403);
+      const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+      const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if(!SB_URL || !SRK) return jsonResp({error:'supabase env missing'},500);
+      const H = { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } as Record<string,string>;
+      const tok=await getAccessToken();
+      const isPhone=(v:string)=>/^0\d{9,10}$/.test(v);
+      const asPhone=(v:unknown)=>{ const s=String(v??'').trim(); if(!s||s.includes('@'))return ''; const p=fixJpPhone(s); return isPhone(p)?p:''; };
+      const [rateRes,rosRes,smRes,nxRes]=await Promise.all([
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:300`,{headers:{'Authorization':`Bearer ${tok}`}}),
+        fetch(`https://sheets.googleapis.com/v4/spreadsheets/${ROSTER_SHEET_ID}/values/${encodeURIComponent(ROSTER_SHEET_NAME)}!A2:D3000`,{headers:{'Authorization':`Bearer ${tok}`}}),
+        fetch(`${SB_URL}/rest/v1/staff_master?select=full_name,phone,shift_login_id,profile_id,hidden`,{headers:H}),
+        fetch(`${SB_URL}/rest/v1/profiles?select=id,phone`,{headers:H}),
+      ]);
+      const rates=parseRates(await sheetVals(rateRes));
+      const rosRows=(await sheetVals(rosRes)) as string[][];
+      const sm=((smRes.ok?await smRes.json():[]) as any[]).filter((r)=>!r.hidden);
+      const nxPhone=new Map<string,string>(); for(const p of (nxRes.ok?await nxRes.json():[]) as any[]){ const ph=asPhone(p.phone); if(ph)nxPhone.set(p.id,ph); }
+      const smByLogin=new Map<string,any>(); const smByName=new Map<string,any[]>();
+      for(const r of sm){ if(r.shift_login_id)smByLogin.set(String(r.shift_login_id).trim(),r); const k=rosterNameKey(r.full_name); if(k){ if(!smByName.has(k))smByName.set(k,[]); smByName.get(k)!.push(r); } }
+      const rosByName=new Map<string,{row:number,raw:string,phone:string}[]>();
+      rosRows.forEach((r,i)=>{ const k=rosterNameKey(r?.[2]); if(!k)return; if(!rosByName.has(k))rosByName.set(k,[]); rosByName.get(k)!.push({row:i+2,raw:String(r?.[3]??'').trim(),phone:asPhone(r?.[3])}); });
+      const rateNameCount=new Map<string,number>(); rates.forEach((r:any)=>{ const k=rosterNameKey(r.name); rateNameCount.set(k,(rateNameCount.get(k)||0)+1); });
+      const items:any[]=[];
+      for(const r of rates as any[]){
+        const k=rosterNameKey(r.name); if(!k)continue;
+        const lid=String(r.login_id||'').trim();
+        // 中央人材マスタ: ログインIDで一致 → 無ければ氏名が一意な時だけ
+        let m=lid?smByLogin.get(lid):undefined;
+        if(!m){ const c=smByName.get(k)||[]; if(c.length===1 && rateNameCount.get(k)===1) m=c[0]; }
+        const ros=(rateNameCount.get(k)===1)?(rosByName.get(k)||[]):[]; // 同姓同名は名簿をどちらの人か決められない
+        const vals={ login:asPhone(lid), roster:ros.map(x=>x.phone).filter(Boolean), master:asPhone(m?.phone), nexport:m?.profile_id?(nxPhone.get(m.profile_id)||''):'' };
+        const all=new Set<string>([vals.login,...vals.roster,vals.master,vals.nexport].filter(Boolean));
+        if(all.size<=1)continue;
+        items.push({ name:r.name, row_number:r.row_number, login_id:lid, login_is_email:lid.includes('@'), roster_rows:ros.map(x=>({row:x.row,raw:x.raw,phone:x.phone})), master:vals.master, nexport:vals.nexport, login:vals.login, candidates:[...all] });
+      }
+      if(action==='phone_consistency') return jsonResp({ok:true,checked:rates.length,items,count:items.length});
+
+      // ── 修正: 相違がある人だけ、候補の番号のどれかに直す。シートは文字列(')で書き先頭0を守る ──
+      const target=String(body.target||''); const want=fixJpPhone(String(body.phone||''));
+      const it=items.find((x)=>x.name===String(body.name||''));
+      if(!it) return jsonResp({error:'この方は今、電話番号の相違がありません(画面を更新してください)'},409);
+      if(!isPhone(want) || !it.candidates.includes(want)) return jsonResp({error:'候補にない番号には直せません'},400);
+      if(target==='roster'){
+        const rows=(it.roster_rows as any[]).filter((x)=>x.phone!==want);
+        if(!rows.length) return jsonResp({error:'人員名簿はすでにこの番号です'},409);
+        const data=rows.map((x)=>({range:`${ROSTER_SHEET_NAME}!D${x.row}`,values:[[`'${want}`]]}));
+        const w=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${ROSTER_SHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${tok}`,'Content-Type':'application/json'},body:JSON.stringify({valueInputOption:'USER_ENTERED',data})});
+        if(!w.ok) return jsonResp({error:'人員名簿の書き込みに失敗: '+(await w.text()).slice(0,200)},500);
+        return jsonResp({success:true,updated:rows.map((x)=>x.row)});
+      }
+      if(target==='login'){
+        if(it.login_is_email) return jsonResp({error:'ログインIDがメール形式の方は対象外です'},400);
+        if(it.login===want) return jsonResp({error:'ログインIDはすでにこの番号です'},409);
+        // ログインIDは一意でないと別人としてログインできてしまう。表記違い(0の有無)も同一とみなす。
+        const clash=(rates as any[]).find((r)=>r.row_number!==it.row_number && asPhone(r.login_id)===want);
+        if(clash) return jsonResp({error:`この番号は「${clash.name}」のログインIDに使われています`},409);
+        const w=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!J${it.row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${tok}`,'Content-Type':'application/json'},body:JSON.stringify({values:[[`'${want}`]]})});
+        if(!w.ok) return jsonResp({error:'単価マスタの書き込みに失敗: '+(await w.text()).slice(0,200)},500);
+        await invalidateRateCache();
+        return jsonResp({success:true,login_id:want});
+      }
+      return jsonResp({error:'target は roster か login'},400);
+    }
+
     // ── Phase1(シャドー監視): 単価マスタ(Sheets 最新) と ミラー(shift_rate_master) を突合し差分をログ ──
     //   本番数値は一切変えない(log専用)。差分ゼロが3ヶ月続けば「取得元をSupabaseに替えても計算不変」と証明。
     if(action==='check_rate_parity'){
