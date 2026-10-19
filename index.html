@@ -2035,6 +2035,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-10-19', tag:'改善', title:'スタッフ管理の一覧に電話番号を表示しました',
+   desc:'管理＞スタッフ管理の一覧に「電話」列を追加しました。表示される番号は、支払明細の確定保存と統合明細ビューアの本人照合に実際に使われる番号です（中央人材マスタ優先、無ければ人員名簿D列）。未登録の方は赤字で「未登録」、先頭の0が落ちるなど番号が崩れている方は赤字＋⚠で出るので、確定前に確認できます。あわせて、人員名簿の電話は今後文字列で保存され、先頭の0が消えなくなりました（9月分で7名の明細がビューアに出なかった原因）。'},
   {date:'2026-10-14', tag:'修正', title:'荷主リスト突合「コード相違をマスタに反映」で、全件スキップになるのを直しました',
    desc:'店舗マスタ側を先に新しい店舗コードに直してあると、「新コードが既にマスタにある＝重複」と判定して全件スキップし、月初スナップの古いコードが残ったままになっていました（2026年10月 立川朝刊の3店：7元八王子2丁目・7国立富士見台1丁目・7府中是政6丁目）。マスタが更新済みのときは、月初スナップのコードだけを直すようにしました。'},
   {date:'2026-10-14', tag:'改善', title:'荷主リスト突合の「差異あり」タブを整理しました',
@@ -10213,7 +10215,7 @@ function adminRenderStaff(){
     return;
   }
   if(!rates.length){listEl.innerHTML='<p style="text-align:center;color:var(--text-sub);padding:20px;">該当なし</p>';return;}
-  let h='<table><thead><tr><th>スタッフ名</th><th>区分</th><th>所属</th><th>ログインID</th><th>PW</th><th>朝刊(平)</th><th>朝(土)</th><th>朝(日)</th><th>夕刊(平)</th><th>夕(末)</th><th>夕(日)</th><th>計算</th><th>権限</th><th></th></tr></thead><tbody>';
+  let h='<table><thead><tr><th>スタッフ名</th><th>区分</th><th>所属</th><th>ログインID</th><th>電話</th><th>PW</th><th>朝刊(平)</th><th>朝(土)</th><th>朝(日)</th><th>夕刊(平)</th><th>夕(末)</th><th>夕(日)</th><th>計算</th><th>権限</th><th></th></tr></thead><tbody>';
   rates.forEach((r)=>{
     const origIdx=invRates.indexOf(r);
     const bizColors={'個人':['#dbeafe','#1d4ed8'],'法人':['#dcfce7','#166534'],'社員':['#fdf4ff','#7c3aed']};
@@ -10232,6 +10234,7 @@ function adminRenderStaff(){
       <td><span class="badge" style="background:${bc[0]};color:${bc[1]}">${r.biz_type==='法人'?'法人・屋号有':(r.biz_type||'未設定')}</span></td>
       <td>${(()=>{const ar=amap[invNormName(r.name)]||'';const areaTag=ar?`<span style="background:#e0f2fe;color:#0369a1;padding:1px 8px;border-radius:8px;font-size:11px;">${ar}</span>`:'';return (r.company?escHtml(r.company)+(areaTag?' ':''):'')+areaTag||'-';})()}</td>
       <td><code>${r.login_id||'-'}</code></td>
+      <td style="white-space:nowrap;">${admStaffPhoneDisp(r.name)}</td>
       <td><code>${r.login_pw||'-'}</code></td>
       <td>¥${Number(r.am_weekday||0).toLocaleString()}</td>
       <td>¥${Number(r.am_weekend||0).toLocaleString()}</td>
@@ -10246,6 +10249,16 @@ function adminRenderStaff(){
   });
   h+='</tbody></table>';
   listEl.innerHTML=h;
+}
+
+// 電話は明細の確定保存と同じ getPhone()(中央人材マスタ優先→人員名簿)で出す。
+// ここに出る番号がそのまま支払明細・明細ビューアの本人照合に使われる。
+function admStaffPhoneDisp(name){
+  const d=String(getPhone(name)||'').replace(/[^0-9]/g,'');
+  if(!d)return '<span style="color:#dc2626;font-size:11px;">未登録</span>';
+  const f=d.length===11?`${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7)}`:d;
+  // 0で始まらない番号は崩れている(数値セルで0落ち等)ので目立たせる
+  return d.startsWith('0')?escHtml(f):`<span style="color:#dc2626;" title="番号が崩れています">${escHtml(f)} ⚠</span>`;
 }
 
 async function admStaffAdd(){
