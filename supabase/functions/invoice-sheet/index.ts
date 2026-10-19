@@ -281,11 +281,17 @@ async function sheetVals(resp: Response, what = ''): Promise<any[][]> {
 }
 
 // 同じ company の名前リスト (オーナー含む) を取得 (法人オーナー権限スコープ用)
+// 会社名の一致(法人格の書き方・空白・中黒・半角カナの違いは同じ会社)。
+// 単価マスタの会社欄は会計マスタの正式名へ自動で置き換わる(normalize_rate_companies)ため、
+// ログイン中のトークンに残った旧表記と完全一致で比べると、法人オーナーが自社メンバーを見失う。
+const coKeyCmp = (v: unknown) => String(v ?? '').normalize('NFKC').replace(/[\s・.,'’`-]+/g, '')
+  .replace(/株式会社|\(株\)/g, '㈱').replace(/合同会社/g, '(合)').replace(/有限会社|\(有\)/g, '㈲').toLowerCase();
+const sameCo = (a: unknown, b: unknown) => !!coKeyCmp(a) && coKeyCmp(a) === coKeyCmp(b);
 async function fetchCompanyNames(sheetsToken: string, company: string): Promise<string[]> {
   if (!company) return [];
   const resp = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`, { headers: { 'Authorization': `Bearer ${sheetsToken}` } });
   const rows = await sheetVals(resp);
-  const list = parseRates(rows).filter((r: any) => r.biz_type === '法人' && r.company === company);
+  const list = parseRates(rows).filter((r: any) => r.biz_type === '法人' && sameCo(r.company, company));
   return list.map((r: any) => r.name);
 }
 
@@ -760,6 +766,45 @@ Deno.serve(async(req:Request)=>{
       return jsonResp({error:'target は roster か login'},400);
     }
 
+    // ── 単価マスタの会社欄を会計マスタの正式名へそろえる(2026-10-19) ──
+    // 会計で法人を正式登録(名前の修正・別名の追加を含む)したら、新聞にも自動で効かせる。
+    // 規則は自動確定(finalize-shift)と同じ: ① 別名(company_aliases)→正式名 ③ 会計マスタの表記へ。
+    // ② 営業所・荷主名(城北 等)は単価マスタでは社員の所属として使われているので、ここでは消さない。
+    // 会計の正式登録時と毎日の staff-master-sync から呼ばれる。dry_run=true なら書かずに一覧だけ返す。
+    if(action==='normalize_rate_companies'){
+      const cronSecret = req.headers.get('x-sync-secret') || '';
+      const okCron = !!SYNC_SECRET && cronSecret === SYNC_SECRET;
+      if(!okCron && !(await adminPwOrToken())) return jsonResp({error:'forbidden'},403);
+      const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+      const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if(!SB_URL || !SRK) return jsonResp({error:'supabase env missing'},500);
+      const H = { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } as Record<string,string>;
+      const coKeyAcc=(v:unknown)=>String(v??'').normalize('NFKC').replace(/[\s・.,'’`-]+/g,'')
+        .replace(/株式会社|\(株\)/g,'㈱').replace(/合同会社/g,'(合)').replace(/有限会社|\(有\)/g,'㈲').toLowerCase();
+      const [ipR,alR]=await Promise.all([
+        fetch(`${SB_URL}/rest/v1/acc_invoice_partners?select=name`,{headers:H}),
+        fetch(`${SB_URL}/rest/v1/company_aliases?select=alias,canonical`,{headers:H}),
+      ]);
+      const canon=new Map<string,string>(); for(const r of (ipR.ok?await ipR.json():[]) as any[]){const n=String(r.name??'').trim(); if(n&&!canon.has(coKeyAcc(n)))canon.set(coKeyAcc(n),n);}
+      const alias=new Map<string,string>(); for(const r of (alR.ok?await alR.json():[]) as any[]){const a=String(r.alias??'').trim(),c=String(r.canonical??'').trim(); if(a&&c)alias.set(coKeyAcc(a),c);}
+      const tok=await getAccessToken();
+      const rows=parseRates(await sheetVals(await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:300`,{headers:{'Authorization':`Bearer ${tok}`}})));
+      const changes:{row:number;name:string;from:string;to:string}[]=[];
+      for(const r of rows as any[]){
+        const raw=String(r.company||'').trim(); if(!raw)continue;
+        const a=alias.get(coKeyAcc(raw))??raw;
+        const to=canon.get(coKeyAcc(a));
+        if(to && to!==raw) changes.push({row:r.row_number,name:r.name,from:raw,to});
+      }
+      if(body.dry_run||!changes.length) return jsonResp({ok:true,dry_run:!!body.dry_run,changes});
+      // M列=所属会社。値だけ書く(RAW)。
+      const w=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{'Authorization':`Bearer ${tok}`,'Content-Type':'application/json'},
+        body:JSON.stringify({valueInputOption:'RAW',data:changes.map(c=>({range:`'単価マスタ'!M${c.row}`,values:[[c.to]]}))})});
+      if(!w.ok) return jsonResp({error:'単価マスタの書き込みに失敗: '+(await w.text()).slice(0,200)},500);
+      await invalidateRateCache();
+      return jsonResp({ok:true,changes});
+    }
+
     // ── Phase1(シャドー監視): 単価マスタ(Sheets 最新) と ミラー(shift_rate_master) を突合し差分をログ ──
     //   本番数値は一切変えない(log専用)。差分ゼロが3ヶ月続けば「取得元をSupabaseに替えても計算不変」と証明。
     if(action==='check_rate_parity'){
@@ -1109,6 +1154,20 @@ Deno.serve(async(req:Request)=>{
     const callerName = claims.name || '';
     const callerCompany = claims.company || '';
 
+    // ---- 法人新規登録(2026-10-19) ----
+    // 法人名は会計マスタの名前からしか選べない。無い会社はここから会計マスタへ「仮登録」する。
+    // 実体は NexPort 側の list-invoice-companies(register)。新聞のログインはここで確かめ、合言葉付きで代理送信する。
+    if (action === 'register_company') {
+      if (!admin) return jsonResp({ error: '法人の新規登録は管理者のみです' }, 403);
+      const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/list-invoice-companies`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-sync-secret': SYNC_SECRET },
+        body: JSON.stringify({ action: 'register', name: body.name, tool: 'shift', requested_by: callerName || '新聞管理者' }),
+      });
+      const j = await r.json().catch(() => ({ error: '応答を読めませんでした' }));
+      return jsonResp(j, r.status);
+    }
+
     // ---- コースのマイマップURL (2026-10-15) ----
     // それまで画面が anon キーで course_mymaps を直接読み書きしており、ログインなしで誰でも書き換えられた。
     // 読むのはログインした人全員、保存・削除は管理者だけ(管理画面からしか使わない)。表は authenticated のみに絞った。
@@ -1243,6 +1302,20 @@ Deno.serve(async(req:Request)=>{
     if(action==='save_rate'){
       if(!admin) return forbid();
       if(!record?.name) return jsonResp({error:'name required'}, 400);
+      // 所属会社は会計マスタにある名前だけ(2026-10-19・表記ゆれ防止)。画面は選択式だが、ここでも確かめる。
+      // 既存行の会社欄が旧表記のまま変わっていないときは通す(他の項目だけ直す保存を止めない)。
+      { const co=String(record.company||'').trim();
+        if(co){
+          const SB_URL=Deno.env.get('SUPABASE_URL')||'', SRK=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'';
+          const pr=await fetch(`${SB_URL}/rest/v1/acc_invoice_partners?select=name`,{headers:{'apikey':SRK,'Authorization':`Bearer ${SRK}`}});
+          const names=new Set(((pr.ok?await pr.json():[]) as any[]).map((r:any)=>String(r.name||'').trim()));
+          if(pr.ok && !names.has(co)){
+            let unchanged=false;
+            if(row_number){ const cur=parseRates(await sheetVals(await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A${row_number}:X${row_number}`,{headers:{'Authorization':`Bearer ${sheetsToken}`}}))); unchanged=String(cur[0]?.company||'').trim()===co; }
+            if(!unchanged) return jsonResp({error:`所属会社「${co}」は会計マスタにありません。一覧から選ぶか「＋法人新規登録」で登録してください`},400);
+          }
+        }
+      }
       const row=[record.name,record.am_weekday||'',record.am_weekend||'',record.pm_weekday||'',record.pm_weekend||'',record.warehouse_am||'',record.warehouse_pm||'',record.calc_type||'固定',record.unit_price||'',record.login_id||'',record.login_pw||'',record.biz_type||'',record.company||'',record.calc_type_pm||'固定',record.unit_price_pm||'',record.am_sunday||'',record.pm_sunday||'',record.permissions||'',record.kw_am_daily||'',record.kw_pattern||'',record.monthly_salary||'',record.invoice_number||'',record.rate_effective_from||'',record.planner_allowance||''];
       if(row_number){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A${row_number}:X${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
       else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:X1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
@@ -1303,7 +1376,7 @@ Deno.serve(async(req:Request)=>{
       if(row_number){
         base = cur.find((r:any)=>r.row_number===Number(row_number));
         if(!base) return jsonResp({error:'row not found'}, 404);
-        if(base.company!==callerCompany) return forbid('自社メンバーのみ編集できます');
+        if(!sameCo(base.company,callerCompany)) return forbid('自社メンバーのみ編集できます');
       }
       const isSelf = row_number ? (base.name===callerName) : false; // 新規は常に配下扱い
       // 価格系は base から保全 (オーナーは編集不可)。 オーナーが触れるのは 氏名/ログイン/show_money のみ
@@ -1312,7 +1385,8 @@ Deno.serve(async(req:Request)=>{
       m.login_id = record.login_id ? record.login_id : (base.login_id||''); // 空欄は現状維持
       m.login_pw = record.login_pw ? record.login_pw : (base.login_pw||''); // 空欄は現状維持(編集時PW消さない)
       m.biz_type = '法人';
-      m.company = callerCompany;
+      // 会社欄は単価マスタ上の表記(正式名へ置き換え済み)を優先。トークンの旧表記で書き戻さない。
+      m.company = (base.company && sameCo(base.company, callerCompany)) ? base.company : ((cur as any[]).find((r:any)=>sameCo(r.company, callerCompany))?.company || callerCompany);
       // show_money: record で明示されればそれ、無ければ現状(base)維持 (氏名編集で消さない)
       const baseShow = (base.permissions||'').split(',').includes('show_money');
       const wantShow = (record.show_money !== undefined) ? !!record.show_money : baseShow;
@@ -1330,7 +1404,7 @@ Deno.serve(async(req:Request)=>{
       const cur = parseRates(await sheetVals(await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!2:200`,{headers:{'Authorization':`Bearer ${sheetsToken}`}}), '単価マスタ'));
       const tgt = cur.find((r:any)=>r.row_number===Number(row_number));
       if(!tgt) return jsonResp({error:'row not found'}, 404);
-      if(tgt.company!==callerCompany) return forbid('自社メンバーのみ削除できます');
+      if(!sameCo(tgt.company,callerCompany)) return forbid('自社メンバーのみ削除できます');
       if(tgt.name===callerName) return forbid('自分自身は削除できません');
       const rowIdx=Number(row_number)-1;
       if(rowIdx<1) return jsonResp({error:'cannot delete header'}, 400);

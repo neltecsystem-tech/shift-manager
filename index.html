@@ -609,7 +609,7 @@ tbody tr:hover { background:var(--primary-light); }
           </div>
         </div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-owner-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-showmoney-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-salary-wrap').style.display=this.value==='社員'?'block':'none';document.getElementById('inv-re-admin-auto').style.display=this.value==='社員'?'block':'none';" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人・屋号有</option><option value="社員">社員</option></select></div>
-        <div style="margin-bottom:10px;display:none;" id="inv-re-company-wrap"><label style="font-size:12px;color:var(--text-sub)">所属会社名</label><input type="text" id="inv-re-company" list="inv-re-company-dl" autocomplete="off" onchange="invCompanyPicked()" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="株式会社○○"><datalist id="inv-re-company-dl"></datalist><div id="inv-re-company-hint" style="font-size:11px;color:var(--text-sub);margin-top:4px;">会計マスタの正式名称から選んでください（表記ゆれ防止）</div></div>
+        <div style="margin-bottom:10px;display:none;" id="inv-re-company-wrap"><label style="font-size:12px;color:var(--text-sub)">所属会社名</label><div style="display:flex;gap:6px;"><select id="inv-re-company" onchange="invCompanyPicked()" style="flex:1;min-width:0;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">読み込み中...</option></select><button type="button" onclick="invRegisterCompany()" style="white-space:nowrap;background:#fff;color:var(--primary);border:1px solid var(--primary);padding:6px 10px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;">＋法人新規登録</button></div><div id="inv-re-company-hint" style="font-size:11px;color:var(--text-sub);margin-top:4px;">会計マスタの正式名称から選んでください（表記ゆれ防止）</div></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-owner-wrap"><label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;background:#fef9c3;border:1px solid #facc15;border-radius:8px;padding:8px 12px;"><input type="checkbox" id="inv-re-owner"> 👑 オーナー (法人代表者)</label><div style="font-size:11px;color:var(--text-sub);margin-top:3px;padding-left:4px;">チェックなしの法人メンバーは稼働登録・請求書で金額が非表示になります</div></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-showmoney-wrap"><label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:8px 12px;"><input type="checkbox" id="inv-re-showmoney"> 💰 配下メンバーにも金額を表示する</label><div style="font-size:11px;color:var(--text-sub);margin-top:3px;padding-left:4px;">オーナーがONにすると、同じ所属会社の法人メンバーにも単価・金額が表示されます（既定OFF＝非表示）。オーナー行のみ有効。</div></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-salary-wrap"><label style="font-size:12px;color:var(--text-sub)">月給 (円)</label><input type="number" id="inv-re-salary" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 280000" min="0" step="1000"><div style="font-size:11px;color:var(--text-sub);margin-top:3px;">収支管理画面で「社員の給料」として集計されます</div></div>
@@ -2038,6 +2038,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-10-19', tag:'改善', title:'所属会社名は会計マスタの名前からしか選べなくなりました（＋法人新規登録）',
+   desc:'スタッフ管理の単価編集で、所属会社名を自由に入力できなくしました。会計ツールの取引先マスタにある名前を一覧から選びます（表記ゆれで、明細ビューアに同じ会社が2つ出ていたため）。一覧に無い会社は「＋法人新規登録」で会計マスタに仮登録すると、すぐ（仮）として選べます。会計で正式名に直して正式登録すると、単価マスタの会社欄も自動で正式名に置き換わります。今の値が会計マスタに無い古い表記の方は「⚠」付きで表示されるので、選び直してください。'},
   {date:'2026-10-19', tag:'新機能', title:'スタッフ管理に「📵 電話番号の相違を確認」を追加しました',
    desc:'単価マスタのログインID・人員名簿D列・中央人材マスタ・NexPortの電話番号を突き合わせ、番号が違う人だけを一覧にします（先頭の0落ちやハイフンの違いは相違にしません）。新聞側（人員名簿D列・ログインID）は、どこかに登録済みの番号から選んで「名簿に反映」「ログインIDに反映」で直せます。ログインIDを直すと本人の新聞ツールのログインIDが変わるので、確認が出ます。相違は毎日自動で点検し、NexPort業務管理の常設アラートにも出ます（自動では直しません）。'},
   {date:'2026-10-19', tag:'改善', title:'スタッフ管理の一覧に電話番号を表示しました',
@@ -7995,20 +7997,52 @@ async function invLoadAccCompanies(){
     const d=await r.json();
     invAccCompanies=(d&&Array.isArray(d.companies))?d.companies:[];
   }catch(e){ console.warn('[company] 会計マスタの会社名取得に失敗',e); invAccCompanies=[]; }
-  const dl=document.getElementById('inv-re-company-dl');
+  invRenderCompanyOptions();
+  return invAccCompanies;
+}
+// 所属会社は会計マスタの名前からしか選べない(2026-10-19・手入力の表記ゆれで明細ビューアに同じ会社が2つ出た)。
+// 今の値がマスタに無い旧表記なら「⚠ …」として残し、他の項目だけ直して保存しても消えないようにする。
+function invRenderCompanyOptions(cur){
+  const sel=document.getElementById('inv-re-company');if(!sel)return;
+  if(cur===undefined)cur=sel.dataset.cur!=null?sel.dataset.cur:(sel.value||'');
+  sel.dataset.cur=cur;
   // esc() はグローバルに無い(各所でローカル定義)ため、ここで最小限のエスケープを持つ
   const q=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  if(dl)dl.innerHTML=invAccCompanies.map(c=>`<option value="${q(c.name)}"></option>`).join('');
+  const list=invAccCompanies||[];
+  const known=list.some(c=>String(c.name).trim()===cur);
+  let h='<option value="">(選択してください)</option>';
+  if(cur&&!known)h+=`<option value="${q(cur)}">⚠ ${q(cur)}（会計マスタに無い表記）</option>`;
+  h+=list.map(c=>`<option value="${q(c.name)}">${q(c.name)}${c.pending?'（仮）':''}</option>`).join('');
+  sel.innerHTML=h;sel.value=cur;
   const hint=document.getElementById('inv-re-company-hint');
-  if(hint)hint.textContent=invAccCompanies.length
-    ?`会計マスタの正式名称から選んでください（${invAccCompanies.length}社・表記ゆれ防止）`
-    :'会計マスタの会社名を取得できませんでした。手入力の際は表記にご注意ください';
-  return invAccCompanies;
+  if(hint){
+    hint.style.color=(cur&&!known)?'var(--danger)':'var(--text-sub)';
+    hint.textContent=!list.length?'会計マスタの会社名を取得できませんでした。画面を開き直してください'
+      :(cur&&!known)?'会計マスタに無い表記です。一覧から選び直してください（無ければ「＋法人新規登録」）'
+      :`会計マスタの正式名称から選んでください（${list.length}社）。一覧に無い会社は「＋法人新規登録」`;
+  }
+}
+async function invSetCompany(v){
+  const sel=document.getElementById('inv-re-company');if(sel)sel.dataset.cur=v||'';
+  invRenderCompanyOptions(v||'');
+  await invLoadAccCompanies();
+  invRenderCompanyOptions(v||'');
+}
+// 会計マスタに無い会社を「仮登録」する。会計で正式登録されるまで（仮）と表示され、
+// 正式登録で名前が直れば単価マスタの会社欄も自動で正式名に置き換わる。
+async function invRegisterCompany(){
+  const nm=(window.prompt('登録する法人名を正式名称で入力してください（例: 株式会社○○）','')||'').trim();
+  if(!nm)return;
+  let j;try{j=await invApi({action:'register_company',name:nm});}catch(e){j={error:e.message};}
+  if(!j||j.error||!j.ok){alert('登録できませんでした: '+((j&&j.error)||'不明'));return;}
+  invAccCompanies=null;await invSetCompany(j.name);invCompanyPicked();
+  alert(j.existed?`既に登録済みの「${j.name}」を選びました`:`「${j.name}」を仮登録しました。会計で正式登録されるまで（仮）と表示されます`);
 }
 // 会社を選んだらインボイス登録番号(T番号)が空の場合だけ自動補完する。
 // 既に入っている番号は会計側と食い違う可能性があるので上書きしない。
 function invCompanyPicked(){
   const v=(document.getElementById('inv-re-company').value||'').trim();
+  const sel=document.getElementById('inv-re-company');if(sel)sel.dataset.cur=v;
   if(!v||!invAccCompanies)return;
   const hit=invAccCompanies.find(c=>String(c.name).trim()===v);
   const tEl=document.getElementById('inv-re-invoice');
@@ -8021,7 +8055,7 @@ function invAddRate(){
   document.getElementById('inv-re-title').textContent='単価を追加';
   ['inv-re-am-wd','inv-re-am-we','inv-re-am-sun','inv-re-pm-wd','inv-re-pm-we','inv-re-pm-sun','inv-re-wh-am','inv-re-wh-pm','inv-re-unit','inv-re-unit-pm','inv-re-loginid','inv-re-loginpw','inv-re-planner'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('inv-re-biztype').value='';
-  document.getElementById('inv-re-company').value='';
+  invSetCompany('');
   document.getElementById('inv-re-company-wrap').style.display='none';
   document.getElementById('inv-re-owner').checked=false;
   document.getElementById('inv-re-owner-wrap').style.display='none';
@@ -8100,7 +8134,7 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-loginid').value=r.login_id||'';
   document.getElementById('inv-re-loginpw').value=r.login_pw||'';
   document.getElementById('inv-re-biztype').value=r.biz_type||'';
-  document.getElementById('inv-re-company').value=r.company||'';
+  invSetCompany(r.company||'');
   document.getElementById('inv-re-company-wrap').style.display=r.biz_type==='法人'?'block':'none';
   document.getElementById('inv-re-owner').checked=(r.permissions||'').split(',').includes('owner');
   document.getElementById('inv-re-owner-wrap').style.display=r.biz_type==='法人'?'block':'none';
@@ -8194,7 +8228,9 @@ async function invSaveRate(){
   const kwPattern=document.getElementById('inv-re-kw-pattern').value;
   const record={name,am_weekday:document.getElementById('inv-re-am-wd').value,am_weekend:document.getElementById('inv-re-am-we').value,am_sunday:document.getElementById('inv-re-am-sun').value,pm_weekday:document.getElementById('inv-re-pm-wd').value,pm_weekend:document.getElementById('inv-re-pm-we').value,pm_sunday:document.getElementById('inv-re-pm-sun').value,warehouse_am:document.getElementById('inv-re-wh-am').value,warehouse_pm:document.getElementById('inv-re-wh-pm').value,calc_type:document.getElementById('inv-re-calc').value,unit_price:document.getElementById('inv-re-unit').value,login_id:document.getElementById('inv-re-loginid').value,login_pw:document.getElementById('inv-re-loginpw').value,biz_type:document.getElementById('inv-re-biztype').value,company:document.getElementById('inv-re-company').value,calc_type_pm:document.getElementById('inv-re-calc-pm').value,unit_price_pm:document.getElementById('inv-re-unit-pm').value,permissions:perms,kw_am_daily:kwAmDaily.replace(/^,+$/,''),kw_pattern:kwPattern,monthly_salary:document.getElementById('inv-re-salary').value||'',invoice_number:document.getElementById('inv-re-invoice').value.trim(),rate_effective_from:document.getElementById('inv-re-effective').value||'',planner_allowance:document.getElementById('inv-re-planner').value||''};
   const isNewStaff=!rowNum;
-  await invApi({action:'save_rate',record,row_number:rowNum?parseInt(rowNum):undefined});
+  const saveRes=await invApi({action:'save_rate',record,row_number:rowNum?parseInt(rowNum):undefined});
+  // 保存エラー(会計マスタに無い会社名など)を黙って成功扱いにしない
+  if(!saveRes||saveRes.error){alert('保存できませんでした: '+((saveRes&&saveRes.error)||'不明'));return;}
   // 新規スタッフ時は人員名簿シートにも氏名のみで自動追加 (既存の同名行があればスキップ)
   if(isNewStaff){
     try{
