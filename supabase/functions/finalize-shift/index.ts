@@ -271,12 +271,33 @@ Deno.serve(async (req) => {
       const ko = calcKodate(course, isKeiba ? '競馬' : '夕刊/競馬'); if (!ko.shopCount) return 0; return up * ko.shopCount;
     };
 
+    // ── 拠点別の単価 (2026-10-22) ──
+    // get_rates が各行に site_rates を付けて返す。決まりは invoice-sheet の rateForDay・index.html の siteRateForDay と同じ。3か所を必ずそろえる
+    const SITE_RATE_FIELDS = ['am_weekday', 'am_weekend', 'am_sunday', 'pm_weekday', 'pm_weekend', 'pm_sunday', 'warehouse_am', 'warehouse_pm', 'calc_type', 'unit_price', 'calc_type_pm', 'unit_price_pm'];
+    const siteAreaOf = (course: unknown): string => {
+      const c = String(course ?? '').replace(/引継/g, '').trim();
+      if (c.startsWith('城北')) return '城北'; if (c.startsWith('川越')) return '川越';
+      if (c.startsWith('立川')) return '立川'; if (c.startsWith('川崎')) return '川崎高津';
+      return '';
+    };
+    const rateForDay = (rate: any, course: unknown, ymd: string): any => {
+      const list = rate?.site_rates;
+      if (!Array.isArray(list) || !list.length) return rate;
+      const area = siteAreaOf(course); if (!area) return rate;
+      const ym = ymd.slice(0, 7);
+      let best: any = null;
+      for (const s of list) { if (s.area !== area || (s.effective_from && s.effective_from > ym)) continue; if (!best || s.effective_from > best.effective_from) best = s; }
+      if (!best) return rate;
+      const out: any = { ...rate, kw_pattern: '', kw_am_daily: '', site_area: area };
+      for (const f of SITE_RATE_FIELDS) out[f] = best[f] ?? '';
+      if (!out.calc_type) out.calc_type = '固定';
+      return out;
+    };
+
     // ── 1名分の明細 (admPayBuildStatement 移植) ──
     const lastDay = new Date(y, m, 0).getDate();
-    const buildStatement = (rate: any) => {
-      const nk = invNormName(rate.name); const dayMap = staffShifts[nk] || {};
-      const isAmKodate = (rate.calc_type || '') === '個建', isPmKodate = ((rate.calc_type_pm || rate.calc_type) || '') === '個建';
-      const isAmQty = (rate.calc_type || '') === '個数', isPmQty = ((rate.calc_type_pm || rate.calc_type) || '') === '個数';
+    const buildStatement = (baseRate: any) => {
+      const nk = invNormName(baseRate.name); const dayMap = staffShifts[nk] || {};
       const rowsOut: any[] = []; let amSum = 0, pmSum = 0;
       for (let d = 1; d <= lastDay; d++) {
         const ymd = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -285,26 +306,30 @@ Deno.serve(async (req) => {
         let amAmount = 0;
         if (sh.am_course) {
           const isHi = isHikitsugi(sh.am_course); const bare = isHi ? stripHikitsugi(sh.am_course) : sh.am_course;
+          const rate = rateForDay(baseRate, bare, ymd);   // その日のコースの拠点の単価(無ければ基本)
+          const isAmKodate = (rate.calc_type || '') === '個建', isAmQty = (rate.calc_type || '') === '個数';
           if (isAmKodate && !bare.includes('庫内')) { const ko = calcKodateAm(bare, d, dowJp); amAmount = ko == null ? lookupRate(rate, dowJp, true, bare) : ko; }
           else if (isAmQty && !bare.includes('庫内')) { const qt = calcQtyAm(bare, rate); amAmount = qt == null ? lookupRate(rate, dowJp, true, bare) : qt; }
           else amAmount = lookupRate(rate, dowJp, true, bare);
           if (isHi) amAmount = Math.floor(amAmount / 2);
         }
-        amAmount = applySpecial(amAmount, ymd, rate.name, true);
+        amAmount = applySpecial(amAmount, ymd, baseRate.name, true);
         let pmAmount = 0;
         if (sh.pm_course) {
           const isHi = isHikitsugi(sh.pm_course); const bare = isHi ? stripHikitsugi(sh.pm_course) : sh.pm_course;
+          const rate = rateForDay(baseRate, bare, ymd);
+          const isPmKodate = ((rate.calc_type_pm || rate.calc_type) || '') === '個建', isPmQty = ((rate.calc_type_pm || rate.calc_type) || '') === '個数';
           if (isPmKodate && !bare.includes('庫内')) { const ko = calcKodatePm(bare, d, dowJp); pmAmount = ko == null ? lookupRate(rate, dowJp, false, bare) : ko; }
           else if (isPmQty && !bare.includes('庫内')) { const qt = calcQtyPm(bare, d, dowJp, rate); pmAmount = qt == null ? lookupRate(rate, dowJp, false, bare) : qt; }
           else pmAmount = lookupRate(rate, dowJp, false, bare);
           if (isHi) pmAmount = Math.floor(pmAmount / 2);
         }
-        pmAmount = applySpecial(pmAmount, ymd, rate.name, false);
+        pmAmount = applySpecial(pmAmount, ymd, baseRate.name, false);
         amSum += amAmount; pmSum += pmAmount;
         rowsOut.push({ d: `${String(m).padStart(2, '0')}月${String(d).padStart(2, '0')}日`, ymd, dow: dowJp, am_course: sh.am_course, am: amAmount, pm_course: sh.pm_course, pm: pmAmount, total: amAmount + pmAmount });
       }
       // 🧭 プランナー手当(単価マスタ 月額)。稼働のある月のみ加算。
-      const plannerAllowance = (amSum + pmSum) > 0 ? (Number(rate.planner_allowance) || 0) : 0;
+      const plannerAllowance = (amSum + pmSum) > 0 ? (Number(baseRate.planner_allowance) || 0) : 0;
       return { amSum, pmSum, plannerAllowance, grandTotal: amSum + pmSum + plannerAllowance, rows: rowsOut };
     };
 

@@ -253,7 +253,47 @@ function stripStaffPrivate(r: any) {
   return rest;
 }
 function stripPrices(r: any) {
-  return { ...r, unit_price: '', amount: '', am_weekday: '', am_weekend: '', pm_weekday: '', pm_weekend: '', warehouse_am: '', warehouse_pm: '', unit_price_pm: '', am_sunday: '', pm_sunday: '', monthly_salary: '', planner_allowance: '' };
+  return { ...r, unit_price: '', amount: '', am_weekday: '', am_weekend: '', pm_weekday: '', pm_weekend: '', warehouse_am: '', warehouse_pm: '', unit_price_pm: '', am_sunday: '', pm_sunday: '', monthly_salary: '', planner_allowance: '', site_rates: [] };
+}
+
+// ── 拠点別の単価 (2026-10-22) ─────────────────────────────────────────
+// 表 shift_site_rates(service_role のみ)。単価の各行に site_rates:[...] として付けて配る。
+// 計算の決まりは rateForDay(下)。同じ決まりが index.html(siteRateForDay)と finalize-shift にもある。3か所を必ずそろえる。
+const SITE_RATE_FIELDS = ['am_weekday','am_weekend','am_sunday','pm_weekday','pm_weekend','pm_sunday','warehouse_am','warehouse_pm','calc_type','unit_price','calc_type_pm','unit_price_pm'];
+const SITE_AREAS = ['城北','川越','立川','川崎高津'];
+const normStaff = (s: unknown) => String(s ?? '').replace(/[\s　]+/g, '');
+async function loadSiteRates(): Promise<Map<string, any[]>> {
+  const SB_URL = Deno.env.get('SUPABASE_URL') || '', SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const r = await fetch(`${SB_URL}/rest/v1/shift_site_rates?select=*&order=effective_from.asc`, { headers: { apikey: SRK, Authorization: `Bearer ${SRK}` } });
+  // 🚨 読めなかったら黙って基本の単価で計算しない(拠点別の人の支払いが静かに変わる)。呼び出し側でエラーにする
+  if (!r.ok) throw new Error('拠点別の単価を読めませんでした: ' + r.status);
+  const m = new Map<string, any[]>();
+  for (const s of (await r.json()) as any[]) { const k = normStaff(s.staff_name); const a = m.get(k); if (a) a.push(s); else m.set(k, [s]); }
+  return m;
+}
+async function attachSiteRates(rates: any[]): Promise<any[]> {
+  const m = await loadSiteRates();
+  return rates.map((r: any) => ({ ...r, site_rates: m.get(normStaff(r.name)) || [] }));
+}
+function siteAreaOf(course: unknown): string {
+  const c = String(course ?? '').replace(/引継/g, '').trim();
+  if (c.startsWith('城北')) return '城北'; if (c.startsWith('川越')) return '川越';
+  if (c.startsWith('立川')) return '立川'; if (c.startsWith('川崎')) return '川崎高津';
+  return '';
+}
+/** その日・そのコースで使う単価。拠点別の単価があれば一式を差し替える(空欄は空欄)。無ければ基本の単価そのまま */
+function rateForDay(rate: any, course: unknown, ymd: unknown): any {
+  const list = rate?.site_rates;
+  if (!Array.isArray(list) || !list.length) return rate;
+  const area = siteAreaOf(course); if (!area) return rate;
+  const ym = String(ymd ?? '').replace(/\//g, '-').slice(0, 7);
+  let best: any = null;
+  for (const s of list) { if (s.area !== area || (s.effective_from && s.effective_from > ym)) continue; if (!best || s.effective_from > best.effective_from) best = s; }
+  if (!best) return rate;
+  const out: any = { ...rate, kw_pattern: '', kw_am_daily: '', site_area: area };
+  for (const f of SITE_RATE_FIELDS) out[f] = best[f] ?? '';
+  if (!out.calc_type) out.calc_type = '固定';
+  return out;
 }
 // 指定メンバー(name)自身の行が permissions に 'show_money' (=本人に金額表示) を持つか
 function memberShowsMoney(rates: any[], name: string): boolean {
@@ -565,7 +605,9 @@ Deno.serve(async(req:Request)=>{
       const is_corp_sub = biz_type === '法人' && !is_owner;
       // permissions に 'admin' があれば EF レベルでも admin 扱い
       const tokenRole = has_admin ? 'admin' : 'staff';
-      const allRates = parseRates(rateRows);
+      // 拠点別の単価も付ける(稼働記録の金額の自動入力で使う)。読めなくてもログインは止めない(基本の単価で表示)
+      let allRates = parseRates(rateRows);
+      try{ allRates = await attachSiteRates(allRates); }catch(_e){ /* noop */ }
       // 金額表示: 明細を明示×にした人は必ず非表示。それ以外は従来(corp-subはshow_money) or 明細許可。
       const toolMoney = is_corp_sub ? permList.includes('show_money') : true;
       const company_shows_money = meisaiChk?.reason === 'explicit_deny' ? false : ((meisaiChk?.allowed ?? true) || toolMoney);
@@ -962,7 +1004,9 @@ Deno.serve(async(req:Request)=>{
         fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPECIAL_SHEET_ID}/values/${encodeURIComponent(SPECIAL_SHEET_NAME)}!A2:J5000`,{headers:{'Authorization':`Bearer ${token}`}}),
         fetchKawagoeCourseRows(token),
       ]);
-      const rates = parseRates(await sheetVals(rRes));
+      let rates: any[];
+      try{ rates = await attachSiteRates(parseRates(await sheetVals(rRes))); }
+      catch(e){ return jsonResp({error:String((e as any)?.message||e)},503); }
       const work = parseWork(await sheetVals(wRes));
       // 川越コース別単価マスタ (旧/新) を course→曜日単価 のMapに。朝刊のコース別自動単価に使う。
       const dowKey = ['sun','mon','tue','wed','thu','fri','sat'];
@@ -992,9 +1036,10 @@ Deno.serve(async(req:Request)=>{
       let skipKodate=0, skipKw=0, skipConf=0, skipEff=0, noRate=0, skipNonzero=0;
       for(const w of work){
         if(!w.staff) continue;
-        const rate = rateByName.get(w.staff); if(!rate){ noRate++; continue; }
+        const baseRate = rateByName.get(w.staff); if(!baseRate){ noRate++; continue; }
         if((w.confirmed||'').toString().trim()){ skipConf++; continue; }
-        const eff = (rate.rate_effective_from||'').replace(/\//g,'-');
+        const eff = (baseRate.rate_effective_from||'').replace(/\//g,'-');
+        const rate = rateForDay(baseRate, w.course, w.date);   // 拠点別の単価があればその拠点の一式
         if(eff && (w.date||'').replace(/\//g,'-') < eff){ skipEff++; continue; }
         const cat = mapCat(w.category);
         const courseV = w.course||'';
@@ -1291,13 +1336,44 @@ Deno.serve(async(req:Request)=>{
       let rateRows: any[];
       try{ rateRows = await fetchSheetValuesWithRetry('単価マスタ!2:200', async()=>sheetsToken); }
       catch(e){ return jsonResp({error:'単価マスタの取得に失敗しました(Sheets一時エラー)。少し待って再実行してください。', detail:String((e as any)?.message||e)}, 503); }
-      const all = parseRates(rateRows);
+      let all: any[];
+      try{ all = await attachSiteRates(parseRates(rateRows)); }
+      catch(e){ return jsonResp({error:'拠点別の単価の取得に失敗しました。少し待って再実行してください。', detail:String((e as any)?.message||e)}, 503); }
       if (admin) return jsonResp({rates: all});
       // staff/owner: scopeNames に含まれる行のみ。corp-sub は金額系も剥がす (自社オーナーが show_money ON なら剥がさない=ライブ判定)
       const csm = !corpSub || memberShowsMoney(all, callerName);
       const scope = await getScopeNames();
       const out = all.filter((r:any)=>scope.has(r.name)).map((r:any)=> (corpSub && !csm) ? stripPrices(stripStaffPrivate(r)) : stripStaffPrivate(r));
       return jsonResp({rates: out, company_shows_money: csm});
+    }
+    // ── 拠点別の単価の保存・削除(管理者のみ) ──
+    if(action==='save_site_rate'){
+      if(!admin) return forbid();
+      const s = body.site_rate || {};
+      const staff = String(s.staff_name||'').trim();
+      if(!staff) return jsonResp({error:'staff_name required'},400);
+      if(!SITE_AREAS.includes(s.area)) return jsonResp({error:'拠点が正しくありません'},400);
+      if(!/^\d{4}-\d{2}$/.test(String(s.effective_from||''))) return jsonResp({error:'「何月分から」を YYYY-MM で入れてください'},400);
+      const row: any = { staff_name: staff, area: s.area, effective_from: s.effective_from, note: s.note ?? null, updated_by: callerName || 'admin', updated_at: new Date().toISOString() };
+      for (const f of SITE_RATE_FIELDS) row[f] = String(s[f] ?? '').replace(/[,，¥￥\s]/g, '');
+      if (!['固定','個建','個数'].includes(row.calc_type)) row.calc_type = '固定';
+      if (!['','固定','個建','個数'].includes(row.calc_type_pm)) row.calc_type_pm = '';
+      const SB_URL=Deno.env.get('SUPABASE_URL')||'', SRK=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'';
+      const H = { apikey: SRK, Authorization: `Bearer ${SRK}`, 'Content-Type': 'application/json', Prefer: 'return=representation' };
+      let res: Response;
+      if (s.id) res = await fetch(`${SB_URL}/rest/v1/shift_site_rates?id=eq.${encodeURIComponent(s.id)}`, { method: 'PATCH', headers: H, body: JSON.stringify(row) });
+      else res = await fetch(`${SB_URL}/rest/v1/shift_site_rates?on_conflict=staff_name,area,effective_from`, { method: 'POST', headers: { ...H, Prefer: 'return=representation,resolution=merge-duplicates' }, body: JSON.stringify(row) });
+      if (!res.ok) return jsonResp({error:'保存できませんでした: '+(await res.text()).slice(0,300)},500);
+      return jsonResp({success:true, site_rate:(await res.json())[0]});
+    }
+    if(action==='delete_site_rate'){
+      if(!admin) return forbid();
+      const id = String(body.id||'');
+      if(!id) return jsonResp({error:'id required'},400);
+      const SB_URL=Deno.env.get('SUPABASE_URL')||'', SRK=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'';
+      const res = await fetch(`${SB_URL}/rest/v1/shift_site_rates?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE', headers: { apikey: SRK, Authorization: `Bearer ${SRK}` } });
+      if (!res.ok) return jsonResp({error:'削除できませんでした: '+(await res.text()).slice(0,300)},500);
+      return jsonResp({success:true});
     }
     if(action==='save_rate'){
       if(!admin) return forbid();

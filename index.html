@@ -615,6 +615,14 @@ tbody tr:hover { background:var(--primary-light); }
         <div style="margin-bottom:10px;display:none;" id="inv-re-salary-wrap"><label style="font-size:12px;color:var(--text-sub)">月給 (円)</label><input type="number" id="inv-re-salary" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: 280000" min="0" step="1000"><div style="font-size:11px;color:var(--text-sub);margin-top:3px;">収支管理画面で「社員の給料」として集計されます</div></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">インボイス登録番号</label><input type="text" id="inv-re-invoice" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;" placeholder="例: T1234567890123 (適格請求書発行事業者)"><div style="font-size:11px;color:var(--text-sub);margin-top:3px;">登録あり=外税表記、なし=内税表記で請求書を生成</div></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">単価適用日（この日から現在の単価）</label><input type="date" id="inv-re-effective" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><div style="font-size:11px;color:var(--text-sub);margin-top:3px;">途中で単価が変わった時の境目。「🔄金額を再計算」はこの日より前の稼働を上書きしません（空=全期間に適用）</div></div>
+        <!-- 拠点別の単価 (2026-10-22)。表 shift_site_rates。計算の決まりは siteRateForDay -->
+        <div id="inv-re-site-wrap" style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px;display:none;">
+          <label style="font-size:13px;color:var(--primary);font-weight:600;">🏢 拠点別の単価</label>
+          <div style="font-size:11px;color:var(--text-sub);margin:4px 0 8px;line-height:1.6;">拠点をまたいで働く人だけ登録します。その日のコースの拠点に単価があればその一式（計算のしかたも含む）で計算し、無ければ上の基本の単価で計算します。登録した拠点の日は、川越のコース別・曜日別単価は使いません。空欄は0円です。</div>
+          <div id="inv-re-site-list"></div>
+          <button type="button" onclick="invSiteRateOpen(null)" style="margin-top:6px;background:#fff;border:1px dashed var(--primary);color:var(--primary);padding:6px 12px;border-radius:8px;font-size:13px;cursor:pointer;">＋ 拠点別の単価を追加</button>
+          <div id="inv-re-site-form" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#f8fafc;"></div>
+        </div>
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">ログイン情報</label></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">ログインID</label><input type="text" id="inv-re-loginid" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">パスワード</label><input type="text" id="inv-re-loginpw" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
@@ -2038,6 +2046,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-10-22', tag:'新機能', title:'拠点をまたいで働く人に「拠点別の単価」を登録できるようになりました',
+   desc:'スタッフ管理の単価編集に「🏢 拠点別の単価」を追加しました。城北・川越・立川・川崎高津ごとに、単価一式（朝刊・夕刊・庫内の金額と、計算のしかた＝固定／個建／個数）と「何月分から使うか」を登録できます。支払いの計算では、その日のコースから拠点を判断し、その拠点の単価があればその一式で、無ければ今までの基本の単価で計算します（支払明細・自動確定・稼働記録の金額の自動入力・金額の再計算のすべて同じ決まり）。登録した拠点の日は、川越のコース別・曜日別の単価は使いません。空欄は0円です。確定済みの月の支払いは変わりません。支払明細の金額にマウスを乗せると「立川の単価」のように、どの拠点の単価で計算したかが出ます。'},
   {date:'2026-10-22', tag:'修正', title:'スタッフ管理で社員以外にも「🔧 管理画面」の権限を付けられるようにしました',
    desc:'区分が「社員」の人は自動で管理画面に入れるため、6月にチェック欄を隠していました。そのせいで、業務委託の責任者など社員以外の人に新しく管理画面の権限を付けられなくなっていました。区分が社員以外のときは、アクセス権限に「🔧 管理画面」のチェック欄が出ます。社員は今までどおり自動です。'},
   {date:'2026-10-19', tag:'改善', title:'所属会社名は会計マスタの名前からしか選べなくなりました（＋法人新規登録）',
@@ -7554,8 +7564,9 @@ function invMapCat(cat){
 }
 // 入力時(invSaveWork)と同一ロジックで単価・金額を算出する純粋関数 (再計算で使用)
 function invComputeRow(staff,dateStr,course,category,qty){
-  const rate=invRates.find(r=>r.name===staff);
-  if(!rate)return {price:0,amount:0,noRate:true};
+  const baseRate=invRates.find(r=>r.name===staff);
+  if(!baseRate)return {price:0,amount:0,noRate:true};
+  const rate=siteRateForDay(baseRate,course,dateStr);   // 拠点別の単価があればその拠点の一式
   const cat=invMapCat(category);
   const d=new Date((dateStr||'').replace(/\//g,'-'));const dow=d.getDay();
   const courseV=course||'';
@@ -7708,8 +7719,9 @@ function invCalcAmount(){
   const staff=document.getElementById('inve-staff').value;
   const date=document.getElementById('inve-date').value;
   if(!staff||!date){document.getElementById('inve-price').value='';document.getElementById('inve-amount').value='';return;}
-  const rate=invRates.find(r=>r.name===staff);
-  if(!rate){document.getElementById('inve-price').value='未設定';document.getElementById('inve-amount').value='';return;}
+  const baseRate=invRates.find(r=>r.name===staff);
+  if(!baseRate){document.getElementById('inve-price').value='未設定';document.getElementById('inve-amount').value='';return;}
+  const rate=siteRateForDay(baseRate,document.getElementById('inve-course').value||'',date);   // 拠点別の単価
   const d=new Date(date);
   const dow=d.getDay();// 0=Sun
   let price=0;
@@ -7887,7 +7899,8 @@ async function invSaveWork(){
   // 単価マスタ(invRates)未読込のまま保存すると金額が0になるため、必ず読み込んでから計算する
   // (「3秒待つ」等の曖昧な遅延では回線次第で取りこぼす。確実に取得を待つのが正解)
   if(!invRates.length){ try{ const rr=await invApi({action:'get_rates'}); if(rr&&rr.rates)invRates=rr.rates; }catch(_){} }
-  const rate=invRates.find(r=>r.name===staff);
+  const baseRate=invRates.find(r=>r.name===staff);
+  const rate=baseRate?siteRateForDay(baseRate,document.getElementById('inve-course').value||'',date):null;   // 拠点別の単価
   const d=new Date(date);const dow=d.getDay();
   let price=0,amount=0;
   if(rate){
@@ -8084,6 +8097,7 @@ function invAddRate(){
   invRateTab('normal');
   document.getElementById('inv-re-delete-btn').style.display='none';
   invJinNewFields(true);
+  document.getElementById('inv-re-site-wrap').style.display='none';   // 拠点別の単価は登録した後に足す
   document.getElementById('inv-rate-edit').style.display='flex';
 }
 
@@ -8163,7 +8177,70 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-perm-defects').checked=permStr.includes('defects');
   document.getElementById('inv-re-perm-shopmaster').checked=permStr.includes('shopmaster');
   document.getElementById('inv-re-perm-shiftedit').checked=permStr.includes('shiftedit');
+  invSiteRateRender(r);
   document.getElementById('inv-rate-edit').style.display='flex';
+}
+
+// ── 拠点別の単価の登録 (2026-10-22) ───────────────────────────────
+let invSiteStaff='';
+const SITE_FORM_PRICES=[['am_weekday','朝刊 平日'],['am_weekend','朝刊 土'],['am_sunday','朝刊 日'],['pm_weekday','夕刊 月〜木'],['pm_weekend','夕刊 金土'],['pm_sunday','夕刊 日'],['warehouse_am','庫内 朝'],['warehouse_pm','庫内 夕'],['unit_price','個数単価 朝'],['unit_price_pm','個数単価 夕']];
+function invSiteRateRender(r){
+  invSiteStaff=r.name;
+  document.getElementById('inv-re-site-wrap').style.display='block';
+  document.getElementById('inv-re-site-form').style.display='none';
+  const list=(r.site_rates||[]).slice().sort((a,b)=>(a.area+a.effective_from).localeCompare(b.area+b.effective_from));
+  const yen=v=>v?'¥'+Number(v).toLocaleString():'-';
+  document.getElementById('inv-re-site-list').innerHTML=list.length?list.map(s=>{
+    const calc=(s.calc_type||'固定')+(s.calc_type_pm&&s.calc_type_pm!==s.calc_type?' / 夕 '+s.calc_type_pm:'');
+    return `<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;">`
+      +`<div style="display:flex;justify-content:space-between;align-items:center;"><b>${admSpEsc(s.area)}</b><span style="color:var(--text-sub);">${admSpEsc(s.effective_from)}分から・${admSpEsc(calc)}</span></div>`
+      +`<div style="color:var(--text-sub);margin-top:3px;line-height:1.6;">朝 ${yen(s.am_weekday)}/${yen(s.am_weekend)}/${yen(s.am_sunday)}　夕 ${yen(s.pm_weekday)}/${yen(s.pm_weekend)}/${yen(s.pm_sunday)}　庫内 ${yen(s.warehouse_am)}/${yen(s.warehouse_pm)}${(s.unit_price||s.unit_price_pm)?'　個数 '+yen(s.unit_price)+'/'+yen(s.unit_price_pm):''}</div>`
+      +`<div style="margin-top:4px;text-align:right;"><button type="button" onclick="invSiteRateOpen('${s.id}')" style="background:none;border:none;color:var(--primary);cursor:pointer;font-size:12px;">✏️ 直す</button>`
+      +`<button type="button" onclick="invSiteRateDelete('${s.id}')" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:12px;margin-left:8px;">🗑 消す</button></div></div>`;
+  }).join(''):'<div style="font-size:12px;color:var(--text-sub);">登録はありません（どの拠点でも基本の単価で計算します）。</div>';
+}
+function invSiteRateOpen(id){
+  const r=invRates.find(x=>x.name===invSiteStaff)||{};
+  const s=id?(r.site_rates||[]).find(x=>x.id===id):null;
+  const now=new Date();const nextYm=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const v=f=>admSpEsc(String((s&&s[f])||''));
+  const calcSel=(id,cur,allowBlank)=>`<select id="${id}" style="padding:6px;border:1px solid var(--border);border-radius:6px;">${allowBlank?`<option value="" ${!cur?'selected':''}>朝と同じ</option>`:''}${['固定','個建','個数'].map(c=>`<option ${cur===c?'selected':''}>${c}</option>`).join('')}</select>`;
+  const f=document.getElementById('inv-re-site-form');
+  f.innerHTML=`<input type="hidden" id="inv-site-id" value="${s?s.id:''}">`
+    +`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">`
+    +`<label style="font-size:12px;">拠点<br><select id="inv-site-area" style="padding:6px;border:1px solid var(--border);border-radius:6px;">${SITE_AREAS.map(a=>`<option ${s&&s.area===a?'selected':''}>${a}</option>`).join('')}</select></label>`
+    +`<label style="font-size:12px;">何月分から<br><input type="month" id="inv-site-from" value="${s?v('effective_from'):nextYm}" style="padding:5px;border:1px solid var(--border);border-radius:6px;"></label>`
+    +`<label style="font-size:12px;">計算（朝刊）<br>${calcSel('inv-site-calc',(s&&s.calc_type)||'固定',false)}</label>`
+    +`<label style="font-size:12px;">計算（夕刊）<br>${calcSel('inv-site-calc-pm',(s&&s.calc_type_pm)||'',true)}</label>`
+    +`</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;">`
+    +SITE_FORM_PRICES.map(([k,l])=>`<label style="font-size:11px;color:var(--text-sub);">${l}<input type="number" id="inv-site-${k}" value="${v(k)}" min="0" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;font-size:13px;"></label>`).join('')
+    +`</div><div style="font-size:11px;color:var(--text-sub);margin-top:6px;">個建は店舗マスタから計算するので金額欄は使いません（庫内の日だけ庫内の単価を使います）。個数は「個数単価」×店数です。</div>`
+    +`<div style="display:flex;gap:8px;margin-top:8px;"><button type="button" onclick="invSiteRateSave()" style="flex:1;background:var(--primary);color:#fff;border:none;padding:8px;border-radius:8px;font-weight:bold;cursor:pointer;">この拠点の単価を保存</button>`
+    +`<button type="button" onclick="document.getElementById('inv-re-site-form').style.display='none'" style="background:#fff;border:1px solid var(--border);padding:8px 12px;border-radius:8px;cursor:pointer;">やめる</button></div>`;
+  f.style.display='block';
+}
+async function invSiteReload(){
+  const rr=await invApi({action:'get_rates'});
+  if(!rr||!rr.rates){alert('単価を読み直せませんでした: '+((rr&&rr.error)||''));return;}
+  invRates=rr.rates;
+  const r=invRates.find(x=>x.name===invSiteStaff);if(r)invSiteRateRender(r);
+}
+async function invSiteRateSave(){
+  const site_rate={id:document.getElementById('inv-site-id').value||undefined,staff_name:invSiteStaff,
+    area:document.getElementById('inv-site-area').value,effective_from:document.getElementById('inv-site-from').value,
+    calc_type:document.getElementById('inv-site-calc').value,calc_type_pm:document.getElementById('inv-site-calc-pm').value};
+  SITE_FORM_PRICES.forEach(([k])=>{site_rate[k]=document.getElementById('inv-site-'+k).value;});
+  if(!/^\d{4}-\d{2}$/.test(site_rate.effective_from)){alert('「何月分から」を選んでください');return;}
+  if(!confirm(`${invSiteStaff} の「${site_rate.area}」の単価を ${site_rate.effective_from} 分から使います。\n\n確定済みの月の支払いは変わりません。よろしいですか？`))return;
+  const res=await invApi({action:'save_site_rate',site_rate});
+  if(!res||res.error){alert('保存できませんでした: '+((res&&res.error)||'不明'));return;}
+  await invSiteReload();
+}
+async function invSiteRateDelete(id){
+  if(!confirm('この拠点別の単価を消しますか？\n消すと、その拠点の日も基本の単価で計算します（確定済みの月は変わりません）。'))return;
+  const res=await invApi({action:'delete_site_rate',id});
+  if(!res||res.error){alert('消せませんでした: '+((res&&res.error)||'不明'));return;}
+  await invSiteReload();
 }
 
 async function invDeleteRate(){
@@ -10271,6 +10348,7 @@ function adminRenderStaff(){
     // 社員は自動で管理者扱い
     const isEmployeeAdmin = r.biz_type === '社員';
     if(isEmployeeAdmin || ps.includes('admin'))permTags.push('<span style="background:#fdf4ff;color:#7c3aed;padding:1px 6px;border-radius:8px;font-size:10px;">管理'+(isEmployeeAdmin?'(自動)':'')+'</span>');
+    if(Array.isArray(r.site_rates)&&r.site_rates.length)permTags.push('<span title="拠点別の単価: '+admSpEsc([...new Set(r.site_rates.map(s=>s.area))].join('・'))+'" style="background:#e0f2fe;color:#075985;padding:1px 6px;border-radius:8px;font-size:10px;">拠点別単価</span>');
     if(ps.includes('defects'))permTags.push('<span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:8px;font-size:10px;">不具合</span>');
     if(ps.includes('shopmaster'))permTags.push('<span style="background:#dcfce7;color:#166534;padding:1px 6px;border-radius:8px;font-size:10px;">店舗</span>');
     if(ps.includes('shiftedit'))permTags.push('<span style="background:#ede9fe;color:#6d28d9;padding:1px 6px;border-radius:8px;font-size:10px;">シフト編集</span>');
@@ -17317,6 +17395,26 @@ function admBillPrint(){
 // 単価マスタの曜日別単価を取得
 // dow: '月'..'日'  isAm: true=朝刊, false=夕刊/競馬
 // courseName: コース名 (庫内系は warehouse_am/pm を使用)
+// ── 拠点別の単価 (2026-10-22) ──
+// 単価(get_rates)の各行に site_rates:[{area,effective_from,am_weekday,...}] が付いてくる(表 shift_site_rates)。
+// その日のコースから拠点を判断し、その人にその拠点の単価があれば「一式」をまるごと差し替える(空欄は空欄)。
+// 無ければ基本の単価のまま。🚨 同じ決まりが invoice-sheet(rateForDay)と finalize-shift にもある。3か所を必ずそろえる
+const SITE_RATE_FIELDS=['am_weekday','am_weekend','am_sunday','pm_weekday','pm_weekend','pm_sunday','warehouse_am','warehouse_pm','calc_type','unit_price','calc_type_pm','unit_price_pm'];
+const SITE_AREAS=['城北','川越','立川','川崎高津'];
+function siteAreaOfCourse(course){return areaOfCourse(String(course||'').replace(/引継/g,'').trim());}
+function siteRateForDay(rate,course,ymd){
+  const list=rate&&rate.site_rates;
+  if(!Array.isArray(list)||!list.length)return rate;
+  const area=siteAreaOfCourse(course);if(!area)return rate;
+  const ym=String(ymd||'').replace(/\//g,'-').slice(0,7);
+  let best=null;
+  for(const s of list){if(s.area!==area||(s.effective_from&&s.effective_from>ym))continue;if(!best||s.effective_from>best.effective_from)best=s;}
+  if(!best)return rate;
+  const out={...rate,kw_pattern:'',kw_am_daily:'',site_area:area};
+  SITE_RATE_FIELDS.forEach(f=>{out[f]=best[f]??'';});
+  if(!out.calc_type)out.calc_type='固定';
+  return out;
+}
 function admPayLookupRate(rate,dow,isAm,courseName){
   if(!rate)return 0;
   const course=courseName||'';
@@ -17763,13 +17861,9 @@ function admPayBuildStatementHtml(rate,y,m,monthLabel,monthVal){
   return admPayBuildStatement(rate,y,m,monthLabel,monthVal).html;
 }
 // 詳細版: HTML + 集計値を返す (サマリーページや会社別グルーピング用)
-function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
-  const staffName=rate.name;
+function admPayBuildStatement(baseRate,y,m,monthLabel,monthVal){
+  const staffName=baseRate.name;
   const dayMap=admPayCollectStaffShifts(monthLabel,staffName);
-  const isAmKodate=(rate.calc_type||'')==='個建';
-  const isPmKodate=((rate.calc_type_pm||rate.calc_type)||'')==='個建';
-  const isAmQty=(rate.calc_type||'')==='個数';
-  const isPmQty=((rate.calc_type_pm||rate.calc_type)||'')==='個数';
   const billCond=getBillConditions(monthVal);
 
   const lastDay=new Date(y,m,0).getDate();
@@ -17784,6 +17878,9 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
     if(sh.am_course){
       const isHi=admPayIsHikitsugi(sh.am_course);
       const bare=isHi?admPayStripHikitsugi(sh.am_course):sh.am_course;
+      const rate=siteRateForDay(baseRate,bare,ymd);   // その日のコースの拠点の単価(無ければ基本)
+      const isAmKodate=(rate.calc_type||'')==='個建';
+      const isAmQty=(rate.calc_type||'')==='個数';
       if(isAmKodate&&!bare.includes('庫内')){
         const ko=admPayCalcKodateAm(bare,d,dowJp,billCond);
         if(ko){amAmount=ko.amount;amDetail=ko.detail;}
@@ -17796,6 +17893,7 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
         amAmount=admPayLookupRate(rate,dowJp,true,bare);
       }
       if(isHi){amAmount=Math.floor(amAmount/2);amDetail=(amDetail?amDetail+' / ':'')+'引継半額';}
+      if(rate.site_area)amDetail=(amDetail?amDetail+' / ':'')+rate.site_area+'の単価';
     }
     // 特別単価 (日当/日当+) を適用 (シフトが無い日でも特別単価だけある場合があり得るので常に呼ぶ)
     {const r=admPayApplySpecial(amAmount,amDetail,ymd,staffName,true);amAmount=r.amount;amDetail=r.detail;}
@@ -17803,6 +17901,9 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
     if(sh.pm_course){
       const isHi=admPayIsHikitsugi(sh.pm_course);
       const bare=isHi?admPayStripHikitsugi(sh.pm_course):sh.pm_course;
+      const rate=siteRateForDay(baseRate,bare,ymd);
+      const isPmKodate=((rate.calc_type_pm||rate.calc_type)||'')==='個建';
+      const isPmQty=((rate.calc_type_pm||rate.calc_type)||'')==='個数';
       if(isPmKodate&&!bare.includes('庫内')){
         const ko=admPayCalcKodatePm(bare,d,dowJp,billCond);
         if(ko){pmAmount=ko.amount;pmDetail=ko.detail;}
@@ -17815,13 +17916,14 @@ function admPayBuildStatement(rate,y,m,monthLabel,monthVal){
         pmAmount=admPayLookupRate(rate,dowJp,false,bare);
       }
       if(isHi){pmAmount=Math.floor(pmAmount/2);pmDetail=(pmDetail?pmDetail+' / ':'')+'引継半額';}
+      if(rate.site_area)pmDetail=(pmDetail?pmDetail+' / ':'')+rate.site_area+'の単価';
     }
     {const r=admPayApplySpecial(pmAmount,pmDetail,ymd,staffName,false);pmAmount=r.amount;pmDetail=r.detail;}
     amSum+=amAmount;pmSum+=pmAmount;
     rows.push({d:`${String(m).padStart(2,'0')}月${String(d).padStart(2,'0')}日`,ymd,dow:dowJp,am_course:sh.am_course,am:amAmount,am_detail:amDetail,pm_course:sh.pm_course,pm:pmAmount,pm_detail:pmDetail,total:amAmount+pmAmount});
   }
   // 🧭 プランナー手当 (単価マスタの月額)。稼働のある月のみ加算 (無稼働の月に手当だけ発生させない)
-  const plannerAllowance=(amSum+pmSum)>0?(Number(rate.planner_allowance)||0):0;
+  const plannerAllowance=(amSum+pmSum)>0?(Number(baseRate.planner_allowance)||0):0;
   const grandTotal=amSum+pmSum+plannerAllowance;
   const reiwa=y-2018;
   const era=reiwa>=1?`令和${reiwa===1?'元':reiwa}年`:`西暦${y}年`;
