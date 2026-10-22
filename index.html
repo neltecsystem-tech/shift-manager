@@ -608,7 +608,7 @@ tbody tr:hover { background:var(--primary-light); }
             <p style="font-size:12px;color:#c2410c;margin:0;background:#fff7ed;padding:6px 8px;border-radius:4px;">⚠ <b>夕刊/競馬は自動適用されません。</b>通常タブの夕刊単価を必ず設定してください。</p>
           </div>
         </div>
-        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-owner-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-showmoney-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-salary-wrap').style.display=this.value==='社員'?'block':'none';document.getElementById('inv-re-admin-auto').style.display=this.value==='社員'?'block':'none';" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人・屋号有</option><option value="社員">社員</option></select></div>
+        <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">区分</label><select id="inv-re-biztype" onchange="document.getElementById('inv-re-company-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-owner-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-showmoney-wrap').style.display=this.value==='法人'?'block':'none';document.getElementById('inv-re-salary-wrap').style.display=this.value==='社員'?'block':'none';document.getElementById('inv-re-admin-auto').style.display=this.value==='社員'?'block':'none';document.getElementById('inv-re-perm-admin-wrap').style.display=this.value==='社員'?'none':'flex';" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">未設定</option><option value="個人">個人事業主</option><option value="法人">法人・屋号有</option><option value="社員">社員</option></select></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-company-wrap"><label style="font-size:12px;color:var(--text-sub)">所属会社名</label><div style="display:flex;gap:6px;"><select id="inv-re-company" onchange="invCompanyPicked()" style="flex:1;min-width:0;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"><option value="">読み込み中...</option></select><button type="button" onclick="invRegisterCompany()" style="white-space:nowrap;background:#fff;color:var(--primary);border:1px solid var(--primary);padding:6px 10px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;">＋法人新規登録</button></div><div id="inv-re-company-hint" style="font-size:11px;color:var(--text-sub);margin-top:4px;">会計マスタの正式名称から選んでください（表記ゆれ防止）</div></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-owner-wrap"><label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;background:#fef9c3;border:1px solid #facc15;border-radius:8px;padding:8px 12px;"><input type="checkbox" id="inv-re-owner"> 👑 オーナー (法人代表者)</label><div style="font-size:11px;color:var(--text-sub);margin-top:3px;padding-left:4px;">チェックなしの法人メンバーは稼働登録・請求書で金額が非表示になります</div></div>
         <div style="margin-bottom:10px;display:none;" id="inv-re-showmoney-wrap"><label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;background:#dcfce7;border:1px solid #22c55e;border-radius:8px;padding:8px 12px;"><input type="checkbox" id="inv-re-showmoney"> 💰 配下メンバーにも金額を表示する</label><div style="font-size:11px;color:var(--text-sub);margin-top:3px;padding-left:4px;">オーナーがONにすると、同じ所属会社の法人メンバーにも単価・金額が表示されます（既定OFF＝非表示）。オーナー行のみ有効。</div></div>
@@ -623,7 +623,7 @@ tbody tr:hover { background:var(--primary-light); }
           ⚙️ <b>区分が「社員」</b> の場合、 自動的に管理者権限 (全機能アクセス可) が付与されます。 個別チェックは不要です。
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;">
-          <label style="display:none;align-items:center;gap:6px;font-size:13px;" id="inv-re-perm-admin-wrap"><input type="checkbox" id="inv-re-perm-admin"> 🔧 管理画面 <span style="color:var(--text-sub);font-size:11px;">(旧式・社員は自動付与)</span></label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;" id="inv-re-perm-admin-wrap"><input type="checkbox" id="inv-re-perm-admin"> 🔧 管理画面 <span style="color:var(--text-sub);font-size:11px;">(社員以外に付与するとき。社員は自動)</span></label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-defects"> 🔧 不具合管理</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-shopmaster"> 🏪 店舗マスタ</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-shiftedit"> 📝 シフト編集</label>
@@ -2038,6 +2038,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-10-22', tag:'修正', title:'スタッフ管理で社員以外にも「🔧 管理画面」の権限を付けられるようにしました',
+   desc:'区分が「社員」の人は自動で管理画面に入れるため、6月にチェック欄を隠していました。そのせいで、業務委託の責任者など社員以外の人に新しく管理画面の権限を付けられなくなっていました。区分が社員以外のときは、アクセス権限に「🔧 管理画面」のチェック欄が出ます。社員は今までどおり自動です。'},
   {date:'2026-10-19', tag:'改善', title:'所属会社名は会計マスタの名前からしか選べなくなりました（＋法人新規登録）',
    desc:'スタッフ管理の単価編集で、所属会社名を自由に入力できなくしました。会計ツールの取引先マスタにある名前を一覧から選びます（表記ゆれで、明細ビューアに同じ会社が2つ出ていたため）。一覧に無い会社は「＋法人新規登録」で会計マスタに仮登録すると、すぐ（仮）として選べます。会計で正式名に直して正式登録すると、単価マスタの会社欄も自動で正式名に置き換わります。今の値が会計マスタに無い古い表記の方は「⚠」付きで表示されるので、選び直してください。'},
   {date:'2026-10-19', tag:'新機能', title:'スタッフ管理に「📵 電話番号の相違を確認」を追加しました',
@@ -8064,6 +8066,7 @@ function invAddRate(){
   document.getElementById('inv-re-salary').value='';
   document.getElementById('inv-re-salary-wrap').style.display='none';
   document.getElementById('inv-re-admin-auto').style.display='none';
+  document.getElementById('inv-re-perm-admin-wrap').style.display='flex';
   document.getElementById('inv-re-invoice').value='';
   document.getElementById('inv-re-effective').value='';
   invUpdateNameSelect('',true);
@@ -8143,6 +8146,8 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-salary').value=r.monthly_salary||'';
   document.getElementById('inv-re-salary-wrap').style.display=r.biz_type==='社員'?'block':'none';
   document.getElementById('inv-re-admin-auto').style.display=r.biz_type==='社員'?'block':'none';
+  // 社員は自動で管理者なのでチェック欄は出さない。社員以外(業務委託の責任者など)はここで付与する
+  document.getElementById('inv-re-perm-admin-wrap').style.display=r.biz_type==='社員'?'none':'flex';
   document.getElementById('inv-re-invoice').value=r.invoice_number||'';
   document.getElementById('inv-re-effective').value=(r.rate_effective_from||'').replace(/\//g,'-');
   // 川越タブ
