@@ -11302,9 +11302,16 @@ async function admRevLoad(){
     }
     return hit;
   };
-  const socialSalaryTotal=socialStaff.reduce((s,r)=>s+(Number(r.monthly_salary)||0),0);
+  // 社員の給料は会計ツールの月額(単価マスタの「月給」列は使わない。読めなければ0円で計算しないよう止める)
+  const empSal=await admGetEmployeeSalaries(monthVal);
+  if(empSal.error){
+    const c0=document.getElementById('adm-rev-summary');
+    if(c0)c0.innerHTML=`<p style="color:var(--danger);text-align:center;padding:40px;">会計ツールの社員の給与を読めませんでした: ${empSal.error}<br>しばらくしてからもう一度開いてください。</p>`;
+    return;
+  }
+  const socialSalaryTotal=socialStaff.reduce((s,r)=>s+admSalaryOf(empSal,r.name),0);
   const socialSalaryByName={};
-  socialStaff.forEach(r=>{socialSalaryByName[r.name]=Number(r.monthly_salary)||0;});
+  socialStaff.forEach(r=>{socialSalaryByName[r.name]=admSalaryOf(empSal,r.name);});
 
   // 該当月のシフトデータを集める (DB.shiftsByCourse[monthLabel])
   // monthVal は 'YYYY-MM' 形式、DEFS の label は '4月シフト2026' 形式
@@ -11414,8 +11421,8 @@ async function admRevLoad(){
   const socialWorked=new Set(Object.entries(empAreaDays)
     .filter(([,d])=>Object.values(d||{}).some(v=>v>0)).map(([n])=>n));
   const socialSalaryNoArea=socialStaff
-    .filter(r=>(Number(r.monthly_salary)||0)>0&&!socialWorked.has(r.name))
-    .map(r=>({name:r.name,salary:Number(r.monthly_salary)||0}));
+    .filter(r=>admSalaryOf(empSal,r.name)>0&&!socialWorked.has(r.name))
+    .map(r=>({name:r.name,salary:admSalaryOf(empSal,r.name)}));
 
   // 外注費はシフトの日数から計算する。シフトが古いと金額が黙って小さく出るので、
   // その状態で粗利を出しても意味がない。数字は出さずに中止する。
@@ -14637,6 +14644,22 @@ async function admEmpInit(){
   admEmpLoad();
 }
 
+// 社員の給料(月額)を会計ツールから読む(invoice-sheet get_employee_salaries)。
+// 単価マスタの「月給」列は使わない(会計とずれて山内=0・佐藤=475,000 になっていた。2026-10-26)。
+// 返り値: {map:{正規化氏名→月額}, error}。読めなかったときは error を返し、0円で黙って計算しない。
+const _empSalaryCache={};
+async function admGetEmployeeSalaries(monthVal){
+  if(_empSalaryCache[monthVal])return _empSalaryCache[monthVal];
+  try{
+    const r=await invApi({action:'get_employee_salaries',year_month:monthVal});
+    if(!r||!Array.isArray(r.salaries))return {map:null,error:(r&&r.error)||'会計の給与を読めませんでした'};
+    const map={};
+    r.salaries.forEach(s=>{map[invNormName(s.name)]=Number(s.monthly_salary)||0;});
+    return (_empSalaryCache[monthVal]={map,error:null});
+  }catch(e){return {map:null,error:String(e&&e.message||e)};}
+}
+const admSalaryOf=(sal,name)=>sal&&sal.map?(sal.map[invNormName(name)]||0):0;
+
 async function admEmpLoad(){
   const monthVal=document.getElementById('adm-emp-month').value;
   if(!monthVal)return;
@@ -14654,6 +14677,12 @@ async function admEmpLoad(){
   const socialStaff=invRates.filter(r=>r.biz_type==='社員');
   if(!socialStaff.length){
     cont.innerHTML='<p style="color:var(--text-sub);text-align:center;padding:40px;">社員 (区分=社員) のドライバーがいません</p>';
+    return;
+  }
+  // 給料は会計ツールの月額(NexPort の社員給与の割り当てと同じ)。読めなければ計算を止める
+  const empSal=await admGetEmployeeSalaries(monthVal);
+  if(empSal.error){
+    cont.innerHTML=`<p style="color:var(--danger);text-align:center;padding:40px;">会計ツールの給与を読めませんでした: ${empSal.error}<br>「🔄 再計算」でもう一度試してください。</p>`;
     return;
   }
   // 名前の表記揺れ (全角/半角空白の混在) に対応するため正規化マップを使う
@@ -14726,7 +14755,7 @@ async function admEmpLoad(){
   // 社員ごとの集計
   const empData={};
   socialStaff.forEach(r=>{
-    empData[r.name]={name:r.name,amDays:0,pmDays:0,sales:0,salary:Number(r.monthly_salary)||0,byArea:{}};
+    empData[r.name]={name:r.name,amDays:0,pmDays:0,sales:0,salary:admSalaryOf(empSal,r.name),byArea:{}};
   });
 
   // 朝刊/夕刊勤務日数 (正規化マッチで rate.name にマップしてから集計)

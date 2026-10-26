@@ -1746,6 +1746,41 @@ Deno.serve(async(req:Request)=>{
       await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(BILL_PRICE_SHEET)}!A2:W2?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});
       return jsonResp({success:true});
     }
+    if(action==='get_employee_salaries'){
+      // 社員の給料(月額)。会計ツールの社員給与マスタ acc_salaries を正とし、NexPort「社員給与の割り当て」で
+      // その月(以前の月から引き継ぎ)に金額を上書きしていればそれを使う(NexPort の employee-salary EF と同じ決まり)。
+      // 2026-10-26 社員管理・収支管理の給料を単価マスタの「月給」列から切り替え(山内=0・佐藤=475,000 のずれがあった)。
+      if(!admin) return forbid();
+      const ym=String((body as any).year_month||'');
+      if(!/^\d{4}-\d{2}$/.test(ym)) return jsonResp({error:'year_month(YYYY-MM)が必要です'},400);
+      const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+      const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      const H = { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } as Record<string,string>;
+      try{
+        const [sr, ar] = await Promise.all([
+          fetch(`${SB_URL}/rest/v1/acc_salaries?select=profile_id,name,monthly_salary&active=eq.true`,{headers:H}),
+          fetch(`${SB_URL}/rest/v1/employee_salary_allocations?select=profile_id,staff_name,year_month,monthly_amount&year_month=lte.${ym}`,{headers:H}),
+        ]);
+        if(!sr.ok||!ar.ok) return jsonResp({ok:false, error:`会計の給与を読めませんでした (${sr.status}/${ar.status})`});
+        const sal=await sr.json() as any[]; const alc=await ar.json() as any[];
+        // 月ごとの上書き: 人ごとにその月以前で一番新しい行
+        const latest=new Map<string,any>();
+        for(const r of alc){ const cur=latest.get(r.profile_id); if(!cur||r.year_month>cur.year_month) latest.set(r.profile_id,r); }
+        const out:any[]=[];
+        const seen=new Set<string>();
+        for(const s of sal){
+          const o=s.profile_id?latest.get(s.profile_id):null;
+          const ov=o&&Number(o.monthly_amount)>0?Number(o.monthly_amount):0;
+          out.push({name:String(s.name||''), monthly_salary:ov||Number(s.monthly_salary)||0, overridden:!!ov});
+          if(s.profile_id) seen.add(s.profile_id);
+        }
+        // 会計に無くても割り当てで金額を入れている人
+        for(const [pid,o] of latest){ if(!seen.has(pid)&&Number(o.monthly_amount)>0) out.push({name:String(o.staff_name||''), monthly_salary:Number(o.monthly_amount), overridden:true}); }
+        return jsonResp({salaries:out});
+      }catch(e){
+        return jsonResp({ok:false, error:String((e as any)?.message??e).slice(0,200)});
+      }
+    }
     if(action==='get_btob_settings'){
       // BtoBプラットフォーム用の振込先と支払先コード。
       // 🚨 shift-manager のリポジトリは公開なので口座情報をコードに置けない。
