@@ -587,6 +587,15 @@ Deno.serve(async(req:Request)=>{
       }
       if(!row || !authOk){ await recordFail(); return jsonResp({success:false,error:'IDまたはパスワードが正しくありません'}); }
       try { await failDb.from('shift_login_failures').delete().eq('login_id', lid); } catch (_) { /* noop */ }
+      // 🚪 2026-10-26 退職の処理が済んだ人は入れない(退職予定 staff_retirements・EF staff-retire が退職日の翌日に処理)。
+      //    新聞は単価マスタに在籍の列が無いので、ここで止める。支払明細ビューアは別のログインなので引き続き見られる。
+      try {
+        const nm = String(row[0] || '').replace(/[\s　]/g, '');
+        const { data: ret } = await failDb.from('staff_retirements').select('full_name, shift_login_id, retire_date')
+          .is('cancelled_at', null).not('processed_at', 'is', null);
+        const hit = (ret ?? []).find((x: any) => (x.shift_login_id && String(x.shift_login_id) === login_id) || String(x.full_name || '').replace(/[\s　]/g, '') === nm);
+        if (hit) return jsonResp({ success: false, error: `退職の手続き（${hit.retire_date}）が済んでいるため、ログインできません。支払明細は明細ビューアからご覧ください。`, code: 'RETIRED' });
+      } catch (_) { /* 確認できないときは止めない */ }
       const match=row;
       // ⑤監査: 新聞ログイン権限(shift)を記録するだけ(ブロックしない)。
       try{ await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/check-login-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system:'shift',login_id,source:'shift-login',log:true})}); }catch(_){ /* noop */ }

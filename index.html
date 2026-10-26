@@ -623,6 +623,8 @@ tbody tr:hover { background:var(--primary-light); }
           <button type="button" onclick="invSiteRateOpen(null)" style="margin-top:6px;background:#fff;border:1px dashed var(--primary);color:var(--primary);padding:6px 12px;border-radius:8px;font-size:13px;cursor:pointer;">＋ 拠点別の単価を追加</button>
           <div id="inv-re-site-form" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#f8fafc;"></div>
         </div>
+        <!-- 🚪 退職予定 (2026-10-26)。登録先は NexPort の staff_retirements(EF staff-retire)。全ツール共通 -->
+        <div id="inv-re-retire-wrap" style="display:none;border:1px solid #fcd34d;background:#fffbeb;border-radius:8px;padding:10px;margin:12px 0 10px;"></div>
         <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;margin-bottom:10px"><label style="font-size:13px;color:var(--primary);font-weight:600;">ログイン情報</label></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">ログインID</label><input type="text" id="inv-re-loginid" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
         <div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-sub)">パスワード</label><input type="text" id="inv-re-loginpw" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></div>
@@ -2050,6 +2052,8 @@ function parseShiftEv(key){parseShift(key);}
 const CHANGELOG=[
   {date:'2026-10-22', tag:'新機能', title:'拠点をまたいで働く人に「拠点別の単価」を登録できるようになりました',
    desc:'スタッフ管理の単価編集に「🏢 拠点別の単価」を追加しました。城北・川越・立川・川崎高津ごとに、単価一式（朝刊・夕刊・庫内の金額と、計算のしかた＝固定／個建／個数）と「何月分から使うか」を登録できます。支払いの計算では、その日のコースから拠点を判断し、その拠点の単価があればその一式で、無ければ今までの基本の単価で計算します（支払明細・自動確定・稼働記録の金額の自動入力・金額の再計算のすべて同じ決まり）。登録した拠点の日は、川越のコース別・曜日別の単価は使いません。空欄は0円です。確定済みの月の支払いは変わりません。支払明細の金額にマウスを乗せると「立川の単価」のように、どの拠点の単価で計算したかが出ます。'},
+  {date:'2026-10-26', tag:'新機能', title:'スタッフ管理に「🚪 退職予定」を追加しました',
+   desc:'スタッフ管理の編集画面で、退職日（最終勤務日）・理由（自己都合／契約終了／その他）・メモを登録できます。登録先はNexPortの1か所で、アスクル・デリバリーのドライバー管理から登録した分も含めて全ツール共通です。一覧の氏名の横に「退職予定 11/30」と出て、退職日より後に新聞のシフトが入っていると「⚠シフトあり」と出ます（マウスを乗せると日付）。退職日の翌日に自動で退職の処理になり、新聞ツールにはログインできなくなります（支払明細ビューアは引き続き見られます）。'},
   {date:'2026-10-22', tag:'修正', title:'スタッフ管理で社員以外にも「🔧 管理画面」の権限を付けられるようにしました',
    desc:'区分が「社員」の人は自動で管理画面に入れるため、6月にチェック欄を隠していました。そのせいで、業務委託の責任者など社員以外の人に新しく管理画面の権限を付けられなくなっていました。区分が社員以外のときは、アクセス権限に「🔧 管理画面」のチェック欄が出ます。社員は今までどおり自動です。'},
   {date:'2026-10-19', tag:'改善', title:'所属会社名は会計マスタの名前からしか選べなくなりました（＋法人新規登録）',
@@ -8100,6 +8104,7 @@ function invAddRate(){
   document.getElementById('inv-re-delete-btn').style.display='none';
   invJinNewFields(true);
   document.getElementById('inv-re-site-wrap').style.display='none';   // 拠点別の単価は登録した後に足す
+  { const rw=document.getElementById('inv-re-retire-wrap'); if(rw) rw.style.display='none'; }   // 退職予定も登録した後に
   document.getElementById('inv-rate-edit').style.display='flex';
 }
 
@@ -8180,6 +8185,7 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-perm-shopmaster').checked=permStr.includes('shopmaster');
   document.getElementById('inv-re-perm-shiftedit').checked=permStr.includes('shiftedit');
   invSiteRateRender(r);
+  admRetireRenderSection(r);
   document.getElementById('inv-rate-edit').style.display='flex';
 }
 
@@ -10301,7 +10307,89 @@ window.admStaffPickArea=async function(val){
   adminRenderStaff();
 };
 
+// ── 🚪 退職予定 (2026-10-26) ───────────────────────────────────────────
+// 登録先は NexPort の staff_retirements 1か所(EF staff-retire)。どのツールから登録しても全ツール共通で出る。
+// 退職日の翌日に自動で退職の処理(アスクル・デリバリーは無効、NexPort は利用停止)。新聞は単価マスタに在籍の列が無いので、ここで「退職」と表示する。
+// 認可は invoice-sheet が発行した管理者トークン(auth_token)。
+const RETIRE_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/staff-retire';
+let admRetireRows=[];
+async function admRetireCall(payload){
+  const r=await fetch(RETIRE_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,auth_token:invAuthToken,actor_name:invStaffName||undefined})});
+  const j=await r.json().catch(()=>({error:'応答を読めませんでした'}));
+  if(!r.ok||j.error)throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+async function admRetireLoad(){
+  try{const j=await admRetireCall({action:'list',include_done:true});admRetireRows=j.rows||[];if(document.getElementById('adm-staff-list'))adminRenderStaff();}catch(e){console.warn('退職予定を読めませんでした',e);}
+}
+function admRetireFor(r){
+  const nm=invNormName(r.name);
+  return admRetireRows.find(x=>(r.login_id&&x.shift_login_id&&String(x.shift_login_id)===String(r.login_id)))
+    ||admRetireRows.find(x=>invNormName(x.full_name)===nm)||null;
+}
+// 退職日より後に新聞のシフトが入っている日(読み込み済みのシフトだけを見る)
+function admRetireShiftDays(name,date){
+  const nm=invNormName(name),days=new Set();
+  Object.values(DB.shifts||{}).forEach(areas=>Object.values(areas||{}).forEach(sh=>(sh.entries||[]).forEach(en=>{
+    if(invNormName(en.course||'')!==nm)return;
+    (en.a||[]).forEach(x=>{if(x.d>date&&((x.am||'').trim()||(x.pm||'').trim()))days.add(x.d);});
+  })));
+  return [...days].sort();
+}
+function admRetireMd(d){return Number(d.slice(5,7))+'/'+Number(d.slice(8,10));}
+function admRetireBadge(r){
+  const x=admRetireFor(r);if(!x)return '';
+  const left=Math.round((new Date(x.retire_date+'T00:00:00+09:00').getTime()-Date.now())/86400000);
+  const sd=admRetireShiftDays(r.name,x.retire_date);
+  const other=(x.shifts_after||[]).map(s=>s.what);
+  const warn=sd.length||other.length;
+  const bg=x.processed_at||left<0?'#e5e7eb':left<=14?'#fee2e2':'#fef3c7',fg=x.processed_at||left<0?'#374151':left<=14?'#991b1b':'#92400e';
+  const tip=x.reason+(x.note?'：'+x.note:'')+(sd.length?'\n⚠ 新聞のシフト '+sd.length+'日（'+sd.slice(0,5).map(admRetireMd).join('・')+(sd.length>5?'…':'')+'）':'')+(other.length?'\n⚠ '+other.join('\n⚠ '):'');
+  return ` <span title="${admSpEsc(tip)}" style="background:${bg};color:${fg};padding:1px 7px;border-radius:8px;font-size:10px;white-space:nowrap;">${x.processed_at?'退職':'退職予定'} ${admRetireMd(x.retire_date)}${warn?' ⚠シフトあり':''}</span>`;
+}
+function admRetireRenderSection(r){
+  const w=document.getElementById('inv-re-retire-wrap');if(!w)return;
+  w.style.display='block';
+  const x=admRetireFor(r);
+  const sd=x?admRetireShiftDays(r.name,x.retire_date):[];
+  const reasons=['自己都合','契約終了','その他'];
+  w.innerHTML=`<div style="font-weight:700;font-size:13px;">🚪 退職予定 <span style="font-weight:400;font-size:11px;color:var(--text-sub);">（全ツール共通。退職日の翌日に自動で退職の処理。支払明細は引き続き見られます）</span></div>`
+    +(x?`<div style="font-size:12px;margin-top:4px;">${x.processed_at?'✅ 退職の処理済み':'登録済み：'+x.retire_date+'（'+admSpEsc(x.reason)+'）'}<span style="color:var(--text-sub);">　登録 ${admSpEsc(x.created_by_name||'—')}（${admSpEsc(x.created_from||'—')}） ${new Date(x.created_at).toLocaleString('ja-JP')}${x.updated_by_name&&x.updated_at!==x.created_at?'／更新 '+admSpEsc(x.updated_by_name)+' '+new Date(x.updated_at).toLocaleString('ja-JP'):''}</span></div>`:'')
+    +(sd.length?`<div style="font-size:12px;color:#b45309;">⚠ 退職日より後に新聞のシフトが ${sd.length}日あります（${sd.slice(0,8).map(admRetireMd).join('・')}${sd.length>8?'…':''}）</div>`:'')
+    +((x&&x.shifts_after)||[]).map(s=>`<div style="font-size:12px;color:#b45309;">⚠ 退職日より後に ${admSpEsc(s.what)}</div>`).join('')
+    +`<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:6px;">
+        <label style="font-size:12px;display:flex;flex-direction:column;gap:2px;">退職日（最終勤務日）<input type="date" id="inv-re-retire-date" value="${x?x.retire_date:''}" style="padding:6px;border:1px solid var(--border);border-radius:6px;"></label>
+        <label style="font-size:12px;display:flex;flex-direction:column;gap:2px;">理由<select id="inv-re-retire-reason" style="padding:6px;border:1px solid var(--border);border-radius:6px;">${reasons.map(v=>`<option${x&&x.reason===v?' selected':''}>${v}</option>`).join('')}</select></label>
+        <label style="font-size:12px;display:flex;flex-direction:column;gap:2px;flex:1;min-width:140px;">メモ<input type="text" id="inv-re-retire-note" value="${admSpEsc(x&&x.note||'')}" placeholder="任意" style="padding:6px;border:1px solid var(--border);border-radius:6px;"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:6px;">
+        <button type="button" onclick="admRetireSave()" style="background:#b45309;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer;">${x?'退職予定を更新':'退職予定を登録'}</button>
+        ${x?`<button type="button" onclick="admRetireCancel('${x.id}')" style="background:#fff;color:#b91c1c;border:1px solid #fca5a5;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer;">取り消し</button>`:''}
+      </div>
+      <div id="inv-re-retire-msg" style="font-size:12px;margin-top:4px;"></div>`;
+}
+function admRetireMsg(t,ok){const m=document.getElementById('inv-re-retire-msg');if(m){m.textContent=t;m.style.color=ok?'#065f46':'#b91c1c';}}
+async function admRetireSave(){
+  const r=invRateByRow(document.getElementById('inv-re-row').value);if(!r){admRetireMsg('対象のスタッフが見つかりません',false);return;}
+  const date=document.getElementById('inv-re-retire-date').value;
+  if(!date){admRetireMsg('退職日（最終勤務日）を入れてください',false);return;}
+  const area=admStaffAreaMap()[invNormName(r.name)]||'';
+  try{
+    const j=await admRetireCall({action:'set',shift_login_id:r.login_id||undefined,full_name:r.name,site:area||undefined,retire_date:date,reason:document.getElementById('inv-re-retire-reason').value,note:document.getElementById('inv-re-retire-note').value});
+    await admRetireLoad();admRetireRenderSection(r);
+    const sd=admRetireShiftDays(r.name,date);
+    admRetireMsg('登録しました。全ツール共通で表示されます。'+(sd.length?' ⚠ 退職日より後に新聞のシフトが'+sd.length+'日あります':''),true);
+  }catch(e){admRetireMsg('登録できませんでした: '+e.message,false);}
+}
+async function admRetireCancel(id){
+  if(!confirm('退職予定を取り消しますか？'))return;
+  const r=invRateByRow(document.getElementById('inv-re-row').value);
+  try{const j=await admRetireCall({action:'cancel',id});await admRetireLoad();if(r)admRetireRenderSection(r);admRetireMsg(j.note||'取り消しました。',true);}
+  catch(e){admRetireMsg('取り消せませんでした: '+e.message,false);}
+}
+
 async function adminLoadStaff(){
+  admRetireLoad();// 🚪 退職予定(全ツール共通)。裏で読んで、読めたら描き直す
   admStaffInvalidate();// タブを開いた時点で最新データに合わせてキャッシュ再構築
   await adminEnsureData();
   admBuildAreaBtns();
@@ -10356,7 +10444,7 @@ function adminRenderStaff(){
     if(ps.includes('shiftedit'))permTags.push('<span style="background:#ede9fe;color:#6d28d9;padding:1px 6px;border-radius:8px;font-size:10px;">シフト編集</span>');
     const permDisp=permTags.length?permTags.join(' '):'<span style="color:#94a3b8;font-size:11px;">-</span>';
     h+=`<tr>
-      <td><b>${r.name}</b></td>
+      <td><b>${r.name}</b>${admRetireBadge(r)}</td>
       <td><span class="badge" style="background:${bc[0]};color:${bc[1]}">${r.biz_type==='法人'?'法人・屋号有':(r.biz_type||'未設定')}</span></td>
       <td>${(()=>{const ar=amap[invNormName(r.name)]||'';const areaTag=ar?`<span style="background:#e0f2fe;color:#0369a1;padding:1px 8px;border-radius:8px;font-size:11px;">${ar}</span>`:'';return (r.company?escHtml(r.company)+(areaTag?' ':''):'')+areaTag||'-';})()}</td>
       <td><code>${r.login_id||'-'}</code></td>
