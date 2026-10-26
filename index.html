@@ -1472,8 +1472,10 @@ tbody tr:hover { background:var(--primary-light); }
           <div><label>年月</label><input type="month" id="adm-emp-month" onchange="admEmpLoad()"></div>
           <div style="margin-left:auto;display:flex;align-items:flex-end;">
             <button onclick="admEmpLoad()" style="background:var(--primary);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">🔄 再計算</button>
+            <button onclick="admEmpSaveToNexport()" style="background:#1A3C8F;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;margin-left:8px;" title="社員ごとの担当日数と担当売上(営業所別)を保存し、NexPort 業務管理→収支→新聞 の「社員の担当売上」に出す(給料は送らない)">💾 NexPortに反映</button>
           </div>
         </div>
+        <div id="adm-emp-msg" style="margin-top:8px;font-size:13px;"></div>
         <div id="adm-emp-content" style="margin-top:12px;"></div>
       </div>
 
@@ -14724,7 +14726,7 @@ async function admEmpLoad(){
   // 社員ごとの集計
   const empData={};
   socialStaff.forEach(r=>{
-    empData[r.name]={name:r.name,amDays:0,pmDays:0,sales:0,salary:Number(r.monthly_salary)||0};
+    empData[r.name]={name:r.name,amDays:0,pmDays:0,sales:0,salary:Number(r.monthly_salary)||0,byArea:{}};
   });
 
   // 朝刊/夕刊勤務日数 (正規化マッチで rate.name にマップしてから集計)
@@ -14776,9 +14778,9 @@ async function admEmpLoad(){
       const sh=shiftDays[ymd];
       if(!sh)return;
       const amReal=findSocial(sh.am);
-      if(amReal&&empData[amReal]&&dayAm>0)empData[amReal].sales+=dayAm;
+      if(amReal&&empData[amReal]&&dayAm>0){empData[amReal].sales+=dayAm;empData[amReal].byArea[cs.area]=(empData[amReal].byArea[cs.area]||0)+dayAm;}
       const pmReal=findSocial(sh.pm);
-      if(pmReal&&empData[pmReal]&&dayPm>0)empData[pmReal].sales+=dayPm;
+      if(pmReal&&empData[pmReal]&&dayPm>0){empData[pmReal].sales+=dayPm;empData[pmReal].byArea[cs.area]=(empData[pmReal].byArea[cs.area]||0)+dayPm;}
     });
   });
 
@@ -14841,6 +14843,30 @@ async function admEmpLoad(){
   h+=`</tr>`;
   h+='</tbody></table></div>';
   cont.innerHTML=h;
+  admEmpLast={monthVal,rows:arr.map(e=>({staff_name:e.name,am_days:e.amDays,pm_days:e.pmDays,sales:e.sales,by_area:e.byArea}))};
+}
+
+// 社員管理の計算結果(社員ごとの担当日数・担当売上・営業所別)を NexPort に保存する。
+// 給料は送らない(NexPort は「社員給与の割り当て」を使う)。表示中の月の計算結果だけを送る。
+let admEmpLast=null;
+async function admEmpSaveToNexport(){
+  const monthVal=document.getElementById('adm-emp-month').value;
+  const msg=document.getElementById('adm-emp-msg');
+  if(!admEmpLast||admEmpLast.monthVal!==monthVal){msg.textContent='先に「🔄 再計算」でこの月を計算してください';msg.style.color='var(--danger)';return;}
+  if(!admEmpLast.rows.length){msg.textContent='⚠️ 社員がいません（単価マスタの区分=社員）';msg.style.color='var(--danger)';return;}
+  msg.textContent='保存中...';msg.style.color='#3b82f6';
+  try{
+    const res=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/save-employee-sales',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({year_month:monthVal,rows:admEmpLast.rows,auth_token:invAuthToken}),
+    });
+    const j=await res.json();
+    if(j.error||!j.ok){msg.textContent='❌ 保存失敗: '+(j.error||j.message||'不明');msg.style.color='var(--danger)';return;}
+    const tot=admEmpLast.rows.reduce((a,r)=>a+(r.sales||0),0);
+    msg.textContent=`✓ NexPort に反映しました (${monthVal}): 社員${admEmpLast.rows.length}名・担当売上 ¥${tot.toLocaleString()}`;msg.style.color='#16a34a';
+  }catch(err){
+    msg.textContent='❌ 通信エラー: '+(err&&err.message?err.message:err);msg.style.color='var(--danger)';
+  }
 }
 
 function admRevRender(){
