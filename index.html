@@ -10444,7 +10444,7 @@ function adminRenderStaff(){
     if(ps.includes('shiftedit'))permTags.push('<span style="background:#ede9fe;color:#6d28d9;padding:1px 6px;border-radius:8px;font-size:10px;">シフト編集</span>');
     const permDisp=permTags.length?permTags.join(' '):'<span style="color:#94a3b8;font-size:11px;">-</span>';
     h+=`<tr>
-      <td><b>${r.name}</b>${admRetireBadge(r)}</td>
+      <td>${canEdit?`<b onclick="admEditRate(${origIdx})" title="押すと詳細（単価・ログイン情報・退職予定など）を開きます" style="cursor:pointer;color:var(--primary);text-decoration:underline;text-underline-offset:3px;">${r.name}</b>`:`<b>${r.name}</b>`}${admRetireBadge(r)}</td>
       <td><span class="badge" style="background:${bc[0]};color:${bc[1]}">${r.biz_type==='法人'?'法人・屋号有':(r.biz_type||'未設定')}</span></td>
       <td>${(()=>{const ar=amap[invNormName(r.name)]||'';const areaTag=ar?`<span style="background:#e0f2fe;color:#0369a1;padding:1px 8px;border-radius:8px;font-size:11px;">${ar}</span>`:'';return (r.company?escHtml(r.company)+(areaTag?' ':''):'')+areaTag||'-';})()}</td>
       <td><code>${r.login_id||'-'}</code></td>
