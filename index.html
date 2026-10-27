@@ -637,6 +637,7 @@ tbody tr:hover { background:var(--primary-light); }
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-defects"> 🔧 不具合管理</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-shopmaster"> 🏪 店舗マスタ</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="inv-re-perm-shiftedit"> 📝 シフト編集</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;" title="退職予定の登録・取り消しと、一覧の退職予定の表示ができます。この権限を持っている人だけが、ほかの人に付けられます"><input type="checkbox" id="inv-re-perm-retire"> 🚪 退職予定</label>
         </div>
         <div style="display:flex;gap:8px;">
           <button onclick="invDeleteRate()" id="inv-re-delete-btn" style="display:none;background:#dc2626;color:#fff;border:none;padding:12px 20px;border-radius:10px;font-size:14px;font-weight:bold;cursor:pointer;">🗑 削除</button>
@@ -8097,6 +8098,7 @@ function invAddRate(){
   document.getElementById('inv-re-perm-defects').checked=false;
   document.getElementById('inv-re-perm-shopmaster').checked=false;
   document.getElementById('inv-re-perm-shiftedit').checked=false;
+  { const c=document.getElementById('inv-re-perm-retire'); if(c){ c.checked=false; c.disabled=!admRetireCanGrant(); } }
   ['inv-re-kw-mon','inv-re-kw-tue','inv-re-kw-wed','inv-re-kw-thu','inv-re-kw-fri','inv-re-kw-sat','inv-re-kw-sun'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('inv-re-kw-pattern').value='';
   invKwPatternChange();
@@ -8184,6 +8186,7 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-perm-defects').checked=permStr.includes('defects');
   document.getElementById('inv-re-perm-shopmaster').checked=permStr.includes('shopmaster');
   document.getElementById('inv-re-perm-shiftedit').checked=permStr.includes('shiftedit');
+  { const c=document.getElementById('inv-re-perm-retire'); if(c){ c.checked=permStr.split(',').includes('retire'); c.disabled=!admRetireCanGrant(); } }
   invSiteRateRender(r);
   admRetireRenderSection(r);
   document.getElementById('inv-rate-edit').style.display='flex';
@@ -8309,6 +8312,7 @@ async function invSaveRate(){
   if(document.getElementById('inv-re-perm-defects').checked)permArr.push('defects');
   if(document.getElementById('inv-re-perm-shopmaster').checked)permArr.push('shopmaster');
   if(document.getElementById('inv-re-perm-shiftedit').checked)permArr.push('shiftedit');
+  if(document.getElementById('inv-re-perm-retire')?.checked)permArr.push('retire');
   // 法人オーナーフラグ (法人区分の時のみ意味を持つ)
   if(document.getElementById('inv-re-biztype').value==='法人'&&document.getElementById('inv-re-owner').checked){permArr.push('owner');
     // show_money はオーナー行のみ有効（配下に金額表示）
@@ -10313,6 +10317,10 @@ window.admStaffPickArea=async function(val){
 // 認可は invoice-sheet が発行した管理者トークン(auth_token)。
 const RETIRE_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/staff-retire';
 let admRetireRows=[];
+// 2026-10-27 退職予定は「🚪 退職予定」の権限(単価マスタの権限 'retire')を持つ人だけ。管理者パスワードで入った人も可。権限が無い人には一覧のバッジも編集画面の欄も出さない
+function admCanRetire(){ return (invStaffPerms||'').split(',').includes('retire') || (!!invAuthToken && !invStaffName); }
+// 権限を付けられるのは、この権限を持っている人。まだ誰も持っていない間は、スタッフを編集できる人なら付けられる(最初の1人を決めるため)
+function admRetireCanGrant(){ return admCanRetire() || !invRates.some(r=>(r.permissions||'').split(',').includes('retire')); }
 async function admRetireCall(payload){
   const r=await fetch(RETIRE_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,auth_token:invAuthToken,actor_name:invStaffName||undefined})});
   const j=await r.json().catch(()=>({error:'応答を読めませんでした'}));
@@ -10320,6 +10328,7 @@ async function admRetireCall(payload){
   return j;
 }
 async function admRetireLoad(){
+  if(!admCanRetire()){admRetireRows=[];return;}
   try{const j=await admRetireCall({action:'list',include_done:true});admRetireRows=j.rows||[];if(document.getElementById('adm-staff-list'))adminRenderStaff();}catch(e){console.warn('退職予定を読めませんでした',e);}
 }
 function admRetireFor(r){
@@ -10338,6 +10347,7 @@ function admRetireShiftDays(name,date){
 }
 function admRetireMd(d){return Number(d.slice(5,7))+'/'+Number(d.slice(8,10));}
 function admRetireBadge(r){
+  if(!admCanRetire())return '';
   const x=admRetireFor(r);if(!x)return '';
   const left=Math.round((new Date(x.retire_date+'T00:00:00+09:00').getTime()-Date.now())/86400000);
   const sd=admRetireShiftDays(r.name,x.retire_date);
@@ -10349,6 +10359,7 @@ function admRetireBadge(r){
 }
 function admRetireRenderSection(r){
   const w=document.getElementById('inv-re-retire-wrap');if(!w)return;
+  if(!admCanRetire()){w.style.display='none';w.innerHTML='';return;}
   w.style.display='block';
   const x=admRetireFor(r);
   const sd=x?admRetireShiftDays(r.name,x.retire_date):[];
@@ -10442,6 +10453,7 @@ function adminRenderStaff(){
     if(ps.includes('defects'))permTags.push('<span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:8px;font-size:10px;">不具合</span>');
     if(ps.includes('shopmaster'))permTags.push('<span style="background:#dcfce7;color:#166534;padding:1px 6px;border-radius:8px;font-size:10px;">店舗</span>');
     if(ps.includes('shiftedit'))permTags.push('<span style="background:#ede9fe;color:#6d28d9;padding:1px 6px;border-radius:8px;font-size:10px;">シフト編集</span>');
+    if(ps.includes('retire'))permTags.push('<span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:8px;font-size:10px;">退職予定</span>');
     const permDisp=permTags.length?permTags.join(' '):'<span style="color:#94a3b8;font-size:11px;">-</span>';
     h+=`<tr>
       <td>${canEdit?`<b onclick="admEditRate(${origIdx})" title="押すと詳細（単価・ログイン情報・退職予定など）を開きます" style="cursor:pointer;color:var(--primary);text-decoration:underline;text-underline-offset:3px;">${r.name}</b>`:`<b>${r.name}</b>`}${admRetireBadge(r)}</td>
