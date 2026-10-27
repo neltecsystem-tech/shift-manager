@@ -8186,7 +8186,7 @@ function invEditRate(rowNum){
   document.getElementById('inv-re-perm-defects').checked=permStr.includes('defects');
   document.getElementById('inv-re-perm-shopmaster').checked=permStr.includes('shopmaster');
   document.getElementById('inv-re-perm-shiftedit').checked=permStr.includes('shiftedit');
-  { const c=document.getElementById('inv-re-perm-retire'); if(c){ c.checked=permStr.split(',').includes('retire'); c.disabled=!admRetireCanGrant(); } }
+  { const c=document.getElementById('inv-re-perm-retire'); if(c){ const emp=r.biz_type==='社員'; c.checked=emp||permStr.split(',').includes('retire'); c.disabled=emp||!admRetireCanGrant(); c.parentElement.title=emp?'社員は設定しなくても退職予定を使えます':''; } }
   invSiteRateRender(r);
   admRetireRenderSection(r);
   document.getElementById('inv-rate-edit').style.display='flex';
@@ -10318,7 +10318,8 @@ window.admStaffPickArea=async function(val){
 const RETIRE_API='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/staff-retire';
 let admRetireRows=[];
 // 2026-10-27 退職予定は「🚪 退職予定」の権限(単価マスタの権限 'retire')を持つ人だけ。管理者パスワードで入った人も可。権限が無い人には一覧のバッジも編集画面の欄も出さない
-function admCanRetire(){ return (invStaffPerms||'').split(',').includes('retire') || (!!invAuthToken && !invStaffName); }
+// 社員(区分=社員)は設定しなくても可(2026-10-27)
+function admCanRetire(){ return (invStaffPerms||'').split(',').includes('retire') || (!!invAuthToken && !invStaffName) || (invRates.find(r=>r.name===invStaffName)||{}).biz_type==='社員'; }
 // 権限を付けられるのは、この権限を持っている人。まだ誰も持っていない間は、スタッフを編集できる人なら付けられる(最初の1人を決めるため)
 function admRetireCanGrant(){ return admCanRetire() || !invRates.some(r=>(r.permissions||'').split(',').includes('retire')); }
 async function admRetireCall(payload){
