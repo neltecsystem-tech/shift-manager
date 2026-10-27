@@ -10374,6 +10374,7 @@ function admRetireRenderSection(r){
         <label style="font-size:12px;display:flex;flex-direction:column;gap:2px;">理由<select id="inv-re-retire-reason" style="padding:6px;border:1px solid var(--border);border-radius:6px;">${reasons.map(v=>`<option${x&&x.reason===v?' selected':''}>${v}</option>`).join('')}</select></label>
         <label style="font-size:12px;display:flex;flex-direction:column;gap:2px;flex:1;min-width:140px;">メモ<input type="text" id="inv-re-retire-note" value="${admSpEsc(x&&x.note||'')}" placeholder="任意" style="padding:6px;border:1px solid var(--border);border-radius:6px;"></label>
       </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-top:6px;"><input type="checkbox" id="inv-re-retire-needs"${x&&x.needs_replacement===false?'':' checked'}> 補填が必要（NexPort 面談シートの「不足人員」に1人足す）</label>
       <div style="display:flex;gap:8px;margin-top:6px;">
         <button type="button" onclick="admRetireSave()" style="background:#b45309;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer;">${x?'退職予定を更新':'退職予定を登録'}</button>
         ${x?`<button type="button" onclick="admRetireCancel('${x.id}')" style="background:#fff;color:#b91c1c;border:1px solid #fca5a5;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer;">取り消し</button>`:''}
@@ -10387,7 +10388,7 @@ async function admRetireSave(){
   if(!date){admRetireMsg('退職日（最終勤務日）を入れてください',false);return;}
   const area=admStaffAreaMap()[invNormName(r.name)]||'';
   try{
-    const j=await admRetireCall({action:'set',shift_login_id:r.login_id||undefined,full_name:r.name,site:area||undefined,retire_date:date,reason:document.getElementById('inv-re-retire-reason').value,note:document.getElementById('inv-re-retire-note').value});
+    const j=await admRetireCall({action:'set',shift_login_id:r.login_id||undefined,full_name:r.name,site:area||undefined,retire_date:date,reason:document.getElementById('inv-re-retire-reason').value,note:document.getElementById('inv-re-retire-note').value,needs_replacement:!!document.getElementById('inv-re-retire-needs')?.checked});
     await admRetireLoad();admRetireRenderSection(r);
     const sd=admRetireShiftDays(r.name,date);
     admRetireMsg('登録しました。全ツール共通で表示されます。'+(sd.length?' ⚠ 退職日より後に新聞のシフトが'+sd.length+'日あります':''),true);
