@@ -809,6 +809,7 @@ tbody tr:hover { background:var(--primary-light); }
         <button onclick="adminTab('specialrate')" id="adm-tab-specialrate" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🎁 特別日当</button>
         <button onclick="adminTab('employee')" id="adm-tab-employee" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">👤 社員管理</button>
         <button onclick="adminTab('shiftedit')" id="adm-tab-shiftedit" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📝 シフト編集</button>
+        <button onclick="adminTab('namematch')" id="adm-tab-namematch" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">🔗 名前の照合</button>
         <button onclick="adminTab('yobi')" id="adm-tab-yobi" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📋 早見表</button>
         <button onclick="adminTab('measure')" id="adm-tab-measure" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⏱ 測定データ</button>
         <button onclick="adminTab('diagram')" id="adm-tab-diagram" class="adm-tab" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">📐 ダイヤグラム</button>
@@ -1291,6 +1292,23 @@ tbody tr:hover { background:var(--primary-light); }
       </div>
 
       <!-- シフト編集 -->
+      <div id="adm-namematch" class="adm-panel" style="display:none;">
+        <div class="card" style="padding:16px;">
+          <h3 style="margin:0 0 6px;color:var(--primary);">🔗 名前の照合（シフト表 ↔ 単価マスタ）</h3>
+          <p style="font-size:13px;color:var(--text-sub);margin:0 0 10px;line-height:1.7;">シフト表の名前は単価マスタの名前と一致しないと、その人の支払明細が作られません（9月に「ELP」で24日分の漏れが出ました）。
+            ここでは、支払いの計算と同じ決まり（営業所で始まるコースの行）でシフト表を読み、単価マスタにも別名にも当たらない名前を出します。
+            <b>シフト表を書き換える</b>か、<b>別名として登録</b>（シフト表はそのまま、その人の単価で払う）してください。単価マスタで名前を変えたときは、旧名が自動で別名に登録されます。</p>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+            <select id="adm-nm-sheet" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);"></select>
+            <button onclick="admNmLoad()" style="border:none;border-radius:8px;cursor:pointer;font-weight:600;background:var(--primary);color:#fff;padding:6px 14px;">読み込む</button>
+            <span id="adm-nm-msg" style="font-size:13px;color:var(--text-sub);"></span>
+          </div>
+          <div id="adm-nm-list"></div>
+          <h4 style="margin:18px 0 6px;">登録済みの別名</h4>
+          <div id="adm-nm-aliases"></div>
+          <datalist id="adm-nm-rates"></datalist>
+        </div>
+      </div>
       <div id="adm-shiftedit" class="adm-panel" style="display:none;">
         <div class="filters">
           <div><label>シフト月</label><div style="display:flex;gap:4px;align-items:center;"><select id="adm-se-sheet" onchange="admSeLoad()"><option value="">選択してください</option></select><button type="button" id="adm-se-sheet-reload" onclick="admSeReloadSheets()" title="月の候補を読み込み直す" style="padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">🔄</button></div></div>
@@ -6975,6 +6993,17 @@ let invAuthToken='';// サーバ発行セッショントークン (HMAC署名)�
 let invCompanyShowsMoney=false;// 自社オーナーが「配下に金額表示」ONか (login応答の company_shows_money)
 let invStaffPerms='';// ログイン中スタッフの permissions 文字列 (権限ゲート用)
 let invRates=[];
+// 🔗 シフト表の名前の別名(2026-10-30)。照合キー(invNormName) → 単価マスタの名前。
+// 単価マスタを改名するとシフト表の旧名の日が誰にも当たらず、明細が黙って作られなかった(「ELP」で9月24日分)。
+// サーバの自動確定(finalize-shift)と同じ表(shift_name_aliases)を使う。管理者のときだけ読む
+let smNameAliases=new Map(), smNameAliasList=[];
+async function smLoadNameAliases(){
+  if(!invIsAdmin)return;
+  try{
+    const r=await invApi({action:'get_name_aliases'});
+    if(r&&Array.isArray(r.aliases)){ smNameAliasList=r.aliases; smNameAliases=new Map(r.aliases.map(a=>[invNormName(a.alias),a.staff_name])); }
+  }catch(_){}
+}
 let invWork=[];
 let invStaffNames=[];
 let invSpecial=[];// 特別単価データ
@@ -7335,6 +7364,7 @@ async function invLoadAllBackground(){
   if(kwRes.new)kwCoursePrices.new=kwRes.new;
   invRates=ratesRes.rates||[];
   invWork=workRes.records||[];
+  smLoadNameAliases();
   if(!invIsAdmin&&invStaffName&&!invCanManageCompany()){
     invWork=invWork.filter(w=>w.staff===invStaffName);
   }
@@ -7344,6 +7374,7 @@ async function invLoadAllBackground(){
 async function invLoadAll(){
   const [ratesRes,workRes,namesRes,specialRes,kwRes]=await Promise.all([invApi({action:'get_rates'}),invApi({action:'list_work'}),invApi({action:'get_staff_names'}),invApi({action:'get_special_rates'}),invApi({action:'get_kawagoe_course_prices'})]);
   invRates=ratesRes.rates||[];
+  smLoadNameAliases();
   invWork=workRes.records||[];
   invSpecial=specialRes.records||[];
   if(kwRes.old)kwCoursePrices.old=kwRes.old;
@@ -9214,6 +9245,7 @@ function adminTab(t){
   if(t==='employee')admEmpInit().catch(()=>{});
   if(t==='settings')admFeatureVisRender();
   if(t==='shiftedit')admSeInit().catch(()=>{});
+  if(t==='namematch')admNmInit().catch(()=>{});
   if(t==='yobi')admYobiInit().catch(()=>{});
   if(t==='data')adminShowDataInfo();
   if(t==='settings')adminShowSysInfo();
@@ -13546,11 +13578,107 @@ async function admJinSave(){
 // 🚨 単価マスタだけで判定してはいけない: 社員は月給のため単価マスタに行が無く、
 //    アスクル等の他現場の人も名簿にだけ載っている。全員に警告が出て意味がなくなる。
 // 空欄・記号・日付は氏名ではないので除外する。
+// ===== 🔗 名前の照合(2026-10-30) =====
+let admNmState={sheet:'',rows:[],items:[]};
+const ADM_NM_AREA=/^(城北|川越|立川|川崎)/;
+function admNmEsc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function admNmInit(){
+  const sel=document.getElementById('adm-nm-sheet');
+  if(!invRates.length){try{const r=await invApi({action:'get_rates'});if(r&&r.rates)invRates=r.rates;}catch(_){}}
+  await smLoadNameAliases();
+  document.getElementById('adm-nm-rates').innerHTML=invRates.map(r=>`<option value="${admNmEsc(r.name)}">`).join('');
+  admNmRenderAliases();
+  if(sel.options.length)return;
+  // 前月・今月・来月・再来月のシフト表
+  const now=new Date(),opts=[];
+  for(let i=-1;i<=2;i++){const d=new Date(now.getFullYear(),now.getMonth()+i,1);opts.push(`${d.getMonth()+1}月シフト${d.getFullYear()}`);}
+  sel.innerHTML=opts.map((o,i)=>`<option ${i===1?'selected':''}>${o}</option>`).join('');
+  admNmLoad();
+}
+async function admNmLoad(){
+  const sheet=document.getElementById('adm-nm-sheet').value, msg=document.getElementById('adm-nm-msg');
+  msg.textContent='読み込み中...';
+  try{
+    const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fetch_sheet',sheet_name:sheet})});
+    const j=await r.json();
+    if(!j.rows)throw new Error(j.error||'シフト表を読めませんでした');
+    admNmState={sheet,rows:j.rows,items:[]};
+    // 照合は自動確定(finalize-shift)・毎朝の点検と同じく「空白だけ無視」。画面の支払計算より厳しいが、払うのは自動確定なのでこちらに合わせる
+    const sk=v=>String(v||'').replace(/[\s　 ]+/g,'');
+    const known=new Set(invRates.map(x=>sk(x.name))), aliasKeys=new Set(smNameAliasList.map(a=>a.alias_key));
+    const by=new Map();
+    j.rows.forEach((row,i)=>{
+      if(i<6||i>115||!ADM_NM_AREA.test(String(row[0]||'').trim()))return;
+      row.forEach((v,c)=>{
+        if(c<1)return;
+        const t=String(v||'').trim();
+        if(!t||t==='0'||/^[0-9０-９./:-]+$/.test(t)||admPayIsNonPaidShift(t)||/引継/.test(t))return;
+        const k=sk(t);
+        if(!k||known.has(k)||aliasKeys.has(k))return;
+        const it=by.get(k)||{name:t,key:k,cells:[]};it.cells.push({row:i,col:c});by.set(k,it);
+      });
+    });
+    admNmState.items=[...by.values()].sort((a,b)=>b.cells.length-a.cells.length);
+    msg.textContent=admNmState.items.length?`合わない名前が ${admNmState.items.length} 件あります`:'✅ すべて単価マスタか別名に当たっています';
+    msg.style.color=admNmState.items.length?'#dc2626':'#16a34a';
+    admNmRender();
+  }catch(e){msg.textContent='❌ '+e.message;msg.style.color='#dc2626';}
+}
+function admNmRender(){
+  const el=document.getElementById('adm-nm-list');
+  if(!admNmState.items.length){el.innerHTML='';return;}
+  el.innerHTML='<table style="width:100%;border-collapse:collapse;font-size:13px;"><tr style="background:#f8fafc;"><th style="text-align:left;padding:6px;">シフト表の名前</th><th style="padding:6px;">セル数</th><th style="text-align:left;padding:6px;">単価マスタの名前（候補から選ぶ）</th><th style="padding:6px;"></th></tr>'
+    +admNmState.items.map((it,i)=>`<tr style="border-top:1px solid var(--border);">
+      <td style="padding:6px;font-weight:700;">${admNmEsc(it.name)}</td><td style="padding:6px;text-align:center;">${it.cells.length}</td>
+      <td style="padding:6px;"><input id="adm-nm-to-${i}" list="adm-nm-rates" placeholder="単価マスタの名前" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;"></td>
+      <td style="padding:6px;white-space:nowrap;">
+        <button onclick="admNmRewrite(${i})" style="border:none;border-radius:8px;cursor:pointer;font-weight:600;background:var(--primary);color:#fff;padding:4px 10px;font-size:12px;">シフト表を書き換え</button>
+        <button onclick="admNmAlias(${i})" style="border:none;border-radius:8px;cursor:pointer;font-weight:600;background:var(--primary);color:#fff;padding:4px 10px;font-size:12px;background:#f1f5f9;color:var(--text);">別名として登録</button>
+      </td></tr>`).join('')+'</table>';
+}
+function admNmPick(i){
+  const v=String(document.getElementById('adm-nm-to-'+i).value||'').trim();
+  const hit=invRates.find(r=>r.name===v)||invRates.find(r=>r.name.replace(/[\s　 ]+/g,'')===v.replace(/[\s　 ]+/g,''));
+  if(!hit){alert('単価マスタにある名前を候補から選んでください');return null;}
+  return hit.name;
+}
+async function admNmRewrite(i){
+  const it=admNmState.items[i];const to=admNmPick(i);if(!to)return;
+  if(!confirm(`${admNmState.sheet} の「${it.name}」${it.cells.length}セルを「${to}」に書き換えます。よろしいですか?`))return;
+  const updates=it.cells.map(c=>({row:c.row,col:c.col,value:to}));
+  const r=await smShiftFetch({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update_cells',sheet_name:admNmState.sheet,updates})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||j.error){alert('書き換えに失敗しました: '+(j.error||r.status));return;}
+  await admNmLoad();
+}
+async function admNmAlias(i){
+  const it=admNmState.items[i];const to=admNmPick(i);if(!to)return;
+  if(!confirm(`シフト表の「${it.name}」を「${to}」の別名として登録します。\n以後この書き方の日は「${to}」の単価で支払明細に入ります（すべての月）。よろしいですか?`))return;
+  const r=await invApi({action:'save_name_alias',alias:it.name,staff_name:to});
+  if(!r||r.error){alert('登録に失敗しました: '+((r&&r.error)||''));return;}
+  await smLoadNameAliases();admNmRenderAliases();await admNmLoad();
+}
+function admNmRenderAliases(){
+  const el=document.getElementById('adm-nm-aliases');if(!el)return;
+  if(!smNameAliasList.length){el.innerHTML='<p style="font-size:13px;color:var(--text-sub);">まだありません</p>';return;}
+  el.innerHTML='<table style="width:100%;border-collapse:collapse;font-size:13px;"><tr style="background:#f8fafc;"><th style="text-align:left;padding:6px;">シフト表の書き方</th><th style="text-align:left;padding:6px;">→ 単価マスタの名前</th><th style="text-align:left;padding:6px;">メモ</th><th></th></tr>'
+    +smNameAliasList.map((a,i)=>`<tr style="border-top:1px solid var(--border);"><td style="padding:6px;">${admNmEsc(a.alias)}</td><td style="padding:6px;font-weight:700;">${admNmEsc(a.staff_name)}</td><td style="padding:6px;color:var(--text-sub);">${admNmEsc(a.note)}</td>
+      <td style="padding:6px;"><button onclick="admNmDelAlias(${i})" style="border:none;border-radius:8px;cursor:pointer;font-weight:600;background:var(--primary);color:#fff;padding:3px 8px;font-size:12px;background:#fee2e2;color:#991b1b;">削除</button></td></tr>`).join('')+'</table>';
+}
+async function admNmDelAlias(i){
+  const a=smNameAliasList[i];if(!a)return;
+  if(!confirm(`別名「${a.alias} → ${a.staff_name}」を削除します。\nシフト表に「${a.alias}」が残っていると、その日は支払明細に入らなくなります。よろしいですか?`))return;
+  const r=await invApi({action:'delete_name_alias',alias:a.alias});
+  if(!r||r.error){alert('削除に失敗しました: '+((r&&r.error)||''));return;}
+  await smLoadNameAliases();admNmRenderAliases();if(admNmState.sheet)admNmLoad();
+}
+
 function admSeUnknownStaffIn(updates){
   const known=(typeof admSeBuildStaffList==='function')?admSeBuildStaffList():[];
   if(!known.length)return []; // 候補が未取得なら判定しない(誤検知で保存を止めない)
   const norm=s=>String(s||'').normalize('NFKC').replace(/[\s　]/g,'');
   const master=new Set(known.map(norm).filter(Boolean));
+  smNameAliasList.forEach(a=>{const k=norm(a.alias);if(k)master.add(k);});   // 別名で登録済みの書き方は警告しない
   const skip=/^(休|公休|有給|-|—|ー|・|×|✕|◯|○|\?|？|空|なし|未定)$/;
   const seen=new Set(),out=[];
   updates.forEach(u=>{
@@ -14848,6 +14976,8 @@ async function admEmpLoad(){
   // shiftCellValue → rate.name のルックアップ用
   const normToName={};
   socialStaff.forEach(r=>{normToName[invNormName(r.name)]=r.name;});
+  // 別名(シフト表の書き方)→ 社員の名前
+  smNameAliases.forEach((to,k)=>{const hit=socialStaff.find(r=>invNormName(r.name)===invNormName(to));if(hit&&!normToName[k])normToName[k]=hit.name;});
   const socialNames=new Set(socialStaff.map(r=>r.name));// 既存ロジック互換
   // 正規化マッチで rate.name を取得 (見つからなければ null)
   const findSocial=(cellName)=>{
@@ -17814,13 +17944,17 @@ function admPayCollectStaffShifts(monthLabel,staffName){
   // 上田 雪枝など、単価マスタとシフトでスペース数が違うケースに対応するため
   // invNormName で正規化して比較
   const target=invNormName(staffName);
+  // 別名(シフト表の旧名など)の行も本人の日として足す。同じ日に両方あれば本人の名前の行を優先(finalize-shift と同じ)
+  const isAlias=e=>{const t=smNameAliases.get(invNormName(e.course));return !!t&&invNormName(t)===target;};
   Object.values(months).forEach(({entries})=>{
-    const entry=entries.find(e=>invNormName(e.course)===target);
-    if(!entry)return;
-    entry.a.forEach(({d,dow,am,pm})=>{
-      if(!dayMap[d])dayMap[d]={dow,am_course:'',pm_course:''};
-      if(!admPayIsNonPaidShift(am))dayMap[d].am_course=String(am).trim();
-      if(!admPayIsNonPaidShift(pm))dayMap[d].pm_course=String(pm).trim();
+    const own=entries.filter(e=>invNormName(e.course)===target), als=entries.filter(e=>invNormName(e.course)!==target&&isAlias(e));
+    [...own,...als].forEach((entry,idx)=>{
+      const fromAlias=idx>=own.length;
+      entry.a.forEach(({d,dow,am,pm})=>{
+        if(!dayMap[d])dayMap[d]={dow,am_course:'',pm_course:''};
+        if(!admPayIsNonPaidShift(am)&&!(fromAlias&&dayMap[d].am_course))dayMap[d].am_course=String(am).trim();
+        if(!admPayIsNonPaidShift(pm)&&!(fromAlias&&dayMap[d].pm_course))dayMap[d].pm_course=String(pm).trim();
+      });
     });
   });
   return dayMap;

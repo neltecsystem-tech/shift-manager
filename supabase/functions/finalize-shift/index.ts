@@ -204,10 +204,35 @@ Deno.serve(async (req) => {
         }
       }
     }
+    // 🔗 別名(2026-10-30): シフト表の書き方 → 単価マスタの名前(shift_name_aliases)。
+    //    単価マスタの「ELP」を「ELP/富岡恵理」に改名したのにシフト表が「ELP」のままで、9月の明細が丸ごと作られなかった。
+    //    別名の日は単価マスタの名前の人の日に足す(同じ日に両方あれば単価マスタの名前のほうを残す)
+    const { data: aliasRows } = await sb.from('shift_name_aliases').select('alias_key, staff_name');
+    const aliasTo = new Map<string, string>();   // 別名の照合キー → 単価マスタの名前の照合キー
+    for (const a of ((aliasRows ?? []) as any[])) aliasTo.set(String(a.alias_key), invNormName(a.staff_name));
+    for (const [ak, tk] of aliasTo) {
+      if (ak === tk || !staffShifts[ak]) continue;
+      const dst = (staffShifts[tk] ||= {}), dstArea = (staffAreaDays[tk] ||= {});
+      for (const [ymd, v] of Object.entries(staffShifts[ak])) {
+        const cur = (dst[ymd] ||= { am_course: '', pm_course: '' });
+        if (!cur.am_course && v.am_course) cur.am_course = v.am_course;
+        if (!cur.pm_course && v.pm_course) cur.pm_course = v.pm_course;
+      }
+      for (const [ar, dd] of Object.entries(staffAreaDays[ak] || {})) dstArea[ar] = (dstArea[ar] || 0) + dd;
+      delete staffShifts[ak]; delete staffAreaDays[ak];
+    }
+    // 単価マスタにも別名にも当たらない名前(支払いのある日だけ数える)。黙って明細が作られないのを防ぐため、結果に必ず載せる
+    const rateKeys = new Set(invRates.map((r: any) => invNormName(r.name)));
+    const unmatched = Object.entries(staffShifts)
+      .filter(([k]) => k && !rateKeys.has(k))
+      .map(([k, days]) => ({ name: k, days: Object.values(days).filter((v) => v.am_course || v.pm_course).length }))
+      .filter((x) => x.days > 0).sort((a, b) => b.days - a.days);
     const primaryArea = (nk: string) => { let a = '', mx = 0; for (const [ar, d] of Object.entries(staffAreaDays[nk] || {})) { if (d > mx) { mx = d; a = ar; } } return a; };
 
     // ── 特別単価・単価ルックアップ ──
-    const findSpecial = (date: string, staff: string) => { const nd = date.replace(/-/g, '/'), nn = invNormName(staff); return invSpecial.filter((s) => (s.date || '').replace(/-/g, '/') === nd && invNormName(s.name) === nn); };
+    // 特別日当も別名で出されたものを本人に寄せる
+    const specialKey = (n: unknown) => { const k = invNormName(n); return aliasTo.get(k) ?? k; };
+    const findSpecial = (date: string, staff: string) => { const nd = date.replace(/-/g, '/'), nn = invNormName(staff); return invSpecial.filter((s) => (s.date || '').replace(/-/g, '/') === nd && specialKey(s.name) === nn); };
     const applySpecial = (amount: number, date: string, staffName: string, isAm: boolean) => {
       const cat = isAm ? '朝刊' : '夕刊';
       const sp = findSpecial(date, staffName).filter((s) => (s.category || '').includes(cat));
@@ -387,7 +412,7 @@ Deno.serve(async (req) => {
     if (dryRun) {
       let debug: any = undefined;
       if (body.debug_staff) { const dk = invNormName(body.debug_staff); const t = targets.find((x) => invNormName(x.staff_name) === dk); debug = t ? { staff_name: t.staff_name, grand_total: t.grand_total, am_sum: t.am_sum, pm_sum: t.pm_sum, primary_area: t.primary_area, rows: (t.rows || []).filter((r: any) => r.total > 0) } : { note: 'not found in targets (no 稼働?)' }; }
-      return json({ ok: true, mode: 'dry_run', year: y, month: m, count: targets.length, total: totalAll, skipped_count: skipped.length,
+      return json({ ok: true, mode: 'dry_run', year: y, month: m, count: targets.length, total: totalAll, skipped_count: skipped.length, unmatched,
         locked: lockDetail.length, locked_detail: lockDetail,
         kawagoe_rate_missing: [...kwMisses.entries()].map(([k, days]) => `${k} (${days}日分)`), summary, debug });
     }
@@ -542,7 +567,7 @@ Deno.serve(async (req) => {
       await sb.from('sm_active_alerts').update({ status: 'resolved', resolved_at: new Date().toISOString(), cnt: 0, updated_at: new Date().toISOString() })
         .eq('key', `kw_course_rate_missing:${ym}`).eq('status', 'open').then(() => {}, () => {});
     }
-    return json({ ok: true, mode: 'finalize', year: y, month: m, count: targets.length, saved, locked: locked.size, locked_detail: force ? [] : lockDetail, total: totalAll,
+    return json({ ok: true, mode: 'finalize', year: y, month: m, count: targets.length, saved, unmatched, locked: locked.size, locked_detail: force ? [] : lockDetail, total: totalAll,
       skipped_no_phone: noPhone, phone_from_company: byCompanyUsed, phone_ambiguous: phoneAmbiguous,
       company_renamed: renamedCo, company_cleared: clearedCo,
       kawagoe_rate_missing: kwMissList, errors: errs });

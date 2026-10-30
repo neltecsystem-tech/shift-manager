@@ -222,6 +222,35 @@ async function createToken(claims: any): Promise<string> {
   const sig = await hmacSign(payload);
   return `${payload}.${sig}`;
 }
+// ── 🔗 シフト表の名前の別名(2026-10-30) ──
+// 単価マスタの名前を変えると、旧名のまま入っているシフト表の日が誰にも当たらず、支払明細が黙って作られない
+// (「ELP」→「ELP/富岡恵理」で9月の24日分が漏れた)。改名したら旧名を別名として登録し、
+// 自動確定(finalize-shift)と画面の支払計算が旧名の日も新しい名前の人に寄せる。照合キーは空白を全部除いたもの。
+const aliasKey = (n: unknown) => String(n ?? '').replace(/[\s　 ]+/g, '').trim();
+async function sbRest(path: string, init: RequestInit = {}): Promise<Response> {
+  const SB_URL = Deno.env.get('SUPABASE_URL') || '', SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  return await fetch(`${SB_URL}/rest/v1/${path}`, { ...init, headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}`, 'Content-Type': 'application/json', ...(init.headers || {}) } });
+}
+/** 旧名 → 新名 を別名として登録し、旧名を指していた別名も新名へ付け替える。失敗しても呼び出し元は止めない */
+async function registerRename(oldName: string, newName: string, note: string, by: string): Promise<boolean> {
+  const ok = aliasKey(oldName), nk = aliasKey(newName);
+  if (!ok || !nk || ok === nk) return false;
+  try {
+    await sbRest('shift_name_aliases?on_conflict=alias_key', { method: 'POST', headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify([{ alias_key: ok, alias: String(oldName).trim(), staff_name: String(newName).trim(), note, created_by: by }]) });
+    const r = await sbRest('shift_name_aliases?select=alias_key,staff_name');
+    const rows = r.ok ? (await r.json()) as any[] : [];
+    for (const a of rows) {
+      if (aliasKey(a.staff_name) === ok && a.alias_key !== nk) {
+        await sbRest(`shift_name_aliases?alias_key=eq.${encodeURIComponent(a.alias_key)}`, { method: 'PATCH', headers: { 'Prefer': 'return=minimal' }, body: JSON.stringify({ staff_name: String(newName).trim() }) });
+      }
+    }
+    // 新名そのものが別名に残っていたら消す(本人の名前が別名だと自分に寄せる意味がない)
+    await sbRest(`shift_name_aliases?alias_key=eq.${encodeURIComponent(nk)}`, { method: 'DELETE', headers: { 'Prefer': 'return=minimal' } });
+    return true;
+  } catch (_) { return false; }
+}
+
 async function verifyToken(token: string | undefined | null): Promise<any | null> {
   if (!token || typeof token !== 'string') return null;
   const parts = token.split('.');
@@ -664,6 +693,10 @@ Deno.serve(async(req:Request)=>{
       const rows = await getRateRowsCached(true); // forceFresh=Sheetsから最新
       const parsed = parseRates(rows);
       const now = new Date().toISOString();
+      // 置き換える前の名前(login_id → 名前)。同じ login_id で名前が変わっていれば改名とみなして別名に登録する。
+      // login_id が重複している行(同じIDを複数行で使っている)は取り違えるので見ない
+      const prevRes = await fetch(`${SB_URL}/rest/v1/shift_rate_master?select=name,login_id`,{headers:{'apikey':SRK,'Authorization':`Bearer ${SRK}`}});
+      const prevRows = prevRes.ok ? (await prevRes.json()) as any[] : [];
       const recs = parsed.map((o:any)=>({ row_number:o.row_number, name:o.name, am_weekday:o.am_weekday, am_weekend:o.am_weekend, pm_weekday:o.pm_weekday, pm_weekend:o.pm_weekend, warehouse_am:o.warehouse_am, warehouse_pm:o.warehouse_pm, calc_type:o.calc_type, unit_price:o.unit_price, login_id:o.login_id, biz_type:o.biz_type, company:o.company, calc_type_pm:o.calc_type_pm, unit_price_pm:o.unit_price_pm, am_sunday:o.am_sunday, pm_sunday:o.pm_sunday, permissions:o.permissions, kw_am_daily:o.kw_am_daily, kw_pattern:o.kw_pattern, monthly_salary:o.monthly_salary, invoice_number:o.invoice_number, rate_effective_from:o.rate_effective_from, planner_allowance:o.planner_allowance, synced_at:now }));
       // 全削除 → 一括挿入(冪等・全リフレッシュ)。単価マスタは~200件なので一括でOK。
       const del = await fetch(`${SB_URL}/rest/v1/shift_rate_master?name=not.is.null`,{method:'DELETE',headers:{'apikey':SRK,'Authorization':`Bearer ${SRK}`,'Prefer':'return=minimal'}});
@@ -672,7 +705,21 @@ Deno.serve(async(req:Request)=>{
         const ins = await fetch(`${SB_URL}/rest/v1/shift_rate_master`,{method:'POST',headers:{'apikey':SRK,'Authorization':`Bearer ${SRK}`,'Content-Type':'application/json','Prefer':'return=minimal'},body:JSON.stringify(recs)});
         if(!ins.ok){ const t=await ins.text(); return jsonResp({error:'insert failed: '+ins.status+' '+t.slice(0,300)},500); }
       }
-      return jsonResp({success:true, synced:recs.length});
+      const renamed: string[] = [];
+      { const uniq = (list: any[]) => { const c = new Map<string, number>(); for (const r of list) { const id = String(r.login_id || '').trim(); if (id) c.set(id, (c.get(id) || 0) + 1); } return c; };
+        const cPrev = uniq(prevRows), cNow = uniq(recs);
+        const nowById = new Map(recs.map((r: any) => [String(r.login_id || '').trim(), String(r.name || '')]));
+        const nowNames = new Set(recs.map((r: any) => aliasKey(r.name)));
+        for (const p of prevRows) {
+          const id = String(p.login_id || '').trim();
+          if (!id || cPrev.get(id) !== 1 || cNow.get(id) !== 1) continue;
+          const nn = nowById.get(id) || '';
+          // 旧名がまだ別の行に残っている(=改名ではなく追加)なら登録しない
+          if (nn && aliasKey(nn) !== aliasKey(p.name) && !nowNames.has(aliasKey(p.name))) {
+            if (await registerRename(String(p.name), nn, '単価マスタの同期で改名を検知(同じログインID)', 'sync_rate_master')) renamed.push(`${p.name} → ${nn}`);
+          }
+        } }
+      return jsonResp({success:true, synced:recs.length, renamed});
     }
 
     // ── 氏名の表記ゆれ検知(2026-09-01) ──
@@ -1194,7 +1241,8 @@ Deno.serve(async(req:Request)=>{
       const putR = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${tkR}`,'Content-Type':'application/json'},body:JSON.stringify({values:[[newName]]})});
       if(!putR.ok) return jsonResp({error:'sheet update failed: '+putR.status+' '+(await putR.text()).slice(0,200)}, 500);
       await invalidateRateCache();
-      return jsonResp({success:true, row_number:Number(row_number), from:expName, to:newName});
+      const aliased = await registerRename(expName, newName, '単価マスタの改名(新聞ツール)', 'rename_rate');
+      return jsonResp({success:true, row_number:Number(row_number), from:expName, to:newName, aliased});
     }
 
     // ---- 以下はトークン必須 ----
@@ -1384,6 +1432,34 @@ Deno.serve(async(req:Request)=>{
       if (!res.ok) return jsonResp({error:'削除できませんでした: '+(await res.text()).slice(0,300)},500);
       return jsonResp({success:true});
     }
+    if(action==='get_name_aliases'){
+      if(!admin) return forbid();
+      const r = await sbRest('shift_name_aliases?select=alias_key,alias,staff_name,note,created_by,created_at&order=created_at.desc');
+      if(!r.ok) return jsonResp({error:'取得失敗: '+(await r.text()).slice(0,200)}, 500);
+      return jsonResp({aliases: await r.json()});
+    }
+    if(action==='save_name_alias'){
+      if(!admin) return forbid();
+      const al = String(body.alias ?? '').trim(), to = String(body.staff_name ?? '').trim();
+      if(!al || !to) return jsonResp({error:'alias と staff_name が必要です'}, 400);
+      if(aliasKey(al) === aliasKey(to)) return jsonResp({error:'同じ名前です'}, 400);
+      // 別名の先は単価マスタにある名前だけ(打ち間違いの先に寄せない)
+      const rates = parseRates(await getRateRowsCached(false));
+      if(!rates.some((x:any)=>aliasKey(x.name)===aliasKey(to))) return jsonResp({error:`「${to}」は単価マスタにありません`}, 400);
+      if(rates.some((x:any)=>aliasKey(x.name)===aliasKey(al))) return jsonResp({error:`「${al}」は単価マスタにある名前なので別名にできません`}, 400);
+      const w = await sbRest('shift_name_aliases?on_conflict=alias_key', { method:'POST', headers:{ 'Prefer':'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify([{ alias_key: aliasKey(al), alias: al, staff_name: to, note: String(body.note ?? '').slice(0,200), created_by: String(callerName || 'admin') }]) });
+      if(!w.ok) return jsonResp({error:'保存失敗: '+(await w.text()).slice(0,200)}, 500);
+      return jsonResp({success:true});
+    }
+    if(action==='delete_name_alias'){
+      if(!admin) return forbid();
+      const k = aliasKey(body.alias);
+      if(!k) return jsonResp({error:'alias が必要です'}, 400);
+      const d = await sbRest(`shift_name_aliases?alias_key=eq.${encodeURIComponent(k)}`, { method:'DELETE', headers:{ 'Prefer':'return=minimal' } });
+      if(!d.ok) return jsonResp({error:'削除失敗: '+(await d.text()).slice(0,200)}, 500);
+      return jsonResp({success:true});
+    }
     if(action==='save_rate'){
       if(!admin) return forbid();
       if(!record?.name) return jsonResp({error:'name required'}, 400);
@@ -1401,11 +1477,15 @@ Deno.serve(async(req:Request)=>{
           }
         }
       }
+      // 名前が変わる保存なら、旧名を別名に登録する(シフト表に旧名のまま入っている日を取りこぼさない)
+      let oldNameForAlias='';
+      if(row_number){ try{ const cur0=parseRates(await sheetVals(await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A${row_number}:X${row_number}`,{headers:{'Authorization':`Bearer ${sheetsToken}`}}))); oldNameForAlias=String(cur0[0]?.name||'').trim(); }catch(_){} }
       const row=[record.name,record.am_weekday||'',record.am_weekend||'',record.pm_weekday||'',record.pm_weekend||'',record.warehouse_am||'',record.warehouse_pm||'',record.calc_type||'固定',record.unit_price||'',record.login_id||'',record.login_pw||'',record.biz_type||'',record.company||'',record.calc_type_pm||'固定',record.unit_price_pm||'',record.am_sunday||'',record.pm_sunday||'',record.permissions||'',record.kw_am_daily||'',record.kw_pattern||'',record.monthly_salary||'',record.invoice_number||'',record.rate_effective_from||'',record.planner_allowance||''];
       if(row_number){await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A${row_number}:X${row_number}?valueInputOption=USER_ENTERED`,{method:'PUT',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
       else{await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent('単価マスタ')}!A1:X1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{'Authorization':`Bearer ${sheetsToken}`,'Content-Type':'application/json'},body:JSON.stringify({values:[row]})});}
       await invalidateRateCache();
-      return jsonResp({success:true});
+      const aliased = oldNameForAlias ? await registerRename(oldNameForAlias, String(record.name).trim(), '単価マスタの改名(スタッフ管理で保存)', 'save_rate') : false;
+      return jsonResp({success:true, aliased});
     }
     if(action==='change_password'){
       // 本人のログインパスワード変更 (現在PWをサーバ側で照合)。adminは login_id 指定で任意ユーザー可。
