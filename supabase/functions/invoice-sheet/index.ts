@@ -1351,7 +1351,16 @@ Deno.serve(async(req:Request)=>{
       // 「電話番号未登録」となり、支払明細の確定保存やビューア照合が通らなかった(上田雪枝で発生)。
       // シートは書き換えず、返す値だけを補う(正=staff_master、シートは人が見るためのコピー)。
       const pf=await fillRosterPhones(rows);
-      return jsonResp({rows, phone_filled: pf.filled, phone_ambiguous: pf.ambiguous, master_phones: pf.map});
+      // 明細ビューアで会社の分を見られる人(代表 or 担当者・NexPortアカウントあり)がいる会社。
+      // 会社の枠(TLC.ﾊﾟｰﾄﾅｰｽﾞ㈱5 等)は電話が無くても代表/担当者が会社名で見られるので、確定保存の警告から外すのに使う
+      let viewer_companies:string[]=[];
+      try{
+        const SB_URL=Deno.env.get('SUPABASE_URL')||'', SRK=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'';
+        const r=await fetch(`${SB_URL}/rest/v1/staff_master?select=company_name&profile_id=not.is.null&hidden=is.false&company_name=not.is.null&or=(is_company_owner.is.true,is_company_contact.is.true,category.eq.法人オーナー)`,
+          {headers:{'apikey':SRK,'Authorization':`Bearer ${SRK}`}});
+        if(r.ok) viewer_companies=[...new Set(((await r.json()) as any[]).map((x)=>String(x?.company_name||'').trim()).filter(Boolean))];
+      }catch(_){ /* 取れなければ空=全員を警告(従来どおり) */ }
+      return jsonResp({rows, phone_filled: pf.filled, phone_ambiguous: pf.ambiguous, master_phones: pf.map, viewer_companies});
     }
     if(action==='get_special_rates'){
       if(!admin) return forbid();

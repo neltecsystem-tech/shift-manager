@@ -3334,6 +3334,7 @@ async function loadLiveStaff(){
     const j=await invApi({action:'get_roster'});
     if(j.error||!Array.isArray(j.rows)||j.rows.length<3)throw new Error(j.error||'rows不足');
     if(j.master_phones&&typeof j.master_phones==='object')masterPhones=j.master_phones;
+    if(Array.isArray(j.viewer_companies))viewerCompanyKeys=new Set(j.viewer_companies.map(companyKey));
     DB.raw.course_staff_table=j.rows;
     DB.staff.length=0;
     parseStaff();
@@ -3737,6 +3738,10 @@ function getDriverMaps(dateStr){
 // 中央人材マスタ(staff_master)の電話。get_roster が master_phones として返す。
 // 氏名キー(空白除去) -> 電話。同姓同名で電話が割れている人は含まれない。
 let masterPhones={};
+// 明細ビューアで会社の分を見られる代表/担当者がいる会社(会社名キー)。get_roster の viewer_companies
+let viewerCompanyKeys=new Set();
+// 会社名の表記ゆれを吸収するキー(ﾊﾟｰﾄﾅｰｽﾞ㈱ ↔ パートナーズ株式会社)
+function companyKey(s){return String(s==null?'':s).normalize('NFKC').replace(/株式会社|有限会社|合同会社|\(株\)|\(有\)|\(同\)|[\s　 ・.．\/]/g,'').toLowerCase();}
 function phoneNameKey(s){return String(s==null?'':s).replace(/[\s　 ]+/g,'').trim();}
 function getPhone(name){
   // 中央人材マスタを先に見る(正はこちら)。名簿シートD列は数値セルで先頭の0が落ちたり
@@ -18110,7 +18115,10 @@ function admPayBuildSaveBar(items,y,m,monthLabel){
     };
   });
   admPaySavePayloadStore[id]=payload;
-  const noPhone=payload.filter(p=>!p.phone);
+  // 会社の枠(会社名あり)は、その会社に代表/担当者のログインがあれば会社名でビューアに出るので警告しない
+  const noPhoneAll=payload.filter(p=>!p.phone);
+  const coCovered=p=>!!p.company_name&&viewerCompanyKeys.has(companyKey(p.company_name));
+  const noPhone=noPhoneAll.filter(p=>!coCovered(p));
   const escHtml=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const warning=noPhone.length?`<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:11px;color:#92400e;">⚠️ 電話番号未登録 (人員名簿シート D列): ${escHtml(noPhone.map(p=>p.staff_name).slice(0,5).join(', '))}${noPhone.length>5?` 他${noPhone.length-5}名`:''} — 該当者はビューアから検索できません</div>`:'';
   return `<div id="${id}" style="background:#eef2ff;border:1px solid #6366f1;border-radius:8px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
