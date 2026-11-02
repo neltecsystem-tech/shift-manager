@@ -11301,8 +11301,9 @@ function admRevRenderImports(monthVal,rows){
   const noEmp=rows.some(r=>r.employee==null);
   const tot={sales:0,out:0,emp:0};
   let h=`<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:10px 14px;margin-bottom:12px;color:#1e40af;font-size:13px;line-height:1.8;">`
-    +`🗂 <b>${monthVal}</b> はシステム導入前のため、スプレッドシート「${(rows[0]&&rows[0].source)||'新聞収益管理表'}」の営業所別の数字を表示しています。`
-    +`<br>売上＝委託売上＋社員売上＋管理費IN＋その他収益 ／ 外注費＝委託支払い ／ 社員給与＝シートの社員給与`
+    +`🗂 <b>${monthVal}</b> はシステム導入前のため、取り込んだ数字（${(rows[0]&&rows[0].source)||'新聞収益管理表'}）を営業所別に表示しています。`
+    +((rows[0]&&rows[0].source)==='新聞収益管理表'?`<br>売上＝委託売上＋社員売上＋管理費IN＋その他収益 ／ 外注費＝委託支払い ／ 社員給与＝シートの社員給与`:'')
+    +((rows[0]&&rows[0].detail&&rows[0].detail.note)?`<br>${rows[0].detail.note}`:'')
     +(noEmp?`<br>この月のシートは委託と社員が分かれていないため、社員給与は不明（0円で計算）です。`:'')+`</div>`;
   h+=`<table><thead><tr><th>営業所</th><th style="text-align:right;">売上</th><th style="text-align:right;">外注費</th><th style="text-align:right;">粗利</th><th style="text-align:right;">粗利率</th><th style="text-align:right;">社員給与</th><th style="text-align:right;">営業利益</th><th style="text-align:right;">率</th></tr></thead><tbody>`;
   rows.forEach(r=>{
@@ -11442,16 +11443,17 @@ async function admRevLoad(){
       if(j&&!j.error)closedPaySummary=j;
       else closedPaySummary={error:String((j&&j.error)||'unknown')};
     }catch(e){closedPaySummary={error:String((e&&e.message)||e)};}
+    // 取込がある月(システム導入前の2025/10〜2026/04)は、取り込んだ数字で出す。2026/04 は確定支払いが試験用の1件しか無いため
+    // 会計の売上＋「NexPortに反映」した支払いで補った(NexPort の収支と同じ決まり)
+    try{
+      const imp=await invApi({action:'get_balance_imports',year_month:monthVal});
+      if(imp&&Array.isArray(imp.rows)&&imp.rows.length){admRevRenderImports(monthVal,imp.rows);return;}
+    }catch(_){}
     if(closedPaySummary&&closedPaySummary.error){
       admRevShowBlocked([`確定支払いを読み込めませんでした（${admRevErrShort(closedPaySummary.error)}）`]);
       return;
     }
     if(!closedPaySummary.finalized){
-      // システム導入前の月は、取り込んだシートの数字で出す
-      try{
-        const imp=await invApi({action:'get_balance_imports',year_month:monthVal});
-        if(imp&&Array.isArray(imp.rows)&&imp.rows.length){admRevRenderImports(monthVal,imp.rows);return;}
-      }catch(_){}
       admRevShowBlocked([`${monthVal} の支払いはまだ確定されていません。支払い明細から「確定・公開」するか、「支払い元」を「シフト自動（再計算）」に切り替えてください。`]);
       return;
     }
