@@ -16347,6 +16347,10 @@ async function admBillAreaConfirmAll(area,monthVal){
       results.push({course,grand:r.grandTotal,am:r.totalAmSum,pm:r.totalPmSum,counts:billCountsFrom(r)});
       total+=r.grandTotal;
     });
+    // 請求対象の店舗が無いコース(立川30など)は確定しない。¥0チェックからも外す
+    const skipC=results.filter(billNoBillableShops);
+    if(skipC.length)results.splice(0,results.length,...results.filter(r=>!billNoBillableShops(r)));
+    const skipNote=skipC.length?`\n\n※ 請求対象の店舗が無いため確定しないコース: ${skipC.map(r=>r.course).join('・')}`:'';
     // 🚨 ¥0 での確定保存を止める(2026-09-10 の¥0確定事故の再発防止)
     const zeroC=results.filter(r=>!(Number(r.grand)>0));
     if(zeroC.length){
@@ -16356,7 +16360,7 @@ async function admBillAreaConfirmAll(area,monthVal){
         +`例: ${zeroC.slice(0,5).map(r=>r.course).join('・')}`);
       return;
     }
-    const ok=window.confirm(`${area}営業所 ${monthVal} の全${courses.length}コースを確定します。\n総額 ¥${total.toLocaleString()}\n\n続行しますか？`);
+    const ok=window.confirm(`${area}営業所 ${monthVal} の${results.length}コースを確定します。\n総額 ¥${total.toLocaleString()}${skipNote}\n\n続行しますか？`);
     if(!ok)return;
     // 進捗表示
     admBillShowProgress(`🔄 ${area}営業所 確定処理中...`);
@@ -16371,7 +16375,7 @@ async function admBillAreaConfirmAll(area,monthVal){
     }finally{
       admBillHideProgress();
     }
-    alert(`✓ ${courses.length}コースを確定しました`);
+    alert(`✓ ${results.length}コースを確定しました${skipNote}`);
     admBillAllCourses();
   }catch(e){admBillHideProgress();alert('確定失敗: '+e.message);console.error(e);}
 }
@@ -16412,6 +16416,9 @@ async function admBillAreaReconfirmAll(area,monthVal){
     // 🚨 ¥0 での確定保存を止める。2026-09-10、単価の読み取り失敗で全単価が0になり、
     //    立川45コースが¥0のまま確定保存された。請求が0円になることは通常あり得ないので、
     //    計算結果が0のときは保存させず、原因(単価/スナップの読み取り)を確認させる。
+    // 請求対象の店舗が無いコース(立川30など)は上書きしない。¥0チェックからも外す
+    const skipR=results.filter(billNoBillableShops);
+    if(skipR.length)results.splice(0,results.length,...results.filter(r=>!billNoBillableShops(r)));
     const zeroCourses=results.filter(r=>!(Number(r.grand)>0));
     if(zeroCourses.length){
       alert(`再計算の結果が¥0のコースが ${zeroCourses.length}/${results.length} 件あります。`+String.fromCharCode(10,10)
@@ -16421,7 +16428,7 @@ async function admBillAreaReconfirmAll(area,monthVal){
       return;
     }
     const diff=newTotal-oldTotal;
-    const msg=`${area}営業所 ${monthVal} の全${courses.length}コースを再確定（上書き）します。\n\n`
+    const msg=`${area}営業所 ${monthVal} の${results.length}コースを再確定（上書き）します。\n\n`
       +`確定済み合計 ¥${oldTotal.toLocaleString()}\n`
       +`再計算後合計 ¥${newTotal.toLocaleString()}\n`
       +`差額 ${diff>=0?'+':''}¥${diff.toLocaleString()}\n\n`
@@ -16454,7 +16461,7 @@ async function admBillAreaReconfirmAll(area,monthVal){
         +(failed.length>10?`\n…他 ${failed.length-10}件`:'')
         +`\n\n成功 ${results.length-failed.length}/${results.length}コース`);
     }else{
-      alert(`✓ ${courses.length}コースを上書き確定しました${changed.length?`（金額変更 ${changed.length}件・差額 ${diff>=0?'+':''}¥${diff.toLocaleString()}）`:''}`);
+      alert(`✓ ${results.length}コースを上書き確定しました${changed.length?`（金額変更 ${changed.length}件・差額 ${diff>=0?'+':''}¥${diff.toLocaleString()}）`:''}`);
     }
     admBillAllCourses();
   }catch(e){admBillHideProgress();alert('再確定失敗: '+e.message);console.error(e);}
@@ -16804,6 +16811,14 @@ function admBillRenderWithTotals(area,course,monthVal){
   return admBillTachikawa(area,course,monthVal,true);
 }
 // 確定売上に記録する店舗数(振り返り統計用)を計算結果から抽出
+// 請求対象の店舗が1店も無いコース(朝刊・夕刊・競馬の店舗数がすべて0)。
+// 例: 立川30 = JRA)立川・ｳｲﾝｽﾞ立川A の競馬コースだが、両店は競馬を請求しない(SPECIAL_BILLING_SHOPS noKeiba)。
+//     朝刊は別コースで請求しているので、立川30自体は¥0が正しく、これまでも請求書を作っていない。
+// ¥0 でも単価の読み取り失敗とは違うので確定を止めない。確定対象から外して保存もしない。
+function billNoBillableShops(r){
+  const c=r&&r.counts;
+  return !!c&&!(Number(r.grand)>0)&&!(c.am>0)&&!(c.pm>0)&&!(c.keiba>0);
+}
 function billCountsFrom(r){
   if(!r)return null;
   return {am:r.amCount||0,am_tokushu:r.amTokushu||0,am_zasshi:r.amZasshi||0,am_dokkon:r.amDokkon||0,am_kyori:r.amKyori||0,pm:r.pmCount||0,pm_tokushu:r.pmTokushu||0,keiba:r.keibaCount||0,keiba_tokushu:r.keibaTokushu||0};
@@ -17159,7 +17174,8 @@ function buildAreaTotalPage(area,monthVal,courses){
     rows.push({course,am,pm,grand,amCount:r.amCount,pmCount:r.pmCount,keibaCount:r.keibaCount,confirmed:!!confirmed});
     tot.am+=am;tot.pm+=pm;tot.grand+=grand;
     tot.amCount+=r.amCount;tot.pmCount+=r.pmCount;tot.keibaCount+=r.keibaCount;
-    if(confirmed)confirmedCnt++;
+    // 請求対象の店舗が無いコース(立川30など)は確定しないので、確定済みと同じに数える(「未確定1コース」が残り続けないように)
+    if(confirmed||billNoBillableShops({grand:r.grandTotal,counts:billCountsFrom(r)}))confirmedCnt++;
   });
 
   // 返品新聞 開梱+カゴ分け作業料（立川・川崎高津のみ）
