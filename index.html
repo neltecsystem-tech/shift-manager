@@ -22470,6 +22470,23 @@ function sysShowAdminLogin(){
 //      トークン自体はサーバが12時間で失効させる (invoice-sheet の TOKEN_EXPIRY_MS)。
 const SYS_SESS_KEY='sm_session_v1';
 
+// トークンに書かれた役割(role)を読む。サーバ(invoice-sheet の isAdmin)と同じく role==='admin' が管理者。
+// 氏名に日本語が入るので JSON.parse せず role だけ拾う。読めなければ ''
+function sysTokenRole(token){
+  try{
+    const raw=atob(String(token||'').split('.')[0].replace(/-/g,'+').replace(/_/g,'/'));
+    const m=raw.match(/"role":\s*"([a-z_]+)"/);
+    return m?m[1]:'';
+  }catch(_e){return '';}
+}
+// トークンに書かれた区分(biz_type)。base64 の中身は UTF-8 なので復号してから読む
+function sysTokenBizType(token){
+  try{
+    const bin=atob(String(token||'').split('.')[0].replace(/-/g,'+').replace(/_/g,'/'));
+    const txt=new TextDecoder().decode(Uint8Array.from(bin,c=>c.charCodeAt(0)));
+    return String(JSON.parse(txt).biz_type||'');
+  }catch(_e){return '';}
+}
 // トークン payload の exp(ミリ秒) を読む。読めなければ 0 = 判定しない (サーバの401に委ねる)
 function sysTokenExp(token){
   try{
@@ -22539,7 +22556,14 @@ function sysStartSession(sess){
   // → システム確認のたびに管理者アカウントへログインし直す手間をなくす。
   // サーバ側権限判定のため、請求書の管理者トークンを裏で取得してから全データ読込。
   if(perms.includes('all')||perms.includes('admin')){
-    invServerAdminLogin(INV_PW).then(r=>{
+    // 🚨 INV_PW は空なので管理者パスワードでの昇格は必ず失敗し、admin/all 権限のスタッフ(小林さん)は
+    //    画面の中だけ invIsAdmin=false のままだった(稼働メモが自分の分しか出ない・別名を読まない 等。2026-11-02)。
+    //    サーバはログイン時のトークンに role=admin を入れて管理者として扱っているので、画面もそれに合わせる。
+    //    ただし画面で管理者扱いにするのは区分=社員の人だけ(個人事業主に admin 権限があっても全員分は見せない。2026-11-02 決定)
+    if(sysTokenRole(invAuthToken)==='admin'&&sysTokenBizType(invAuthToken)==='社員'){
+      invIsAdmin=true; invStaffName=''; sysSessionSave(); invLoadAll().catch(()=>{});
+      if(typeof loadLiveStaff==='function')loadLiveStaff().catch(()=>{});
+    }else invServerAdminLogin(INV_PW).then(r=>{
       if(r&&r.success){ invIsAdmin=true; invStaffName=''; sysSessionSave(); invLoadAll();
         // スタッフ管理を開いた瞬間に出せるよう、人員名簿(営業所判定)も裏で先読み
         if(typeof loadLiveStaff==='function')loadLiveStaff().catch(()=>{});
