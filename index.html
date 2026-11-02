@@ -7710,15 +7710,28 @@ async function invRecalcRun(){
 
 // 個建制: 店舗マスタから自動計算 (共通キャッシュ経由)
 let invShopMasterCache=null;
+// 🚨 読めなかった結果(エラー・0件)はキャッシュしない。
+//   2026-10-15 に店舗マスタEFがログイン必須になってから、ページ読込直後(トークン付与前)のこの先読みが
+//   AUTH_REQUIRED で失敗し、空の店舗マスタが残り続けた。個建・個数の人(井田均 川越53 など)の明細が
+//   全日¥0で作られていた(2026-11-02 発覚)。
 async function invLoadShopMaster(){
-  if(invShopMasterCache)return invShopMasterCache;
+  if(invShopMasterCache&&invShopMasterCache.records.length)return invShopMasterCache;
   try{
     const json=await fetchShopMasterList();
-    invShopMasterCache={records:json.records||[],headers:json.headers||[]};
-    return invShopMasterCache;
-  }catch(_){return {records:[],headers:[]};}
+    if(json&&!json.error&&Array.isArray(json.records)&&json.records.length){
+      invShopMasterCache={records:json.records,headers:json.headers||[]};
+      return invShopMasterCache;
+    }
+    return {records:[],headers:[],error:(json&&json.error)||'店舗マスタが0件でした'};
+  }catch(e){return {records:[],headers:[],error:String(e&&e.message||e)};}
 }
-// 事前ロード（非同期で裏読み）
+// 明細・収支の計算前に店舗マスタを確実に読む。読めなければ理由を返す(呼び出し側で計算を止める。
+// 店舗マスタ無しで計算すると個建・個数の人が黙って¥0になる)
+async function invEnsureShopMaster(){
+  const sm=await invLoadShopMaster();
+  return sm.records.length?'':`店舗マスタを読み込めませんでした(${sm.error||'0件'})。少し待って再読み込みしてください`;
+}
+// 事前ロード（非同期で裏読み）。ログイン前は失敗するが、キャッシュしないので後で読み直される
 invLoadShopMaster();
 
 function invCalcKodate(courseName,category){
@@ -11334,7 +11347,7 @@ async function admRevLoad(){
   if(!smNameAliases.size)await smLoadNameAliases();   // 別名が未読込のまま作ると、別名の日が本人の明細から抜ける
     if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}}
     if(!invSpecial.length){try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}}
-    if(!invShopMasterCache)await invLoadShopMaster();
+    {const e=await invEnsureShopMaster();if(e)throw new Error(e);}
     const monthLabelExp=await admPayEnsureMonthLoaded(y,m);
     if(monthLabelExp){
       invRates.forEach(rate=>{
@@ -18081,9 +18094,10 @@ async function admPayRender(){
   const isPmKodate=((rate.calc_type_pm||rate.calc_type)||'')==='個建';
   const isAmQty=(rate.calc_type||'')==='個数';
   const isPmQty=((rate.calc_type_pm||rate.calc_type)||'')==='個数';
-  if((isAmKodate||isPmKodate||isAmQty||isPmQty)&&!invShopMasterCache){
+  if(isAmKodate||isPmKodate||isAmQty||isPmQty){
     msg.textContent='店舗マスタを読み込み中...';msg.style.color='#3b82f6';
-    await invLoadShopMaster();
+    const e=await invEnsureShopMaster();
+    if(e){msg.textContent='❌ '+e;msg.style.color='var(--danger)';cont.innerHTML='';return;}
     msg.textContent='';
   }
   const stmt=admPayBuildStatement(rate,y,m,monthLabel,monthVal);
@@ -18190,7 +18204,7 @@ async function admPayFinalizeAll(){
   try{const r=await invApi({action:'get_rates'});if(r&&r.rates)invRates=r.rates;}catch(_){}
   try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw&&kw.old)kwCoursePrices.old=kw.old;if(kw&&kw.new)kwCoursePrices.new=kw.new;}catch(_){}
   try{const sp=await invApi({action:'get_special_rates'});if(sp&&sp.records)invSpecial=sp.records;}catch(_){}
-  if(!invShopMasterCache){setMsg('店舗マスタを読み込み中...');await invLoadShopMaster();}
+  {setMsg('店舗マスタを読み込み中...');const e=await invEnsureShopMaster();if(e){setMsg('❌ '+e,'var(--danger)');return;}}
 
   // 非社員ドライバー全員(営業所問わず)。稼働のある人(明細行あり or 総額>0)だけ確定。
   const targets=[]; const skippedEmpty=[];
@@ -18600,7 +18614,7 @@ async function admPaySaveToNexport(){
   if(!smNameAliases.size)await smLoadNameAliases();   // 別名が未読込のまま作ると、別名の日が本人の明細から抜ける
   if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}}
   if(!invSpecial.length){try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}}
-  if(!invShopMasterCache){msg.textContent='店舗マスタを読み込み中...';await invLoadShopMaster();}
+  {msg.textContent='店舗マスタを読み込み中...';const e=await invEnsureShopMaster();if(e){msg.textContent='❌ '+e;msg.style.color='var(--danger)';return;}}
 
   msg.textContent='集計中...';
   // 営業所別の合計
@@ -18692,7 +18706,7 @@ async function admPayBulk(){
   if(!smNameAliases.size)await smLoadNameAliases();   // 別名が未読込のまま作ると、別名の日が本人の明細から抜ける
   if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}}
   if(!invSpecial.length){try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}}
-  if(!invShopMasterCache){msg.textContent='店舗マスタを読み込み中...';await invLoadShopMaster();}
+  {msg.textContent='店舗マスタを読み込み中...';const e=await invEnsureShopMaster();if(e){msg.textContent='❌ '+e;msg.style.color='var(--danger)';return;}}
 
   // 主稼働が指定営業所のドライバーを抽出 (社員は月給制のため除外)
   const drivers=[];
