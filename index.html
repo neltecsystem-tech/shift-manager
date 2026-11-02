@@ -7004,7 +7004,10 @@ let invRates=[];
 let smNameAliases=new Map(), smNameAliasList=[], smNameAliasErr='';
 async function smLoadNameAliases(){
   // 読めなかった理由を残す(黙って空にすると、別名の日が本人の明細から抜けても気付けない)
-  if(!invIsAdmin){smNameAliasErr='管理者として認証されていません(invIsAdmin=false)';return;}
+  // 画面側の invIsAdmin では絞らない。小林さんのような admin/all 権限のスタッフは invIsAdmin=false のまま
+  // (管理者パスワードでの昇格が通らない)で、別名を読まず ELP/富岡恵理 の明細が作られなかった(2026-11)。
+  // 読めるかどうかはサーバ(get_name_aliases の管理者判定)に任せ、断られたら理由を残す
+  if(!invAuthToken){smNameAliasErr='ログインしていません';return;}
   try{
     const r=await invApi({action:'get_name_aliases'});
     if(r&&Array.isArray(r.aliases)){ smNameAliasList=r.aliases; smNameAliases=new Map(r.aliases.map(a=>[invNormName(a.alias),a.staff_name])); smNameAliasErr=''; }
