@@ -11290,6 +11290,41 @@ function admRevShowBlocked(reasons){
     +`</div>`;
 }
 
+// 🗂 システム導入前(2025/10〜2026/03)の収支。スプレッドシート「新聞収益管理表」から取り込んだ営業所別の数字を出す。
+//   確定支払いが無い月で、取込データがある月だけ(NexPort の収支と同じ決まり。2026-11-02)
+function admRevRenderImports(monthVal,rows){
+  admRevData=null;
+  const ORDER=['立川','城北','川越','川崎高津'];
+  rows=[...rows].sort((a,b)=>ORDER.indexOf(a.area)-ORDER.indexOf(b.area));
+  const yen=v=>'¥'+Math.round(Number(v)||0).toLocaleString();
+  const pct=(a,b)=>b>0?(a/b*100).toFixed(1)+'%':'—';
+  const noEmp=rows.some(r=>r.employee==null);
+  const tot={sales:0,out:0,emp:0};
+  let h=`<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:10px 14px;margin-bottom:12px;color:#1e40af;font-size:13px;line-height:1.8;">`
+    +`🗂 <b>${monthVal}</b> はシステム導入前のため、スプレッドシート「${(rows[0]&&rows[0].source)||'新聞収益管理表'}」の営業所別の数字を表示しています。`
+    +`<br>売上＝委託売上＋社員売上＋管理費IN＋その他収益 ／ 外注費＝委託支払い ／ 社員給与＝シートの社員給与`
+    +(noEmp?`<br>この月のシートは委託と社員が分かれていないため、社員給与は不明（0円で計算）です。`:'')+`</div>`;
+  h+=`<table><thead><tr><th>営業所</th><th style="text-align:right;">売上</th><th style="text-align:right;">外注費</th><th style="text-align:right;">粗利</th><th style="text-align:right;">粗利率</th><th style="text-align:right;">社員給与</th><th style="text-align:right;">営業利益</th><th style="text-align:right;">率</th></tr></thead><tbody>`;
+  rows.forEach(r=>{
+    const s=Number(r.sales)||0,o=Number(r.outsource)||0,e=Number(r.employee)||0,g=s-o,op=g-e;
+    tot.sales+=s;tot.out+=o;tot.emp+=e;
+    h+=`<tr><td><b>${r.area}</b></td><td style="text-align:right;">${yen(s)}</td><td style="text-align:right;">${yen(o)}</td><td style="text-align:right;">${yen(g)}</td><td style="text-align:right;">${pct(g,s)}</td><td style="text-align:right;">${r.employee==null?'不明':yen(e)}</td><td style="text-align:right;">${yen(op)}</td><td style="text-align:right;">${pct(op,s)}</td></tr>`;
+  });
+  const tg=tot.sales-tot.out,top=tg-tot.emp;
+  h+=`<tr style="font-weight:bold;background:#f8fafc;"><td>合計</td><td style="text-align:right;">${yen(tot.sales)}</td><td style="text-align:right;">${yen(tot.out)}</td><td style="text-align:right;">${yen(tg)}</td><td style="text-align:right;">${pct(tg,tot.sales)}</td><td style="text-align:right;">${noEmp?'不明':yen(tot.emp)}</td><td style="text-align:right;">${yen(top)}</td><td style="text-align:right;">${pct(top,tot.sales)}</td></tr></tbody></table>`;
+  // 内訳(シートの欄そのまま)
+  const d0=rows[0]&&rows[0].detail||{};
+  let dh='';
+  if('itaku_sales' in d0){
+    const L=[['itaku_sales','委託売上'],['itaku_pay','委託支払い'],['emp_sales','社員売上'],['emp_salary','社員給与'],['kanri_in','管理費IN'],['kanri_out','管理費OUT'],['other','その他収益'],['special_out','特殊支出'],['eigyori','営利(シート)']];
+    dh=`<h4 style="margin:16px 0 8px;">シートの内訳</h4><table><thead><tr><th>営業所</th>${L.map(x=>`<th style="text-align:right;">${x[1]}</th>`).join('')}</tr></thead><tbody>`
+      +rows.map(r=>`<tr><td>${r.area}</td>${L.map(x=>`<td style="text-align:right;">${yen((r.detail||{})[x[0]])}</td>`).join('')}</tr>`).join('')+`</tbody></table>`
+      +`<p style="font-size:12px;color:var(--text-sub);margin-top:6px;">※ 管理費OUT・特殊支出は、これまでの年間収支と同じく外注費・社員給与に入れていません。</p>`;
+  }
+  const el=document.getElementById('adm-rev-summary');if(el)el.innerHTML=h;
+  const detail=document.getElementById('adm-rev-detail');if(detail)detail.innerHTML=dh;
+}
+
 async function admRevLoad(){
   const monthVal=document.getElementById('adm-rev-month').value;
   if(!monthVal)return;
@@ -11412,6 +11447,11 @@ async function admRevLoad(){
       return;
     }
     if(!closedPaySummary.finalized){
+      // システム導入前の月は、取り込んだシートの数字で出す
+      try{
+        const imp=await invApi({action:'get_balance_imports',year_month:monthVal});
+        if(imp&&Array.isArray(imp.rows)&&imp.rows.length){admRevRenderImports(monthVal,imp.rows);return;}
+      }catch(_){}
       admRevShowBlocked([`${monthVal} の支払いはまだ確定されていません。支払い明細から「確定・公開」するか、「支払い元」を「シフト自動（再計算）」に切り替えてください。`]);
       return;
     }

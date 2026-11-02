@@ -1903,6 +1903,18 @@ Deno.serve(async(req:Request)=>{
         return jsonResp({ok:false, error:String((e as any)?.message??e).slice(0,200)});
       }
     }
+    if(action==='get_balance_imports'){
+      // システム導入前(2025/10〜2026/03)の新聞の収支。スプレッドシート「新聞収益管理表」から取り込んだ営業所別の数字
+      // (NexPort の shimbun_balance_imports)。収支管理で確定支払いが無い月だけ使う(2026-11-02)
+      if(!admin) return forbid();
+      const ym=String((body as any).year_month||'');
+      if(!/^\d{4}-\d{2}$/.test(ym)) return jsonResp({error:'year_month(YYYY-MM)が必要です'},400);
+      const SB_URL = Deno.env.get('SUPABASE_URL') || '';
+      const SRK = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      const r=await fetch(`${SB_URL}/rest/v1/shimbun_balance_imports?select=area,sales,outsource,employee,detail,source&year_month=eq.${ym}`,{headers:{'apikey':SRK,'Authorization':`Bearer ${SRK}`}});
+      if(!r.ok) return jsonResp({error:`取込データを読めませんでした (${r.status})`});
+      return jsonResp({rows: await r.json()});
+    }
     if(action==='get_btob_settings'){
       // BtoBプラットフォーム用の振込先と支払先コード。
       // 🚨 shift-manager のリポジトリは公開なので口座情報をコードに置けない。
