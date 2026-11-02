@@ -47,7 +47,25 @@ async function fillRosterPhones(rows: any[][]): Promise<{ filled: string[]; ambi
       { headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } });
     if (r.ok) master = await r.json();
   } catch (_) { return empty; } // 補完できなくても名簿自体は返す(従来動作)
-  if (!Array.isArray(master) || !master.length) return empty;
+  if (!Array.isArray(master)) return empty;
+  // staff_master に電話が無く NexPort アカウントに紐付いている人は、NexPort のプロフィールの電話を使う。
+  // NexPort で電話を登録しても staff_master には写らず「電話番号未登録」のままだった(和田登志夫・2026-11)。
+  // プロフィールの電話は本人の手入力もあるので、携帯/固定の形(0始まり10〜11桁)になるものだけ採る。
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/staff_master?select=full_name,profile_id&phone=is.null&profile_id=not.is.null&hidden=is.false`,
+      { headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } });
+    const noPhone: any[] = r.ok ? await r.json() : [];
+    const ids = [...new Set(noPhone.map((m) => m?.profile_id).filter(Boolean))];
+    if (ids.length) {
+      const pr = await fetch(`${SB_URL}/rest/v1/profiles?select=id,phone&phone=not.is.null&id=in.(${ids.join(',')})`,
+        { headers: { 'apikey': SRK, 'Authorization': `Bearer ${SRK}` } });
+      const profs: any[] = pr.ok ? await pr.json() : [];
+      const phoneById = new Map<string, string>();
+      for (const p of profs) { const ph = fixJpPhone(p?.phone); if (/^0\d{9,10}$/.test(ph)) phoneById.set(p.id, ph); }
+      for (const m of noPhone) { const ph = phoneById.get(m.profile_id); if (ph) master.push({ full_name: m.full_name, phone: ph }); }
+    }
+  } catch (_) { /* 補えなくても staff_master の電話だけで続ける */ }
+  if (!master.length) return empty;
   const byName = new Map<string, Set<string>>();
   for (const m of master) {
     const k = rosterNameKey(m?.full_name);
