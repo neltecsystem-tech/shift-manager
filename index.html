@@ -15062,7 +15062,8 @@ async function admGetEmployeeSalaries(monthVal){
     if(!r||!Array.isArray(r.salaries))return {map:null,error:(r&&r.error)||'会計の給与を読めませんでした'};
     const map={};
     r.salaries.forEach(s=>{map[invNormName(s.name)]=Number(s.monthly_salary)||0;});
-    return (_empSalaryCache[monthVal]={map,error:null});
+    const officers=new Set((r.officers||[]).map(n=>invNormName(n)));
+    return (_empSalaryCache[monthVal]={map,error:null,officers});
   }catch(e){return {map:null,error:String(e&&e.message||e)};}
 }
 const admSalaryOf=(sal,name)=>sal&&sal.map?(sal.map[invNormName(name)]||0):0;
@@ -15081,16 +15082,17 @@ async function admEmpLoad(){
   const [my,mm]=monthVal.split('-').map(Number);
   await admPayEnsureMonthLoaded(my,mm);
 
-  // 社員抽出
-  const socialStaff=invRates.filter(r=>r.biz_type==='社員');
-  if(!socialStaff.length){
-    cont.innerHTML='<p style="color:var(--text-sub);text-align:center;padding:40px;">社員 (区分=社員) のドライバーがいません</p>';
-    return;
-  }
   // 給料は会計ツールの月額(NexPort の社員給与の割り当てと同じ)。読めなければ計算を止める
   const empSal=await admGetEmployeeSalaries(monthVal);
   if(empSal.error){
     cont.innerHTML=`<p style="color:var(--danger);text-align:center;padding:40px;">会計ツールの給与を読めませんでした: ${empSal.error}<br>「🔄 再計算」でもう一度試してください。</p>`;
+    return;
+  }
+  // 社員抽出。役員(NexPort の組織図で役職=役員。小林・吉田)は現場の担当売上と給料の対比に入れない(2026-11-02)
+  const officers=empSal.officers||new Set();
+  const socialStaff=invRates.filter(r=>r.biz_type==='社員'&&!officers.has(invNormName(r.name)));
+  if(!socialStaff.length){
+    cont.innerHTML='<p style="color:var(--text-sub);text-align:center;padding:40px;">社員 (区分=社員) のドライバーがいません</p>';
     return;
   }
   // 名前の表記揺れ (全角/半角空白の混在) に対応するため正規化マップを使う

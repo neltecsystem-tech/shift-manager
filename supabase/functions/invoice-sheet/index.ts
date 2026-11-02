@@ -1892,7 +1892,13 @@ Deno.serve(async(req:Request)=>{
         }
         // 会計に無くても割り当てで金額を入れている人
         for(const [pid,o] of latest){ if(!seen.has(pid)&&Number(o.monthly_amount)>0) out.push({name:String(o.staff_name||''), monthly_salary:Number(o.monthly_amount), overridden:true}); }
-        return jsonResp({salaries:out});
+        // 役員(NexPort の組織図で役職=役員)。社員管理(担当売上と給料)の対象から外すために返す(2026-11-02 小林・吉田)
+        let officers:string[]=[];
+        try{
+          const or=await fetch(`${SB_URL}/rest/v1/profiles?select=display_name&position=eq.${encodeURIComponent('役員')}`,{headers:H});
+          if(or.ok) officers=((await or.json()) as any[]).map((x)=>String(x?.display_name||'')).filter(Boolean);
+        }catch(_){ /* 読めなければ空(従来どおり全員) */ }
+        return jsonResp({salaries:out, officers});
       }catch(e){
         return jsonResp({ok:false, error:String((e as any)?.message??e).slice(0,200)});
       }
