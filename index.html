@@ -18460,6 +18460,9 @@ function admPayDiagnoseStaff(monthLabel,targetArea){
     const norm=invNormName(name);
     const primary=admPayGetPrimaryArea(monthLabel,name);
     const rate=invRates.find(r=>invNormName(r.name)===norm);
+    // 名前の照合(別名)で本人に寄せている名前は未登録ではない(ELP → ELP/富岡恵理。明細は本人側に入る)
+    const aliasTo=smNameAliases.get(norm);
+    if(!rate&&aliasTo&&invRates.some(r=>invNormName(r.name)===invNormName(aliasTo)))return;
     if(!rate){
       result.missingRate.push({name,primaryArea:primary,paidDays});
     }else if(rate.biz_type==='社員'){
