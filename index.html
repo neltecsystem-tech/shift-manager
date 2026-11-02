@@ -17968,6 +17968,23 @@ async function admPayEnsureMonthLoaded(year,month){
 // 引継は「通常コースの半額」として支払い対象 (請求書側の calcDay と同じルール)
 const ADM_PAY_NONPAID_PATTERN=/ミーティング|希望休|研修|有給|欠勤|出張|五反田|目黒|渋谷|休刊/;
 const ADM_PAY_HIKITSUGI_PATTERN=/引継/;
+// シフトが入っている(休み・ミーティング等の対象外シフトではない)のに支払いが¥0の枠。
+// シフトがあって¥0はあり得ない(単価・店舗マスタ・別名の読み込み失敗が疑わしい)ので警告に使う。
+// 例: 2026-11 井田均 10月 川越53 が店舗マスタの読込失敗で全日¥0になっていた
+function admPayZeroShifts(rows){
+  const out=[];
+  (rows||[]).forEach(r=>{
+    if(r.am_course&&!admPayIsNonPaidShift(r.am_course)&&!(Number(r.am)>0))out.push(`${r.d} 朝 ${r.am_course}`);
+    if(r.pm_course&&!admPayIsNonPaidShift(r.pm_course)&&!(Number(r.pm)>0))out.push(`${r.d} 夕 ${r.pm_course}`);
+  });
+  return out;
+}
+function admPayZeroShiftBanner(zero){
+  if(!zero||!zero.length)return '';
+  return `<div class="no-print" style="background:#fee2e2;border:1px solid #f87171;border-radius:8px;padding:8px 12px;margin:0 auto 8px;max-width:760px;font-size:12px;color:#991b1b;">`
+    +`🚫 <b>シフトがあるのに支払いが¥0の日が ${zero.length}件</b>あります。単価・店舗マスタ・名前の照合を確認してください。<br>`
+    +`<span style="font-size:11px;">${zero.slice(0,8).join(' / ')}${zero.length>8?` 他${zero.length-8}件`:''}</span></div>`;
+}
 function admPayIsNonPaidShift(v){
   if(v==null)return true;
   const s=String(v).trim();
@@ -18110,6 +18127,7 @@ const ADM_PAY_SAVE_EF='https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/sav
 // このEFは verify_jwt=true なので anon キーが要る (権限は auth_token 側で判定)
 const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jY29nbnB0b3ByaHdzYmpud2N1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNDU0NDEsImV4cCI6MjA4OTkyMTQ0MX0.M3h31uPyKYWlNevVW3OvZOonoTidC1KLZ04sB5nRKzU';
 const admPaySavePayloadStore={};// barId -> statements[]
+const admPayZeroStore={};// barId -> シフトがあるのに¥0の日がある人 ['氏名(n件)']
 
 function admPayBuildSaveBar(items,y,m,monthLabel){
   if(!items.length)return '';
@@ -18136,6 +18154,8 @@ function admPayBuildSaveBar(items,y,m,monthLabel){
     };
   });
   admPaySavePayloadStore[id]=payload;
+  const zeroPeople=items.filter(({stmt})=>stmt.zeroShifts&&stmt.zeroShifts.length).map(({rate,stmt})=>`${rate.name}(${stmt.zeroShifts.length}件)`);
+  admPayZeroStore[id]=zeroPeople;
   // 会社の枠(会社名あり)は、その会社に代表/担当者のログインがあれば会社名でビューアに出るので警告しない
   const noPhoneAll=payload.filter(p=>!p.phone);
   const coCovered=p=>!!p.company_name&&viewerCompanyKeys.has(companyKey(p.company_name));
@@ -18146,6 +18166,7 @@ function admPayBuildSaveBar(items,y,m,monthLabel){
   <div style="font-size:13px;color:#3730a3;font-weight:600;">📤 統合明細ビューアに公開 (${items.length}名)</div>
   <button onclick="admPaySaveStatements('${id}')" style="background:#6366f1;color:#fff;border:none;padding:7px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;">${escHtml(label)}</button>
   <div id="${id}-msg" style="font-size:12px;flex-basis:100%;"></div>
+  ${zeroPeople.length?`<div style="background:#fee2e2;border:1px solid #f87171;border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:11px;color:#991b1b;">🚫 シフトがあるのに支払い¥0の日がある人 ${zeroPeople.length}名: ${escHtml(zeroPeople.slice(0,8).join(', '))}${zeroPeople.length>8?` 他${zeroPeople.length-8}名`:''} — 単価・店舗マスタ・名前の照合を確認してください</div>`:''}
   ${warning}
   </div>`;
 }
@@ -18154,6 +18175,8 @@ async function admPaySaveStatements(barId){
   const statements=admPaySavePayloadStore[barId];
   if(!statements||!statements.length){alert('保存対象がありません');return;}
   if(!adminAuthed){alert('管理者権限が必要です');return;}
+  const zeroPeople=admPayZeroStore[barId]||[];
+  if(zeroPeople.length&&!window.confirm(`🚫 シフトがあるのに支払い¥0の日がある人が ${zeroPeople.length}名います。\n${zeroPeople.slice(0,10).join('\n')}${zeroPeople.length>10?`\n他${zeroPeople.length-10}名`:''}\n\n単価・店舗マスタ・名前の照合の読み込み失敗が疑われます。このまま保存しますか？`))return;
   const msg=document.getElementById(`${barId}-msg`);
   msg.textContent=`💾 保存中... (${statements.length}名)`;msg.style.color='#3b82f6';
   try{
@@ -18207,7 +18230,7 @@ async function admPayFinalizeAll(){
   {setMsg('店舗マスタを読み込み中...');const e=await invEnsureShopMaster();if(e){setMsg('❌ '+e,'var(--danger)');return;}}
 
   // 非社員ドライバー全員(営業所問わず)。稼働のある人(明細行あり or 総額>0)だけ確定。
-  const targets=[]; const skippedEmpty=[];
+  const targets=[]; const skippedEmpty=[]; const zeroAll=[];
   invRates.forEach(rate=>{
     if(rate.biz_type==='社員')return;
     let stmt; try{stmt=admPayBuildStatement(rate,y,m,monthLabel,monthVal);}catch(_){stmt=null;}
@@ -18216,6 +18239,7 @@ async function admPayFinalizeAll(){
     // ビューアに公開されてしまう(2026-07 で31名発生)。実際に稼働のある日を数える。
     const workedDays=(stmt&&stmt.rows||[]).filter(r=>(r.am_course||'')||(r.pm_course||'')||Number(r.total||0)>0).length;
     if(!stmt||!(workedDays>0||stmt.grandTotal>0)){skippedEmpty.push(rate.name);return;}
+    if(stmt.zeroShifts&&stmt.zeroShifts.length)zeroAll.push(`${rate.name}(${stmt.zeroShifts.length}件: ${stmt.zeroShifts.slice(0,2).join(' / ')})`);
     targets.push({
       staff_name:rate.name, phone:getPhone(rate.name)||'', year:y, month:m,
       am_sum:stmt.amSum, pm_sum:stmt.pmSum, planner_allowance:stmt.plannerAllowance||0, grand_total:stmt.grandTotal, rows:stmt.rows,
@@ -18225,6 +18249,7 @@ async function admPayFinalizeAll(){
     });
   });
   if(!targets.length){setMsg('確定対象(稼働あり)がいません',' var(--danger)');return;}
+  if(zeroAll.length&&!window.confirm(`🚫 シフトがあるのに支払い¥0の日がある人が ${zeroAll.length}名います。\n${zeroAll.slice(0,10).join('\n')}${zeroAll.length>10?`\n他${zeroAll.length-10}名`:''}\n\n単価・店舗マスタ・名前の照合の読み込み失敗が疑われます。このまま確定・公開しますか？`)){setMsg('🚫 シフトがあるのに¥0の日があるため中止しました','var(--danger)');return;}
   const noPhone=targets.filter(t=>!t.phone);
   if(!window.confirm(`${monthVal} 全営業所を一括確定・公開します。\n\n対象(稼働あり) ${targets.length}名${noPhone.length?`\n（うち電話未登録 ${noPhone.length}名も含めて確定）`:''}${skippedEmpty.length?`\n稼働なしでスキップ ${skippedEmpty.length}名`:''}\n\n続行しますか?`))return;
 
@@ -18372,7 +18397,8 @@ function admPayBuildStatement(baseRate,y,m,monthLabel,monthVal){
    +`</tr>`;
   h+='</tbody></table>';
   h+='</div>';
-  return {html:h,amSum,pmSum,plannerAllowance,grandTotal,rows};
+  const zeroShifts=admPayZeroShifts(rows);
+  return {html:admPayZeroShiftBanner(zeroShifts)+h,amSum,pmSum,plannerAllowance,grandTotal,rows,zeroShifts};
 }
 
 // 法人 (同一会社) の支払いサマリーページ
