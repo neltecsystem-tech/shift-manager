@@ -483,6 +483,7 @@ tbody tr:hover { background:var(--primary-light); }
       <div id="inv-tabs" style="display:flex;gap:6px;margin-bottom:12px;">
         <button onclick="invSetTab('work')" id="inv-tab-work" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:var(--primary);color:#fff;">稼働メモ</button>
         <button onclick="invSetTab('generate')" id="inv-tab-generate" style="padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">請求書作成</button>
+        <button onclick="invSetTab('gap')" id="inv-tab-gap" style="display:none;padding:8px 16px;border-radius:16px;border:none;cursor:pointer;font-weight:600;background:#f1f5f9;color:var(--text-sub);">⚠ シフトとのズレ</button>
       </div>
       <!-- 稼働記録ビュー -->
       <div id="inv-work-view">
@@ -495,6 +496,16 @@ tbody tr:hover { background:var(--primary-light); }
         </div>
         <div id="inv-work-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
         <div class="table-wrap" id="inv-work-table"></div>
+      </div>
+      <!-- シフトとのズレ(管理者のみ)。NexPort の「シフトと稼働記録の不一致」アラートと同じ判定 -->
+      <div id="inv-gap-view" style="display:none;">
+        <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:#92400e;line-height:1.7;">
+          稼働メモとシフトが合わない日だけを全員分並べます（NexPortの「シフトと稼働記録の不一致」と同じ判定）。シフトを直すか稼働メモを消すと、ここから消えます。直したら「未作成スタッフ確認」を押すとNexPortのアラートも更新されます。
+        </div>
+        <div class="filters"><div><label>月</label><input type="month" id="inv-gap-month" onchange="invRenderGap()"></div>
+          <div><label>&nbsp;</label><button onclick="invRenderGap(true)" style="background:#f1f5f9;border:1px solid #cbd5e1;padding:7px 12px;border-radius:6px;cursor:pointer;">🔄 シフトを読み直す</button></div></div>
+        <div id="inv-gap-count" style="font-size:12px;color:var(--text-sub);margin-bottom:8px;"></div>
+        <div class="table-wrap" id="inv-gap-table"></div>
       </div>
       <!-- 請求書生成ビュー -->
       <div id="inv-gen-view" style="display:none;">
@@ -7298,6 +7309,7 @@ function invApplyUI(){
   const isOwner=invIsCorpOwner();
   const canManage=invIsAdmin||isOwner;
   const canScope=invIsAdmin||invCanManageCompany(); // 配下選択セレクタを出せる範囲 (金額表示ON配下も含む)
+  {const g=document.getElementById('inv-tab-gap');if(g)g.style.display=invIsAdmin?'':'none';}
   const adminEls=document.querySelectorAll('.inv-admin-only');
   adminEls.forEach(el=>{el.style.display=canManage?'':'none';});
   // 金額表示ON の配下スタッフにも「配下選択セレクタ」だけは表示 (⚙単価設定等の管理機能は出さない)
@@ -7411,6 +7423,9 @@ async function invLoadAll(){
 
 function invSetTab(t){
   invTab=t;
+  {const g=document.getElementById('inv-tab-gap');if(g){g.style.background=t==='gap'?'var(--primary)':'#f1f5f9';g.style.color=t==='gap'?'#fff':'var(--text-sub)';}
+   const gv=document.getElementById('inv-gap-view');if(gv)gv.style.display=t==='gap'?'':'none';
+   if(t==='gap')invRenderGap();}
   document.getElementById('inv-tab-work').style.background=t==='work'?'var(--primary)':'#f1f5f9';
   document.getElementById('inv-tab-work').style.color=t==='work'?'#fff':'var(--text-sub)';
   document.getElementById('inv-tab-generate').style.background=t==='generate'?'var(--primary)':'#f1f5f9';
@@ -7419,6 +7434,38 @@ function invSetTab(t){
   document.getElementById('inv-gen-view').style.display=t==='generate'?'':'none';
 }
 
+// ⚠ シフトとのズレ タブ: 全員分の不一致の行だけを並べる(管理者のみ)
+async function invRenderGap(force){
+  const tbl=document.getElementById('inv-gap-table'),cnt=document.getElementById('inv-gap-count'),mi=document.getElementById('inv-gap-month');
+  if(!tbl||!mi)return;
+  if(!invIsAdmin){tbl.innerHTML='<p style="color:var(--text-sub);">管理者のみ見られます</p>';return;}
+  if(!mi.value){const _n=new Date();mi.value=(document.getElementById('inv-month')||{}).value||`${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}`;}
+  const month=mi.value;const [y,m]=month.split('-').map(Number);const ml=`${m}月シフト${y}`;
+  // シフトは毎回 live で読み直される(admPayEnsureMonthLoaded)。読めなければ手元の写しで表示する
+  if(force||!DB.shifts[ml]){cnt.textContent='シフトを読み込み中...';await admPayEnsureMonthLoaded(y,m);}
+  if(!DB.shifts[ml]){cnt.textContent='';tbl.innerHTML=`<p style="color:#b91c1c;">❌ ${m}月シフト${y} を読み込めませんでした</p>`;return;}
+  const mm=invShiftWorkMismatch(ml,month);
+  const rows=[...mm.rows].sort((a,b)=>a.date.localeCompare(b.date)||String(a.name).localeCompare(String(b.name),'ja'));
+  const people=new Set(rows.map(r=>r.name)).size;
+  cnt.textContent=`${rows.length}件（${people}名）`;
+  if(!rows.length){tbl.innerHTML='<p style="text-align:center;color:#15803d;padding:30px;">✓ この月のズレはありません</p>';return;}
+  const esc=t=>String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const shiftText=r=>{const {am,pm}=invShiftSlots(r.name,r.date);const v=[...am.map(c=>'朝 '+c),...pm.map(c=>'夕 '+c)];return v.length?v.join(' / '):'(なし)';};
+  let h='<table><thead><tr><th>日付</th><th>スタッフ</th><th>ズレ</th><th>稼働メモ</th><th>シフト</th><th></th></tr></thead><tbody>';
+  rows.forEach(r=>{
+    const isExtra=r.kind==='extra';
+    h+=`<tr style="background:${isExtra?'#fee2e2':'#fef3c7'};"><td>${esc(r.date.replace(/-/g,'/'))}</td><td><b>${esc(r.name)}</b></td>`
+      +`<td style="font-weight:700;color:${isExtra?'#b91c1c':'#92400e'};">${isExtra?'シフトに無い日':'区分が違う'}</td>`
+      +`<td>${esc(r.category)} ${esc(r.course)}</td><td>${esc(isExtra?'(なし)':shiftText(r))}</td>`
+      +`<td><button data-name="${esc(r.name).replace(/"/g,'&quot;')}" onclick="invGapOpenMemo(this.dataset.name,'${month}')" style="background:#fff;border:1px solid #cbd5e1;padding:3px 8px;border-radius:6px;cursor:pointer;font-size:12px;">稼働メモ</button></td></tr>`;
+  });
+  tbl.innerHTML=h+'</tbody></table>';
+}
+function invGapOpenMemo(name,month){
+  const mi=document.getElementById('inv-month');if(mi)mi.value=month;
+  const sf=document.getElementById('inv-staff-filter');if(sf)sf.value=name;
+  invSetTab('work');invFilterWork();
+}
 function invFilterWork(){
   const month=document.getElementById('inv-month').value;
   const staff=(document.getElementById('inv-staff-filter').value||'').trim();
@@ -7532,7 +7579,7 @@ function invShiftExpectedCats(staff,date){
 function invShiftWorkMismatch(monthLabel,monthVal){
   // detail: 氏名 -> ['10/21 朝刊 引継 立川9', ...] / rowFlags: 'norm|YYYY-MM-DD' -> {kind:'extra'|'cat', shiftCats}
   //   (どの日がズレているかを一覧と稼働メモの行に出すため。アラートと同じ判定から作る)
-  const out={missingWork:[],extraWork:[],catMismatch:[],extraDetail:{},catDetail:{},rowFlags:{}};
+  const out={missingWork:[],extraWork:[],catMismatch:[],extraDetail:{},catDetail:{},rowFlags:{},rows:[]};
   const months=DB.shifts[monthLabel];
   if(!months)return out;
   const nd=s=>String(s||'').replace(/\//g,'-');
@@ -7576,6 +7623,7 @@ function invShiftWorkMismatch(monthLabel,monthVal){
     if(bad.length){
       s3.add(s.name);
       out.rowFlags[key]={kind:'cat',shiftCats:[...s.cats]};
+      bad.forEach(r=>out.rows.push({kind:'cat',name:s.name,date:r.date,course:r.course,category:r.category,shiftCats:[...s.cats]}));
       bad.forEach(r=>(out.catDetail[s.name]=out.catDetail[s.name]||[]).push(`${md(r.date)} 記録「${r.category} ${r.course}」/ シフト「${[...s.cats].join('・')}」`));
     }
   });
@@ -7583,6 +7631,7 @@ function invShiftWorkMismatch(monthLabel,monthVal){
     if(!shiftMap[key]){
       s2.add(recs[0].name);
       out.rowFlags[key]={kind:'extra',shiftCats:[]};
+      recs.forEach(r=>out.rows.push({kind:'extra',name:recs[0].name,date:r.date,course:r.course,category:r.category,shiftCats:[]}));
       recs.forEach(r=>(out.extraDetail[recs[0].name]=out.extraDetail[recs[0].name]||[]).push(`${md(r.date)} ${r.category} ${r.course}`));
     }
   });
