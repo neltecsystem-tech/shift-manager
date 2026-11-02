@@ -7001,13 +7001,15 @@ let invRates=[];
 // 🔗 シフト表の名前の別名(2026-10-30)。照合キー(invNormName) → 単価マスタの名前。
 // 単価マスタを改名するとシフト表の旧名の日が誰にも当たらず、明細が黙って作られなかった(「ELP」で9月24日分)。
 // サーバの自動確定(finalize-shift)と同じ表(shift_name_aliases)を使う。管理者のときだけ読む
-let smNameAliases=new Map(), smNameAliasList=[];
+let smNameAliases=new Map(), smNameAliasList=[], smNameAliasErr='';
 async function smLoadNameAliases(){
-  if(!invIsAdmin)return;
+  // 読めなかった理由を残す(黙って空にすると、別名の日が本人の明細から抜けても気付けない)
+  if(!invIsAdmin){smNameAliasErr='管理者として認証されていません(invIsAdmin=false)';return;}
   try{
     const r=await invApi({action:'get_name_aliases'});
-    if(r&&Array.isArray(r.aliases)){ smNameAliasList=r.aliases; smNameAliases=new Map(r.aliases.map(a=>[invNormName(a.alias),a.staff_name])); }
-  }catch(_){}
+    if(r&&Array.isArray(r.aliases)){ smNameAliasList=r.aliases; smNameAliases=new Map(r.aliases.map(a=>[invNormName(a.alias),a.staff_name])); smNameAliasErr=''; }
+    else smNameAliasErr=String((r&&(r.error||r.code))||'応答が不正です').slice(0,200);
+  }catch(e){smNameAliasErr=String(e&&e.message||e).slice(0,200);}
 }
 let invWork=[];
 let invStaffNames=[];
@@ -18713,7 +18715,7 @@ async function admPayBulk(){
   smSyncRateAlert(monthVal,(diag.missingRate||[]).map(x=>x.name));
   let warnMsg='';
   if(missingHere.length){
-    warnMsg=`\n\n⚠️ ${area}主稼働で単価マスタ未登録のスタッフ ${missingHere.length}名 (作成されません):\n${missingHere.map(x=>'・'+x.name+` (${x.paidDays}日)`).slice(0,10).join('\n')}${missingHere.length>10?`\n他 ${missingHere.length-10}名`:''}`;
+    warnMsg=(smNameAliasErr?`\n\n🚫 名前の照合(別名)を読み込めませんでした: ${smNameAliasErr}`:'')+`\n\n⚠️ ${area}主稼働で単価マスタ未登録のスタッフ ${missingHere.length}名 (作成されません):\n${missingHere.map(x=>'・'+x.name+` (${x.paidDays}日)`).slice(0,10).join('\n')}${missingHere.length>10?`\n他 ${missingHere.length-10}名`:''}`;
   }
 
   if(!window.confirm(`${area}営業所 ${monthVal}\nドライバー ${drivers.length}名の明細を一括作成します。\n\n${drivers.map(d=>'・'+d.rate.name).slice(0,15).join('\n')}${drivers.length>15?`\n他 ${drivers.length-15}名`:''}${warnMsg}\n\n続行?`))return;
