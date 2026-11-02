@@ -7441,10 +7441,26 @@ function invFilterWork(){
   document.getElementById('inv-work-count').textContent=`${filtered.length}件`;
   if(!filtered.length){document.getElementById('inv-work-table').innerHTML='<p style="text-align:center;color:var(--text-sub);padding:40px;">稼働データがありません</p>';return;}
   const hideMoney=invIsCorpSubStaff();
+  // シフト×稼働記録の不一致(アラートと同じ判定)の行に印を付ける。管理者で、その月のシフトが読めているときだけ
+  let flags={};
+  if(invIsAdmin&&month){
+    const [fy,fm]=month.split('-').map(Number);
+    const ml=`${fm}月シフト${fy}`;
+    if(DB.shifts[ml])flags=invShiftWorkMismatch(ml,month).rowFlags;
+    else if(!invFilterWork._loading){
+      invFilterWork._loading=true;
+      admPayEnsureMonthLoaded(fy,fm).then(()=>{invFilterWork._loading=false;if(DB.shifts[ml])invFilterWork();}).catch(()=>{invFilterWork._loading=false;});
+    }
+  }
   let h='<table><thead><tr><th>日付</th><th>スタッフ</th><th>コース</th><th>区分</th><th>時間</th><th>個数</th>'+(hideMoney?'':'<th>単価</th><th>金額</th>')+'<th></th></tr></thead><tbody>';
   filtered.forEach(w=>{
     const locked=!invIsAdmin&&w.confirmed;
-    h+=`<tr${locked?' style="background:#f0fdf4;"':''}><td>${w.date}</td><td><b>${w.staff}</b></td><td>${w.course}</td><td>${w.category}</td><td>${w.start_time||''}${w.start_time&&w.end_time?'~':''}${w.end_time||''}</td><td>${w.quantity||''}</td>${hideMoney?'':`<td>${w.unit_price?'¥'+Number(w.unit_price).toLocaleString():''}</td><td><b>${w.amount?'¥'+Number(w.amount).toLocaleString():''}</b></td>`}<td>${locked?'<span title="確定済み" style="color:#22c55e;font-size:16px;">🔒</span>':'<button onclick="invEditWork('+w.row_number+')" style="background:none;border:none;cursor:pointer;">✏️</button><button onclick="invDeleteWork('+w.row_number+')" style="background:none;border:none;cursor:pointer;">🗑</button>'}</td></tr>`;
+    const fl=flags[invNormName(w.staff)+'|'+String(w.date||'').replace(/\//g,'-')];
+    const bg=fl?(fl.kind==='extra'?'#fee2e2':'#fef3c7'):(locked?'#f0fdf4':'');
+    const badge=fl?(fl.kind==='extra'
+      ?'<div style="font-size:11px;color:#b91c1c;font-weight:700;">⚠ シフトに無い日</div>'
+      :`<div style="font-size:11px;color:#92400e;font-weight:700;">⚠ シフトは「${fl.shiftCats.join('・')}」</div>`):'';
+    h+=`<tr${bg?` style="background:${bg};"`:''}><td>${w.date}${badge}</td><td><b>${w.staff}</b></td><td>${w.course}</td><td>${w.category}</td><td>${w.start_time||''}${w.start_time&&w.end_time?'~':''}${w.end_time||''}</td><td>${w.quantity||''}</td>${hideMoney?'':`<td>${w.unit_price?'¥'+Number(w.unit_price).toLocaleString():''}</td><td><b>${w.amount?'¥'+Number(w.amount).toLocaleString():''}</b></td>`}<td>${locked?'<span title="確定済み" style="color:#22c55e;font-size:16px;">🔒</span>':'<button onclick="invEditWork('+w.row_number+')" style="background:none;border:none;cursor:pointer;">✏️</button><button onclick="invDeleteWork('+w.row_number+')" style="background:none;border:none;cursor:pointer;">🗑</button>'}</td></tr>`;
   });
   h+='</tbody></table>';
   if(!hideMoney){
@@ -7514,10 +7530,13 @@ function invShiftExpectedCats(staff,date){
 //  #3 catMismatch: 両方あるが稼働記録の区分がシフトの想定とズレ (要確認)
 // 単価マスタ未登録・社員は対象外(前者は rate_missing で別報告、後者は月給制)。
 function invShiftWorkMismatch(monthLabel,monthVal){
-  const out={missingWork:[],extraWork:[],catMismatch:[]};
+  // detail: 氏名 -> ['10/21 朝刊 引継 立川9', ...] / rowFlags: 'norm|YYYY-MM-DD' -> {kind:'extra'|'cat', shiftCats}
+  //   (どの日がズレているかを一覧と稼働メモの行に出すため。アラートと同じ判定から作る)
+  const out={missingWork:[],extraWork:[],catMismatch:[],extraDetail:{},catDetail:{},rowFlags:{}};
   const months=DB.shifts[monthLabel];
   if(!months)return out;
   const nd=s=>String(s||'').replace(/\//g,'-');
+  const md=d=>{const p=String(d).split('-');return p.length===3?`${+p[1]}/${+p[2]}`:d;};
   const rateOf=norm=>invRates.find(r=>invNormName(r.name)===norm);
   // 1) シフト側: "norm|date" -> {name, norm, cats:Set} (有給スロットのみ)
   const shiftMap={};
@@ -7544,7 +7563,7 @@ function invShiftWorkMismatch(monthLabel,monthVal){
     if(monthVal&&!date.startsWith(monthVal))return;
     const norm=invNormName(w.staff);
     const key=norm+'|'+date;
-    (workMap[key]=workMap[key]||[]).push({name:w.staff,cat:invMapCat(w.category)});
+    (workMap[key]=workMap[key]||[]).push({name:w.staff,cat:invMapCat(w.category),date,course:w.course||'',category:w.category||''});
   });
   // 3) 判定
   const s1=new Set(),s2=new Set(),s3=new Set();
@@ -7553,10 +7572,19 @@ function invShiftWorkMismatch(monthLabel,monthVal){
     if(!rt||rt.biz_type==='社員')return;
     const recs=workMap[key];
     if(!recs||!recs.length){s1.add(s.name);return;}
-    if(recs.some(r=>!s.cats.has(r.cat)))s3.add(s.name);
+    const bad=recs.filter(r=>!s.cats.has(r.cat));
+    if(bad.length){
+      s3.add(s.name);
+      out.rowFlags[key]={kind:'cat',shiftCats:[...s.cats]};
+      bad.forEach(r=>(out.catDetail[s.name]=out.catDetail[s.name]||[]).push(`${md(r.date)} 記録「${r.category} ${r.course}」/ シフト「${[...s.cats].join('・')}」`));
+    }
   });
   Object.entries(workMap).forEach(([key,recs])=>{
-    if(!shiftMap[key])s2.add(recs[0].name);
+    if(!shiftMap[key]){
+      s2.add(recs[0].name);
+      out.rowFlags[key]={kind:'extra',shiftCats:[]};
+      recs.forEach(r=>(out.extraDetail[recs[0].name]=out.extraDetail[recs[0].name]||[]).push(`${md(r.date)} ${r.category} ${r.course}`));
+    }
   });
   const sortJa=a=>[...a].sort((x,y)=>String(x).localeCompare(String(y),'ja'));
   out.missingWork=sortJa(s1);out.extraWork=sortJa(s2);out.catMismatch=sortJa(s3);
@@ -18605,17 +18633,24 @@ async function admPayDiagnose(){
   renderList('👤 社員 (月給制で除外)','#e0e7ff','#a5b4fc',r.employees,'主稼働営業所','区分=社員のため支払い明細の対象外です (月給制)。');
   if(area)renderList(`📍 別営業所が主稼働 (${area} 一括対象外)`,'#fef3c7','#fbbf24',r.wrongArea,'主稼働営業所',`${area} 以外を主稼働とするドライバーは別営業所の一括作成で表示されます。`);
   // シフト×稼働記録の不一致(3種)を表示
-  const renderNames=(title,bg,border,names,note)=>{
+  const renderNames=(title,bg,border,names,note,detail)=>{
     h+=`<div style="margin-bottom:14px;border:1px solid ${border};border-radius:8px;overflow:hidden;">`;
     h+=`<div style="background:${bg};padding:8px 12px;font-weight:600;font-size:13px;">${title} (${names.length}名)</div>`;
     if(note)h+=`<div style="padding:6px 12px;font-size:11px;color:var(--text-sub);background:#fafafa;">${note}</div>`;
     if(!names.length){h+=`<div style="padding:10px 12px;color:var(--text-sub);font-size:12px;">該当なし</div>`;}
+    else if(detail){
+      // 名前ごとに、どの日がズレているかを並べる(稼働メモの該当行にも同じ印が付く)
+      const esc=t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+      h+=`<div style="padding:8px 12px;font-size:12px;line-height:1.8;">`+names.map(n=>`<div style="margin-bottom:6px;"><b>${esc(n)}</b>`
+        +((detail[n]||[]).length?`<div style="color:#475569;padding-left:12px;">${detail[n].map(esc).join('<br>')}</div>`:'')+`</div>`).join('')
+        +`<div style="color:var(--text-sub);font-size:11px;margin-top:4px;">→ 左メニュー「請求書」の稼働メモでも、該当の行に印が付きます。</div></div>`;
+    }
     else{h+=`<div style="padding:8px 12px;font-size:12px;line-height:1.9;">${names.join('、')}</div>`;}
     h+=`</div>`;
   };
   h+=`<h4 style="margin:18px 0 10px 0;font-size:14px;color:var(--text);">🔎 シフト×稼働記録の不一致</h4>`;
-  renderNames('➕ シフト外の稼働 (記録有・シフト無)','#fef3c7','#fbbf24',mm.extraWork,'稼働記録がありますがシフトにありません。誤入力/代走の可能性 — 要確認。');
-  renderNames('🔀 区分ズレ (シフトと区分が不一致)','#e0e7ff','#a5b4fc',mm.catMismatch,'稼働記録の区分がシフトの想定とズレています — 要確認。');
+  renderNames('➕ シフト外の稼働 (記録有・シフト無)','#fef3c7','#fbbf24',mm.extraWork,'稼働記録がありますがシフトにありません。誤入力/代走の可能性 — 要確認。',mm.extraDetail);
+  renderNames('🔀 区分ズレ (シフトと区分が不一致)','#e0e7ff','#a5b4fc',mm.catMismatch,'稼働記録の区分がシフトの想定とズレています — 要確認。',mm.catDetail);
   // 稼働漏れ(シフト有/記録無)は法人配下ドライバー等の見かけ上の不一致が多くアラート対象外。参考として控えめに表示。
   renderNames('（参考）稼働記録が未登録 (アラート対象外)','#f1f5f9','#cbd5e1',mm.missingWork,'法人配下ドライバー等で見かけ上「記録無」になる例が多く、アラート・NexPortバナーの対象外です。実際の請求漏れが疑われる場合のみ確認してください。');
   h+=`</div>`;
