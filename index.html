@@ -1476,7 +1476,7 @@ tbody tr:hover { background:var(--primary-light); }
                 <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px;">書込値</label>
                 <div style="display:flex;gap:8px;">
                   <select id="adm-se-vac-handover-value" onchange="admSeHandoverValuePreview()" style="flex:0 0 40%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><option value="引継">引継</option><option value="研修">研修</option><option value="希望休">希望休</option><option value="有給">有給</option><option value="欠勤">欠勤</option><option value="出張">出張</option><option value="ミーティング">ミーティング</option></select>
-                  <input type="text" id="adm-se-vac-handover-course" list="adm-se-course-list" autocomplete="off" oninput="admSeHandoverValuePreview()" placeholder="コース名 (任意) 例: 立川13" style="flex:1;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><datalist id="adm-se-course-list"></datalist>
+                  <input type="text" id="adm-se-vac-handover-course" list="adm-se-course-list" autocomplete="off" oninput="admSeHandoverValuePreview()" placeholder="コース名 (引継は必須) 例: 立川13" style="flex:1;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;"><datalist id="adm-se-course-list"></datalist>
                 </div>
                 <div id="adm-se-vac-handover-valprev" style="font-size:11px;color:#64748b;margin-top:4px;">書き込まれる値: <b>引継</b></div>
               </div>
@@ -12454,6 +12454,17 @@ function admSeDowByDateLabel(){
 // 書込値 = 種別(引継等) + 半角スペース + コース名(任意)。
 // 「引継 立川13」のように書いても、 半額判定は includes('引継')、 コース別集計は
 // admPayStripHikitsugi() が「引継」を除去して bare コース名にするため両立する。
+// 「引継」はコース名を必須にする。「引継」だけだとどのコースの半額か決まらず、
+// 支払いが¥0になる(2026-10 政所奈美 10/20・米倉智美 10/21 の夕刊)。
+// コース一覧が読めているときは、一覧にあるコース名だけ通す(打ち間違いも同じく¥0になるため)
+function admSeHandoverCourseError(){
+  const v=(document.getElementById('adm-se-vac-handover-value')||{}).value||'';
+  if(v!=='引継')return '';
+  const c=((document.getElementById('adm-se-vac-handover-course')||{}).value||'').trim();
+  if(!c)return '引継はコース名が必須です。\nコース名を入れてください(例: 川崎高津3)。\n「引継」だけだと、どのコースの半額か決まらず支払いが¥0になります。';
+  if(admSeCourseListAll.length&&!admSeCourseListAll.includes(c))return `コース名「${c}」がシフトのコース一覧にありません。\n候補から選んでください(打ち間違いだと支払いが¥0になります)。`;
+  return '';
+}
 function admSeHandoverWriteValue(){
   const v=(document.getElementById('adm-se-vac-handover-value')||{}).value||'';
   const c=((document.getElementById('adm-se-vac-handover-course')||{}).value||'').trim();
@@ -12474,8 +12485,8 @@ function admSeHandoverCourseDatalist(){
   dl.innerHTML=list.map(c=>`<option value="${String(c).replace(/"/g,'&quot;')}"></option>`).join('');
   const inp=document.getElementById('adm-se-vac-handover-course');
   if(inp)inp.placeholder=area&&list!==admSeCourseListAll
-    ? `コース名 (任意) ${area}の${list.length}コース`
-    : 'コース名 (任意) 例: 立川13';
+    ? `コース名 (引継は必須) ${area}の${list.length}コース`
+    : 'コース名 (引継は必須) 例: 立川13';
 }
 function admSeHandoverValuePreview(){
   const el=document.getElementById('adm-se-vac-handover-valprev');
@@ -12563,6 +12574,7 @@ function admSeHandoverPreview(){
   const prev=document.getElementById('adm-se-vac-preview3');
   if(!startCol&&!admSeVacHasMulti(3)){alert('開始日を選択してください（または「飛び飛びの日を複数選ぶ」で日を選んでください）');return;}
   if(!staff){alert('対象スタッフを入力してください');return;}
+  {const ce=admSeHandoverCourseError();if(ce){alert(ce);return;}}
   const matches=admSeVacMultiRun(3,startCol,endCol,(a,b)=>admSeFindSection2CellsForStaff(staff,a,b,edition,dows));
   if(!matches.length){
     prev.style.display='block';prev.style.background='#fef2f2';prev.style.borderColor='#fecaca';prev.style.color='#991b1b';
@@ -12585,6 +12597,7 @@ async function admSeHandoverApply(){
   const dows=admSeDow3Selected();
   if(!startCol&&!admSeVacHasMulti(3)){alert('開始日を選択してください（または「飛び飛びの日を複数選ぶ」で日を選んでください）');return;}
   if(!staff){alert('対象スタッフを入力してください');return;}
+  {const ce=admSeHandoverCourseError();if(ce){alert(ce);return;}}
   const matches=admSeVacMultiRun(3,startCol,endCol,(a,b)=>admSeFindSection2CellsForStaff(staff,a,b,edition,dows));
   if(!matches.length){alert((admSeVacHasMulti(3)?'選んだ日に、このスタッフのセルが見つかりません':admSeDiagnoseHandover(staff,startCol,endCol,edition,dows)));return;}
   const summaryLines=matches.slice(0,15).map(m=>`${m.dateLabel} ${m.area} ${m.edition}: ${m.oldValue||'(空)'} → ${value}`);
@@ -13740,6 +13753,12 @@ async function admSeSave(){
   // シフト表の氏名は単価マスタと完全一致で突合され、外れると支払明細がその人だけ
   // 丸ごと作られない(7月に「ノアガデル/ノアガベル」の1文字違いで実際に発生)。
   // 候補(datalist)から選べば起きないが、手入力・貼り付けの取りこぼしをここで拾う。
+  // 「引継」だけのセルは保存させない(コース名が無いと支払いが¥0になる)
+  const bareHandover=updates.filter(u=>/^[\s　]*引継[\s　]*$/.test(String(u.value||'')));
+  if(bareHandover.length){
+    alert(`🚫 コース名の無い「引継」が ${bareHandover.length} セルあります。\n\n「引継 川崎高津3」のようにコース名を付けてください。\n「引継」だけだと、どのコースの半額か決まらず支払いが¥0になります。`);
+    return;
+  }
   const unknown=admSeUnknownStaffIn(updates);
   if(unknown.length){
     const list=unknown.slice(0,12).map(n=>`・${n}`).join('\n')+(unknown.length>12?`\n…ほか${unknown.length-12}件`:'');
