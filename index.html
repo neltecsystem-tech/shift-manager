@@ -11326,6 +11326,7 @@ async function admRevLoad(){
     // シフト自動計算: invRates の各非社員ドライバーに admPayBuildStatement を実行し、
     // grandTotal を expByStaff に、rows の per-day amount をコース別/エリア別に集計
     if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
+  if(!smNameAliases.size)await smLoadNameAliases();   // 別名が未読込のまま作ると、別名の日が本人の明細から抜ける
     if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}}
     if(!invSpecial.length){try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}}
     if(!invShopMasterCache)await invLoadShopMaster();
@@ -14960,6 +14961,7 @@ async function admEmpLoad(){
 
   // 依存データ load
   if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
+  if(!smNameAliases.size)await smLoadNameAliases();   // 別名が未読込のまま作ると、別名の日が本人の明細から抜ける
   if(!admBillShopData)await admBillInit().catch(()=>{});
   await loadConfirmedSales();
   const [my,mm]=monthVal.split('-').map(Number);
@@ -18411,11 +18413,12 @@ function admPayGetPrimaryArea(monthLabel,staffName){
   const strong={},weak={};   // strong=コース名から読めた営業所 / weak=シフト表のブロック
   const areaNames=Object.keys(months).sort((a,b)=>b.length-a.length);
   const target=invNormName(staffName);
+  // 名前の照合(別名)でこの人に寄せている名前の行も数える(ELP → ELP/富岡恵理)。
+  // 数えないと、シフト表に本人名の行が無い人は主稼働が空になり、どの営業所の一括作成からも外れていた(2026-10)
+  const isMine=e=>{const k=invNormName(e.course);if(k===target)return true;const t=smNameAliases.get(k);return !!t&&invNormName(t)===target;};
   Object.entries(months).forEach(([area,obj])=>{
     if(!obj||!obj.entries)return;
-    const entry=obj.entries.find(e=>invNormName(e.course)===target);
-    if(!entry)return;
-    entry.a.forEach(({am,pm})=>{
+    obj.entries.filter(isMine).forEach(entry=>entry.a.forEach(({am,pm})=>{
       [am,pm].forEach(c=>{
         // ミーティング等の特殊シフトは主稼働判定からも除外 (支払い計算と一貫させる)
         if(!c||admPayIsNonPaidShift(c))return;
@@ -18423,7 +18426,7 @@ function admPayGetPrimaryArea(monthLabel,staffName){
         if(byCourse)strong[byCourse]=(strong[byCourse]||0)+1;
         else weak[area]=(weak[area]||0)+1;
       });
-    });
+    }));
   });
   const pick=obj=>{let a='',n=0;Object.entries(obj).forEach(([k,v])=>{if(v>n){n=v;a=k;}});return a;};
   return pick(strong)||pick(weak);
@@ -18510,6 +18513,7 @@ async function admPayDiagnose(){
   const monthLabel=await admPayEnsureMonthLoaded(y,m);
   if(!monthLabel){msg.textContent=`❌ ${m}月シフト${y} のデータが取得できませんでした`;msg.style.color='var(--danger)';return;}
   if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
+  if(!smNameAliases.size)await smLoadNameAliases();   // 別名が未読込のまま作ると、別名の日が本人の明細から抜ける
   msg.textContent='';
   const r=admPayDiagnoseStaff(monthLabel,area);
   // 単価マスタ未登録の状態を NexPort に同期(0名なら自動で対処済みになり表示が消える)
@@ -18588,6 +18592,7 @@ async function admPaySaveToNexport(){
   const monthLabel=await admPayEnsureMonthLoaded(y,m);
   if(!monthLabel){msg.textContent=`❌ ${m}月シフト${y} のデータが取得できませんでした`;msg.style.color='var(--danger)';return;}
   if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
+  if(!smNameAliases.size)await smLoadNameAliases();   // 別名が未読込のまま作ると、別名の日が本人の明細から抜ける
   if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}}
   if(!invSpecial.length){try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}}
   if(!invShopMasterCache){msg.textContent='店舗マスタを読み込み中...';await invLoadShopMaster();}
@@ -18679,6 +18684,7 @@ async function admPayBulk(){
   const monthLabel=await admPayEnsureMonthLoaded(y,m);
   if(!monthLabel){msg.textContent=`❌ ${m}月シフト${y} のデータが取得できませんでした`;msg.style.color='var(--danger)';return;}
   if(!invRates.length){try{const r=await invApi({action:'get_rates'});invRates=r.rates||[];}catch(_){}}
+  if(!smNameAliases.size)await smLoadNameAliases();   // 別名が未読込のまま作ると、別名の日が本人の明細から抜ける
   if(!kwCoursePrices.old.length&&!kwCoursePrices.new.length){try{const kw=await invApi({action:'get_kawagoe_course_prices'});if(kw.old)kwCoursePrices.old=kw.old;if(kw.new)kwCoursePrices.new=kw.new;}catch(_){}}
   if(!invSpecial.length){try{const sp=await invApi({action:'get_special_rates'});invSpecial=sp.records||[];}catch(_){}}
   if(!invShopMasterCache){msg.textContent='店舗マスタを読み込み中...';await invLoadShopMaster();}
