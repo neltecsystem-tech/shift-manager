@@ -2995,6 +2995,8 @@ function initMyShift(){
   if(wrap)wrap.style.display=myShiftCanPickStaff()?'flex':'none';
   if(myShiftCanPickStaff())updateMyShiftStaffOptions();
   renderMyShift();
+  // 別名(シフト表の旧名)がまだ読めていなければ読んでから描き直す(本人には自分に寄せた別名だけ返る)
+  if(!smNameAliases.size&&typeof smLoadNameAliases==='function')smLoadNameAliases().then(()=>{if(smNameAliases.size)renderMyShift();}).catch(()=>{});
 }
 
 function renderMyShift(){
@@ -3011,12 +3013,14 @@ function renderMyShift(){
   // 自分の名前で normalize 比較
   const norm=s=>(s||'').replace(/[\s　]+/g,'').trim();
   const myNorm=norm(userName);
+  // 名前の照合(別名)で自分に寄せている名前の行も自分の分(シフト表は「ELP」、本人は「ELP/富岡恵理」。2026-11-03)
+  const isMine=c=>{if(norm(c)===myNorm)return true;const t=smNameAliases.get(invNormName(c));return !!t&&norm(t)===myNorm;};
   // 全営業所横断で自分の entries を収集 (同名がエリアに分散している場合に備えて)
   const myEntries=[];
   let dates=null;
   Object.entries(DB.shifts[month]).forEach(([area,sh])=>{
     sh.entries.forEach(e=>{
-      if(norm(e.course)===myNorm){myEntries.push({area,a:e.a});if(!dates)dates=sh.dates;}
+      if(isMine(e.course)){myEntries.push({area,a:e.a});if(!dates)dates=sh.dates;}
     });
   });
   if(!myEntries.length){empty.style.display='block';return;}

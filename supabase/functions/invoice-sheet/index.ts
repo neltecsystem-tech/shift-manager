@@ -1460,10 +1460,14 @@ Deno.serve(async(req:Request)=>{
       return jsonResp({success:true});
     }
     if(action==='get_name_aliases'){
-      if(!admin) return forbid();
       const r = await sbRest('shift_name_aliases?select=alias_key,alias,staff_name,note,created_by,created_at&order=created_at.desc');
       if(!r.ok) return jsonResp({error:'取得失敗: '+(await r.text()).slice(0,200)}, 500);
-      return jsonResp({aliases: await r.json()});
+      const all = await r.json() as any[];
+      if(admin) return jsonResp({aliases: all});
+      // 管理者以外は「自分に寄せている別名」だけ返す(マイシフトで、シフト表の旧名の行も自分の分として出すため。
+      // ELP → ELP/富岡恵理 が本人のマイシフトに出なかった 2026-11-03)。他人の別名は見せない
+      const me = aliasKey(callerName);
+      return jsonResp({aliases: me ? all.filter((a)=>aliasKey(a.staff_name)===me).map(({alias,staff_name})=>({alias,staff_name})) : []});
     }
     if(action==='save_name_alias'){
       if(!admin) return forbid();
