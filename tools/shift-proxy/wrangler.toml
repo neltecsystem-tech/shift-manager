@@ -1,0 +1,9 @@
+name = "shift-proxy"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+account_id = "06c9f67168ae737b0c17b4b9a22f8783"
+workers_dev = false
+
+[[routes]]
+pattern = "shift.workchat.neltec-tokyo.info"
+custom_domain = true

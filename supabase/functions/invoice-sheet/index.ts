@@ -676,6 +676,11 @@ function matchRateRows(rateRows: any[], email: string, masterIds: string[]): any
     return !!id && ((!!mail && id.toLowerCase() === mail) || masterIds.includes(id));
   });
 }
+// パスワードのみにする人(shift_passkey_denied)。表を読めないときは使わせない
+async function isPasskeyDenied(loginId: string, db: any): Promise<boolean> {
+  const { data, error } = await db.from('shift_passkey_denied').select('login_id').eq('login_id', loginId).maybeSingle();
+  return !!error || !!data;
+}
 async function findRateRowsForUser(user: { id: string; email: string }, db: any): Promise<{ rows: any[]; rateRows: any[] }> {
   const { data, error } = await db.from('staff_master').select('shift_login_id').eq('profile_id', user.id);
   if (error) throw error;
@@ -746,7 +751,9 @@ Deno.serve(async(req:Request)=>{
       catch(_e){ return jsonResp({success:false, error:'サーバが一時的に混み合っています。少し待ってからもう一度お試しください。', code:'SHEET_UNAVAILABLE'}, 503); }
       if(found.rows.length!==1) return jsonResp({success:false, error:'このアカウントは新聞ツールのスタッフと結びついていません。IDとパスワードでログインしてください。', code:'PASSKEY_NOT_LINKED'});
       const row = found.rows[0];
-      return await completeStaffLogin(row, found.rateRows, (row[9]||'').trim(), db);
+      const passkeyLoginId = (row[9]||'').trim();
+      if(await isPasskeyDenied(passkeyLoginId, db)) return jsonResp({success:false, error:'このアカウントは指紋・顔認証を使えません。IDとパスワードでログインしてください。', code:'PASSKEY_PASSWORD_ONLY'});
+      return await completeStaffLogin(row, found.rateRows, passkeyLoginId, db);
     }
     // 登録の前に、いま新聞ツールに入っている本人の NexPort アカウントかを確かめる(別の人の端末に登録してしまわないように)
     if(action==='passkey_check_link'){
@@ -757,6 +764,7 @@ Deno.serve(async(req:Request)=>{
       const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
       try{
         const { rows } = await findRateRowsForUser(user, db);
+        if(rows.length===1 && await isPasskeyDenied((rows[0][9]||'').trim(), db)) return jsonResp({success:true, linked:true, same:false, password_only:true});
         return jsonResp({success:true, linked:rows.length===1, same:rows.length===1 && aliasKey(rows[0][0])===aliasKey(claims.name)});
       }catch(_e){ return jsonResp({success:false, error:'サーバが一時的に混み合っています。少し待ってからもう一度お試しください。', code:'SHEET_UNAVAILABLE'}, 503); }
     }

@@ -22810,6 +22810,7 @@ function sysPasskeyShowRegister(){
       if(!j.access_token){msg(j.error==='locked'?'パスワードの間違いが続いたため、15分ほどロックされています。':'メールアドレスかパスワードが正しくありません。');return;}
       const chk=await invApi({action:'passkey_check_link',access_token:j.access_token});
       if(!chk?.success){msg(chk?.error||'確認できませんでした');return;}
+      if(chk.password_only){msg('このアカウントは指紋・顔認証を使えません。IDとパスワードでログインしてください。');return;}
       if(!chk.same){msg('このNexPortアカウントは、いまログイン中の方と結びついていないため登録できません。');return;}
       sb=await sysPasskeyClient();
       const {error:se}=await sb.auth.setSession({access_token:j.access_token,refresh_token:j.refresh_token});
