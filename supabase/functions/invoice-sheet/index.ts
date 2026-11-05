@@ -585,6 +585,107 @@ async function fetchKawagoeCourseRows(token: string): Promise<{ old: string[][];
   return split;
 }
 
+// 認証が済んだ人のトークンと初期データを返す。パスワードでも指紋・顔認証でも、退職の確認や権限はここを通す(2026-11-05 共通化)。
+async function completeStaffLogin(row: string[], rateRows: any[], login_id: string, failDb: any): Promise<Response> {
+  // 🚪 2026-10-26 退職の処理が済んだ人は入れない(退職予定 staff_retirements・EF staff-retire が退職日の翌日に処理)。
+  //    新聞は単価マスタに在籍の列が無いので、ここで止める。支払明細ビューアは別のログインなので引き続き見られる。
+  try {
+    const nm = String(row[0] || '').replace(/[\s　]/g, '');
+    const { data: ret } = await failDb.from('staff_retirements').select('full_name, shift_login_id, retire_date')
+      .is('cancelled_at', null).not('processed_at', 'is', null);
+    const hit = (ret ?? []).find((x: any) => (x.shift_login_id && String(x.shift_login_id) === login_id) || String(x.full_name || '').replace(/[\s　]/g, '') === nm);
+    if (hit) return jsonResp({ success: false, error: `退職の手続き（${hit.retire_date}）が済んでいるため、ログインできません。支払明細は明細ビューアからご覧ください。`, code: 'RETIRED' });
+  } catch (_) { /* 確認できないときは止めない */ }
+  const match=row;
+  // ⑤監査: 新聞ログイン権限(shift)を記録するだけ(ブロックしない)。
+  try{ await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/check-login-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system:'shift',login_id,source:'shift-login',log:true})}); }catch(_){ /* noop */ }
+  // 中央明細権限(meisai): 金額表示の制御に使う(明細を明示×にした人は必ず金額を隠す)。
+  let meisaiChk: any = { allowed: true, reason: 'default_allow' };
+  try{ meisaiChk = await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/check-login-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system:'meisai',login_id,source:'shift-money'})}).then(x=>x.json()); }catch(_){ /* noop */ }
+  // claims 構築
+  const name = match[0];
+  const biz_type = match[11] || '';
+  const company = match[12] || '';
+  const permissions = match[17] || '';
+  const permList = permissions.split(',');
+  // 管理者 = 社員 (biz_type='社員' は自動で admin)。 旧データ互換で permissions='admin' も認める
+  const has_admin = biz_type === '社員' || permList.includes('admin');
+  const is_owner = biz_type === '法人' && permList.includes('owner');
+  const is_corp_sub = biz_type === '法人' && !is_owner;
+  // permissions に 'admin' があれば EF レベルでも admin 扱い
+  const tokenRole = has_admin ? 'admin' : 'staff';
+  // 拠点別の単価も付ける(稼働記録の金額の自動入力で使う)。読めなくてもログインは止めない(基本の単価で表示)
+  let allRates = parseRates(rateRows);
+  try{ allRates = await attachSiteRates(allRates); }catch(_e){ /* noop */ }
+  // 金額表示: 明細を明示×にした人は必ず非表示。それ以外は従来(corp-subはshow_money) or 明細許可。
+  const toolMoney = is_corp_sub ? permList.includes('show_money') : true;
+  const company_shows_money = meisaiChk?.reason === 'explicit_deny' ? false : ((meisaiChk?.allowed ?? true) || toolMoney);
+  const sessionToken = await createToken({ role: tokenRole, name, biz_type, company, permissions, is_corp_sub, is_owner, company_shows_money });
+  // 単価 + 稼働のスコープ: admin=全件 / corp-owner=同company全員 / それ以外=自分のみ
+  // 稼働記録は認証には不要(表示用)なので、取得できなくてもログインは通す(空扱い)。
+  let workValues: any[] = [];
+  try{ workValues = await getWorkRowsCached(); }catch(_e){ workValues = []; }
+  const allWork = parseWork(workValues);
+  let ratesScoped, myWork;
+  if (has_admin) {
+    ratesScoped = allRates;
+    myWork = allWork;
+  } else {
+    const scopeNames = new Set<string>([name]);
+    // オーナー or 金額表示ON配下 → 同company全員を配下スコープに含める
+    if (is_owner || (is_corp_sub && company_shows_money)) {
+      allRates.filter((r:any)=>r.biz_type==='法人' && r.company===company).forEach((r:any)=>scopeNames.add(r.name));
+    }
+    myWork = allWork.filter((w:any)=>scopeNames.has(w.staff));
+    ratesScoped = allRates.filter((r:any)=>scopeNames.has(r.name)).map((r:any)=>{
+      if (is_corp_sub && !company_shows_money) return stripPrices(stripStaffPrivate(r));
+      return stripStaffPrivate(r);
+    });
+  }
+  return jsonResp({success:true, staff_name:name, rates:ratesScoped, work:myWork, permissions, auth_token:sessionToken, is_owner, company, has_admin, company_shows_money});
+}
+
+// ── 🔐 指紋・顔認証(パスキー)でのログイン(2026-11-05) ──
+// 検証は Supabase Auth に任せ(自前で WebAuthn を検証しない)、ここでは本人と単価マスタの行を結びつける。
+// シートのパスワードから NexPort のセッションは作らない(逆向きは権限の格上げになる)。
+const PASSKEY_MAX_AGE_SEC = 300;
+async function getNexportUser(accessToken: unknown): Promise<{ id: string; email: string } | null> {
+  const token = String(accessToken ?? '');
+  if (!token) return null;
+  try {
+    const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/auth/v1/user`, { headers: { apikey: Deno.env.get('SUPABASE_ANON_KEY') || '', Authorization: `Bearer ${token}` } });
+    if (!r.ok) return null;
+    const u = await r.json();
+    return u?.id ? { id: String(u.id), email: String(u.email || '') } : null;
+  } catch (_) { return null; }
+}
+// 署名は getNexportUser でサーバが確認済み。ここでは「たった今パスキーで入ったセッションか」だけを読む
+function isFreshPasskeySession(accessToken: unknown, userId: string): boolean {
+  try {
+    const c = JSON.parse(b64urlDecode(String(accessToken).split('.')[1]));
+    if (c.sub !== userId || !Array.isArray(c.amr)) return false;
+    const m = c.amr.find((a: any) => a?.method === 'passkey');
+    return !!m && Number(m.timestamp) >= Date.now() / 1000 - PASSKEY_MAX_AGE_SEC;
+  } catch (_) { return false; }
+}
+// NexPort のアカウント → 単価マスタの行。メールのログインIDか、人材マスタの shift_login_id で結ぶ。複数の行に当たるときは入れない
+function matchRateRows(rateRows: any[], email: string, masterIds: string[]): any[] {
+  const mail = email.trim().toLowerCase();
+  return rateRows.filter((r: string[]) => {
+    const id = (r[9] || '').trim();
+    return !!id && ((!!mail && id.toLowerCase() === mail) || masterIds.includes(id));
+  });
+}
+async function findRateRowsForUser(user: { id: string; email: string }, db: any): Promise<{ rows: any[]; rateRows: any[] }> {
+  const { data, error } = await db.from('staff_master').select('shift_login_id').eq('profile_id', user.id);
+  if (error) throw error;
+  const masterIds = (data ?? []).map((x: any) => String(x.shift_login_id || '').trim()).filter(Boolean);
+  let rateRows: any[] = await getRateRowsCached();
+  let rows = matchRateRows(rateRows, user.email, masterIds);
+  if (!rows.length) { rateRows = await getRateRowsCached(true); rows = matchRateRows(rateRows, user.email, masterIds); }
+  return { rows, rateRows };
+}
+
 Deno.serve(async(req:Request)=>{
   if(req.method==='OPTIONS')return new Response('ok',{headers:corsHeaders});
   try{
@@ -634,62 +735,30 @@ Deno.serve(async(req:Request)=>{
       }
       if(!row || !authOk){ await recordFail(); return jsonResp({success:false,error:'IDまたはパスワードが正しくありません'}); }
       try { await failDb.from('shift_login_failures').delete().eq('login_id', lid); } catch (_) { /* noop */ }
-      // 🚪 2026-10-26 退職の処理が済んだ人は入れない(退職予定 staff_retirements・EF staff-retire が退職日の翌日に処理)。
-      //    新聞は単価マスタに在籍の列が無いので、ここで止める。支払明細ビューアは別のログインなので引き続き見られる。
-      try {
-        const nm = String(row[0] || '').replace(/[\s　]/g, '');
-        const { data: ret } = await failDb.from('staff_retirements').select('full_name, shift_login_id, retire_date')
-          .is('cancelled_at', null).not('processed_at', 'is', null);
-        const hit = (ret ?? []).find((x: any) => (x.shift_login_id && String(x.shift_login_id) === login_id) || String(x.full_name || '').replace(/[\s　]/g, '') === nm);
-        if (hit) return jsonResp({ success: false, error: `退職の手続き（${hit.retire_date}）が済んでいるため、ログインできません。支払明細は明細ビューアからご覧ください。`, code: 'RETIRED' });
-      } catch (_) { /* 確認できないときは止めない */ }
-      const match=row;
-      // ⑤監査: 新聞ログイン権限(shift)を記録するだけ(ブロックしない)。
-      try{ await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/check-login-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system:'shift',login_id,source:'shift-login',log:true})}); }catch(_){ /* noop */ }
-      // 中央明細権限(meisai): 金額表示の制御に使う(明細を明示×にした人は必ず金額を隠す)。
-      let meisaiChk: any = { allowed: true, reason: 'default_allow' };
-      try{ meisaiChk = await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/check-login-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system:'meisai',login_id,source:'shift-money'})}).then(x=>x.json()); }catch(_){ /* noop */ }
-      // claims 構築
-      const name = match[0];
-      const biz_type = match[11] || '';
-      const company = match[12] || '';
-      const permissions = match[17] || '';
-      const permList = permissions.split(',');
-      // 管理者 = 社員 (biz_type='社員' は自動で admin)。 旧データ互換で permissions='admin' も認める
-      const has_admin = biz_type === '社員' || permList.includes('admin');
-      const is_owner = biz_type === '法人' && permList.includes('owner');
-      const is_corp_sub = biz_type === '法人' && !is_owner;
-      // permissions に 'admin' があれば EF レベルでも admin 扱い
-      const tokenRole = has_admin ? 'admin' : 'staff';
-      // 拠点別の単価も付ける(稼働記録の金額の自動入力で使う)。読めなくてもログインは止めない(基本の単価で表示)
-      let allRates = parseRates(rateRows);
-      try{ allRates = await attachSiteRates(allRates); }catch(_e){ /* noop */ }
-      // 金額表示: 明細を明示×にした人は必ず非表示。それ以外は従来(corp-subはshow_money) or 明細許可。
-      const toolMoney = is_corp_sub ? permList.includes('show_money') : true;
-      const company_shows_money = meisaiChk?.reason === 'explicit_deny' ? false : ((meisaiChk?.allowed ?? true) || toolMoney);
-      const sessionToken = await createToken({ role: tokenRole, name, biz_type, company, permissions, is_corp_sub, is_owner, company_shows_money });
-      // 単価 + 稼働のスコープ: admin=全件 / corp-owner=同company全員 / それ以外=自分のみ
-      // 稼働記録は認証には不要(表示用)なので、取得できなくてもログインは通す(空扱い)。
-      let workValues: any[] = [];
-      try{ workValues = await getWorkRowsCached(); }catch(_e){ workValues = []; }
-      const allWork = parseWork(workValues);
-      let ratesScoped, myWork;
-      if (has_admin) {
-        ratesScoped = allRates;
-        myWork = allWork;
-      } else {
-        const scopeNames = new Set<string>([name]);
-        // オーナー or 金額表示ON配下 → 同company全員を配下スコープに含める
-        if (is_owner || (is_corp_sub && company_shows_money)) {
-          allRates.filter((r:any)=>r.biz_type==='法人' && r.company===company).forEach((r:any)=>scopeNames.add(r.name));
-        }
-        myWork = allWork.filter((w:any)=>scopeNames.has(w.staff));
-        ratesScoped = allRates.filter((r:any)=>scopeNames.has(r.name)).map((r:any)=>{
-          if (is_corp_sub && !company_shows_money) return stripPrices(stripStaffPrivate(r));
-          return stripStaffPrivate(r);
-        });
-      }
-      return jsonResp({success:true, staff_name:name, rates:ratesScoped, work:myWork, permissions, auth_token:sessionToken, is_owner, company, has_admin, company_shows_money});
+      return await completeStaffLogin(row, rateRows, login_id, failDb);
+    }
+    if(action==='passkey_login'){
+      const user = await getNexportUser(body.access_token);
+      if(!user || !isFreshPasskeySession(body.access_token, user.id)) return jsonResp({success:false, error:'指紋・顔認証を確認できませんでした。もう一度お試しください。', code:'PASSKEY_INVALID'});
+      const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+      let found: { rows: any[]; rateRows: any[] };
+      try{ found = await findRateRowsForUser(user, db); }
+      catch(_e){ return jsonResp({success:false, error:'サーバが一時的に混み合っています。少し待ってからもう一度お試しください。', code:'SHEET_UNAVAILABLE'}, 503); }
+      if(found.rows.length!==1) return jsonResp({success:false, error:'このアカウントは新聞ツールのスタッフと結びついていません。IDとパスワードでログインしてください。', code:'PASSKEY_NOT_LINKED'});
+      const row = found.rows[0];
+      return await completeStaffLogin(row, found.rateRows, (row[9]||'').trim(), db);
+    }
+    // 登録の前に、いま新聞ツールに入っている本人の NexPort アカウントかを確かめる(別の人の端末に登録してしまわないように)
+    if(action==='passkey_check_link'){
+      const claims = await verifyToken(auth_token);
+      if(!claims) return authErr();
+      const user = await getNexportUser(body.access_token);
+      if(!user) return jsonResp({success:false, error:'NexPortのログインを確認できませんでした。'});
+      const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+      try{
+        const { rows } = await findRateRowsForUser(user, db);
+        return jsonResp({success:true, linked:rows.length===1, same:rows.length===1 && aliasKey(rows[0][0])===aliasKey(claims.name)});
+      }catch(_e){ return jsonResp({success:false, error:'サーバが一時的に混み合っています。少し待ってからもう一度お試しください。', code:'SHEET_UNAVAILABLE'}, 503); }
     }
     if(action==='admin_login'){
       if(!ADMIN_PASSWORD || !admin_password || admin_password !== ADMIN_PASSWORD) return jsonResp({success:false,error:'管理者パスワードが正しくありません'},401);

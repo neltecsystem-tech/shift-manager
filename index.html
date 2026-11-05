@@ -146,6 +146,7 @@ tbody tr:hover { background:var(--primary-light); }
     <div style="margin-bottom:16px;text-align:left;"><label style="font-size:12px;color:#64748b;">パスワード</label><input type="password" id="sys-login-pw" style="width:100%;padding:12px;border:1px solid #dde1e8;border-radius:10px;font-size:15px;" placeholder="パスワードを入力"></div>
     <div id="sys-login-err" style="color:#dc2626;font-size:13px;margin-bottom:12px;display:none;"></div>
     <button onclick="sysDoLogin()" id="sys-login-btn" style="width:100%;background:#1a56db;color:#fff;border:none;padding:14px;border-radius:12px;font-size:16px;font-weight:bold;cursor:pointer;margin-bottom:12px;">ログイン</button>
+    <button onclick="sysPasskeyLogin()" id="sys-passkey-btn" style="display:none;width:100%;background:#fff;color:#1a56db;border:1px solid #1a56db;padding:13px;border-radius:12px;font-size:15px;font-weight:bold;cursor:pointer;margin-bottom:12px;">🔐 指紋・顔認証でログイン</button>
     <button onclick="sysShowAdminLogin()" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:13px;">管理者ログイン</button>
     <div id="sys-admin-area" style="display:none;margin-top:16px;border-top:1px solid #dde1e8;padding-top:16px;">
       <div style="margin-bottom:12px;text-align:left;"><label style="font-size:12px;color:#64748b;">管理者パスワード</label><input type="password" id="sys-admin-pw" style="width:100%;padding:12px;border:1px solid #dde1e8;border-radius:10px;font-size:15px;" placeholder="管理者パスワード"></div>
@@ -176,6 +177,7 @@ tbody tr:hover { background:var(--primary-light); }
     <a href="manual.html" target="_blank" rel="noopener" title="管理者マニュアルを開く">📖<span class="nav-lbl"> マニュアル</span></a>
     <button id="nav-admin-btn" onclick="adminShowLogin()" title="管理画面">🔧<span class="nav-lbl"> 管理</span></button>
     <button id="sys-changepw-btn" onclick="invShowChangePw()" style="display:none;" title="自分のログインパスワードを変更">🔑<span class="nav-lbl"> PW変更</span></button>
+    <button id="sys-passkey-reg-btn" onclick="sysPasskeyShowRegister()" style="display:none;" title="この端末の指紋・顔認証を登録">🔐<span class="nav-lbl"> 指紋・顔</span></button>
     <button onclick="sysLogout()" title="ログアウト">ログアウト</button>
   </div>
 </div>
@@ -2429,7 +2431,7 @@ function ktThresholds(){ return ktInWindow()?{warn:3,bad:6}:{warn:14,bad:26}; }
 function ktAgeH(s){if(!s)return null;const t=Date.parse(s);if(isNaN(t))return null;return (Date.now()-t)/3600000;}
 function ktAgeText(h){if(h==null)return '';if(h<1)return Math.max(1,Math.round(h*60))+'分前';if(h<48)return Math.round(h)+'時間前';return Math.round(h/24)+'日前';}
 async function ktApi(payload){
-  const r=await fetch(KEYTAG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({admin_password:adminPw},payload))});
+  const r=await fetch(KEYTAG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({admin_password:adminPw,auth_token:invAuthToken},payload))});
   return r.json();
 }
 // コース一覧(シフトから) と 本日の担当算出
@@ -2921,7 +2923,7 @@ async function keytagRefreshNow(btn){
   const old=btn.textContent;
   btn.disabled=true; btn.textContent='更新要求中...';
   try{
-    const r=await fetch(KEYTAG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'refresh',admin_password:adminPw})});
+    const r=await fetch(KEYTAG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'refresh',admin_password:adminPw,auth_token:invAuthToken})});
     const j=await r.json();
     if(j.error){alert('更新の起動に失敗しました: '+j.error);btn.disabled=false;btn.textContent=old;return;}
     // 起動成功 → 約45秒後に自動反映(Actions実行時間)
@@ -2937,7 +2939,7 @@ async function keytagRefreshNow(btn){
 async function keytagSaveHolder(tagId){
   const el=document.getElementById('kt-holder-'+tagId); if(!el)return;
   try{
-    await fetch(KEYTAG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_holder',admin_password:adminPw,tag_id:tagId,holder:el.value})});
+    await fetch(KEYTAG_EF,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set_holder',admin_password:adminPw,auth_token:invAuthToken,tag_id:tagId,holder:el.value})});
     renderKeyTag();
   }catch(e){alert('保存に失敗しました');}
 }
@@ -22663,6 +22665,7 @@ function sysStartSession(sess){
   document.getElementById('sys-login').style.display='none';
   document.getElementById('sys-user-label').textContent=(sysIsAdmin?'👑 ':'👤 ')+sysUserName;
   document.getElementById('sys-changepw-btn').style.display=sysIsAdmin?'none':'';
+  document.getElementById('sys-passkey-reg-btn').style.display=(!sysIsAdmin&&sysPasskeyUsable())?'':'none';
   sysApplyPermissions(perms);
   msrAuthed=true;msrStaffName=sysUserName;
   invAuthed=true;invIsAdmin=sysIsAdmin;invStaffName=sysIsAdmin?'':sysUserName;
@@ -22721,11 +22724,111 @@ async function sysDoLogin(){
     errEl.textContent=res?.error||'IDまたはパスワードが正しくありません';errEl.style.display='block';
     document.getElementById('sys-login-btn').textContent='ログイン';return;
   }
+  sysFinishStaffLogin(res);
+}
+function sysFinishStaffLogin(res){
   const perms=(res.permissions||'').split(',').filter(Boolean);
   // 自分のrateだけ手元に
   if(res.rates)invRates=res.rates;
   if(res.work)invWork=res.work;
   sysStartSession({name:res.staff_name,isAdmin:false,perms});
+}
+
+// ─── 🔐 指紋・顔認証(パスキー)(2026-11-05) ───
+// NexPort と同じ Supabase 標準の仕組み。パスキーは RP ID(workchat.neltec-tokyo.info)の配下でしか動かないので、このアドレスの時だけ出す。
+// 本人確認は Supabase、新聞の権限は invoice-sheet の passkey_login が決める。NexPort のセッションは手元に残さない。
+const SYS_PASSKEY_HOST='shift.workchat.neltec-tokyo.info';
+const SYS_SB_JS='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.115.0/dist/umd/supabase.js';
+const SYS_SB_JS_SRI='sha384-CLZeq1dk8+Uzrs7TVvBUdlFoV5F0DMqgRoeHa8g5wJcuPe5SkVfEvdxB0ZuzlnBQ';
+let sysPasskeyClientP=null;
+function sysPasskeyUsable(){return location.hostname===SYS_PASSKEY_HOST&&!!window.PublicKeyCredential;}
+// 使う時だけ読み込む(パスワードの人には読み込ませない)
+function sysPasskeyClient(){
+  if(!sysPasskeyClientP)sysPasskeyClientP=new Promise((resolve,reject)=>{
+    const sc=document.createElement('script');
+    sc.src=SYS_SB_JS;sc.integrity=SYS_SB_JS_SRI;sc.crossOrigin='anonymous';
+    sc.onload=()=>resolve(window.supabase.createClient('https://nccognptoprhwsbjnwcu.supabase.co',SUPABASE_ANON_KEY,{
+      auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false,experimental:{passkey:true}}}));
+    sc.onerror=()=>{sysPasskeyClientP=null;reject(new Error('読み込みに失敗しました。通信を確認してもう一度お試しください。'));};
+    document.head.appendChild(sc);
+  });
+  return sysPasskeyClientP;
+}
+function sysPasskeyMessage(e){
+  const code=e?.code||'',msg=e?.message||'';
+  if(e?.name==='NotAllowedError'||/CEREMONY_ABORTED|NotAllowed|cancel/i.test(code+msg))return '指紋・顔認証が取り消されたか、時間切れになりました。もう一度お試しください。';
+  if(code==='webauthn_credential_not_found'||code==='webauthn_verification_failed')return 'この端末の指紋・顔認証は使えません。IDとパスワードでログインしてから登録してください。';
+  if(code==='webauthn_credential_exists'||code==='ERROR_AUTHENTICATOR_PREVIOUSLY_REGISTERED'||e?.name==='InvalidStateError')return 'この端末は既に登録されています。登録はそのまま使えます。';
+  if(code==='user_banned')return 'このアカウントは止められています。管理者にご確認ください。';
+  if(code==='too_many_passkeys')return '登録できる数の上限です。NexPortのプロフィールで、使っていない端末の登録を消してください。';
+  return '指紋・顔認証の操作ができませんでした（'+(code||msg||'不明')+'）。パスワードはそのまま使えます。';
+}
+async function sysPasskeyLogin(){
+  const errEl=document.getElementById('sys-login-err'),btn=document.getElementById('sys-passkey-btn');
+  errEl.style.display='none';btn.disabled=true;
+  let sb=null;
+  try{
+    sb=await sysPasskeyClient();
+    const {error}=await sb.auth.signInWithPasskey();
+    if(error)throw error;
+    const {data}=await sb.auth.getSession();
+    const res=await invApi({action:'passkey_login',access_token:data?.session?.access_token||''});
+    if(!res?.success||!res.auth_token){errEl.textContent=res?.error||'ログインできませんでした';errEl.style.display='block';return;}
+    invAuthToken=res.auth_token;
+    invStaffPerms=res.permissions||'';
+    sysFinishStaffLogin(res);
+  }catch(e){
+    errEl.textContent=sysPasskeyMessage(e);errEl.style.display='block';
+  }finally{
+    btn.disabled=false;
+    if(sb)sb.auth.signOut({scope:'local'}).catch(()=>{});
+  }
+}
+function sysPasskeyShowRegister(){
+  const m=document.createElement('div');
+  m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:600;display:flex;justify-content:center;align-items:center;padding:20px;';
+  m.innerHTML='<div style="background:#fff;border-radius:16px;padding:24px;width:100%;max-width:380px;">'
+    +'<h3 style="margin-bottom:8px;">🔐 この端末の指紋・顔認証を登録</h3>'
+    +'<p style="font-size:13px;color:#64748b;margin-bottom:14px;">本人確認のため、<b>NexPort</b>のメールアドレスとパスワードを入力してください（新聞ツールのパスワードとは別のことがあります）。</p>'
+    +'<input type="email" id="sys-pk-email" autocomplete="username" placeholder="NexPortのメールアドレス" style="width:100%;padding:12px;border:1px solid #dde1e8;border-radius:10px;font-size:15px;margin-bottom:10px;">'
+    +'<input type="password" id="sys-pk-pw" autocomplete="current-password" placeholder="NexPortのパスワード" style="width:100%;padding:12px;border:1px solid #dde1e8;border-radius:10px;font-size:15px;margin-bottom:10px;">'
+    +'<div id="sys-pk-msg" style="font-size:13px;color:#dc2626;margin-bottom:10px;display:none;"></div>'
+    +'<button id="sys-pk-go" style="width:100%;background:#1a56db;color:#fff;border:none;padding:12px;border-radius:10px;font-size:15px;font-weight:bold;cursor:pointer;margin-bottom:8px;">登録する</button>'
+    +'<button id="sys-pk-close" style="width:100%;background:none;border:none;color:#64748b;padding:8px;cursor:pointer;">閉じる</button></div>';
+  document.body.appendChild(m);
+  const msg=(t,ok)=>{const el=m.querySelector('#sys-pk-msg');el.textContent=t;el.style.color=ok?'#15803d':'#dc2626';el.style.display='block';};
+  m.querySelector('#sys-pk-close').onclick=()=>m.remove();
+  m.querySelector('#sys-pk-go').onclick=async()=>{
+    const email=m.querySelector('#sys-pk-email').value.trim(),password=m.querySelector('#sys-pk-pw').value;
+    if(!email||!password){msg('メールアドレスとパスワードを入力してください');return;}
+    const go=m.querySelector('#sys-pk-go');go.disabled=true;
+    let sb=null;
+    try{
+      // 3回ミスのロックを効かせるため、NexPort のログインと同じ窓口を通す
+      const r=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/nexport-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'login',email,password})});
+      const j=await r.json().catch(()=>({}));
+      if(!j.access_token){msg(j.error==='locked'?'パスワードの間違いが続いたため、15分ほどロックされています。':'メールアドレスかパスワードが正しくありません。');return;}
+      const chk=await invApi({action:'passkey_check_link',access_token:j.access_token});
+      if(!chk?.success){msg(chk?.error||'確認できませんでした');return;}
+      if(!chk.same){msg('このNexPortアカウントは、いまログイン中の方と結びついていないため登録できません。');return;}
+      sb=await sysPasskeyClient();
+      const {error:se}=await sb.auth.setSession({access_token:j.access_token,refresh_token:j.refresh_token});
+      if(se)throw se;
+      const {error}=await sb.auth.registerPasskey();
+      if(error)throw error;
+      msg('登録しました。次回からログイン画面の「指紋・顔認証でログイン」で入れます。',true);
+      m.querySelector('#sys-pk-pw').value='';
+    }catch(e){
+      msg(sysPasskeyMessage(e));
+    }finally{
+      go.disabled=false;
+      if(sb)sb.auth.signOut({scope:'local'}).catch(()=>{});
+    }
+  };
+}
+if(sysPasskeyUsable()){
+  const pkBtn=document.getElementById('sys-passkey-btn');
+  if(pkBtn)pkBtn.style.display='';
 }
 
 async function sysAdminLogin(){
