@@ -17801,6 +17801,18 @@ async function admBillLoadBtobSettings(){
   }catch(e){/* 読めなければ手入力のまま */}
 }
 
+// BtoB CSV を出したときの請求書PDF(会計の source-docs が作って共有ドライブに置く)。失敗してもCSVは出ている
+async function admBillBtoBStorePdf(invoice){
+  try{
+    const r=await fetch('https://nccognptoprhwsbjnwcu.supabase.co/functions/v1/source-docs',{method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON_KEY},
+      body:JSON.stringify({action:'invoice_pdf',tool:'shift',auth_token:invAuthToken,invoice})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||j.error)return '⚠ 請求書PDFの保管に失敗しました: '+(j.error||r.status);
+    return '📄 請求書PDFを保管しました（財務資料/売掛金/売上請求書: '+j.made.file+'）'+(j.made.client_registered?'':'\n⚠ 請求先の住所が会計に未登録です（会計の設定→BtoB請求書の取引先で登録）');
+  }catch(e){return '⚠ 請求書PDFの保管に失敗しました: '+e.message;}
+}
+
 async function admBillBtoBCsv46(){
   const ctx=admBillBtoBCtx;if(!ctx){alert('先に「🧾 BtoB請求書」を押してください');return;}
   const v=id=>(document.getElementById(id).value||'').trim();
@@ -17855,7 +17867,9 @@ async function admBillBtoBCsv46(){
     const sjis=Encoding.convert(Encoding.stringToCode(csv),{to:'SJIS',from:'UNICODE'});
     dl(new Blob([new Uint8Array(sjis)],{type:'text/csv'}),fname);
     document.getElementById('sm-btob-modal').style.display='none';
-    alert(`✅ BtoB請求書CSV(46列/SJIS)を出力しました。\n明細 ${lines.length}行 / 税抜 ¥${net.toLocaleString()} / 税込 ¥${gross.toLocaleString()}${warn}`);
+    // 同じ数字で BtoBプラットフォームの請求書(おもて)と同じ形の PDF を作り、会計の共有ドライブ「財務資料/売掛金/売上請求書」へ保管する(2026-11-10)
+    const pdfMsg=await admBillBtoBStorePdf({invoice_no:invoiceNo,client_code:code,client_name:v('btob-client'),subject,closing_date:shime,due_date:due,net,tax:totalTax,gross});
+    alert(`✅ BtoB請求書CSV(46列/SJIS)を出力しました。\n明細 ${lines.length}行 / 税抜 ¥${net.toLocaleString()} / 税込 ¥${gross.toLocaleString()}\n${pdfMsg}${warn}`);
   }catch(e){
     dl(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8;'}),fname.replace('.csv','_utf8.csv'));
     alert('⚠ Shift-JIS変換に失敗したためUTF-8(BOM付)で出力しました。BtoBはSJISです。\nネット接続を確認して再実行してください。\nエラー: '+e.message);
