@@ -2085,6 +2085,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-11-11', tag:'改善', title:'荷主リスト突合: 「荷主のみ」の店に、区分に数えていない理由を出すようにしました',
+   desc:'区分集計の差異で、店舗マスタに店があるのに一律「荷主のみ(マスタ未登録)」と出ていました。マスタにある店は「マスタの開店日 ◯ が月初より後」「マスタに朝刊のコースなし」「マスタでは納品中止」など、その区分に数えていない理由を表示します。月途中に開店した店は翌月から数える決まりのため、開店日が月初より後なら月初に反映しても差異は消えません。'},
   {date:'2026-11-11', tag:'修正', title:'店舗マスタ: 新店登録で営業所を選べませんでした',
    desc:'店舗の追加画面で「営業所」の選択肢が空になっていました。10/15にログインしていないと使えない仕組みにしたとき、営業所の選択肢を取りに行く処理だけがログイン情報を付けていなかったためです。ログイン情報を付けて取りに行くように直し、万一取れないときも今の店舗の営業所から選べるようにしました。'},
   {date:'2026-11-11', tag:'改善', title:'荷主リスト突合: 店舗マスタに無い店をその場で登録できるようにしました',
@@ -19924,7 +19926,15 @@ function admShopListAnalyze(){
   const catCompare={};
   new Set([...Object.keys(shipByCatN),...Object.keys(masterByCat)]).forEach(k=>{
     const sh=shipByCatN[k]||new Set(), ma=masterByCat[k]||new Set();
-    let onlyShip=[...sh].filter(c=>!ma.has(c)).map(c=>({code:c,name:shipNameOf(c)}));
+    // 荷主のみでもマスタに店がある場合は「未登録」ではないので、区分に数えていない理由を付ける(開店日が月初より後・その区分のコースが無い等)
+    const wCat=k.split('	')[1];
+    const whyNot=c=>{const mm=masterMap.get(c);if(!mm)return '';
+      if(mm.closed)return 'マスタでは納品中止';
+      if(slNotOpenYet(mm))return `マスタの開店日 ${mm.openDate} が月初より後`;
+      const sc=SHEETCATS.find(x=>x.key===wCat);
+      if(sc&&!(sc.bool?String(mm[sc.mast]||'').trim().toUpperCase()==='TRUE':String(mm[sc.mast]||'').trim()))return `マスタに${wCat}のコースなし`;
+      return 'マスタでは別の営業所のコース';};
+    let onlyShip=[...sh].filter(c=>!ma.has(c)).map(c=>({code:c,name:shipNameOf(c),why:whyNot(c)}));
     let onlyMast=[...ma].filter(c=>!sh.has(c)).map(c=>({code:c,name:mastNameOf(c),row:(masterMap.get(c)||{}).row}));
     // 同一店なのに店舗コードが違うケース(例 LS江古田 751662 ↔ LS江古田店 751000)は
     // 正規化店名で 荷主のみ↔マスタのみ を突き合わせ「コード相違(同一店)」として差異から除外
@@ -20154,7 +20164,7 @@ function admShopListRender(){
   }else if(tab==='catsummary'){
     const cc=admSlResult.catCompare||{};
     const cs={};
-    Object.keys(cc).forEach(k=>{const c=cc[k];cs[k]=[...c.onlyShip.map(s=>({kind:'荷主のみ(マスタ未登録)',color:'#15803d',code:s.code,name:s.name})),...c.onlyMast.map(s=>({kind:'マスタのみ(荷主シート未掲載)',color:'#dc2626',code:s.code,name:s.name}))];});
+    Object.keys(cc).forEach(k=>{const c=cc[k];cs[k]=[...c.onlyShip.map(s=>({kind:s.why?`荷主のみ(${s.why})`:'荷主のみ(マスタ未登録)',color:'#15803d',code:s.code,name:s.name})),...c.onlyMast.map(s=>({kind:'マスタのみ(荷主シート未掲載)',color:'#dc2626',code:s.code,name:s.name}))];});
     const cats=['朝刊','平日','競馬','朝出し'];
     if(admSlCatDrill&&cs[admSlCatDrill]){
       // ── ドリルダウン明細 ──
