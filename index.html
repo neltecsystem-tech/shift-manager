@@ -2085,6 +2085,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-11-11', tag:'改善', title:'店舗マスタ: 開店日などの日付はカレンダーから選ぶ形にしました',
+   desc:'店舗の登録・編集で、開店日・最終納品日・最終回収日・情報更新日をカレンダーから選ぶようにしました。手入力だと「2026/12/1」「2026-12-01」など書き方がばらつき、日付として読み落とす原因になっていたためです。保存は「2026/12/01」の形にそろえます。日付として読めないメモが入っている欄は、消さないよう今までどおりの文字入力になります。'},
   {date:'2026-11-11', tag:'修正', title:'荷主リスト突合: 開店日が「2026/12/1」のような書き方の新店が差異に出ていました',
    desc:'まだ開店していない店は突合から外す決まりですが、開店日の月や日が1桁（例 2026/12/1）だと日付として読めず、開店済みとして扱っていました。そのため荷主リストに載っていない「マスタのみ」の差異として出ていました。1桁の月日も読めるように直しました。2026年11月分では川越のTJ7埼玉医科大学病院（開店日 12/1）が対象です。'},
   {date:'2026-10-22', tag:'新機能', title:'拠点をまたいで働く人に「拠点別の単価」を登録できるようになりました',
@@ -5690,6 +5692,15 @@ async function smGeocode(){
   }
 }
 
+// 日付の列はカレンダーで選ばせる(手入力の「2026/12/1」「2026-12-01」等の表記ゆれで読み落とす事故があったため 2026-11-11)。
+// 書き込みは情報更新日と同じ「YYYY/MM/DD」。日付として読めない既存値(メモ書き等)は消さないよう、その行だけ文字入力のままにする。
+const SM_DATE_HEADERS=['開店日','最終納品日','最終回収日','情報更新日'];
+const smIsDateHeader=h=>SM_DATE_HEADERS.some(k=>String(h||'').includes(k));
+function smDateToIso(v){
+  const t=String(v||'').trim();
+  let m=t.match(/^(\d{4})(\d{2})(\d{2})$/)||t.match(/^(\d{4})[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})日?$/);
+  return m?`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`:'';
+}
 function smBuildForm(record){
   let html='';
   const isAreaCol=i=>smHeaders[i]&&smHeaders[i].includes('営業所');
@@ -5753,6 +5764,11 @@ function smBuildForm(record){
           <input type="text" id="sme-${i}" value="${val.replace(/"/g,'&quot;')}" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:#f8fafc;" placeholder="店着時間順で自動">
           <button type="button" onclick="smInsertOrder(${i})" style="background:#0891b2;color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;">↕ 間に挿入</button>
         </div>
+      </div>`;
+    }else if(smIsDateHeader(h)&&(!String(val).trim()||smDateToIso(val))){
+      html+=`<div style="margin-bottom:8px;">
+        <label style="font-size:12px;color:var(--text-sub)">${h}</label>
+        <input type="date" id="sme-${i}" value="${smDateToIso(val)}" data-orig="${String(val).replace(/"/g,'&quot;')}" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
       </div>`;
     }else if([13,18,24].includes(i)&&h.includes('店着時間')){
       // 店着時間列: 手入力すると「間に挿入」の後続シフト保留をクリア (手入力優先)
@@ -6385,6 +6401,10 @@ async function smSave(){
     if(!el)return;
     if(isCheck2(i)||el.type==='checkbox'){
       record[`col_${i}`]=el.checked?'TRUE':'FALSE';
+    }else if(el.type==='date'){
+      // カレンダーの値(YYYY-MM-DD)を YYYY/MM/DD で書く。日付が変わっていなければ元の表記のまま(無駄な更新・更新日の打刻を避ける)
+      const orig=el.dataset.orig||'';
+      record[`col_${i}`]=!el.value?'':(smDateToIso(orig)===el.value?orig:el.value.replace(/-/g,'/'));
     }else{
       record[`col_${i}`]=el.value;
     }
