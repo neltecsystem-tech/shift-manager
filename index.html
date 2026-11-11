@@ -6457,7 +6457,7 @@ async function smSave(){
     if(!smEditRow&&admSlAfterAdd){
       const pend=admSlAfterAdd;admSlAfterAdd=null;
       const c=String(record[`col_${smColMap.code??2}`]||'').trim();
-      if(c===pend.code)setTimeout(()=>admSlSnapSync(pend.code,pend.cat,true),0);
+      if(c===pend.code)setTimeout(()=>admSlSnapSync(pend.code,pend.cat,true),5000);
     }
   }catch(e){alert('エラー: '+e.message);}
   btn.textContent=smEditRow?'更新する':'追加する';btn.disabled=false;
@@ -20365,8 +20365,19 @@ ${mRec.name||''}（${code}）は店舗マスタに${cat}のコースが入って
   }
   if(!afterAdd&&!confirm(`店舗コード ${code} を ${month} の月初スナップに反映します（現行マスタの今の値をコピー）。\n\n月初(${month}-01)時点で在籍していた店の場合のみ実行してください。\n（月途中に開店した店は翌月から。スナップには入れない）\n\nよろしいですか？`))return;
   try{
-    const resp=await smPost({action:'snapshot_sync_store',month,codes:[String(code)]});
-    const j=await resp.json();
+    // Sheets の読み取り上限(1分あたり)に当たったら待ってやり直す。新店登録の直後は登録・再読込・Place ID 取得で読み取りが重なり当たりやすい
+    let j=null;
+    for(let t=0;t<4;t++){
+      const resp=await smPost({action:'snapshot_sync_store',month,codes:[String(code)]});
+      j=await resp.json();
+      const quota=j&&j.error&&/429|Quota exceeded|RESOURCE_EXHAUSTED/i.test(String(j.error));
+      if(!quota||t===3)break;
+      let tip=document.getElementById('adm-sl-wait');
+      if(!tip){tip=document.createElement('div');tip.id='adm-sl-wait';tip.style.cssText='position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1e293b;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;z-index:700;box-shadow:0 4px 12px rgba(0,0,0,.3);';document.body.appendChild(tip);}
+      tip.textContent=`⏳ Googleの読み取り上限に当たったため、30秒待って月初スナップへの反映をやり直します（${t+1}/3）。このままお待ちください`;
+      await new Promise(r=>setTimeout(r,30000));
+      tip.remove();
+    }
     if(j.error)throw new Error(j.error);
     if((j.missingInLive||[]).length){
       if(afterAdd){alert(`⚠ コード ${code} の登録を確認できませんでした。少し待ってからもう一度「📌 月初に反映」を押してください。`);return;}
