@@ -2085,6 +2085,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-11-11', tag:'修正', title:'店舗マスタ: 新店登録で営業所を選べませんでした',
+   desc:'店舗の追加画面で「営業所」の選択肢が空になっていました。10/15にログインしていないと使えない仕組みにしたとき、営業所の選択肢を取りに行く処理だけがログイン情報を付けていなかったためです。ログイン情報を付けて取りに行くように直し、万一取れないときも今の店舗の営業所から選べるようにしました。'},
   {date:'2026-11-11', tag:'改善', title:'荷主リスト突合: 店舗マスタに無い店をその場で登録できるようにしました',
    desc:'「荷主のみ（マスタ未登録）」の店で「📌 月初に反映」を押したとき、店舗マスタに無ければ登録画面を開くようにしました。店舗コード・店名・住所・営業所・コースは荷主リストの内容を入れてあります。確認して「追加する」を押すと、続けてその月の月初スナップに反映します。これまでは店舗マスタ画面へ移って登録し直す必要がありました。'},
   {date:'2026-11-11', tag:'改善', title:'店舗マスタ: 開店日などの日付はカレンダーから選ぶ形にしました',
@@ -4435,7 +4437,8 @@ async function smLoad(force){
     if(force)invalidateShopMasterCache();
     // マスタオプションと全件listを並列取得(独立なので直列に待たない)。
     // 初回オープンの体感速度はこの list 取得が支配的なので、optを直列に挟まない。
-    const optPromise=smMasterAreas.length?null:fetch(SM_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'master_options'})}).then(r=>r.json()).catch(()=>null);
+    // 🚨 10/15 のログイン必須化以降、素の fetch は「ログインが必要です」で断られ営業所の選択肢が空だった(新店登録で営業所を選べない)。smPost でトークンを付ける
+    const optPromise=smMasterAreas.length?null:smPost({action:'master_options'}).then(r=>r.json()).catch(()=>null);
     const listPromise=fetchShopMasterList();
     if(optPromise){
       const optJson=await optPromise;
@@ -4445,6 +4448,11 @@ async function smLoad(force){
     if(json.error)throw new Error(json.error);
     smHeaders=json.headers||[];
     smData=json.records||[];
+    // 選択肢が取れなかったときは、今の店舗の営業所から作る(空のままだと新店登録で営業所を選べない)
+    if(!smMasterAreas.length){
+      const ai=smHeaders.findIndex(h=>String(h||'').includes('営業所'));
+      if(ai>=0)smMasterAreas=[...new Set(smData.map(r=>String(r[`col_${ai}`]||'').trim()).filter(a=>a&&!a.includes('納品中止')&&!a.includes(',')))].sort();
+    }
     // 列マッピング
     smColMap={};
     smHeaders.forEach((h,i)=>{
