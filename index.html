@@ -2085,6 +2085,8 @@ function parseShiftEv(key){parseShift(key);}
 // ─── 更新履歴 (新機能・改善・修正のお知らせ) ───
 // 新しい項目は配列の先頭に追加してください (date 降順)。tag: '新機能'|'改善'|'修正'
 const CHANGELOG=[
+  {date:'2026-11-11', tag:'改善', title:'荷主リスト突合: 店舗マスタに無い店をその場で登録できるようにしました',
+   desc:'「荷主のみ（マスタ未登録）」の店で「📌 月初に反映」を押したとき、店舗マスタに無ければ登録画面を開くようにしました。店舗コード・店名・住所・営業所・コースは荷主リストの内容を入れてあります。確認して「追加する」を押すと、続けてその月の月初スナップに反映します。これまでは店舗マスタ画面へ移って登録し直す必要がありました。'},
   {date:'2026-11-11', tag:'改善', title:'店舗マスタ: 開店日などの日付はカレンダーから選ぶ形にしました',
    desc:'店舗の登録・編集で、開店日・最終納品日・最終回収日・情報更新日をカレンダーから選ぶようにしました。手入力だと「2026/12/1」「2026-12-01」など書き方がばらつき、日付として読み落とす原因になっていたためです。保存は「2026/12/01」の形にそろえます。日付として読めないメモが入っている欄は、消さないよう今までどおりの文字入力になります。'},
   {date:'2026-11-11', tag:'修正', title:'荷主リスト突合: 開店日が「2026/12/1」のような書き方の新店が差異に出ていました',
@@ -5955,6 +5957,9 @@ function smClosePicker(){const m=document.getElementById('sm-pick-modal');if(m)m
 function smShowAdd(prefill){
   smEditRow=null;
   smPendingTimeShift=null;
+  // 店舗マスタ画面の中に置いた modal は、別画面(管理の荷主リスト突合など)では親が非表示で出ないため body 直下へ移す
+  const smMd=document.getElementById('sm-modal');
+  if(smMd&&smMd.parentElement!==document.body)document.body.appendChild(smMd);
   document.getElementById('sm-modal-title').textContent='店舗を追加';
   document.getElementById('sm-form').innerHTML=smBuildForm(null);
   document.getElementById('sm-submit').textContent='追加する';
@@ -5967,6 +5972,9 @@ function smShowAdd(prefill){
     setV(smColMap.amCourse, prefill.amCourse);
     setV(smColMap.pmCourse, prefill.pmCourse);
     setV(smColMap.keibaCourse, prefill.keibaCourse);
+    setV(smColMap.code??2, prefill.code);
+    setV(smColMap.name??3, prefill.name);
+    if(prefill.addr){const ai=smHeaders.findIndex(h=>String(h||'').includes('住所'));if(ai>=0)setV(ai,prefill.addr);}
   }
   setTimeout(smInitEditMap,50);
 }
@@ -6437,6 +6445,12 @@ async function smSave(){
     await smLoad(true);
     // 新店追加時のみ: その店のPlace IDを自動取得(ナビで店名表示のため)
     if(!smEditRow){const c=String(record[`col_${smColMap.code??2}`]||'').trim();if(c)smAutoFetchPlaceId([c]).then(n=>{if(n)smLoad(true);});}
+    // 荷主リスト突合の「月初に反映」から開いた新店登録なら、登録後にそのまま月初スナップへ反映する
+    if(!smEditRow&&admSlAfterAdd){
+      const pend=admSlAfterAdd;admSlAfterAdd=null;
+      const c=String(record[`col_${smColMap.code??2}`]||'').trim();
+      if(c===pend.code)setTimeout(()=>admSlSnapSync(pend.code,pend.cat,true),0);
+    }
   }catch(e){alert('エラー: '+e.message);}
   btn.textContent=smEditRow?'更新する':'追加する';btn.disabled=false;
 }
@@ -20278,7 +20292,21 @@ function slHasCat(m,cat){
   return cat==='朝出し'?v.toUpperCase()==='TRUE':!!v;
 }
 
-async function admSlSnapSync(code,cat){
+// 「月初に反映」で店舗マスタに無かった店: 荷主リストの値で新店登録画面を開き、登録後に反映を続ける
+let admSlAfterAdd=null;
+async function admSlOpenAddFromShip(code,cat){
+  if(!smHeaders.length){try{await (smLoadPromise||smLoad());}catch(_){}}
+  if(!smHeaders.length){alert('店舗マスタを読み込めませんでした。少し待ってからもう一度お試しください。');return;}
+  const ship=((admSlData&&admSlData.moto)||[]).find(m=>m.code===String(code))||{};
+  // 荷主リストの営業所名 → 店舗マスタの営業所名
+  const toArea=a=>{const t=String(a||'').trim();if(!t)return '';if(t==='高津'||t==='川崎')return '川崎高津';if(t==='池袋')return '城北';if(t==='川越朝')return '川越';return t;};
+  const area=toArea(ship.amArea||ship.pmArea||ship.keibaArea||String(admSlCatDrill||'').split('	')[0]);
+  const course=c=>slShipCourseName(code,c)||'';
+  admSlAfterAdd={code:String(code),cat};
+  smShowAdd({code:String(code),name:ship.name||'',addr:ship.addr||'',area,
+    amCourse:course('朝刊'),pmCourse:course('平日'),keibaCourse:course('競馬')});
+}
+async function admSlSnapSync(code,cat,afterAdd){
   const month=admSlSnapMonth();
   if(!month){alert('いまライブ突合中のため月初スナップがありません。対象月を月初スナップに切替えてください。');return;}
   // 🚨 この差異は「その区分でマスタ未登録」。スナップへ反映しても、コピー元の現行マスタに
@@ -20327,12 +20355,19 @@ ${mRec.name||''}（${code}）は店舗マスタに${cat}のコースが入って
     return;
     }
   }
-  if(!confirm(`店舗コード ${code} を ${month} の月初スナップに反映します（現行マスタの今の値をコピー）。\n\n月初(${month}-01)時点で在籍していた店の場合のみ実行してください。\n（月途中に開店した店は翌月から。スナップには入れない）\n\nよろしいですか？`))return;
+  if(!afterAdd&&!confirm(`店舗コード ${code} を ${month} の月初スナップに反映します（現行マスタの今の値をコピー）。\n\n月初(${month}-01)時点で在籍していた店の場合のみ実行してください。\n（月途中に開店した店は翌月から。スナップには入れない）\n\nよろしいですか？`))return;
   try{
     const resp=await smPost({action:'snapshot_sync_store',month,codes:[String(code)]});
     const j=await resp.json();
     if(j.error)throw new Error(j.error);
-    if((j.missingInLive||[]).length){alert(`⚠ コード ${code} は現行マスタに未登録です。\n先に「店舗マスタ」画面で新規登録 → もう一度「📌 月初に反映」してください。`);return;}
+    if((j.missingInLive||[]).length){
+      if(afterAdd){alert(`⚠ コード ${code} の登録を確認できませんでした。少し待ってからもう一度「📌 月初に反映」を押してください。`);return;}
+      if(!confirm(`コード ${code} は店舗マスタに未登録です。
+
+荷主リストの内容を入れた登録画面を開きます。内容を確認して「追加する」を押すと、続けて ${month} の月初スナップに反映します。`))return;
+      await admSlOpenAddFromShip(String(code),cat);
+      return;
+    }
     alert(`✓ ${month} の月初スナップに反映しました（更新${j.updated}／追加${j.appended}）。\n${month} の請求に反映されます。現行マスタはそのままです。`);
     admSlMaster=null;await admShopListEnsureMaster();admShopListAnalyze();
   }catch(e){alert('反映エラー: '+e.message);}
