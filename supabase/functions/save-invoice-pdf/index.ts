@@ -59,21 +59,34 @@ async function shiftLoggedIn(token: unknown): Promise<boolean> {
     if (diff !== 0) return false;
     const bin = atob(parts[0].replace(/-/g, '+').replace(/_/g, '/'));
     const claims = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
-    return !(claims.exp && claims.exp < Date.now());
+    if (claims.exp && claims.exp < Date.now()) return false;
+    lastClaims = claims;
+    return true;
   } catch { return false; }
 }
+// shiftLoggedIn が通ったときのトークンの中身(role / name)。1リクエスト1回なのでモジュール変数で受け渡す
+let lastClaims: { role?: string; name?: string; is_owner?: boolean } | null = null;
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const body = await req.json();
-    const { staff, from, to, records, total, custom_html, custom_filename } = body;
+    // 🔒 2026-11-13 セキュリティ点検 M87: custom_html / custom_filename を廃止(画面は使っていない)。
+    //    ログインした誰でも任意の内容・任意の名前の PDF を会社の Drive に作れた。
+    //    管理者以外は「自分の名前(トークンの name)」の請求書だけ作れる。
+    const { staff, from, to, records, total } = body;
+    lastClaims = null;
     if (!(await shiftLoggedIn(body.auth_token))) {
       return new Response(JSON.stringify({ error: 'ログインが必要です（再ログインしてください）', code: 'AUTH_REQUIRED' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
     if (!staff || !from || !to) {
       return new Response(JSON.stringify({ error: 'staff, from, to required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
+    // 法人オーナーは自社の配下を選んで作れる(画面 canScope)ので通す
+    if (lastClaims?.role !== 'admin' && !(lastClaims as any)?.is_owner && String(lastClaims?.name ?? '') !== String(staff)) {
+      return new Response(JSON.stringify({ error: '自分の請求書だけ保存できます', code: 'FORBIDDEN' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    const custom_html = '', custom_filename = '';
 
     const token = await getAccessToken();
     // Use custom HTML if provided, otherwise generate invoice HTML

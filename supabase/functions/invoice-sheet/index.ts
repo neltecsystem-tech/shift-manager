@@ -1651,6 +1651,14 @@ Deno.serve(async(req:Request)=>{
         if(!base) return jsonResp({error:'row not found'}, 404);
         if(!sameCo(base.company,callerCompany)) return forbid('自社メンバーのみ編集できます');
       }
+      // 🔒 2026-11-13 セキュリティ点検 M89: 他の行と同じ氏名・ログインIDは断る。閲覧範囲や稼働・単価は名前で引くため、
+      //    他社の人と同じ名前の配下を作るとその人の分まで見えてしまう恐れがあった。
+      {
+        const nk = (s: unknown) => String(s ?? '').replace(/[\s　]/g, '');
+        const others = (cur as any[]).filter((r: any) => r.row_number !== Number(row_number || 0));
+        if (others.some((r: any) => nk(r.name) && nk(r.name) === nk(record.name))) return jsonResp({ error: 'この氏名は既に登録されています。別の書き方(フルネームなど)で登録してください' }, 409);
+        if (record.login_id && others.some((r: any) => String(r.login_id || '') === String(record.login_id))) return jsonResp({ error: 'このログインIDは既に使われています' }, 409);
+      }
       const isSelf = row_number ? (base.name===callerName) : false; // 新規は常に配下扱い
       // 価格系は base から保全 (オーナーは編集不可)。 オーナーが触れるのは 氏名/ログイン/show_money のみ
       const m: any = { ...base };
