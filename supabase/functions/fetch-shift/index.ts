@@ -14,6 +14,10 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
 };
 const SHIFT_SPREADSHEET = '1yVKQLSmdc9RZ2U5m4CIPqAl4JqP9siiSeSRP0z3SEEM';
+// 既定のシフト表以外に扱ってよいシート(管理者のみ)。index.html の IMPORTRANGE_TARGET_SS(新しい月の IMPORTRANGE 先)
+const EXTRA_SPREADSHEETS = new Set([
+  '1B0fJftK8raFyasa8aT8-U_pmHabo3VeibnqwsbmsezQ'
+]);
 const SA = JSON.parse(Deno.env.get('GOOGLE_SERVICE_ACCOUNT_KEY'));
 function b64url(d) {
   return btoa(d).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -175,6 +179,24 @@ Deno.serve(async (req)=>{
             }
           });
         }
+      }
+    }
+    // 🔒 2026-11-13 セキュリティ点検 H73: 書き込みは管理者(role=admin のトークン or 管理パスワード)だけ。
+    //    それまではトークンがあるかしか見ておらず、ドライバー(role=staff)でもシフト表・名簿・単価マスタを書き換えられた。
+    //    管理画面を使う人(社員・permissions に admin)は全員 role=admin のトークンになる(invoice-sheet の login)。
+    //    spreadsheet_id も呼び出し側が自由に指定でき、サービスアカウントで読めるシートを何でも読み書きできたので、
+    //    既定のシフト表以外は「管理者 × 許可した ID」だけにする。
+    {
+      const adminPw = !!FS_ADMIN_PASSWORD && body.admin_password === FS_ADMIN_PASSWORD;
+      const who = adminPw ? { role: 'admin' } : await verifyToken(body.auth_token);
+      const isAdminCaller = who?.role === 'admin';
+      const deny = (msg) => new Response(JSON.stringify({ error: msg, code: 'FORBIDDEN' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+      if (WRITE_ACTIONS.has(body.action) && !isAdminCaller) return deny('書き込みは管理者のみです');
+      if (body.spreadsheet_id && body.spreadsheet_id !== SHIFT_SPREADSHEET) {
+        if (!isAdminCaller || !EXTRA_SPREADSHEETS.has(String(body.spreadsheet_id))) return deny('このシートは扱えません');
       }
     }
     if (body.action === 'fetch_cached_shifts') {

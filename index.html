@@ -2367,7 +2367,7 @@ function docsRenderList(){
       <td style="white-space:nowrap;text-align:right;">
         <button onclick="docsOpen('${d.id}',false)" style="background:#0ea5e9;color:#fff;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">開く</button>
         <button onclick="docsOpen('${d.id}',true)" style="background:#64748b;color:#fff;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;margin-left:4px;">保存</button>
-        <button onclick="docsDelete('${d.id}','${docsEsc(d.title).replace(/'/g,'')}')" style="background:#fff;color:var(--danger);border:1px solid var(--danger);padding:5px 9px;border-radius:6px;cursor:pointer;font-size:12px;margin-left:4px;">削除</button>
+        <button data-id="${docsEsc(d.id)}" data-title="${docsEsc(d.title)}" onclick="docsDelete(this.dataset.id,this.dataset.title)" style="background:#fff;color:var(--danger);border:1px solid var(--danger);padding:5px 9px;border-radius:6px;cursor:pointer;font-size:12px;margin-left:4px;">削除</button>
       </td></tr>`;
   }
   list.innerHTML=h+'</tbody></table>';
