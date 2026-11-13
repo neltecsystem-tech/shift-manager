@@ -107,10 +107,13 @@ async function noticePublished(nx: any, profileId: string, ym: string): Promise<
 //    引くため、そうなると本人には「明細がありません」としか見えない。
 //    使える形でなければ中央人材マスタ(profile_id で紐付く・日次同期で正規化済み)を採る。
 async function callerPhone(admin: any, uid: string, profPhone: unknown): Promise<string> {
-  const ph = normalizePhone(String(profPhone ?? ''));
-  if (ph.length >= 10) return ph;
+  // 🔒 2026-11-13 セキュリティ点検 H15: 中央人材マスタ(本人は書き換えられない)を先に見る。
+  //    profiles.phone は本人が自由に書き換えられるので、他人の番号にすると他人の明細が見えた。
+  //    マスタに使える番号が無い人だけ profiles.phone を使う(従来どおり)。
   const { data: sm } = await admin.from('staff_master').select('phone').eq('profile_id', uid).not('phone', 'is', null).limit(1);
-  return normalizePhone(String((sm ?? [])[0]?.phone ?? ''));
+  const mp = normalizePhone(String((sm ?? [])[0]?.phone ?? ''));
+  if (mp.length >= 10) return mp;
+  return normalizePhone(String(profPhone ?? ''));
 }
 
 // 呼び出し元(本人)の role/phone/オーナー情報。電話番号での明細取得を「本人/管理者/自社オーナー」に限定するため。
